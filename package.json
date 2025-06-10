@@ -1,0 +1,32 @@
+{
+    "name": "com.flock.sdk",
+    "version": "1.0.0",
+    "displayName": "Flock SDK",
+    "description": "A comprehensive game backend SDK for Unity with multiple authentication methods, leaderboards, achievements, and more.",
+    "unity": "2020.3",
+    "dependencies": {
+        "com.unity.nuget.newtonsoft-json": "3.0.2"
+    },
+    "keywords": [
+        "backend",
+        "game",
+        "sdk",
+        "authentication",
+        "leaderboards",
+        "achievements",
+        "analytics"
+    ],
+    "author": {
+        "name": "Flock",
+        "email": "support@qwacks.com",
+        "url": "https://flock.qwacks.com"
+    },
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/flock/unity-sdk.git"
+    },
+    "documentationUrl": "https://docs.flock.qwacks.com/unity-sdk",
+    "changelogUrl": "https://github.com/flock/unity-sdk/blob/main/CHANGELOG.md",
+    "licensesUrl": "https://github.com/flock/unity-sdk/blob/main/LICENSE"
+} 
