@@ -18,6 +18,8 @@ namespace Flock
             _config = config ?? throw new ArgumentNullException(nameof(config));
         }
 
+        public string GameId => _config.GameId;
+
         public async Task<LoginResponse> LoginAsync(string email, string password, string otp = null)
         {
             var response = await HttpClient.PostAsync<LoginResponse>(
