@@ -3,7 +3,6 @@ using System.Threading.Tasks;
 using Flock.Models;
 using Flock.Http;
 using Flock.Config;
-using Flock.Services;
 using Flock.Auth;
 
 namespace Flock
@@ -13,42 +12,10 @@ namespace Flock
         private readonly FlockConfig _config;
         private string _accessToken;
         private string _refreshToken;
-        private IFlockAuthProvider _currentAuthProvider;
-        
-        public readonly GameConfigService GameConfigs;
-        public readonly LeaderboardService Leaderboards;
-        public readonly AchievementService Achievements;
-        public readonly DocumentService Documents;
-        public readonly EventService Events;
-        public readonly CurrencyService Currencies;
-        public readonly ShopService Shop;
-        public readonly SegmentService Segments;
-        public readonly AssetService Assets;
-        public readonly GameService Games;
-        public readonly VersionService Versions;
-        public readonly PatchService Patches;
-        public readonly PlayerService Players;
-        public readonly PlayerDataService PlayerData;
 
         public FlockClient(FlockConfig config)
         {
             _config = config ?? throw new ArgumentNullException(nameof(config));
-            
-            // Initialize all services
-            GameConfigs = new GameConfigService(this);
-            Leaderboards = new LeaderboardService(this);
-            Achievements = new AchievementService(this);
-            Documents = new DocumentService(this);
-            Events = new EventService(this);
-            Currencies = new CurrencyService(this);
-            Shop = new ShopService(this);
-            Segments = new SegmentService(this);
-            Assets = new AssetService(this);
-            Games = new GameService(this);
-            Versions = new VersionService(this);
-            Patches = new PatchService(this);
-            Players = new PlayerService(this);
-            PlayerData = new PlayerDataService(this);
         }
 
         public async Task<LoginResponse> LoginAsync(string email, string password, string otp = null)
@@ -133,39 +100,6 @@ namespace Flock
             _refreshToken = response.RefreshToken;
             
             return response;
-        }
-
-        public void SetAuthProvider(IFlockAuthProvider provider)
-        {
-            _currentAuthProvider = provider;
-        }
-
-        public async Task<AuthResult> AuthenticateAsync()
-        {
-            if (_currentAuthProvider == null)
-            {
-                throw new InvalidOperationException("No auth provider set. Call SetAuthProvider first.");
-            }
-
-            return await _currentAuthProvider.AuthenticateAsync();
-        }
-
-        public async Task<bool> IsAuthenticatedAsync()
-        {
-            if (_currentAuthProvider == null)
-            {
-                return false;
-            }
-
-            return await _currentAuthProvider.IsAuthenticatedAsync();
-        }
-
-        public async Task LogoutAsync()
-        {
-            if (_currentAuthProvider != null)
-            {
-                await _currentAuthProvider.LogoutAsync();
-            }
         }
 
         public string GetAccessToken()
