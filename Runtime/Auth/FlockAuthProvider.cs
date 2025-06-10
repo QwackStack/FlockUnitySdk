@@ -39,7 +39,7 @@ namespace Flock.Auth
 
         public async Task<AuthResult> RegisterAsync(string email, string password, string confirmPassword, string otp = null)
         {
-            var response = await HttpClient.PostAsync<GenericResponse<RegisterResponse>>(
+            var response = await HttpClient.PostAsync<GenericResponse<LoginResponse>>(
                 $"{_apiUrl}/auth/register",
                 new RegisterRequest
                 {

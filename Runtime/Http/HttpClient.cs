@@ -12,7 +12,7 @@ namespace Flock.Http
 
         public static async Task<T> GetAsync<T>(string url, string accessToken = null)
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            var request = new HttpRequestMessage(HttpMethod.Get, url);
             if (!string.IsNullOrEmpty(accessToken))
             {
                 request.Headers.Add("Authorization", $"Bearer {accessToken}");
@@ -27,7 +27,7 @@ namespace Flock.Http
 
         public static async Task<T> PostAsync<T>(string url, object data, string accessToken = null)
         {
-            using var request = new HttpRequestMessage(HttpMethod.Post, url);
+            var request = new HttpRequestMessage(HttpMethod.Post, url);
             if (!string.IsNullOrEmpty(accessToken))
             {
                 request.Headers.Add("Authorization", $"Bearer {accessToken}");
@@ -45,7 +45,7 @@ namespace Flock.Http
 
         public static async Task<T> PutAsync<T>(string url, object data, string accessToken = null)
         {
-            using var request = new HttpRequestMessage(HttpMethod.Put, url);
+            var request = new HttpRequestMessage(HttpMethod.Put, url);
             if (!string.IsNullOrEmpty(accessToken))
             {
                 request.Headers.Add("Authorization", $"Bearer {accessToken}");
@@ -63,7 +63,7 @@ namespace Flock.Http
 
         public static async Task<T> DeleteAsync<T>(string url, string accessToken = null)
         {
-            using var request = new HttpRequestMessage(HttpMethod.Delete, url);
+            var request = new HttpRequestMessage(HttpMethod.Delete, url);
             if (!string.IsNullOrEmpty(accessToken))
             {
                 request.Headers.Add("Authorization", $"Bearer {accessToken}");
