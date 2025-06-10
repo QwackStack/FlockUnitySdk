@@ -9,11 +9,15 @@ namespace Flock.Services
     {
         private readonly string _apiUrl;
         private readonly string _accessToken;
+        private readonly FlockClient _client;
+        private readonly string _baseUrl;
 
-        public PlayerDataService(string apiUrl, string accessToken)
+        public PlayerDataService(string apiUrl, string accessToken, FlockClient client)
         {
             _apiUrl = apiUrl;
             _accessToken = accessToken;
+            _client = client;
+            _baseUrl = $"{_apiUrl}/player-data";
         }
 
         public async Task<PlayerData> GetPlayerDataAsync()
