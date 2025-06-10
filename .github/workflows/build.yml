@@ -49,12 +49,12 @@ jobs:
           StateCache-
 
     - name: Setup Unity
-      uses: game-ci/setup-unity@v1
+      uses: game-ci/unity-setup@v3
       with:
         unity-version: '2022.3.18f1'
         
     - name: Build Unity Package
-      uses: game-ci/unity-builder@v1
+      uses: game-ci/unity-builder@v3
       with:
         projectPath: .
         buildName: FlockUnitySDK
