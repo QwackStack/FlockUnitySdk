@@ -24,9 +24,9 @@
     "license": "MIT",
     "repository": {
         "type": "git",
-        "url": "https://github.com/flock/unity-sdk.git"
+        "url": "https://github.com/QwackStack/FlockUnitySDK.git"
     },
-    "documentationUrl": "https://docs.flock.qwacks.com/unity-sdk",
-    "changelogUrl": "https://github.com/flock/unity-sdk/blob/main/CHANGELOG.md",
-    "licensesUrl": "https://github.com/flock/unity-sdk/blob/main/LICENSE"
+    "documentationUrl": "https://github.com/QwackStack/FlockUnitySDK",
+    "changelogUrl": "https://github.com/QwackStack/FlockUnitySDK/blob/main/CHANGELOG.md",
+    "licensesUrl": "https://github.com/QwackStack/FlockUnitySDK/blob/main/LICENSE"
 } 
