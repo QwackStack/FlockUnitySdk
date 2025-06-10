@@ -1,4 +1,4 @@
-name: Build Unity SDK
+name: Build .NET SDK
 
 on:
   push:
@@ -15,56 +15,26 @@ jobs:
     - uses: actions/checkout@v4
       with:
         fetch-depth: 0
-        
-    - name: Cache Library
-      uses: actions/cache@v4
-      with:
-        path: Library
-        key: Library-${{ hashFiles('**/Assets/**', '**/Packages/**', '**/ProjectSettings/**') }}
-        restore-keys: |
-          Library-
-          
-    - name: Cache Library/ScriptAssemblies
-      uses: actions/cache@v4
-      with:
-        path: Library/ScriptAssemblies
-        key: ScriptAssemblies-${{ hashFiles('**/Assets/**', '**/Packages/**', '**/ProjectSettings/**') }}
-        restore-keys: |
-          ScriptAssemblies-
-          
-    - name: Cache Library/PackageCache
-      uses: actions/cache@v4
-      with:
-        path: Library/PackageCache
-        key: PackageCache-${{ hashFiles('**/Packages/**') }}
-        restore-keys: |
-          PackageCache-
-          
-    - name: Cache Library/StateCache
-      uses: actions/cache@v4
-      with:
-        path: Library/StateCache
-        key: StateCache-${{ hashFiles('**/Assets/**', '**/Packages/**', '**/ProjectSettings/**') }}
-        restore-keys: |
-          StateCache-
 
-    - name: Setup Unity
-      uses: game-ci/unity-setup@v3
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
       with:
-        unity-version: '2022.3.18f1'
-        
-    - name: Build Unity Package
-      uses: game-ci/unity-builder@v3
-      with:
-        projectPath: .
-        buildName: FlockUnitySDK
-        buildsPath: build
-        unityVersion: '2022.3.18f1'
-        targetPlatform: StandaloneWindows64
-        allowDirtyBuild: true
-        
+        dotnet-version: '8.0.x'
+
+    - name: Restore dependencies
+      run: dotnet restore Runtime/FlockSDK.csproj
+
+    - name: Build
+      run: dotnet build Runtime/FlockSDK.csproj --configuration Release --no-restore
+
+    - name: Test
+      run: dotnet test Runtime/FlockSDK.csproj --configuration Release --no-build
+
+    - name: Pack
+      run: dotnet pack Runtime/FlockSDK.csproj --configuration Release --no-build --output ./nupkgs
+
     - name: Upload Build Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: build
-        path: build 
+        name: nupkgs
+        path: ./nupkgs 
