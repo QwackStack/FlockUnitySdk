@@ -1,6 +1,7 @@
 using System.Threading.Tasks;
 using System.Collections.Generic;
 using Flock.Models;
+using Flock.Http;
 
 namespace Flock.Services
 {
@@ -17,12 +18,14 @@ namespace Flock.Services
 
         public async Task<PlayerData> GetPlayerDataAsync()
         {
-            return await HttpClient.GetAsync<PlayerData>($"{_apiUrl}/player-data");
+            var response = await HttpClient.GetAsync<GenericResponse<PlayerData>>($"{_apiUrl}/player-data", _accessToken);
+            return response.Result;
         }
 
         public async Task<PlayerData> UpdatePlayerDataAsync(PlayerData data)
         {
-            return await HttpClient.PutAsync<PlayerData>($"{_apiUrl}/player-data", data);
+            var response = await HttpClient.PutAsync<GenericResponse<PlayerData>>($"{_apiUrl}/player-data", data, _accessToken);
+            return response.Result;
         }
 
         /// <summary>

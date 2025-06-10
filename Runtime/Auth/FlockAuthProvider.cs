@@ -1,6 +1,7 @@
 using System;
 using System.Threading.Tasks;
 using Flock.Models;
+using Flock.Http;
 
 namespace Flock.Auth
 {
@@ -17,27 +18,28 @@ namespace Flock.Auth
 
         public async Task<AuthResult> LoginAsync(string email, string password, string otp = null)
         {
-            var response = await HttpClient.PostAsync<LoginResponse>(
+            var response = await HttpClient.PostAsync<GenericResponse<LoginResponse>>(
                 $"{_apiUrl}/auth/login",
                 new LoginRequest
                 {
                     Email = email,
                     Password = password,
                     Otp = otp
-                }
+                },
+                _accessToken
             );
 
             return new AuthResult
             {
                 Success = true,
-                AccessToken = response.AccessToken,
-                RefreshToken = response.RefreshToken
+                AccessToken = response.Result.AccessToken,
+                RefreshToken = response.Result.RefreshToken
             };
         }
 
         public async Task<AuthResult> RegisterAsync(string email, string password, string confirmPassword, string otp = null)
         {
-            var response = await HttpClient.PostAsync<RegisterResponse>(
+            var response = await HttpClient.PostAsync<GenericResponse<RegisterResponse>>(
                 $"{_apiUrl}/auth/register",
                 new RegisterRequest
                 {
@@ -45,14 +47,15 @@ namespace Flock.Auth
                     Password = password,
                     ConfirmPassword = confirmPassword,
                     Otp = otp
-                }
+                },
+                _accessToken
             );
 
             return new AuthResult
             {
                 Success = true,
-                AccessToken = response.AccessToken,
-                RefreshToken = response.RefreshToken
+                AccessToken = response.Result.AccessToken,
+                RefreshToken = response.Result.RefreshToken
             };
         }
     }

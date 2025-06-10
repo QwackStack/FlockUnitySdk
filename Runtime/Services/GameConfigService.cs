@@ -1,5 +1,6 @@
 using System.Threading.Tasks;
 using Flock.Models;
+using Flock.Http;
 using System.Collections.Generic;
 
 namespace Flock.Services
@@ -41,7 +42,8 @@ namespace Flock.Services
 
         public async Task<GameConfig> GetGameConfigAsync()
         {
-            return await HttpClient.GetAsync<GameConfig>($"{_apiUrl}/game-config");
+            var response = await HttpClient.GetAsync<GenericResponse<GameConfig>>($"{_apiUrl}/game-config", _accessToken);
+            return response.Result;
         }
     }
 
