@@ -1,113 +1,61 @@
 using System;
-using System.Threading.Tasks;
-using UnityEngine;
-using UnityEngine.Networking;
+using System.Net.Http;
 using System.Text;
+using System.Threading.Tasks;
 using Newtonsoft.Json;
 
-namespace Flock
+namespace Flock.Http
 {
-    internal static class HttpClient
+    public static class HttpClient
     {
-        public static async Task<T> GetAsync<T>(string url, string accessToken = null)
+        private static readonly System.Net.Http.HttpClient _client = new System.Net.Http.HttpClient();
+
+        public static async Task<T> PostAsync<T>(string url, object data)
         {
-            using var request = new UnityWebRequest(url, "GET");
-            request.downloadHandler = new DownloadHandlerBuffer();
-            
-            if (!string.IsNullOrEmpty(accessToken))
-            {
-                request.SetRequestHeader("Authorization", $"Bearer {accessToken}");
-            }
+            var content = new StringContent(
+                JsonConvert.SerializeObject(data),
+                Encoding.UTF8,
+                "application/json"
+            );
 
-            try
-            {
-                await request.SendWebRequest();
-                
-                if (request.result != UnityWebRequest.Result.Success)
-                {
-                    throw new FlockException($"HTTP Error: {request.error}", request.responseCode);
-                }
+            var response = await _client.PostAsync(url, content);
+            response.EnsureSuccessStatusCode();
 
-                return JsonConvert.DeserializeObject<T>(request.downloadHandler.text);
-            }
-            catch (Exception ex) when (!(ex is FlockException))
-            {
-                throw new FlockException($"Network Error: {ex.Message}", 0);
-            }
+            var responseContent = await response.Content.ReadAsStringAsync();
+            return JsonConvert.DeserializeObject<T>(responseContent);
         }
 
-        public static async Task<T> PostAsync<T>(string url, object data, string accessToken = null)
+        public static async Task<T> GetAsync<T>(string url)
         {
-            var json = JsonConvert.SerializeObject(data);
-            using var request = new UnityWebRequest(url, "POST");
-            
-            byte[] bodyRaw = Encoding.UTF8.GetBytes(json);
-            request.uploadHandler = new UploadHandlerRaw(bodyRaw);
-            request.downloadHandler = new DownloadHandlerBuffer();
-            request.SetRequestHeader("Content-Type", "application/json");
-            
-            if (!string.IsNullOrEmpty(accessToken))
-            {
-                request.SetRequestHeader("Authorization", $"Bearer {accessToken}");
-            }
+            var response = await _client.GetAsync(url);
+            response.EnsureSuccessStatusCode();
 
-            try
-            {
-                await request.SendWebRequest();
-                
-                if (request.result != UnityWebRequest.Result.Success)
-                {
-                    throw new FlockException($"HTTP Error: {request.error}", request.responseCode);
-                }
-
-                return JsonConvert.DeserializeObject<T>(request.downloadHandler.text);
-            }
-            catch (Exception ex) when (!(ex is FlockException))
-            {
-                throw new FlockException($"Network Error: {ex.Message}", 0);
-            }
+            var content = await response.Content.ReadAsStringAsync();
+            return JsonConvert.DeserializeObject<T>(content);
         }
 
-        public static async Task<T> PutAsync<T>(string url, object data, string accessToken = null)
+        public static async Task<T> PutAsync<T>(string url, object data)
         {
-            var json = JsonConvert.SerializeObject(data);
-            using var request = new UnityWebRequest(url, "PUT");
-            
-            byte[] bodyRaw = Encoding.UTF8.GetBytes(json);
-            request.uploadHandler = new UploadHandlerRaw(bodyRaw);
-            request.downloadHandler = new DownloadHandlerBuffer();
-            request.SetRequestHeader("Content-Type", "application/json");
-            
-            if (!string.IsNullOrEmpty(accessToken))
-            {
-                request.SetRequestHeader("Authorization", $"Bearer {accessToken}");
-            }
+            var content = new StringContent(
+                JsonConvert.SerializeObject(data),
+                Encoding.UTF8,
+                "application/json"
+            );
 
-            try
-            {
-                await request.SendWebRequest();
-                
-                if (request.result != UnityWebRequest.Result.Success)
-                {
-                    throw new FlockException($"HTTP Error: {request.error}", request.responseCode);
-                }
+            var response = await _client.PutAsync(url, content);
+            response.EnsureSuccessStatusCode();
 
-                return JsonConvert.DeserializeObject<T>(request.downloadHandler.text);
-            }
-            catch (Exception ex) when (!(ex is FlockException))
-            {
-                throw new FlockException($"Network Error: {ex.Message}", 0);
-            }
+            var responseContent = await response.Content.ReadAsStringAsync();
+            return JsonConvert.DeserializeObject<T>(responseContent);
         }
-    }
 
-    public class FlockException : Exception
-    {
-        public long StatusCode { get; }
-
-        public FlockException(string message, long statusCode) : base(message)
+        public static async Task<T> DeleteAsync<T>(string url)
         {
-            StatusCode = statusCode;
+            var response = await _client.DeleteAsync(url);
+            response.EnsureSuccessStatusCode();
+
+            var content = await response.Content.ReadAsStringAsync();
+            return JsonConvert.DeserializeObject<T>(content);
         }
     }
 } 

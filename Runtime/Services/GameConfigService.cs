@@ -6,13 +6,13 @@ namespace Flock.Services
 {
     public class GameConfigService
     {
-        private readonly FlockClient _client;
-        private readonly string _baseUrl;
+        private readonly string _apiUrl;
+        private readonly string _accessToken;
 
-        internal GameConfigService(FlockClient client)
+        public GameConfigService(string apiUrl, string accessToken)
         {
-            _client = client;
-            _baseUrl = $"{client.GetApiUrl()}/game-config";
+            _apiUrl = apiUrl;
+            _accessToken = accessToken;
         }
 
         /// <summary>
@@ -21,8 +21,8 @@ namespace Flock.Services
         public async Task<List<GameConfig>> GetAllAsync()
         {
             var response = await HttpClient.GetAsync<GenericResponse<List<GameConfig>>>(
-                $"{_baseUrl}?game_id={_client.GameId}",
-                _client.GetAccessToken()
+                $"{_apiUrl}/game-config",
+                _accessToken
             );
             return response.Result;
         }
@@ -33,10 +33,15 @@ namespace Flock.Services
         public async Task<GameConfig> GetByIdAsync(string configId)
         {
             var response = await HttpClient.GetAsync<GenericResponse<GameConfig>>(
-                $"{_baseUrl}/{configId}",
-                _client.GetAccessToken()
+                $"{_apiUrl}/game-config/{configId}",
+                _accessToken
             );
             return response.Result;
+        }
+
+        public async Task<GameConfig> GetGameConfigAsync()
+        {
+            return await HttpClient.GetAsync<GameConfig>($"{_apiUrl}/game-config");
         }
     }
 
@@ -48,5 +53,8 @@ namespace Flock.Services
         public Dictionary<string, object> Data { get; set; }
         public string CreatedAt { get; set; }
         public string UpdatedAt { get; set; }
+        public string Version { get; set; }
+        public bool MaintenanceMode { get; set; }
+        public string[] EnabledFeatures { get; set; }
     }
 } 

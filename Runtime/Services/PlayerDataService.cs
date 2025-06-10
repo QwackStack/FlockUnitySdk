@@ -6,13 +6,23 @@ namespace Flock.Services
 {
     public class PlayerDataService
     {
-        private readonly FlockClient _client;
-        private readonly string _baseUrl;
+        private readonly string _apiUrl;
+        private readonly string _accessToken;
 
-        internal PlayerDataService(FlockClient client)
+        public PlayerDataService(string apiUrl, string accessToken)
         {
-            _client = client;
-            _baseUrl = $"{client.GetApiUrl()}/player_data";
+            _apiUrl = apiUrl;
+            _accessToken = accessToken;
+        }
+
+        public async Task<PlayerData> GetPlayerDataAsync()
+        {
+            return await HttpClient.GetAsync<PlayerData>($"{_apiUrl}/player-data");
+        }
+
+        public async Task<PlayerData> UpdatePlayerDataAsync(PlayerData data)
+        {
+            return await HttpClient.PutAsync<PlayerData>($"{_apiUrl}/player-data", data);
         }
 
         /// <summary>
@@ -86,12 +96,11 @@ namespace Flock.Services
 
     public class PlayerData
     {
-        public string Id { get; set; }
-        public string GameId { get; set; }
         public string PlayerId { get; set; }
-        public Dictionary<string, object> Data { get; set; }
-        public string CreatedAt { get; set; }
-        public string UpdatedAt { get; set; }
+        public string Username { get; set; }
+        public int Level { get; set; }
+        public int Experience { get; set; }
+        public Dictionary<string, object> CustomData { get; set; }
     }
 
     internal class PlayerDataRequest

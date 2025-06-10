@@ -5,8 +5,9 @@ namespace Flock.Config
 {
     public class FlockConfig
     {
-        public string GameId { get; }
-        public string ApiUrl { get; }
+        public string ApiUrl { get; set; }
+        public string GameId { get; set; }
+        public string Environment { get; set; }
         public bool EnableDebugLogs { get; }
         public TimeSpan Timeout { get; }
         public bool[] EnabledAuthMethods { get; }

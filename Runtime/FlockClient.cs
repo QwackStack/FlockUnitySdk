@@ -1,9 +1,9 @@
 using System;
 using System.Threading.Tasks;
-using UnityEngine;
 using Flock.Models;
-using Flock.Services;
+using Flock.Http;
 using Flock.Config;
+using Flock.Services;
 using Flock.Auth;
 
 namespace Flock
