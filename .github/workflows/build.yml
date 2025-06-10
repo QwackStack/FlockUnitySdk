@@ -1,4 +1,4 @@
-name: Build Unity SDK
+name: Build .NET SDK
 
 on:
   push:
@@ -9,51 +9,29 @@ on:
 
 jobs:
   build:
-    name: Build Unity SDK
+    name: Build .NET SDK
     runs-on: ubuntu-latest
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
-      with:
-        lfs: true
 
-    - name: Cache Library
-      uses: actions/cache@v4
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
       with:
-        path: Library
-        key: Library-${{ hashFiles('Assets/**', 'Packages/**', 'ProjectSettings/**') }}
-        restore-keys: |
-          Library-
+        dotnet-version: '8.0.x'
 
-    - name: Activate Unity License
-      uses: game-ci/unity-activate@v4
-      env:
-        UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
-        UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
-        UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+    - name: Restore dependencies
+      run: dotnet restore Runtime/FlockSDK.csproj
 
-    - name: Run tests
-      uses: game-ci/unity-test-runner@v4
-      env:
-        UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
-        UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
-        UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
-      with:
-        githubToken: ${{ secrets.GITHUB_TOKEN }}
+    - name: Build
+      run: dotnet build Runtime/FlockSDK.csproj --configuration Release --no-restore
 
-    - name: Build project
-      uses: game-ci/unity-builder@v4
-      env:
-        UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
-        UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
-        UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
-      with:
-        targetPlatform: StandaloneWindows64
-        allowDirtyBuild: true
+    - name: Pack
+      run: dotnet pack Runtime/FlockSDK.csproj --configuration Release --no-build --output ./nupkgs
 
     - name: Upload Build Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: Build
-        path: build 
+        name: nupkgs
+        path: ./nupkgs 
