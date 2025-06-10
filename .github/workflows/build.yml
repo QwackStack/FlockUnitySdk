@@ -9,62 +9,44 @@ on:
 
 jobs:
   build:
+    name: Build Unity SDK
     runs-on: ubuntu-latest
     
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
       with:
-        fetch-depth: 0
-        
+        lfs: true
+
     - name: Cache Library
       uses: actions/cache@v4
       with:
         path: Library
-        key: Library-${{ hashFiles('**/Assets/**', '**/Packages/**', '**/ProjectSettings/**') }}
+        key: Library-${{ hashFiles('Assets/**', 'Packages/**', 'ProjectSettings/**') }}
         restore-keys: |
           Library-
-          
-    - name: Cache Library/ScriptAssemblies
-      uses: actions/cache@v4
-      with:
-        path: Library/ScriptAssemblies
-        key: ScriptAssemblies-${{ hashFiles('**/Assets/**', '**/Packages/**', '**/ProjectSettings/**') }}
-        restore-keys: |
-          ScriptAssemblies-
-          
-    - name: Cache Library/PackageCache
-      uses: actions/cache@v4
-      with:
-        path: Library/PackageCache
-        key: PackageCache-${{ hashFiles('**/Packages/**') }}
-        restore-keys: |
-          PackageCache-
-          
-    - name: Cache Library/StateCache
-      uses: actions/cache@v4
-      with:
-        path: Library/StateCache
-        key: StateCache-${{ hashFiles('**/Assets/**', '**/Packages/**', '**/ProjectSettings/**') }}
-        restore-keys: |
-          StateCache-
 
-    - name: Setup Unity
-      uses: game-ci/unity-setup@v3
+    - name: Run tests
+      uses: game-ci/unity-test-runner@v4
+      env:
+        UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+        UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
       with:
-        unity-version: '2022.3.18f1'
-        
-    - name: Build Unity Package
-      uses: game-ci/unity-builder@v3
+        githubToken: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Build project
+      uses: game-ci/unity-builder@v4
+      env:
+        UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+        UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
       with:
-        projectPath: .
-        buildName: FlockUnitySDK
-        buildsPath: build
-        unityVersion: '2022.3.18f1'
         targetPlatform: StandaloneWindows64
         allowDirtyBuild: true
-        
+
     - name: Upload Build Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: build
+        name: Build
         path: build 
