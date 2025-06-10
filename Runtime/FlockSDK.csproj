@@ -17,12 +17,4 @@
     <PackageReference Include="System.Net.Http" Version="4.3.4" />
   </ItemGroup>
 
-  <ItemGroup>
-    <Compile Include="FlockClient.cs" />
-    <Compile Include="Auth/*.cs" />
-    <Compile Include="Services/*.cs" />
-    <Compile Include="Http/*.cs" />
-    <Compile Include="Config/*.cs" />
-  </ItemGroup>
-
 </Project> 
