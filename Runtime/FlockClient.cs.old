@@ -1,0 +1,282 @@
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+using Flock.Models;
+using Flock.Http;
+using Flock.Config;
+using Flock.Auth;
+using Flock.Achievements;
+using Flock.Leaderboard;
+using Flock.Services;
+using Flock.Logging;
+using Flock.Exceptions;
+
+namespace Flock
+{
+    public class FlockClient
+    {
+        private readonly FlockInitConfig _initConfig;
+        private readonly IFlockLogger _logger;
+        private readonly RetryHandler _retryHandler;
+        private string _accessToken;
+        private string _refreshToken;
+        private JwtTokenClaims _tokenClaims;
+        private DateTime? _tokenExpirationTime;
+        private bool _isRefreshingToken = false;
+
+        // Service providers
+        private FlockAchievementProvider _achievements;
+        private FlockLeaderboardProvider _leaderboards;
+        private FlockConfigProvider _config;
+        private PlayerDataService _playerData;
+
+        public FlockClient(FlockInitConfig initConfig, IFlockLogger logger = null)
+        {
+            _initConfig = initConfig ?? throw new ArgumentNullException(nameof(initConfig));
+            _logger = logger ?? new UnityFlockLogger(initConfig.EnableDebugLogs);
+            _retryHandler = new RetryHandler(initConfig.RetryPolicy, _logger);
+
+            _logger.LogInfo($"Initializing Flock SDK - Environment: {initConfig.Environment}");
+            InitializeServices();
+        }
+
+        private void InitializeServices()
+        {
+            _achievements = new FlockAchievementProvider(this);
+            _leaderboards = new FlockLeaderboardProvider(this);
+            _playerData = new PlayerDataService(this);
+            _config = new FlockConfigProvider(this);
+        }
+
+        // Internal accessors for services
+        internal IFlockLogger Logger => _logger;
+        internal RetryHandler RetryHandler => _retryHandler;
+
+        // Service accessors
+        public FlockAchievementProvider Achievements => _achievements;
+        public FlockLeaderboardProvider Leaderboards => _leaderboards;
+        public FlockConfigProvider Config => _config;
+        public PlayerDataService PlayerData => _playerData;
+
+        // Public properties
+        public string CurrentPlayerId => _tokenClaims?.PlayerId;
+        public string GameId => _tokenClaims?.GameId;
+        public bool IsAuthenticated => !string.IsNullOrEmpty(_accessToken) && !IsTokenExpired();
+        public JwtTokenClaims TokenClaims => _tokenClaims;
+
+        public async Task<LoginResponse> LoginAsync(string email, string password, string otp = null)
+        {
+            var response = await HttpClient.PostAsync<LoginResponse>(
+                $"{_initConfig.ApiUrl}/auth/login",
+                new LoginRequest
+                {
+                    Email = email,
+                    Password = password,
+                    Otp = otp
+                }
+            );
+
+            SetTokens(response.AccessToken, response.RefreshToken);
+
+            return response;
+        }
+
+        public async Task<RegisterResponse> RegisterAsync(string email, string password, string confirmPassword, string otp = null)
+        {
+            return await HttpClient.PostAsync<RegisterResponse>(
+                $"{_initConfig.ApiUrl}/auth/register",
+                new RegisterRequest
+                {
+                    Email = email,
+                    Password = password,
+                    ConfirmPassword = confirmPassword,
+                    Otp = otp
+                }
+            );
+        }
+
+        public async Task<AuthResponse> AuthenticateWithSteamAsync(string steamTicket)
+        {
+            var response = await HttpClient.PostAsync<AuthResponse>(
+                $"{_initConfig.ApiUrl}/auth/steam",
+                new SteamAuthRequest { Ticket = steamTicket }
+            );
+
+            SetTokens(response.AccessToken, response.RefreshToken);
+
+            return response;
+        }
+
+        public async Task<AuthResponse> AuthenticateWithGameCenterAsync()
+        {
+            var response = await HttpClient.PostAsync<AuthResponse>(
+                $"{_initConfig.ApiUrl}/auth/gamecenter",
+                new GameCenterAuthRequest()
+            );
+
+            SetTokens(response.AccessToken, response.RefreshToken);
+
+            return response;
+        }
+
+        public async Task<AuthResponse> AuthenticateWithPlayStoreAsync(string playStoreToken)
+        {
+            var response = await HttpClient.PostAsync<AuthResponse>(
+                $"{_initConfig.ApiUrl}/auth/playstore",
+                new PlayStoreAuthRequest { Token = playStoreToken }
+            );
+
+            SetTokens(response.AccessToken, response.RefreshToken);
+
+            return response;
+        }
+
+        public async Task<AuthResponse> AuthenticateWithDeviceIdAsync(string deviceId)
+        {
+            var response = await HttpClient.PostAsync<AuthResponse>(
+                $"{_initConfig.ApiUrl}/auth/device",
+                new DeviceAuthRequest { DeviceId = deviceId }
+            );
+
+            SetTokens(response.AccessToken, response.RefreshToken);
+
+            return response;
+        }
+
+        /// <summary>
+        /// Refreshes the access token using the refresh token
+        /// </summary>
+        public async Task<RefreshTokenResponse> RefreshTokenAsync()
+        {
+            if (string.IsNullOrEmpty(_refreshToken))
+            {
+                throw new InvalidOperationException("No refresh token available");
+            }
+
+            _isRefreshingToken = true;
+
+            try
+            {
+                var response = await HttpClient.PostAsync<RefreshTokenResponse>(
+                    $"{_initConfig.ApiUrl}/auth/refresh",
+                    new RefreshTokenRequest { RefreshToken = _refreshToken }
+                );
+
+                SetTokens(response.AccessToken, response.RefreshToken);
+
+                return response;
+            }
+            finally
+            {
+                _isRefreshingToken = false;
+            }
+        }
+
+        public string GetAccessToken()
+        {
+            return _accessToken;
+        }
+
+        public void ClearTokens()
+        {
+            _accessToken = null;
+            _refreshToken = null;
+            _tokenClaims = null;
+            _tokenExpirationTime = null;
+        }
+
+        public string GetApiUrl()
+        {
+            return _initConfig.ApiUrl;
+        }
+
+        /// <summary>
+        /// Checks if the current token is expired
+        /// </summary>
+        public bool IsTokenExpired()
+        {
+            if (string.IsNullOrEmpty(_accessToken))
+                return true;
+
+            if (_tokenExpirationTime.HasValue)
+            {
+                return DateTime.UtcNow >= _tokenExpirationTime.Value;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Gets the time remaining until token expiration
+        /// </summary>
+        public TimeSpan? GetTimeUntilTokenExpiration()
+        {
+            if (_tokenExpirationTime.HasValue)
+            {
+                var remaining = _tokenExpirationTime.Value - DateTime.UtcNow;
+                return remaining.TotalSeconds > 0 ? remaining : TimeSpan.Zero;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Gets an access token, automatically refreshing if expired
+        /// </summary>
+        public async Task<string> GetValidAccessTokenAsync()
+        {
+            if (IsTokenExpired() && !string.IsNullOrEmpty(_refreshToken))
+            {
+                if (!_isRefreshingToken)
+                {
+                    try
+                    {
+                        await RefreshTokenAsync();
+                    }
+                    catch (Exception ex)
+                    {
+                        if (_initConfig.EnableDebugLogs)
+                        {
+                            UnityEngine.Debug.LogError($"Failed to refresh token: {ex.Message}");
+                        }
+                        throw;
+                    }
+                }
+            }
+
+            return _accessToken;
+        }
+
+        /// <summary>
+        /// Sets the access and refresh tokens and parses JWT claims
+        /// </summary>
+        private void SetTokens(string accessToken, string refreshToken)
+        {
+            _accessToken = accessToken;
+            _refreshToken = refreshToken;
+
+            // Parse JWT token
+            if (!string.IsNullOrEmpty(accessToken))
+            {
+                try
+                {
+                    _tokenClaims = JwtTokenParser.Parse(accessToken);
+                    _tokenExpirationTime = _tokenClaims.ExpirationTime;
+
+                    if (_initConfig.EnableDebugLogs)
+                    {
+                        UnityEngine.Debug.Log($"Token set for PlayerId: {_tokenClaims.PlayerId}, Expires: {_tokenExpirationTime}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    if (_initConfig.EnableDebugLogs)
+                    {
+                        UnityEngine.Debug.LogWarning($"Failed to parse JWT token: {ex.Message}");
+                    }
+                    _tokenClaims = null;
+                    _tokenExpirationTime = null;
+                }
+            }
+        }
+    }
+} 
