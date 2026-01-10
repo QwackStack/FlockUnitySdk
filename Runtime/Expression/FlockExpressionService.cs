@@ -60,10 +60,11 @@ namespace Flock.Expression
             if (string.IsNullOrWhiteSpace(expressionName))
                 throw new ArgumentException("expression is required", nameof(expressionName));
 
+            var data = BuildDefaultContext(customData);
             var payload = new ExpressionEventPayload
             {
                 Expression = expressionName,
-                Data = customData ?? new Dictionary<string, object>(),
+                Data = data ?? new Dictionary<string, object>(),
                 TimestampUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
             };
 
