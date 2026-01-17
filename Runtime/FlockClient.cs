@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Flock.Models;
@@ -10,6 +11,7 @@ using Flock.Leaderboard;
 using Flock.Services;
 using Flock.Logging;
 using Flock.Exceptions;
+using Flock.LogEvent;
 
 namespace Flock
 {
@@ -66,6 +68,40 @@ namespace Flock
         public FlockLeaderboardProvider Leaderboards => _leaderboards;
         public FlockConfigProvider Config => _config;
         public PlayerDataService PlayerData => _playerData;
+        
+        /// <summary>
+        /// Helper method to log events using the static FlockLogEventService (uses config from JSON)
+        /// </summary>
+        public async Task<LogEvent.LogEventSchema> LogExceptionAsync(
+            string message,
+            Exception exception,
+            Dictionary<string, object> extraData = null,
+            CancellationToken cancellationToken = default)
+        {
+            return await LogEvent.FlockLogEventService.LogExceptionAsync(
+                message,
+                exception,
+                extraData,
+                cancellationToken);
+        }
+        
+        /// <summary>
+        /// Helper method to log logic errors using the static FlockLogEventService (uses config from JSON)
+        /// </summary>
+        public async Task<LogEvent.LogEventSchema> LogLogicErrorAsync(
+            string message,
+            string errorCode = null,
+            Dictionary<string, object> errorData = null,
+            Dictionary<string, object> extraData = null,
+            CancellationToken cancellationToken = default)
+        {
+            return await LogEvent.FlockLogEventService.LogLogicErrorAsync(
+                message,
+                errorCode,
+                errorData,
+                extraData,
+                cancellationToken);
+        }
 
         // Public properties
         public string CurrentPlayerId => _tokenClaims?.PlayerId;

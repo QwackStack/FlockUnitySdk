@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Net.Http;
 using System.Text;
 using System.Threading;
@@ -57,12 +58,31 @@ namespace Flock.Http
 
         public static async Task<T> PostAsync<T>(string url, object data, string accessToken = null, CancellationToken cancellationToken = default)
         {
+            return await PostAsyncWithHeaders<T>(url, data, null, accessToken, cancellationToken);
+        }
+
+        public static async Task<T> PostAsyncWithHeaders<T>(
+            string url,
+            object data,
+            Dictionary<string, string> customHeaders = null,
+            string accessToken = null,
+            CancellationToken cancellationToken = default)
+        {
             try
             {
                 HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, url);
+                
                 if (!string.IsNullOrEmpty(accessToken))
                 {
                     request.Headers.Add("Authorization", $"Bearer {accessToken}");
+                }
+
+                if (customHeaders != null)
+                {
+                    foreach (var header in customHeaders)
+                    {
+                        request.Headers.Add(header.Key, header.Value);
+                    }
                 }
 
                 string json = JsonConvert.SerializeObject(data);
