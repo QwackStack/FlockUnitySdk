@@ -7,13 +7,11 @@ namespace Flock.Services
 {
     public class GameConfigService
     {
-        private readonly string _apiUrl;
-        private readonly string _accessToken;
+        private readonly FlockClient _client;
 
-        public GameConfigService(string apiUrl, string accessToken)
+        public GameConfigService(FlockClient flockClient)
         {
-            _apiUrl = apiUrl;
-            _accessToken = accessToken;
+            _client = flockClient;
         }
 
         /// <summary>
@@ -22,8 +20,8 @@ namespace Flock.Services
         public async Task<List<GameConfig>> GetAllAsync()
         {
             var response = await HttpClient.GetAsync<GenericResponse<List<GameConfig>>>(
-                $"{_apiUrl}/game-config",
-                _accessToken
+                $"{_client.GetApiUrl()}/game-config",
+                _client.GetAuthenticatedHeaders()
             );
             return response.Result;
         }
@@ -34,15 +32,15 @@ namespace Flock.Services
         public async Task<GameConfig> GetByIdAsync(string configId)
         {
             var response = await HttpClient.GetAsync<GenericResponse<GameConfig>>(
-                $"{_apiUrl}/game-config/{configId}",
-                _accessToken
+                $"{_client.GetApiUrl()}/game-config/{configId}",
+                _client.GetAuthenticatedHeaders()
             );
             return response.Result;
         }
 
         public async Task<GameConfig> GetGameConfigAsync()
         {
-            var response = await HttpClient.GetAsync<GenericResponse<GameConfig>>($"{_apiUrl}/game-config", _accessToken);
+            var response = await HttpClient.GetAsync<GenericResponse<GameConfig>>($"{_client.GetApiUrl()}/game-config", _client.GetAuthenticatedHeaders());
             return response.Result;
         }
     }

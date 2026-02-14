@@ -1,150 +1,266 @@
 using UnityEngine;
 using UnityEditor;
 using System;
+using System.IO;
 using Flock.Config;
-using Flock.Auth;
 
 namespace Flock.Editor
 {
     public class FlockConfigWindow : EditorWindow
     {
-        private string gameId = "";
-        private string clientId = "";
-        private string clientSecret = "";
         private string apiUrl = "https://api-flock.qwacks.com";
+        private string apiKey = "";
+        private string gameId = "";
+        private string gameVersionId = "";
+        private FlockEnvironment environment = FlockEnvironment.Production;
         private bool enableDebugLogs = false;
-        private TimeSpan timeout = TimeSpan.FromSeconds(30);
-        private bool[] enabledAuthMethods = new bool[Enum.GetValues(typeof(AuthProviderType)).Length];
-        private string[] authMethodNames = Enum.GetNames(typeof(AuthProviderType));
 
         private Vector2 scrollPosition;
         private GUIStyle headerStyle;
         private GUIStyle sectionStyle;
-        private GUIStyle errorStyle;
+        private GUIStyle boxStyle;
         private string errorMessage = "";
+        private string successMessage = "";
+        private double messageTimer = 0;
+        private FlockConfigAsset existingConfig;
+        private bool _hasUnsavedChanges = false;
 
-        [MenuItem("Window/Flock/Configuration")]
+        [MenuItem("Qwacks/Configuration")]
         public static void ShowWindow()
         {
-            var window = GetWindow<FlockConfigWindow>("Flock Configuration");
-            window.minSize = new Vector2(500, 600);
-            window.LoadConfig();
+            var window = GetWindow<FlockConfigWindow>("Flock SDK Config");
+            window.minSize = new Vector2(500, 500);
+            window.Show();
         }
 
         private void OnEnable()
         {
-            // Initialize styles
-            headerStyle = new GUIStyle
-            {
-                fontSize = 20,
-                fontStyle = FontStyle.Bold,
-                alignment = TextAnchor.MiddleCenter,
-                normal = { textColor = EditorGUIUtility.isProSkin ? Color.white : Color.black }
-            };
+            LoadConfig();
+        }
 
-            sectionStyle = new GUIStyle
+        private void InitializeStyles()
+        {
+            if (headerStyle == null)
             {
-                fontSize = 14,
-                fontStyle = FontStyle.Bold,
-                margin = new RectOffset(0, 0, 10, 5),
-                normal = { textColor = EditorGUIUtility.isProSkin ? Color.white : Color.black }
-            };
+                headerStyle = new GUIStyle(EditorStyles.boldLabel)
+                {
+                    fontSize = 16,
+                    alignment = TextAnchor.MiddleCenter,
+                    margin = new RectOffset(0, 0, 10, 10)
+                };
+            }
 
-            errorStyle = new GUIStyle
+            if (sectionStyle == null)
             {
-                normal = { textColor = Color.red },
-                wordWrap = true
-            };
+                sectionStyle = new GUIStyle(EditorStyles.boldLabel)
+                {
+                    fontSize = 12,
+                    margin = new RectOffset(0, 0, 15, 5)
+                };
+            }
+
+            if (boxStyle == null)
+            {
+                boxStyle = new GUIStyle(EditorStyles.helpBox)
+                {
+                    padding = new RectOffset(10, 10, 10, 10)
+                };
+            }
         }
 
         private void OnGUI()
         {
+            InitializeStyles();
+
             scrollPosition = EditorGUILayout.BeginScrollView(scrollPosition);
 
-            // Header
             GUILayout.Space(10);
+
+            // Header
+            EditorGUILayout.BeginVertical(boxStyle);
             GUILayout.Label("Flock SDK Configuration", headerStyle);
-            GUILayout.Space(20);
+            GUILayout.Label("Configure your Flock SDK API credentials", EditorStyles.centeredGreyMiniLabel);
+            EditorGUILayout.EndVertical();
 
-            // Required Settings
-            GUILayout.Label("Required Settings", sectionStyle);
-            EditorGUI.indentLevel++;
+            GUILayout.Space(15);
 
-            gameId = EditorGUILayout.TextField(new GUIContent("Game ID", "Your Flock Game ID"), gameId);
-            clientId = EditorGUILayout.TextField(new GUIContent("Client ID", "Your Flock Client ID"), clientId);
-            
-            // Client Secret with toggle to show/hide
-            EditorGUILayout.BeginHorizontal();
-            clientSecret = EditorGUILayout.PasswordField(new GUIContent("Client Secret", "Your Flock Client Secret"), clientSecret);
-            if (GUILayout.Button(EditorGUIUtility.IconContent("d_ViewToolOrbit"), GUILayout.Width(30)))
+            // Status Bar
+            if (existingConfig != null)
             {
-                // Toggle between password and normal text field
-                var temp = GUI.skin.textField;
-                GUI.skin.textField = GUI.skin.textArea;
-                clientSecret = EditorGUILayout.TextField(clientSecret);
-                GUI.skin.textField = temp;
-            }
-            EditorGUILayout.EndHorizontal();
-
-            EditorGUI.indentLevel--;
-            GUILayout.Space(20);
-
-            // Authentication Methods
-            GUILayout.Label("Authentication Methods", sectionStyle);
-            EditorGUI.indentLevel++;
-
-            for (int i = 0; i < enabledAuthMethods.Length; i++)
-            {
-                enabledAuthMethods[i] = EditorGUILayout.Toggle(
-                    new GUIContent(
-                        authMethodNames[i],
-                        $"Enable {authMethodNames[i]} authentication"
-                    ),
-                    enabledAuthMethods[i]
-                );
+                EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+                GUILayout.Label($"Config Status: Loaded from FlockConfig.asset", EditorStyles.miniLabel);
+                if (_hasUnsavedChanges)
+                {
+                    GUILayout.Label("You have unsaved changes", EditorStyles.miniLabel);
+                }
+                EditorGUILayout.EndVertical();
+                GUILayout.Space(10);
             }
 
-            EditorGUI.indentLevel--;
-            GUILayout.Space(20);
+            // Required Settings Section
+            EditorGUILayout.BeginVertical(boxStyle);
+            GUILayout.Label("API Configuration (Required)", sectionStyle);
+            GUILayout.Space(5);
 
-            // Optional Settings
-            GUILayout.Label("Optional Settings", sectionStyle);
-            EditorGUI.indentLevel++;
+            EditorGUI.BeginChangeCheck();
 
-            apiUrl = EditorGUILayout.TextField(new GUIContent("API URL", "The Flock API URL"), apiUrl);
-            enableDebugLogs = EditorGUILayout.Toggle(new GUIContent("Enable Debug Logs", "Enable detailed logging for debugging"), enableDebugLogs);
-            
-            EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.PrefixLabel(new GUIContent("Timeout", "Request timeout in seconds"));
-            float timeoutSeconds = (float)timeout.TotalSeconds;
-            timeoutSeconds = EditorGUILayout.Slider(timeoutSeconds, 1, 120);
-            timeout = TimeSpan.FromSeconds(timeoutSeconds);
-            EditorGUILayout.EndHorizontal();
+            string newApiUrl = EditorGUILayout.TextField(
+                new GUIContent("API URL *", "Flock API endpoint URL"),
+                apiUrl);
 
-            EditorGUI.indentLevel--;
-            GUILayout.Space(20);
+            if (string.IsNullOrWhiteSpace(newApiUrl))
+            {
+                EditorGUILayout.HelpBox("API URL is required", MessageType.Warning);
+            }
 
-            // Error message
-            if (!string.IsNullOrEmpty(errorMessage))
+            GUILayout.Space(5);
+
+            string newApiKey = EditorGUILayout.PasswordField(
+                new GUIContent("API Key *", "Your Flock API Key (stored securely, never logged)"),
+                apiKey);
+
+            if (string.IsNullOrWhiteSpace(newApiKey))
+            {
+                EditorGUILayout.HelpBox("API Key is required for SDK authentication", MessageType.Warning);
+            }
+
+            GUILayout.Space(5);
+
+            string newGameId = EditorGUILayout.TextField(
+                new GUIContent("Game ID *", "Your Flock Game ID"),
+                gameId);
+
+            if (string.IsNullOrWhiteSpace(newGameId))
+            {
+                EditorGUILayout.HelpBox("Game ID is required", MessageType.Warning);
+            }
+
+            GUILayout.Space(5);
+
+            string newGameVersionId = EditorGUILayout.TextField(
+                new GUIContent("Game Version ID *", "Your Flock Game Version ID (sent as X-Game-Version-ID header)"),
+                gameVersionId);
+
+            if (string.IsNullOrWhiteSpace(newGameVersionId))
+            {
+                EditorGUILayout.HelpBox("Game Version ID is required", MessageType.Warning);
+            }
+
+            GUILayout.Space(5);
+
+            FlockEnvironment newEnvironment = (FlockEnvironment)EditorGUILayout.EnumPopup(
+                new GUIContent("Environment", "Select Production for live, Development for testing"),
+                environment);
+
+            GUILayout.Space(5);
+
+            bool newEnableDebugLogs = EditorGUILayout.Toggle(
+                new GUIContent("Enable Debug Logs", "Show detailed SDK logs in console (useful for troubleshooting)"),
+                enableDebugLogs);
+
+            if (EditorGUI.EndChangeCheck())
+            {
+                apiUrl = newApiUrl;
+                apiKey = newApiKey;
+                gameId = newGameId;
+                gameVersionId = newGameVersionId;
+                environment = newEnvironment;
+                enableDebugLogs = newEnableDebugLogs;
+                _hasUnsavedChanges = true;
+            }
+
+            GUILayout.Space(5);
+            EditorGUILayout.LabelField("Tip: Get your API Key, Game ID and Game Version ID from the Flock dashboard", EditorStyles.wordWrappedMiniLabel);
+
+            EditorGUILayout.EndVertical();
+
+            GUILayout.Space(10);
+
+            // Header Info
+            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+            GUILayout.Label("Headers sent with every API call:", EditorStyles.boldLabel);
+            GUILayout.Label("  X-Flock-API-Key: <your API key>", EditorStyles.miniLabel);
+            GUILayout.Label("  X-Game-Version-ID: <your game version ID>", EditorStyles.miniLabel);
+            EditorGUILayout.EndVertical();
+
+            GUILayout.Space(10);
+
+            // Messages
+            if (!string.IsNullOrEmpty(errorMessage) && EditorApplication.timeSinceStartup < messageTimer)
             {
                 EditorGUILayout.HelpBox(errorMessage, MessageType.Error);
             }
 
-            // Buttons
-            GUILayout.FlexibleSpace();
+            if (!string.IsNullOrEmpty(successMessage) && EditorApplication.timeSinceStartup < messageTimer)
+            {
+                EditorGUILayout.HelpBox(successMessage, MessageType.Info);
+            }
+
+            GUILayout.Space(10);
+
+            // Quick Actions Section
+            if (existingConfig != null && !string.IsNullOrWhiteSpace(apiKey))
+            {
+                EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+                GUILayout.Label("Quick Actions", EditorStyles.boldLabel);
+                GUILayout.Space(5);
+
+                EditorGUILayout.BeginHorizontal();
+                if (GUILayout.Button("Test Configuration", GUILayout.Height(30)))
+                {
+                    TestConfiguration();
+                }
+                if (GUILayout.Button("Locate Config File", GUILayout.Height(30)))
+                {
+                    EditorGUIUtility.PingObject(existingConfig);
+                    Selection.activeObject = existingConfig;
+                }
+                EditorGUILayout.EndHorizontal();
+
+                EditorGUILayout.EndVertical();
+                GUILayout.Space(10);
+            }
+
+            // Action Buttons
             EditorGUILayout.BeginHorizontal();
-            
-            if (GUILayout.Button("Save", GUILayout.Height(30)))
+
+            GUI.enabled = _hasUnsavedChanges || string.IsNullOrWhiteSpace(apiKey) == false;
+            GUI.backgroundColor = new Color(0.3f, 0.8f, 0.3f);
+            if (GUILayout.Button("Save Configuration", GUILayout.Height(35)))
             {
                 SaveConfig();
             }
-            
-            if (GUILayout.Button("Reset", GUILayout.Height(30)))
+            GUI.backgroundColor = Color.white;
+            GUI.enabled = true;
+
+            GUI.backgroundColor = new Color(0.8f, 0.6f, 0.3f);
+            if (GUILayout.Button("Reset", GUILayout.Height(35), GUILayout.Width(100)))
             {
                 ResetConfig();
             }
-            
+            GUI.backgroundColor = Color.white;
+
             EditorGUILayout.EndHorizontal();
+
+            GUILayout.Space(5);
+
+            // Help Section
+            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+            EditorGUILayout.BeginHorizontal();
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button("Documentation", EditorStyles.linkLabel))
+            {
+                Application.OpenURL("https://docs.flock.qwacks.com");
+            }
+            GUILayout.Label("|", EditorStyles.miniLabel);
+            if (GUILayout.Button("Support", EditorStyles.linkLabel))
+            {
+                Application.OpenURL("https://support.qwacks.com");
+            }
+            GUILayout.FlexibleSpace();
+            EditorGUILayout.EndHorizontal();
+            EditorGUILayout.EndVertical();
+
             GUILayout.Space(10);
 
             EditorGUILayout.EndScrollView();
@@ -152,100 +268,274 @@ namespace Flock.Editor
 
         private void LoadConfig()
         {
-            // Load from EditorPrefs
-            gameId = EditorPrefs.GetString("Flock_GameId", "");
-            clientId = EditorPrefs.GetString("Flock_ClientId", "");
-            clientSecret = EditorPrefs.GetString("Flock_ClientSecret", "");
-            apiUrl = EditorPrefs.GetString("Flock_ApiUrl", "https://api.flock.qwacks.com");
-            enableDebugLogs = EditorPrefs.GetBool("Flock_EnableDebugLogs", false);
-            timeout = TimeSpan.FromSeconds(EditorPrefs.GetFloat("Flock_TimeoutSeconds", 30));
+            existingConfig = AssetDatabase.LoadAssetAtPath<FlockConfigAsset>("Assets/Resources/FlockConfig.asset");
 
-            // Load enabled auth methods
-            for (int i = 0; i < enabledAuthMethods.Length; i++)
+            if (existingConfig != null)
             {
-                enabledAuthMethods[i] = EditorPrefs.GetBool($"Flock_Auth_{authMethodNames[i]}", false);
+                apiUrl = existingConfig.apiUrl ?? "https://api-flock.qwacks.com";
+                apiKey = existingConfig.ApiKey ?? "";
+                gameId = existingConfig.gameId ?? "";
+                gameVersionId = existingConfig.gameVersionId ?? "";
+                environment = existingConfig.environment;
+                enableDebugLogs = existingConfig.enableDebugLogs;
             }
+            else
+            {
+                apiUrl = EditorPrefs.GetString("Flock_ApiUrl", "https://api-flock.qwacks.com");
+                apiKey = EditorPrefs.GetString("Flock_ApiKey", "");
+                gameId = EditorPrefs.GetString("Flock_GameId", "");
+                gameVersionId = EditorPrefs.GetString("Flock_GameVersionId", "");
+                environment = (FlockEnvironment)EditorPrefs.GetInt("Flock_Environment", (int)FlockEnvironment.Production);
+                enableDebugLogs = EditorPrefs.GetBool("Flock_EnableDebugLogs", false);
+            }
+
+            _hasUnsavedChanges = false;
         }
 
         private void SaveConfig()
         {
             errorMessage = "";
+            successMessage = "";
 
-            // Validate
-            if (string.IsNullOrEmpty(gameId))
-                errorMessage += "Game ID is required\n";
-            if (string.IsNullOrEmpty(clientId))
-                errorMessage += "Client ID is required\n";
-            if (string.IsNullOrEmpty(clientSecret))
-                errorMessage += "Client Secret is required\n";
-            if (!Uri.IsWellFormedUriString(apiUrl, UriKind.Absolute))
-                errorMessage += "API URL must be a valid URL\n";
-
-            if (!string.IsNullOrEmpty(errorMessage))
-                return;
-
-            // Save to EditorPrefs
-            EditorPrefs.SetString("Flock_GameId", gameId);
-            EditorPrefs.SetString("Flock_ClientId", clientId);
-            EditorPrefs.SetString("Flock_ClientSecret", clientSecret);
-            EditorPrefs.SetString("Flock_ApiUrl", apiUrl);
-            EditorPrefs.SetBool("Flock_EnableDebugLogs", enableDebugLogs);
-            EditorPrefs.SetFloat("Flock_TimeoutSeconds", (float)timeout.TotalSeconds);
-
-            // Save enabled auth methods
-            for (int i = 0; i < enabledAuthMethods.Length; i++)
+            if (string.IsNullOrWhiteSpace(apiUrl))
             {
-                EditorPrefs.SetBool($"Flock_Auth_{authMethodNames[i]}", enabledAuthMethods[i]);
+                errorMessage = "API URL is required!";
+                messageTimer = EditorApplication.timeSinceStartup + 3;
+                return;
             }
 
-            // Create runtime config
-            var config = new FlockConfig.Builder()
-                .SetGameId(gameId)
-                .SetApiUrl(apiUrl)
-                .SetEnableDebugLogs(enableDebugLogs)
-                .SetTimeout(timeout)
-                .SetEnabledAuthMethods(enabledAuthMethods)
-                .Build();
+            if (string.IsNullOrWhiteSpace(apiKey))
+            {
+                errorMessage = "API Key is required!";
+                messageTimer = EditorApplication.timeSinceStartup + 3;
+                return;
+            }
 
-            // Save to a ScriptableObject for runtime use
-            var configAsset = CreateInstance<FlockConfigAsset>();
-            configAsset.Config = config;
+            if (string.IsNullOrWhiteSpace(gameId))
+            {
+                errorMessage = "Game ID is required!";
+                messageTimer = EditorApplication.timeSinceStartup + 3;
+                return;
+            }
 
-            const string configPath = "Assets/Resources/FlockConfig.asset";
-            AssetDatabase.CreateAsset(configAsset, configPath);
-            AssetDatabase.SaveAssets();
-            AssetDatabase.Refresh();
+            if (string.IsNullOrWhiteSpace(gameVersionId))
+            {
+                errorMessage = "Game Version ID is required!";
+                messageTimer = EditorApplication.timeSinceStartup + 3;
+                return;
+            }
 
-            Debug.Log("Flock configuration saved successfully!");
-            ShowNotification(new GUIContent("Configuration saved!"));
+            apiUrl = apiUrl.Trim();
+            apiKey = apiKey.Trim();
+            gameId = gameId.Trim();
+            gameVersionId = gameVersionId.Trim();
+
+            if (!Uri.IsWellFormedUriString(apiUrl, UriKind.Absolute))
+            {
+                errorMessage = "API URL must be a valid URL (e.g., https://api-flock.qwacks.com)";
+                messageTimer = EditorApplication.timeSinceStartup + 3;
+                return;
+            }
+
+            try
+            {
+                EditorPrefs.SetString("Flock_ApiUrl", apiUrl);
+                EditorPrefs.SetString("Flock_ApiKey", apiKey);
+                EditorPrefs.SetString("Flock_GameId", gameId);
+                EditorPrefs.SetString("Flock_GameVersionId", gameVersionId);
+                EditorPrefs.SetInt("Flock_Environment", (int)environment);
+                EditorPrefs.SetBool("Flock_EnableDebugLogs", enableDebugLogs);
+
+                string resourcesPath = "Assets/Resources";
+                if (!Directory.Exists(resourcesPath))
+                {
+                    Directory.CreateDirectory(resourcesPath);
+                    AssetDatabase.Refresh();
+                }
+
+                string configPath = "Assets/Resources/FlockConfig.asset";
+                FlockConfigAsset configAsset = AssetDatabase.LoadAssetAtPath<FlockConfigAsset>(configPath);
+
+                if (configAsset == null)
+                {
+                    configAsset = CreateInstance<FlockConfigAsset>();
+                    AssetDatabase.CreateAsset(configAsset, configPath);
+                    Debug.Log("Created new FlockConfig.asset");
+                }
+
+                configAsset.apiUrl = apiUrl;
+                configAsset.ApiKey = apiKey;
+                configAsset.gameId = gameId;
+                configAsset.gameVersionId = gameVersionId;
+                configAsset.environment = environment;
+                configAsset.enableDebugLogs = enableDebugLogs;
+
+                EditorUtility.SetDirty(configAsset);
+                AssetDatabase.SaveAssets();
+                AssetDatabase.Refresh();
+
+                existingConfig = configAsset;
+                _hasUnsavedChanges = false;
+
+                successMessage = "Configuration saved successfully!";
+                messageTimer = EditorApplication.timeSinceStartup + 3;
+
+                Debug.Log($"Flock SDK configuration saved: API={apiUrl}, GameId={gameId}, GameVersionId={gameVersionId}, Environment={environment}");
+            }
+            catch (System.Exception ex)
+            {
+                errorMessage = $"Failed to save configuration: {ex.Message}";
+                messageTimer = EditorApplication.timeSinceStartup + 5;
+                Debug.LogError($"Failed to save Flock configuration: {ex}");
+            }
         }
 
         private void ResetConfig()
         {
             if (EditorUtility.DisplayDialog("Reset Configuration",
-                "Are you sure you want to reset all Flock configuration settings?",
-                "Yes", "No"))
+                "Are you sure you want to reset all Flock SDK settings to defaults?",
+                "Yes", "Cancel"))
             {
+                apiUrl = "https://api-flock.qwacks.com";
+                apiKey = "";
                 gameId = "";
-                clientId = "";
-                clientSecret = "";
-                apiUrl = "https://api.flock.qwacks.com";
+                gameVersionId = "";
+                environment = FlockEnvironment.Production;
                 enableDebugLogs = false;
-                timeout = TimeSpan.FromSeconds(30);
                 errorMessage = "";
+                successMessage = "";
+                _hasUnsavedChanges = true;
 
-                // Reset auth methods
-                for (int i = 0; i < enabledAuthMethods.Length; i++)
+                successMessage = "Configuration reset to defaults. Click Save to apply changes.";
+                messageTimer = EditorApplication.timeSinceStartup + 4;
+            }
+        }
+
+        private async void TestConfiguration()
+        {
+            errorMessage = "";
+            successMessage = "";
+
+            if (string.IsNullOrWhiteSpace(apiUrl))
+            {
+                errorMessage = "Cannot test: API URL is missing!";
+                messageTimer = EditorApplication.timeSinceStartup + 3;
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(apiKey))
+            {
+                errorMessage = "Cannot test: API Key is missing!";
+                messageTimer = EditorApplication.timeSinceStartup + 3;
+                return;
+            }
+
+            if (!Uri.IsWellFormedUriString(apiUrl, UriKind.Absolute))
+            {
+                errorMessage = "Cannot test: API URL is invalid!";
+                messageTimer = EditorApplication.timeSinceStartup + 3;
+                return;
+            }
+
+            EditorUtility.DisplayProgressBar("Testing Configuration", "Validating API connection...", 0.3f);
+
+            try
+            {
+                var httpClient = new System.Net.Http.HttpClient();
+                httpClient.Timeout = TimeSpan.FromSeconds(10);
+                httpClient.DefaultRequestHeaders.Add("X-Flock-API-Key", apiKey);
+                httpClient.DefaultRequestHeaders.Add("X-Game-Version-ID", gameVersionId);
+
+                var response = await httpClient.GetAsync($"{apiUrl}/health");
+
+                EditorUtility.DisplayProgressBar("Testing Configuration", "Verifying API key...", 0.6f);
+
+                string testResults = "";
+
+                if (response.IsSuccessStatusCode)
                 {
-                    enabledAuthMethods[i] = false;
+                    testResults = $"Configuration Test Results:\n\n" +
+                                $"API URL: {apiUrl} (Connection successful)\n" +
+                                $"API Key: {new string('*', Math.Min(apiKey.Length, 20))} (Authenticated)\n" +
+                                $"Game ID: {gameId}\n" +
+                                $"Game Version ID: {gameVersionId}\n" +
+                                $"Environment: {environment}\n" +
+                                $"Debug Logs: {(enableDebugLogs ? "Enabled" : "Disabled")}\n\n" +
+                                $"Configuration is valid and ready to use!";
+
+                    successMessage = "Configuration test passed!";
                 }
+                else if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized ||
+                         response.StatusCode == System.Net.HttpStatusCode.Forbidden)
+                {
+                    testResults = $"Configuration Test Results:\n\n" +
+                                $"API URL: {apiUrl} (Connection successful)\n" +
+                                $"API Key: Invalid or unauthorized\n\n" +
+                                $"Please check your API key and try again.";
+
+                    errorMessage = "API Key authentication failed!";
+                }
+                else
+                {
+                    testResults = $"Configuration Test Results:\n\n" +
+                                $"API URL: {apiUrl} (HTTP {(int)response.StatusCode})\n" +
+                                $"API returned unexpected status code: {response.StatusCode}";
+
+                    errorMessage = $"API test returned status: {response.StatusCode}";
+                }
+
+                EditorUtility.ClearProgressBar();
+                EditorUtility.DisplayDialog("Configuration Test", testResults, "OK");
+
+                messageTimer = EditorApplication.timeSinceStartup + 3;
+                Debug.Log($"Flock SDK Configuration Test:\n{testResults}");
+            }
+            catch (System.Net.Http.HttpRequestException ex)
+            {
+                EditorUtility.ClearProgressBar();
+
+                string testResults = $"Configuration Test Results:\n\n" +
+                                    $"API URL: {apiUrl} (Connection failed)\n" +
+                                    $"Error: {ex.Message}\n\n" +
+                                    $"Please check your API URL and network connection.";
+
+                EditorUtility.DisplayDialog("Configuration Test Failed", testResults, "OK");
+
+                errorMessage = "Failed to connect to API!";
+                messageTimer = EditorApplication.timeSinceStartup + 3;
+
+                Debug.LogError($"Flock SDK Configuration Test Failed: {ex.Message}");
+            }
+            catch (System.Threading.Tasks.TaskCanceledException)
+            {
+                EditorUtility.ClearProgressBar();
+
+                string testResults = $"Configuration Test Results:\n\n" +
+                                    $"API URL: {apiUrl} (Connection timeout)\n\n" +
+                                    $"The API request timed out after 10 seconds.\n" +
+                                    $"Please check your API URL and network connection.";
+
+                EditorUtility.DisplayDialog("Configuration Test Failed", testResults, "OK");
+
+                errorMessage = "API connection timeout!";
+                messageTimer = EditorApplication.timeSinceStartup + 3;
+
+                Debug.LogError("Flock SDK Configuration Test: Connection timeout");
+            }
+            catch (Exception ex)
+            {
+                EditorUtility.ClearProgressBar();
+
+                string testResults = $"Configuration Test Results:\n\n" +
+                                    $"Test failed with error:\n{ex.Message}";
+
+                EditorUtility.DisplayDialog("Configuration Test Failed", testResults, "OK");
+
+                errorMessage = "Configuration test failed!";
+                messageTimer = EditorApplication.timeSinceStartup + 3;
+
+                Debug.LogError($"Flock SDK Configuration Test Error: {ex}");
             }
         }
     }
-
-    // ScriptableObject to store runtime configuration
-    public class FlockConfigAsset : ScriptableObject
-    {
-        public FlockConfig Config;
-    }
-} 
+}
