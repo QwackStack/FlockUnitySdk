@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using Flock.Models;
 using Flock.Http;
@@ -8,63 +10,75 @@ namespace Flock.Auth
     public class FlockAuthProvider
     {
         private readonly string _apiUrl;
-        private readonly string _accessToken;
+        private readonly Dictionary<string, string> _headers;
 
-        public FlockAuthProvider(string apiUrl, string accessToken)
+        public FlockAuthProvider(string apiUrl, Dictionary<string, string> headers)
         {
             _apiUrl = apiUrl;
-            _accessToken = accessToken;
+            _headers = headers;
         }
 
-        public async Task<AuthResult> LoginAsync(string email, string password, string otp = null)
+        // POST /v1/player/login
+        public async Task<PlayerLoginResponse> LoginWithEmailAsync(string email, string password, CancellationToken cancellationToken = default)
         {
-            var response = await HttpClient.PostAsync<GenericResponse<LoginResponse>>(
-                $"{_apiUrl}/auth/login",
-                new LoginRequest
+            return await HttpClient.PostAsync<PlayerLoginResponse>(
+                $"{_apiUrl}/v1/player/login",
+                new PlayerLoginRequest
+                {
+                    LoginType = "email",
+                    Email = email,
+                    Password = password
+                },
+                _headers,
+                cancellationToken
+            );
+        }
+
+        // POST /v1/player/register
+        public async Task<PlayerLoginResponse> RegisterWithEmailAsync(string email, string password, string name = null, CancellationToken cancellationToken = default)
+        {
+            return await HttpClient.PostAsync<PlayerLoginResponse>(
+                $"{_apiUrl}/v1/player/register",
+                new PlayerEmailRegistrationRequest
                 {
                     Email = email,
                     Password = password,
-                    Otp = otp
+                    Name = name
                 },
-                _accessToken
+                _headers,
+                cancellationToken
             );
-
-            return new AuthResult
-            {
-                Success = true,
-                AccessToken = response.Result.AccessToken,
-                RefreshToken = response.Result.RefreshToken
-            };
         }
 
-        public async Task<AuthResult> RegisterAsync(string email, string password, string confirmPassword, string otp = null)
+        // POST /v1/player/login/device
+        public async Task<PlayerLoginResponse> LoginWithDeviceAsync(string deviceType, string deviceId, CancellationToken cancellationToken = default)
         {
-            var response = await HttpClient.PostAsync<GenericResponse<LoginResponse>>(
-                $"{_apiUrl}/auth/register",
-                new RegisterRequest
+            return await HttpClient.PostAsync<PlayerLoginResponse>(
+                $"{_apiUrl}/v1/player/login/device",
+                new PlayerDeviceLoginRequest
                 {
-                    Email = email,
-                    Password = password,
-                    ConfirmPassword = confirmPassword,
-                    Otp = otp
+                    DeviceType = deviceType,
+                    DeviceId = deviceId
                 },
-                _accessToken
+                _headers,
+                cancellationToken
             );
+        }
 
-            return new AuthResult
-            {
-                Success = true,
-                AccessToken = response.Result.AccessToken,
-                RefreshToken = response.Result.RefreshToken
-            };
+        // POST /v1/player/register/device
+        public async Task<PlayerLoginResponse> RegisterWithDeviceAsync(string deviceType, string deviceId, string name = null, CancellationToken cancellationToken = default)
+        {
+            return await HttpClient.PostAsync<PlayerLoginResponse>(
+                $"{_apiUrl}/v1/player/register/device",
+                new PlayerDeviceRegistrationRequest
+                {
+                    DeviceType = deviceType,
+                    DeviceId = deviceId,
+                    Name = name
+                },
+                _headers,
+                cancellationToken
+            );
         }
     }
-
-    public class AuthResult
-    {
-        public bool Success { get; set; }
-        public string AccessToken { get; set; }
-        public string RefreshToken { get; set; }
-        public string Error { get; set; }
-    }
-} 
+}

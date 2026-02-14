@@ -1,9 +1,11 @@
 using UnityEngine;
 using UnityEditor;
 using System.IO;
+using System.Linq;
 
 namespace Flock.Editor
 {
+    //TODO this needs a re-make where it can include features , separate asmdefs and possibly find a different way to do this as it is very unity dependant
     public class FlockPackageBuilder
     {
         private const string PackageName = "FlockSDK";
@@ -20,12 +22,12 @@ namespace Flock.Editor
             }
 
             // Get all assets in the package
-            string[] assets = AssetDatabase.GetAllAssetPaths()
+            var assets = AssetDatabase.GetAllAssetPaths()
                 .Where(path => path.StartsWith("Assets/") && 
                        (path.Contains("Runtime/") || 
                         path.Contains("Editor/") || 
                         path.Contains("Samples~/") || 
-                        path.Contains("Documentation~/")));
+                        path.Contains("Documentation~/"))).ToArray();
 
             // Create the package
             string packagePath = Path.Combine(OutputPath, $"{PackageName}-{Version}.unitypackage");
@@ -52,7 +54,7 @@ namespace Flock.Editor
                        (path.Contains("Runtime/") || 
                         path.Contains("Editor/") || 
                         path.Contains("Samples~/") || 
-                        path.Contains("Documentation~/")));
+                        path.Contains("Documentation~/"))).ToArray();
 
             // Create the package with development options
             string packagePath = Path.Combine(OutputPath, $"{PackageName}-{Version}-dev.unitypackage");
