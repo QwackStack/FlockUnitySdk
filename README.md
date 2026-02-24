@@ -1,252 +1,136 @@
 # Flock Unity SDK
 
-The Flock Unity SDK provides easy access to Flock's game backend services from Unity games.
+The Flock Unity SDK provides access to Flock's game backend services from Unity games.
 
 ## Features
 
-- Multiple Authentication Methods:
-  - Email/Password
-  - Steam
-  - Game Center
-  - Play Store
-  - Device ID
-- Game configuration management
-- Leaderboards
+- Player authentication (email, device, registration)
+- Game configuration with automatic patch merging
+- Game patches
+- Game and game version metadata
 - Achievements
-- Documents
-- Events
-- Currencies
-- Shop system
-- Segmentation
-- Asset management
-- Game versioning
-- Patch management
-- Player data management
+- Leaderboards
+- Player data (CRUD with pagination)
+- Automatic retry with exponential backoff
+- JWT token management
 
 ## Installation
 
-1. Download the latest release from the releases page
-2. Import the .unitypackage file into your Unity project
-3. Add the following dependencies to your project's manifest.json:
+Add via Unity Package Manager using the git URL or import the `.unitypackage`.
 
-```json
-{
-  "dependencies": {
-    "com.unity.nuget.newtonsoft-json": "3.0.2"
-  }
-}
+## Setup
+
+### Editor Configuration
+
+Go to **Qwacks > Configuration** in the Unity menu bar to set:
+
+- **API URL** — Flock API endpoint (default: `https://api-flock.qwacks.com`)
+- **API Key** — Your Flock API key (required)
+- **Game ID** — Your game ID from the Flock dashboard
+- **Game Version ID** — Your game version ID
+
+### Code-Based Configuration
+
+```csharp
+var config = new FlockInitConfig(
+    apiUrl: "https://api-flock.qwacks.com",
+    apiKey: "your-api-key",
+    gameId: "your-game-id",
+    gameVersionId: "your-game-version-id",
+    enableDebugLogs: true
+);
+
+var client = new FlockClient(config);
 ```
 
-## Configuration UI
+Or load from a ScriptableObject:
 
-The SDK includes a user-friendly configuration window that you can access from Unity's menu:
-
-1. Open the configuration window: Window > Flock > Configuration
-2. Fill in the required settings:
-   - Game ID: Your unique game identifier
-   - Client ID: Your API client identifier
-   - Client Secret: Your API client secret (securely stored)
-3. Configure Authentication Methods:
-   - Enable/disable specific auth methods (Email, Steam, Game Center, Play Store, Device ID)
-   - Each method can be toggled independently
-4. Optional settings:
-   - API URL: Custom API endpoint (defaults to https://api-flock.qwacks.com)
-   - Enable Debug Logs: Toggle detailed logging
-   - Timeout: Request timeout in seconds (1-120)
-
-The configuration window provides:
-
-- Secure storage of sensitive credentials
-- Input validation
-- Dark/Light theme support
-- Easy reset functionality
-- Configuration backup
-- Authentication method management
-
-The settings are stored in:
-
-- EditorPrefs for editor-time configuration
-- A ScriptableObject (FlockConfig.asset) for runtime use
-
-Best practices for configuration:
-
-1. Never commit the FlockConfig.asset file to version control
-2. Use different credentials for development and production
-3. Store the configuration file in a .gitignored location
-4. Regularly backup your configuration
-5. Only enable authentication methods you plan to use
+```csharp
+var configAsset = Resources.Load<FlockConfigAsset>("FlockConfig");
+var client = new FlockClient(configAsset.ToInitConfig());
+```
 
 ## Quick Start
 
-1. Initialize the SDK:
+### Authentication
 
 ```csharp
-using Flock;
-using Flock.Config;
-using Flock.Auth;
+// Email login
+var response = await client.LoginWithEmailAsync("player@example.com", "password");
 
-public class GameManager : MonoBehaviour
-{
-    private FlockClient _client;
+// Device login
+var response = await client.LoginWithDeviceAsync("ios", "device-uuid");
 
-    void Start()
-    {
-        var config = new FlockConfig.Builder()
-            .SetGameId("your-game-id")
-            .EnableAuthMethod(AuthProviderType.Steam)
-            .EnableAuthMethod(AuthProviderType.GameCenter)
-            .SetEnableDebugLogs(true)
-            .Build();
+// Email registration
+var response = await client.RegisterWithEmailAsync("player@example.com", "password", "PlayerName");
 
-        _client = new FlockClient(config);
-    }
-}
+// Device registration
+var response = await client.RegisterWithDeviceAsync("android", "device-uuid", "PlayerName");
 ```
 
-2. Authenticate a player:
+All auth methods return a `PlayerLoginResponse` with access and refresh tokens. The SDK stores the access token internally.
+
+### Services
 
 ```csharp
-// Steam Authentication
-try
-{
-    var steamProvider = new SteamAuthProvider(_client, steamTicket);
-    _client.SetAuthProvider(steamProvider);
-    var authResult = await _client.AuthenticateAsync();
-    
-    if (authResult.Success)
-    {
-        Debug.Log("Steam authentication successful!");
-    }
-    else
-    {
-        Debug.LogError($"Steam authentication failed: {authResult.ErrorMessage}");
-    }
-}
-catch (FlockException ex)
-{
-    Debug.LogError($"Authentication failed: {ex.Message}");
-}
+// Game configs (with automatic patch merging)
+var configs = await client.Config.GetAllConfigsAsync();
+var configs = await client.Config.GetAllConfigsAsync(tag: "gameplay");
+var versionConfigs = await client.Config.GetConfigsByVersionAsync();
+var config = await client.Config.GetConfigByIdAsync("config-id");
+var patches = await client.Config.GetConfigPatchesAsync("config-id");
 
-// Game Center Authentication
-try
-{
-    var gameCenterProvider = new GameCenterAuthProvider(_client);
-    _client.SetAuthProvider(gameCenterProvider);
-    var authResult = await _client.AuthenticateAsync();
-    
-    if (authResult.Success)
-    {
-        Debug.Log("Game Center authentication successful!");
-    }
-    else
-    {
-        Debug.LogError($"Game Center authentication failed: {authResult.ErrorMessage}");
-    }
-}
-catch (FlockException ex)
-{
-    Debug.LogError($"Authentication failed: {ex.Message}");
-}
+// Game patches
+var patches = await client.Patches.GetAllPatchesAsync();
+var patch = await client.Patches.GetPatchByIdAsync("patch-id");
+var configPatches = await client.Patches.GetPatchesByConfigIdAsync("config-id");
+
+// Game info
+var game = await client.Game.GetGameAsync();
+var version = await client.Game.GetGameVersionAsync();
+
+// Achievements
+var achievements = await client.Achievements.GetAllAchievementsAsync();
+var achievement = await client.Achievements.GetAchievementByIdAsync("achievement-id");
+
+// Leaderboards
+var boards = await client.Leaderboards.GetAllLeaderboardsAsync();
+var board = await client.Leaderboards.GetLeaderboardByIdAsync("leaderboard-id");
+
+// Player data
+var data = await client.PlayerData.CreateAsync("player-id", new Dictionary<string, object> { { "score", 100 } });
+var data = await client.PlayerData.GetByIdAsync("player-data-id");
+var all = await client.PlayerData.GetAllAsync(page: 1, limit: 10);
+var updated = await client.PlayerData.UpdateAsync("player-data-id", new Dictionary<string, object> { { "score", 200 } });
 ```
 
-3. Work with game configurations:
+## Headers
 
-```csharp
-try
-{
-    // Get all game configs
-    var configs = await _client.GameConfigs.GetAllAsync();
+Every API request includes these headers:
 
-    // Get specific config
-    var config = await _client.GameConfigs.GetByIdAsync("config-id");
-}
-catch (FlockException ex)
-{
-    Debug.LogError($"Failed to get configs: {ex.Message}");
-}
-```
+| Header | Source | Description |
+|--------|--------|-------------|
+| `X-Flock-API-Key` | `FlockInitConfig.ApiKey` | Required. Identifies the game. |
+| `X-Game-Version-ID` | `FlockInitConfig.GameVersionId` | Optional. Identifies the game version. |
+| `Authorization` | Bearer token from login | Added after authentication. |
 
-4. Work with player data:
+## API Endpoints
 
-```csharp
-try
-{
-    // Create player data
-    var data = new Dictionary<string, object>
-    {
-        { "level", 1 },
-        { "coins", 100 },
-        { "inventory", new[] { "sword", "shield" } }
-    };
-
-    var playerData = await _client.PlayerData.CreateAsync(
-        playerId: "player-id",
-        data: data
-    );
-
-    // Update player data
-    data["level"] = 2;
-    data["coins"] = 200;
-
-    await _client.PlayerData.UpdateAsync(
-        playerDataId: playerData.Id,
-        data: data
-    );
-
-    // Get player data
-    var allPlayerData = await _client.PlayerData.GetAllAsync(
-        page: 1,
-        limit: 10,
-        playerId: "player-id"
-    );
-}
-catch (FlockException ex)
-{
-    Debug.LogError($"Failed to handle player data: {ex.Message}");
-}
-```
-
-## Error Handling
-
-The SDK uses the `FlockException` class for error handling. All errors include:
-
-- Message: A human-readable error message
-- StatusCode: The HTTP status code (if applicable)
-- AuthResult: For authentication errors, includes provider type and detailed error message
-
-## Best Practices
-
-1. Always initialize the SDK before using it
-2. Handle exceptions appropriately
-3. Store sensitive data securely
-4. Use appropriate timeouts for network operations
-5. Cache frequently accessed data when possible
-6. Follow Unity's best practices for async operations
-7. Choose appropriate authentication methods for your game
-8. Handle authentication state changes properly
-9. Implement proper error recovery for failed auth attempts
-
-## Thread Safety
-
-The SDK is thread-safe and uses async/await for all network operations. Make sure to:
-
-- Call SDK methods from the main thread
-- Use proper async/await patterns
-- Don't block the main thread with network operations
-- Handle authentication state changes on the main thread
-
-## Security
-
-The SDK implements several security best practices:
-
-- All network communication uses HTTPS
-- Authentication tokens are stored securely
-- Sensitive data is never logged
-- Input validation before sending to the server
-- Support for multiple secure authentication methods
-- Proper token refresh handling
-- Secure storage of credentials
-
-## Support
-
-For issues and feature requests, please visit our [issue tracker](https://github.com/flock/unity-sdk/issues).
+| Service | Endpoint | Auth |
+|---------|----------|------|
+| Email Login | `POST /v1/player/login` | API Key |
+| Device Login | `POST /v1/player/login/device` | API Key |
+| Email Register | `POST /v1/player/register` | API Key |
+| Device Register | `POST /v1/player/register/device` | API Key |
+| Game Configs | `GET /v1/game_config` | API Key |
+| Configs by Version | `GET /v1/game_config/version` | API Key |
+| Config by ID | `GET /v1/game_config/{id}` | API Key |
+| Config Patches | `GET /v1/game_config/{id}/patches` | API Key |
+| Game Patches | `GET /v1/game_patch` | API Key |
+| Patch by ID | `GET /v1/game_patch/{id}` | API Key |
+| Patches by Config | `GET /v1/game_patch/config/{id}` | API Key |
+| Game Info | `GET /v1/game` | API Key |
+| Game Version | `GET /v1/game_version` | API Key |
+| Player Data | `GET /v1/player_data` | API Key |
+| Achievements | `GET /achievement` | Bearer |
+| Leaderboards | `GET /leaderboard/{game_id}` | Bearer |
