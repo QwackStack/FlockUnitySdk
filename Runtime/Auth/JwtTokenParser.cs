@@ -49,43 +49,8 @@ namespace Flock.Auth
             }
             catch (Exception ex)
             {
-                throw new ArgumentException($"Failed to parse JWT token: {ex.Message}", ex);
-            }
-        }
-
-        /// <summary>
-        /// Checks if a token is expired
-        /// </summary>
-        public static bool IsTokenExpired(string token)
-        {
-            try
-            {
-                var claims = Parse(token);
-                return claims.IsExpired;
-            }
-            catch
-            {
-                return true; // If we can't parse it, consider it expired
-            }
-        }
-
-        /// <summary>
-        /// Gets the time until token expiration
-        /// </summary>
-        public static TimeSpan? GetTimeUntilExpiration(string token)
-        {
-            try
-            {
-                var claims = Parse(token);
-                if (claims.ExpirationTime.HasValue)
-                {
-                    return claims.ExpirationTime.Value - DateTime.UtcNow;
-                }
-                return null;
-            }
-            catch
-            {
-                return null;
+                throw new ArgumentException(
+                    new StringBuilder().Append("Failed to parse JWT token: ").Append(ex.Message).ToString(), ex);
             }
         }
 
@@ -171,53 +136,5 @@ namespace Flock.Auth
         public string Issuer { get; set; }
         public string Audience { get; set; }
         public Dictionary<string, object> RawClaims { get; set; }
-
-        /// <summary>
-        /// Checks if the token is expired
-        /// </summary>
-        public bool IsExpired
-        {
-            get
-            {
-                if (!ExpirationTime.HasValue)
-                    return false; // If no expiration, consider it valid
-
-                return DateTime.UtcNow >= ExpirationTime.Value;
-            }
-        }
-
-        /// <summary>
-        /// Gets the time remaining until expiration
-        /// </summary>
-        public TimeSpan? TimeUntilExpiration
-        {
-            get
-            {
-                if (!ExpirationTime.HasValue)
-                    return null;
-
-                var remaining = ExpirationTime.Value - DateTime.UtcNow;
-                return remaining.TotalSeconds > 0 ? remaining : TimeSpan.Zero;
-            }
-        }
-
-        /// <summary>
-        /// Gets a custom claim value
-        /// </summary>
-        public T GetClaim<T>(string key)
-        {
-            if (RawClaims != null && RawClaims.ContainsKey(key))
-            {
-                try
-                {
-                    return (T)Convert.ChangeType(RawClaims[key], typeof(T));
-                }
-                catch
-                {
-                    return default(T);
-                }
-            }
-            return default(T);
-        }
     }
 }
