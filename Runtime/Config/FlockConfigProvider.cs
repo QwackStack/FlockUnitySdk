@@ -1,182 +1,115 @@
-using System;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Collections.Generic;
 using Flock.Models;
 using Flock.Http;
 using Flock.Interfaces;
-using Flock.Exceptions;
 
 namespace Flock.Config
 {
-    public class FlockConfigProvider : IConfigProvider
+    public class FlockConfigProvider : FlockProviderBase, IConfigProvider
     {
-        private readonly FlockClient _client;
+        public FlockConfigProvider(FlockClient client) : base(client) { }
 
-        public FlockConfigProvider(FlockClient client)
-        {
-            _client = client ?? throw new ArgumentNullException(nameof(client));
-        }
-
-        // GET /v1/game_config
         public async Task<List<GameConfigSchema>> GetAllConfigsAsync(string tag = null, CancellationToken cancellationToken = default)
         {
-            try
+            return await ExecuteAsync(async () =>
             {
-                return await _client.RetryHandler.ExecuteAsync(async () =>
-                {
-                    _client.Logger.LogDebug("Fetching all game configurations");
+                var url = new StringBuilder().Append(Client.GetApiUrl()).Append("/v1/game_config");
 
-                    var url = $"{_client.GetApiUrl()}/v1/game_config";
-                    if (!string.IsNullOrEmpty(tag))
-                    {
-                        url += $"?tag={Uri.EscapeDataString(tag)}";
-                    }
+                if (!string.IsNullOrEmpty(tag))
+                    url.Append("?tag=").Append(tag);
 
-                    var response = await HttpClient.GetAsync<GenericResponse<List<GameConfigSchema>>>(
-                        url,
-                        _client.GetBaseHeaders(),
-                        cancellationToken
-                    );
+                var response = await FlockHttpClient.GetAsync<GenericResponse<List<GameConfigSchema>>>(url.ToString(), Client.GetBaseHeaders(), cancellationToken);
+                ValidateResponse(response);
 
-                    if (response == null || response.Result == null)
-                    {
-                        throw new FlockNetworkException("Invalid response from server");
-                    }
-
-                    _client.Logger.LogDebug($"Successfully fetched {response.Result.Count} game configurations");
-                    return response.Result;
-                }, cancellationToken);
-            }
-            catch (FlockException)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                _client.Logger.LogError("Failed to get all game configurations", ex);
-                throw new FlockNetworkException("Failed to fetch game configurations", ex);
-            }
+                var configs = response.Result;
+                await ApplyPatchesToConfigsAsync(configs, cancellationToken);
+                return configs;
+            }, "Fetch game configs", cancellationToken);
         }
 
-        // GET /v1/game_config/version
         public async Task<List<GameConfigSchema>> GetConfigsByVersionAsync(string tag = null, CancellationToken cancellationToken = default)
         {
-            try
+            return await ExecuteAsync(async () =>
             {
-                return await _client.RetryHandler.ExecuteAsync(async () =>
-                {
-                    _client.Logger.LogDebug("Fetching game configurations by version");
+                var url = new StringBuilder().Append(Client.GetApiUrl()).Append("/v1/game_config/version");
 
-                    var url = $"{_client.GetApiUrl()}/v1/game_config/version";
-                    if (!string.IsNullOrEmpty(tag))
-                    {
-                        url += $"?tag={Uri.EscapeDataString(tag)}";
-                    }
-
-                    var response = await HttpClient.GetAsync<GenericResponse<List<GameConfigSchema>>>(
-                        url,
-                        _client.GetBaseHeaders(),
-                        cancellationToken
-                    );
-
-                    if (response == null || response.Result == null)
-                    {
-                        throw new FlockNetworkException("Invalid response from server");
-                    }
-
-                    _client.Logger.LogDebug($"Successfully fetched {response.Result.Count} game configurations by version");
-                    return response.Result;
-                }, cancellationToken);
-            }
-            catch (FlockException)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                _client.Logger.LogError("Failed to get game configurations by version", ex);
-                throw new FlockNetworkException("Failed to fetch game configurations by version", ex);
-            }
+                if (!string.IsNullOrEmpty(tag))
+                    url.Append("?tag=").Append(tag);
+                
+                var response = await FlockHttpClient.GetAsync<GenericResponse<List<GameConfigSchema>>>(url.ToString(), Client.GetBaseHeaders(), cancellationToken);
+                ValidateResponse(response);
+                var configs = response.Result;
+                await ApplyPatchesToConfigsAsync(configs, cancellationToken);
+                return configs;
+            }, "Fetch game configs by version", cancellationToken);
         }
 
-        // GET /v1/game_config/{game_config_id}
         public async Task<GameConfigSchema> GetConfigByIdAsync(string configId, CancellationToken cancellationToken = default)
         {
-            if (string.IsNullOrEmpty(configId))
+            RequireNotEmpty(configId, "Config ID");
+            return await ExecuteAsync(async () =>
             {
-                throw new FlockValidationException("Config ID cannot be null or empty");
-            }
+                var response = await FlockHttpClient.GetAsync<GenericResponse<GameConfigSchema>>(
+                    new StringBuilder().Append(Client.GetApiUrl())
+                        .Append("/v1/game_config/")
+                        .Append(configId)
+                        .ToString(), Client.GetBaseHeaders(), cancellationToken);
+                ValidateResponse(response);
 
-            try
+                var config = response.Result;
+                await ApplyPatchToConfigAsync(config, cancellationToken);
+                return config;
+            }, new StringBuilder().Append("Fetch config ").Append(configId).ToString(), cancellationToken);
+        }
+
+        public async Task<List<GamePatchSchema>> GetConfigPatchesAsync(string configId, CancellationToken cancellationToken = default)
+        {
+            RequireNotEmpty(configId, "Config ID");
+
+            return await ExecuteAsync(async () =>
             {
-                return await _client.RetryHandler.ExecuteAsync(async () =>
-                {
-                    _client.Logger.LogDebug($"Fetching game configuration: {configId}");
+                var response = await FlockHttpClient.GetAsync<GenericResponse<List<GamePatchSchema>>>(
+                    new StringBuilder().Append(Client.GetApiUrl())
+                        .Append("/v1/game_config/")
+                        .Append(configId)
+                        .Append("/patches")
+                        .ToString(), Client.GetBaseHeaders(), cancellationToken);
+                ValidateResponse(response);
+                return response.Result;
+            }, new StringBuilder().Append("Fetch patches for config ").Append(configId).ToString(), cancellationToken);
+        }
 
-                    var response = await HttpClient.GetAsync<GenericResponse<GameConfigSchema>>(
-                        $"{_client.GetApiUrl()}/v1/game_config/{configId}",
-                        _client.GetBaseHeaders(),
-                        cancellationToken
-                    );
+        private async Task ApplyPatchToConfigAsync(GameConfigSchema config, CancellationToken cancellationToken)
+        {
+            if (config?.Data == null || string.IsNullOrEmpty(config.Id))
+                return;
 
-                    if (response == null || response.Result == null)
-                    {
-                        throw new FlockNetworkException("Invalid response from server");
-                    }
+            var patches = await GetConfigPatchesAsync(config.Id, cancellationToken);
+            if (patches == null || patches.Count == 0)
+                return;
 
-                    _client.Logger.LogDebug($"Successfully fetched game configuration: {configId}");
-                    return response.Result;
-                }, cancellationToken);
-            }
-            catch (FlockException)
+            patches.Sort((a, b) => a.CreatedAt.CompareTo(b.CreatedAt));
+
+            foreach (var patch in patches)
             {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                _client.Logger.LogError($"Failed to get game configuration {configId}", ex);
-                throw new FlockNetworkException($"Failed to fetch game configuration {configId}", ex);
+                if (patch.Data == null) continue;
+                foreach (var kvp in patch.Data)
+                    config.Data[kvp.Key] = kvp.Value;
             }
         }
 
-        // GET /v1/game_config/{game_config_id}/patches
-        public async Task<List<GamePatchSchema>> GetConfigPatchesAsync(string configId, CancellationToken cancellationToken = default)
+        private async Task ApplyPatchesToConfigsAsync(List<GameConfigSchema> configs, CancellationToken cancellationToken)
         {
-            if (string.IsNullOrEmpty(configId))
-            {
-                throw new FlockValidationException("Config ID cannot be null or empty");
-            }
+            if (configs == null || configs.Count == 0)
+                return;
 
-            try
+            //Apply patch directly
+            foreach (var config in configs)
             {
-                return await _client.RetryHandler.ExecuteAsync(async () =>
-                {
-                    _client.Logger.LogDebug($"Fetching patches for game configuration: {configId}");
-
-                    var response = await HttpClient.GetAsync<GenericResponse<List<GamePatchSchema>>>(
-                        $"{_client.GetApiUrl()}/v1/game_config/{configId}/patches",
-                        _client.GetBaseHeaders(),
-                        cancellationToken
-                    );
-
-                    if (response == null || response.Result == null)
-                    {
-                        throw new FlockNetworkException("Invalid response from server");
-                    }
-
-                    _client.Logger.LogDebug($"Successfully fetched {response.Result.Count} patches for config: {configId}");
-                    return response.Result;
-                }, cancellationToken);
-            }
-            catch (FlockException)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                _client.Logger.LogError($"Failed to get patches for config {configId}", ex);
-                throw new FlockNetworkException($"Failed to fetch patches for config {configId}", ex);
+                await ApplyPatchToConfigAsync(config, cancellationToken);
             }
         }
     }
