@@ -1,31 +1,30 @@
 using System;
 using System.Collections.Generic;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using Flock.Models;
-using Flock.Http;
-using Flock.Config;
-using Flock.Auth;
 using Flock.Achievements;
-using Flock.Leaderboard;
-using Flock.Services;
-using Flock.Logging;
+using Flock.Auth;
+using Flock.Config;
 using Flock.Exceptions;
+using Flock.Http;
+using Flock.Interfaces;
+using Flock.Leaderboards;
+using Flock.Logging;
+using Flock.Models;
+using Flock.Services;
 
 namespace Flock
 {
-    public class FlockClient
+    public class FlockClient : IFlockClient
     {
         private readonly FlockInitConfig _initConfig;
         private readonly IFlockLogger _logger;
         private readonly RetryHandler _retryHandler;
         private string _accessToken;
-        private string _refreshToken;
         private JwtTokenClaims _tokenClaims;
         private DateTime? _tokenExpirationTime;
-        private bool _isRefreshingToken = false;
 
-        // Service providers
         private FlockAchievementProvider _achievements;
         private FlockLeaderboardProvider _leaderboards;
         private FlockConfigProvider _config;
@@ -36,22 +35,8 @@ namespace Flock
         public FlockClient(FlockInitConfig initConfig, IFlockLogger logger = null)
         {
             _initConfig = initConfig ?? throw new ArgumentNullException(nameof(initConfig));
-            if (logger == null)
-            {
-                if (initConfig.EnableDebugLogs)
-                {
-                    _logger = new UnityFlockLogger();
-                }
-                else
-                {
-                    _logger = new NullFlockLogger();
-                }
-            }
-            else
-            {
-                _logger = logger;
-            }
-            _logger.LogInfo($"Initializing Flock SDK - Environment: {initConfig.Environment}");
+            _logger = logger ?? (initConfig.EnableDebugLogs ? new UnityFlockLogger() : new NullFlockLogger());
+            _logger.LogInfo("Initializing Flock SDK");
             _retryHandler = new RetryHandler(initConfig.RetryPolicy, _logger);
             InitializeServices();
         }
@@ -66,12 +51,10 @@ namespace Flock
             _game = new FlockGameService(this);
         }
 
-        // Internal accessors for services
         internal IFlockLogger Logger => _logger;
         internal RetryHandler RetryHandler => _retryHandler;
         internal FlockInitConfig InitConfig => _initConfig;
 
-        // Service accessors
         public FlockAchievementProvider Achievements => _achievements;
         public FlockLeaderboardProvider Leaderboards => _leaderboards;
         public FlockConfigProvider Config => _config;
@@ -79,7 +62,6 @@ namespace Flock
         public FlockGameService Game => _game;
         public PlayerDataService PlayerData => _playerData;
 
-        // Public properties
         public string CurrentPlayerId => _tokenClaims?.PlayerId;
         public string GameId => _initConfig.GameId;
         public string GameVersionId => _initConfig.GameVersionId;
@@ -96,170 +78,71 @@ namespace Flock
             return _initConfig.GetAuthenticatedHeaders(_accessToken);
         }
 
-        // ---- Auth: Email Login (POST /v1/player/login) ----
         public async Task<PlayerLoginResponse> LoginWithEmailAsync(string email, string password, CancellationToken cancellationToken = default)
         {
-            try
-            {
-                _logger.LogDebug($"Attempting email login for: {email}");
-
-                var response = await _retryHandler.ExecuteAsync(async () =>
-                {
-                    return await HttpClient.PostAsync<PlayerLoginResponse>(
-                        $"{_initConfig.ApiUrl}/v1/player/login",
-                        new PlayerLoginRequest
-                        {
-                            LoginType = "email",
-                            Email = email,
-                            Password = password
-                        },
-                        _initConfig.GetBaseHeaders(),
-                        cancellationToken
-                    );
-                }, cancellationToken);
-
-                if (response == null || string.IsNullOrEmpty(response.AccessToken))
-                {
-                    throw new FlockAuthException("Invalid login response from server");
-                }
-
-                SetTokens(response.AccessToken, response.RefreshToken);
-                _logger.LogInfo($"Email login successful for player: {CurrentPlayerId}");
-                return response;
-            }
-            catch (FlockException)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError("Email login failed", ex);
-                throw new FlockAuthException("Email login failed", ex);
-            }
+            return await ExecuteAuthAsync(
+                () => FlockHttpClient.PostAsync<PlayerLoginResponse>(
+                    new StringBuilder().Append(_initConfig.ApiUrl).Append("/v1/player/login").ToString(),
+                    new PlayerLoginRequest { LoginType = "email", Email = email, Password = password },
+                    _initConfig.GetBaseHeaders(), cancellationToken),
+                "Email login", cancellationToken);
         }
 
-        // ---- Auth: Email Register (POST /v1/player/register) ----
-        public async Task<PlayerLoginResponse> RegisterWithEmailAsync(string email, string password, string name = null, CancellationToken cancellationToken = default)
-        {
-            try
-            {
-                _logger.LogDebug($"Attempting email registration for: {email}");
-
-                var response = await _retryHandler.ExecuteAsync(async () =>
-                {
-                    return await HttpClient.PostAsync<PlayerLoginResponse>(
-                        $"{_initConfig.ApiUrl}/v1/player/register",
-                        new PlayerEmailRegistrationRequest
-                        {
-                            Email = email,
-                            Password = password,
-                            Name = name
-                        },
-                        _initConfig.GetBaseHeaders(),
-                        cancellationToken
-                    );
-                }, cancellationToken);
-
-                if (response == null || string.IsNullOrEmpty(response.AccessToken))
-                {
-                    throw new FlockAuthException("Invalid registration response from server");
-                }
-
-                SetTokens(response.AccessToken, response.RefreshToken);
-                _logger.LogInfo($"Email registration successful for player: {CurrentPlayerId}");
-                return response;
-            }
-            catch (FlockException)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError("Email registration failed", ex);
-                throw new FlockAuthException("Email registration failed", ex);
-            }
-        }
-
-        // ---- Auth: Device Login (POST /v1/player/login/device) ----
         public async Task<PlayerLoginResponse> LoginWithDeviceAsync(string deviceType, string deviceId, CancellationToken cancellationToken = default)
         {
-            try
-            {
-                _logger.LogDebug($"Attempting device login for device: {deviceId}");
-
-                var response = await _retryHandler.ExecuteAsync(async () =>
-                {
-                    return await HttpClient.PostAsync<PlayerLoginResponse>(
-                        $"{_initConfig.ApiUrl}/v1/player/login/device",
-                        new PlayerDeviceLoginRequest
-                        {
-                            DeviceType = deviceType,
-                            DeviceId = deviceId
-                        },
-                        _initConfig.GetBaseHeaders(),
-                        cancellationToken
-                    );
-                }, cancellationToken);
-
-                if (response == null || string.IsNullOrEmpty(response.AccessToken))
-                {
-                    throw new FlockAuthException("Invalid device login response from server");
-                }
-
-                SetTokens(response.AccessToken, response.RefreshToken);
-                _logger.LogInfo($"Device login successful for player: {CurrentPlayerId}");
-                return response;
-            }
-            catch (FlockException)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError("Device login failed", ex);
-                throw new FlockAuthException("Device login failed", ex);
-            }
+            return await ExecuteAuthAsync(
+                () => FlockHttpClient.PostAsync<PlayerLoginResponse>(
+                    new StringBuilder().Append(_initConfig.ApiUrl).Append("/v1/player/login/device").ToString(),
+                    new PlayerDeviceLoginRequest { DeviceType = deviceType, DeviceId = deviceId },
+                    _initConfig.GetBaseHeaders(), cancellationToken),
+                "Device login", cancellationToken);
         }
 
-        // ---- Auth: Device Register (POST /v1/player/register/device) ----
+        public async Task<PlayerLoginResponse> RegisterWithEmailAsync(string email, string password, string name = null, CancellationToken cancellationToken = default)
+        {
+            return await ExecuteAuthAsync(
+                () => FlockHttpClient.PostAsync<PlayerLoginResponse>(
+                    new StringBuilder().Append(_initConfig.ApiUrl).Append("/v1/player/register").ToString(),
+                    new PlayerEmailRegistrationRequest { Email = email, Password = password, Name = name },
+                    _initConfig.GetBaseHeaders(), cancellationToken),
+                "Email registration", cancellationToken);
+        }
+
         public async Task<PlayerLoginResponse> RegisterWithDeviceAsync(string deviceType, string deviceId, string name = null, CancellationToken cancellationToken = default)
+        {
+            return await ExecuteAuthAsync(
+                () => FlockHttpClient.PostAsync<PlayerLoginResponse>(
+                    new StringBuilder().Append(_initConfig.ApiUrl).Append("/v1/player/register/device").ToString(),
+                    new PlayerDeviceRegistrationRequest { DeviceType = deviceType, DeviceId = deviceId, Name = name },
+                    _initConfig.GetBaseHeaders(), cancellationToken),
+                "Device registration", cancellationToken);
+        }
+
+        private async Task<PlayerLoginResponse> ExecuteAuthAsync(
+            Func<Task<PlayerLoginResponse>> operation, string context, CancellationToken cancellationToken)
         {
             try
             {
-                _logger.LogDebug($"Attempting device registration for device: {deviceId}");
-
-                var response = await _retryHandler.ExecuteAsync(async () =>
-                {
-                    return await HttpClient.PostAsync<PlayerLoginResponse>(
-                        $"{_initConfig.ApiUrl}/v1/player/register/device",
-                        new PlayerDeviceRegistrationRequest
-                        {
-                            DeviceType = deviceType,
-                            DeviceId = deviceId,
-                            Name = name
-                        },
-                        _initConfig.GetBaseHeaders(),
-                        cancellationToken
-                    );
-                }, cancellationToken);
+                var response = await _retryHandler.ExecuteAsync(operation, cancellationToken);
 
                 if (response == null || string.IsNullOrEmpty(response.AccessToken))
-                {
-                    throw new FlockAuthException("Invalid device registration response from server");
-                }
+                    throw new FlockAuthException(new StringBuilder().Append("Invalid ")
+                        .Append(context.ToLower())
+                        .Append(" response from server")
+                        .ToString());
 
-                SetTokens(response.AccessToken, response.RefreshToken);
-                _logger.LogInfo($"Device registration successful for player: {CurrentPlayerId}");
+                SetToken(response.AccessToken);
+                _logger.LogInfo(new StringBuilder().Append(context)
+                    .Append(" successful for player: ")
+                    .Append(CurrentPlayerId)
+                    .ToString());
                 return response;
             }
-            catch (FlockException)
-            {
-                throw;
-            }
+            catch (FlockException) { throw; }
             catch (Exception ex)
             {
-                _logger.LogError("Device registration failed", ex);
-                throw new FlockAuthException("Device registration failed", ex);
+                _logger.LogError(new StringBuilder().Append(context).Append(" failed").ToString(), ex);
+                throw new FlockAuthException(new StringBuilder().Append(context).Append(" failed").ToString(), ex);
             }
         }
 
@@ -272,7 +155,6 @@ namespace Flock
         {
             _logger.LogInfo("Clearing authentication tokens");
             _accessToken = null;
-            _refreshToken = null;
             _tokenClaims = null;
             _tokenExpirationTime = null;
         }
@@ -288,9 +170,7 @@ namespace Flock
                 return true;
 
             if (_tokenExpirationTime.HasValue)
-            {
                 return DateTime.UtcNow >= _tokenExpirationTime.Value;
-            }
 
             return false;
         }
@@ -308,17 +188,17 @@ namespace Flock
         public async Task<string> GetValidAccessTokenAsync(CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrEmpty(_accessToken))
-            {
                 throw new FlockAuthException("No valid access token available. Please authenticate first.");
-            }
 
-            return _accessToken;
+            if (!IsTokenExpired())
+                return _accessToken;
+
+            throw new FlockAuthException("Access token expired. Please authenticate again.");
         }
 
-        private void SetTokens(string accessToken, string refreshToken)
+        private void SetToken(string accessToken)
         {
             _accessToken = accessToken;
-            _refreshToken = refreshToken;
 
             if (!string.IsNullOrEmpty(accessToken))
             {
@@ -326,11 +206,17 @@ namespace Flock
                 {
                     _tokenClaims = JwtTokenParser.Parse(accessToken);
                     _tokenExpirationTime = _tokenClaims.ExpirationTime;
-                    _logger.LogDebug($"Token set for PlayerId: {_tokenClaims.PlayerId}, Expires: {_tokenExpirationTime}");
+                    _logger.LogDebug(new StringBuilder().Append("Token set for PlayerId: ")
+                        .Append(_tokenClaims.PlayerId)
+                        .Append(", Expires: ")
+                        .Append(_tokenExpirationTime)
+                        .ToString());
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning($"Failed to parse JWT token: {ex.Message}");
+                    _logger.LogWarning(new StringBuilder().Append("Failed to parse JWT token: ")
+                        .Append(ex.Message)
+                        .ToString());
                     _tokenClaims = null;
                     _tokenExpirationTime = null;
                 }
