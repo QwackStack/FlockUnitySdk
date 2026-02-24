@@ -19,9 +19,6 @@ namespace Flock.Config
         [Tooltip("Your Game Version ID")]
         public string gameVersionId;
 
-        [Tooltip("Target environment")]
-        public FlockEnvironment environment = FlockEnvironment.Production;
-
         [Header("Optional Settings")]
         [Tooltip("Enable detailed debug logging")]
         public bool enableDebugLogs = false;
@@ -34,7 +31,7 @@ namespace Flock.Config
 
         public FlockInitConfig ToInitConfig()
         {
-            return new FlockInitConfig(apiUrl, apiKey, gameId, gameVersionId, environment, enableDebugLogs);
+            return new FlockInitConfig(apiUrl, apiKey, gameId, gameVersionId, enableDebugLogs);
         }
 
         public bool IsValid(out string errorMessage)
