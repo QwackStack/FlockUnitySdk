@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace Flock.Models
 {
@@ -32,6 +33,12 @@ namespace Flock.Models
 
         [JsonProperty("updated_at")]
         public DateTime UpdatedAt { get; set; }
+
+        public T GetDataAs<T>()
+        {
+            if (Data == null) return default;
+            return JObject.FromObject(Data).ToObject<T>();
+        }
     }
 
     public class GamePatchSchema
@@ -53,5 +60,11 @@ namespace Flock.Models
 
         [JsonProperty("updated_at")]
         public DateTime UpdatedAt { get; set; }
+
+        public T GetDataAs<T>()
+        {
+            if (Data == null) return default;
+            return JObject.FromObject(Data).ToObject<T>();
+        }
     }
 }
