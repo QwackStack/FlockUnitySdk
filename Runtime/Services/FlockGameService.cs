@@ -14,10 +14,9 @@ namespace Flock.Services
         {
             return await ExecuteAsync(async () =>
             {
+                string url = new StringBuilder().Append(Client.GetApiUrl()).Append("/v1/game").ToString();
                 var response = await FlockHttpClient.GetAsync<GenericResponse<GameSchema>>(
-                    new StringBuilder().Append(Client.GetApiUrl())
-                        .Append("/v1/game")
-                        .ToString(), Client.GetBaseHeaders(), cancellationToken);
+                    url, Client.GetBaseHeaders(), cancellationToken);
                 ValidateResponse(response);
                 return response.Result;
             }, "Fetch game info", cancellationToken);

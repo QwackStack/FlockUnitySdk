@@ -8,7 +8,6 @@ namespace Flock.Config
     {
         public string ApiUrl { get; set; }
         public string ApiKey { get; set; }
-        //for now only leaderboard uses
         public string GameId { get; set; }
         public string GameVersionId { get; set; }
         public bool EnableDebugLogs { get; set; }

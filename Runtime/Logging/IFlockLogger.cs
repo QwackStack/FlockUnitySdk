@@ -30,7 +30,7 @@ namespace Flock.Logging
             .Append("\nException: ")
             .Append(exception)
             .ToString());
-        public void LogDebug(string message) => UnityEngine.Debug.Log(new StringBuilder().Append("[Flock SDK Debug] ")
+        public void LogDebug(string message) => UnityEngine.Debug.Log(new StringBuilder().Append("[Flock SDK] ")
             .Append(message)
             .ToString());
     }

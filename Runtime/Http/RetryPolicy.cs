@@ -49,11 +49,14 @@ namespace Flock.Http
                 try
                 {
                     attempt++;
-                    _logger?.LogDebug(new StringBuilder().Append("Attempt ")
-                        .Append(attempt)
-                        .Append("/")
-                        .Append(_policy.MaxRetries + 1)
-                        .ToString());
+                    if (attempt > 1)
+                    {
+                        _logger?.LogDebug(new StringBuilder().Append("Attempt ")
+                            .Append(attempt)
+                            .Append("/")
+                            .Append(_policy.MaxRetries + 1)
+                            .ToString());
+                    }
                     return await operation();
                 }
                 catch (Exception ex) when (shouldRetryOnException && attempt <= _policy.MaxRetries)
