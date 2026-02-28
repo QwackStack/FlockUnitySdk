@@ -5,11 +5,9 @@ The Flock Unity SDK provides access to Flock's game backend services from Unity 
 ## Features
 
 - Player authentication (email, device, registration)
-- Game configuration with automatic patch merging
-- Game patches
+- Game configuration (fetched from game patch endpoints)
+- Config schema validation (backend validation of config types)
 - Game and game version metadata
-- Achievements
-- Leaderboards
 - Player data (CRUD with pagination)
 - Automatic retry with exponential backoff
 - JWT token management
@@ -73,29 +71,26 @@ All auth methods return a `PlayerLoginResponse` with access and refresh tokens. 
 ### Services
 
 ```csharp
-// Game configs (with automatic patch merging)
-var configs = await client.Config.GetAllConfigsAsync();
-var configs = await client.Config.GetAllConfigsAsync(tag: "gameplay");
-var versionConfigs = await client.Config.GetConfigsByVersionAsync();
-var config = await client.Config.GetConfigByIdAsync("config-id");
-var patches = await client.Config.GetConfigPatchesAsync("config-id");
+// Game configuration — raw (returns GamePatchSchema with Data dictionary)
+var configs = await client.Config.GetAllAsync();
+var config = await client.Config.GetByIdAsync("config-id");
+var bySchema = await client.Config.GetBySchemaAsync("schema-id");
 
-// Game patches
-var patches = await client.Patches.GetAllPatchesAsync();
-var patch = await client.Patches.GetPatchByIdAsync("patch-id");
-var configPatches = await client.Patches.GetPatchesByConfigIdAsync("config-id");
+// Game configuration — typed (deserializes Data into your class)
+var configs = await client.Config.GetAllAsync<GameplayConfig>();
+var config = await client.Config.GetByIdAsync<GameplayConfig>("config-id");
+var bySchema = await client.Config.GetBySchemaAsync<GameplayConfig>("schema-id");
+
+// Config schema validation (backend concern, most games skip this)
+var schemas = await client.Schema.GetAllSchemasAsync();
+var schemas = await client.Schema.GetAllSchemasAsync(tag: "gameplay");
+var versionSchemas = await client.Schema.GetSchemasByVersionAsync();
+var schema = await client.Schema.GetSchemaByIdAsync("schema-id");
+var configs = await client.Schema.GetSchemaConfigsAsync("schema-id");
 
 // Game info
 var game = await client.Game.GetGameAsync();
 var version = await client.Game.GetGameVersionAsync();
-
-// Achievements
-var achievements = await client.Achievements.GetAllAchievementsAsync();
-var achievement = await client.Achievements.GetAchievementByIdAsync("achievement-id");
-
-// Leaderboards
-var boards = await client.Leaderboards.GetAllLeaderboardsAsync();
-var board = await client.Leaderboards.GetLeaderboardByIdAsync("leaderboard-id");
 
 // Player data
 var data = await client.PlayerData.CreateAsync("player-id", new Dictionary<string, object> { { "score", 100 } });
@@ -122,15 +117,13 @@ Every API request includes these headers:
 | Device Login | `POST /v1/player/login/device` | API Key |
 | Email Register | `POST /v1/player/register` | API Key |
 | Device Register | `POST /v1/player/register/device` | API Key |
-| Game Configs | `GET /v1/game_config` | API Key |
-| Configs by Version | `GET /v1/game_config/version` | API Key |
-| Config by ID | `GET /v1/game_config/{id}` | API Key |
-| Config Patches | `GET /v1/game_config/{id}/patches` | API Key |
-| Game Patches | `GET /v1/game_patch` | API Key |
-| Patch by ID | `GET /v1/game_patch/{id}` | API Key |
-| Patches by Config | `GET /v1/game_patch/config/{id}` | API Key |
+| Game Configs | `GET /v1/game_patch` | API Key |
+| Config by ID | `GET /v1/game_patch/{id}` | API Key |
+| Configs by Schema | `GET /v1/game_patch/config/{id}` | API Key |
+| Config Schemas | `GET /v1/game_config` | API Key |
+| Schemas by Version | `GET /v1/game_config/version` | API Key |
+| Schema by ID | `GET /v1/game_config/{id}` | API Key |
+| Schema Configs | `GET /v1/game_config/{id}/patches` | API Key |
 | Game Info | `GET /v1/game` | API Key |
 | Game Version | `GET /v1/game_version` | API Key |
 | Player Data | `GET /v1/player_data` | API Key |
-| Achievements | `GET /achievement` | Bearer |
-| Leaderboards | `GET /leaderboard/{game_id}` | Bearer |
