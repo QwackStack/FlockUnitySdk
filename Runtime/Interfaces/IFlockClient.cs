@@ -3,8 +3,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Flock.Models;
 using Flock.Auth;
-using Flock.Achievements;
-using Flock.Leaderboards;
 using Flock.Config;
 using Flock.Services;
 
@@ -18,10 +16,8 @@ namespace Flock.Interfaces
         bool IsAuthenticated { get; }
         JwtTokenClaims TokenClaims { get; }
 
-        FlockAchievementProvider Achievements { get; }
-        FlockLeaderboardProvider Leaderboards { get; }
         FlockConfigProvider Config { get; }
-        FlockGamePatchProvider Patches { get; }
+        FlockSchemaProvider Schema { get; }
         FlockGameService Game { get; }
         PlayerDataService PlayerData { get; }
 

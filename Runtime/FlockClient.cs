@@ -3,13 +3,11 @@ using System.Collections.Generic;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using Flock.Achievements;
 using Flock.Auth;
 using Flock.Config;
 using Flock.Exceptions;
 using Flock.Http;
 using Flock.Interfaces;
-using Flock.Leaderboards;
 using Flock.Logging;
 using Flock.Models;
 using Flock.Services;
@@ -25,10 +23,8 @@ namespace Flock
         private JwtTokenClaims _tokenClaims;
         private DateTime? _tokenExpirationTime;
 
-        private FlockAchievementProvider _achievements;
-        private FlockLeaderboardProvider _leaderboards;
         private FlockConfigProvider _config;
-        private FlockGamePatchProvider _patches;
+        private FlockSchemaProvider _schema;
         private FlockGameService _game;
         private PlayerDataService _playerData;
 
@@ -43,11 +39,9 @@ namespace Flock
 
         private void InitializeServices()
         {
-            _achievements = new FlockAchievementProvider(this);
-            _leaderboards = new FlockLeaderboardProvider(this);
             _playerData = new PlayerDataService(this);
             _config = new FlockConfigProvider(this);
-            _patches = new FlockGamePatchProvider(this);
+            _schema = new FlockSchemaProvider(this);
             _game = new FlockGameService(this);
         }
 
@@ -55,10 +49,8 @@ namespace Flock
         internal RetryHandler RetryHandler => _retryHandler;
         internal FlockInitConfig InitConfig => _initConfig;
 
-        public FlockAchievementProvider Achievements => _achievements;
-        public FlockLeaderboardProvider Leaderboards => _leaderboards;
         public FlockConfigProvider Config => _config;
-        public FlockGamePatchProvider Patches => _patches;
+        public FlockSchemaProvider Schema => _schema;
         public FlockGameService Game => _game;
         public PlayerDataService PlayerData => _playerData;
 
