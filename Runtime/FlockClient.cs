@@ -11,6 +11,7 @@ using Flock.Interfaces;
 using Flock.Logging;
 using Flock.Models;
 using Flock.Services;
+using UnityEngine;
 
 namespace Flock
 {
@@ -80,12 +81,12 @@ namespace Flock
                 "Email login", cancellationToken);
         }
 
-        public async Task<PlayerLoginResponse> LoginWithDeviceAsync(string deviceType, string deviceId, CancellationToken cancellationToken = default)
+        public async Task<PlayerLoginResponse> LoginWithDeviceAsync(string deviceId, CancellationToken cancellationToken = default)
         {
             return await ExecuteAuthAsync(
                 () => FlockHttpClient.PostAsync<PlayerLoginResponse>(
                     new StringBuilder().Append(_initConfig.ApiUrl).Append("/v1/player/login/device").ToString(),
-                    new PlayerDeviceLoginRequest { DeviceType = deviceType, DeviceId = deviceId },
+                    new PlayerDeviceLoginRequest { DeviceType = SystemInfo.deviceType.ToString(), DeviceId = deviceId },
                     _initConfig.GetBaseHeaders(), cancellationToken),
                 "Device login", cancellationToken);
         }
@@ -100,12 +101,12 @@ namespace Flock
                 "Email registration", cancellationToken);
         }
 
-        public async Task<PlayerLoginResponse> RegisterWithDeviceAsync(string deviceType, string deviceId, string name = null, CancellationToken cancellationToken = default)
+        public async Task<PlayerLoginResponse> RegisterWithDeviceAsync(string deviceId, string name = null, CancellationToken cancellationToken = default)
         {
             return await ExecuteAuthAsync(
                 () => FlockHttpClient.PostAsync<PlayerLoginResponse>(
                     new StringBuilder().Append(_initConfig.ApiUrl).Append("/v1/player/register/device").ToString(),
-                    new PlayerDeviceRegistrationRequest { DeviceType = deviceType, DeviceId = deviceId, Name = name },
+                    new PlayerDeviceRegistrationRequest { DeviceType = SystemInfo.deviceType.ToString(), DeviceId = deviceId, Name = name },
                     _initConfig.GetBaseHeaders(), cancellationToken),
                 "Device registration", cancellationToken);
         }
