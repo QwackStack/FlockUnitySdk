@@ -2,7 +2,7 @@
     "name": "com.flock.sdk",
     "version": "1.0.0",
     "displayName": "Flock SDK",
-    "description": "A comprehensive game backend SDK for Unity with multiple authentication methods, leaderboards, achievements, and more.",
+    "description": "A game backend SDK for Unity with authentication, game configuration, and player data.",
     "unity": "2020.3",
     "dependencies": {
         "com.unity.nuget.newtonsoft-json": "3.0.2"
@@ -12,9 +12,8 @@
         "game",
         "sdk",
         "authentication",
-        "leaderboards",
-        "achievements",
-        "analytics"
+        "configuration",
+        "player-data"
     ],
     "author": {
         "name": "Flock",

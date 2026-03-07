@@ -12,7 +12,6 @@ namespace Flock.Editor
         private string apiKey = "";
         private string gameId = "";
         private string gameVersionId = "";
-        private FlockEnvironment environment = FlockEnvironment.Production;
         private bool enableDebugLogs = false;
 
         private Vector2 scrollPosition;
@@ -76,7 +75,6 @@ namespace Flock.Editor
 
             GUILayout.Space(10);
 
-            // Header
             EditorGUILayout.BeginVertical(boxStyle);
             GUILayout.Label("Flock SDK Configuration", headerStyle);
             GUILayout.Label("Configure your Flock SDK API credentials", EditorStyles.centeredGreyMiniLabel);
@@ -84,7 +82,6 @@ namespace Flock.Editor
 
             GUILayout.Space(15);
 
-            // Status Bar
             if (existingConfig != null)
             {
                 EditorGUILayout.BeginVertical(EditorStyles.helpBox);
@@ -97,7 +94,6 @@ namespace Flock.Editor
                 GUILayout.Space(10);
             }
 
-            // Required Settings Section
             EditorGUILayout.BeginVertical(boxStyle);
             GUILayout.Label("API Configuration (Required)", sectionStyle);
             GUILayout.Space(5);
@@ -109,9 +105,7 @@ namespace Flock.Editor
                 apiUrl);
 
             if (string.IsNullOrWhiteSpace(newApiUrl))
-            {
                 EditorGUILayout.HelpBox("API URL is required", MessageType.Warning);
-            }
 
             GUILayout.Space(5);
 
@@ -120,9 +114,7 @@ namespace Flock.Editor
                 apiKey);
 
             if (string.IsNullOrWhiteSpace(newApiKey))
-            {
                 EditorGUILayout.HelpBox("API Key is required for SDK authentication", MessageType.Warning);
-            }
 
             GUILayout.Space(5);
 
@@ -131,9 +123,7 @@ namespace Flock.Editor
                 gameId);
 
             if (string.IsNullOrWhiteSpace(newGameId))
-            {
                 EditorGUILayout.HelpBox("Game ID is required", MessageType.Warning);
-            }
 
             GUILayout.Space(5);
 
@@ -142,15 +132,7 @@ namespace Flock.Editor
                 gameVersionId);
 
             if (string.IsNullOrWhiteSpace(newGameVersionId))
-            {
                 EditorGUILayout.HelpBox("Game Version ID is required", MessageType.Warning);
-            }
-
-            GUILayout.Space(5);
-
-            FlockEnvironment newEnvironment = (FlockEnvironment)EditorGUILayout.EnumPopup(
-                new GUIContent("Environment", "Select Production for live, Development for testing"),
-                environment);
 
             GUILayout.Space(5);
 
@@ -164,7 +146,6 @@ namespace Flock.Editor
                 apiKey = newApiKey;
                 gameId = newGameId;
                 gameVersionId = newGameVersionId;
-                environment = newEnvironment;
                 enableDebugLogs = newEnableDebugLogs;
                 _hasUnsavedChanges = true;
             }
@@ -176,7 +157,6 @@ namespace Flock.Editor
 
             GUILayout.Space(10);
 
-            // Header Info
             EditorGUILayout.BeginVertical(EditorStyles.helpBox);
             GUILayout.Label("Headers sent with every API call:", EditorStyles.boldLabel);
             GUILayout.Label("  X-Flock-API-Key: <your API key>", EditorStyles.miniLabel);
@@ -185,20 +165,14 @@ namespace Flock.Editor
 
             GUILayout.Space(10);
 
-            // Messages
             if (!string.IsNullOrEmpty(errorMessage) && EditorApplication.timeSinceStartup < messageTimer)
-            {
                 EditorGUILayout.HelpBox(errorMessage, MessageType.Error);
-            }
 
             if (!string.IsNullOrEmpty(successMessage) && EditorApplication.timeSinceStartup < messageTimer)
-            {
                 EditorGUILayout.HelpBox(successMessage, MessageType.Info);
-            }
 
             GUILayout.Space(10);
 
-            // Quick Actions Section
             if (existingConfig != null && !string.IsNullOrWhiteSpace(apiKey))
             {
                 EditorGUILayout.BeginVertical(EditorStyles.helpBox);
@@ -207,9 +181,7 @@ namespace Flock.Editor
 
                 EditorGUILayout.BeginHorizontal();
                 if (GUILayout.Button("Test Configuration", GUILayout.Height(30)))
-                {
                     TestConfiguration();
-                }
                 if (GUILayout.Button("Locate Config File", GUILayout.Height(30)))
                 {
                     EditorGUIUtility.PingObject(existingConfig);
@@ -221,42 +193,32 @@ namespace Flock.Editor
                 GUILayout.Space(10);
             }
 
-            // Action Buttons
             EditorGUILayout.BeginHorizontal();
 
             GUI.enabled = _hasUnsavedChanges || string.IsNullOrWhiteSpace(apiKey) == false;
             GUI.backgroundColor = new Color(0.3f, 0.8f, 0.3f);
             if (GUILayout.Button("Save Configuration", GUILayout.Height(35)))
-            {
                 SaveConfig();
-            }
             GUI.backgroundColor = Color.white;
             GUI.enabled = true;
 
             GUI.backgroundColor = new Color(0.8f, 0.6f, 0.3f);
             if (GUILayout.Button("Reset", GUILayout.Height(35), GUILayout.Width(100)))
-            {
                 ResetConfig();
-            }
             GUI.backgroundColor = Color.white;
 
             EditorGUILayout.EndHorizontal();
 
             GUILayout.Space(5);
 
-            // Help Section
             EditorGUILayout.BeginVertical(EditorStyles.helpBox);
             EditorGUILayout.BeginHorizontal();
             GUILayout.FlexibleSpace();
             if (GUILayout.Button("Documentation", EditorStyles.linkLabel))
-            {
                 Application.OpenURL("https://docs.flock.qwacks.com");
-            }
             GUILayout.Label("|", EditorStyles.miniLabel);
             if (GUILayout.Button("Support", EditorStyles.linkLabel))
-            {
                 Application.OpenURL("https://support.qwacks.com");
-            }
             GUILayout.FlexibleSpace();
             EditorGUILayout.EndHorizontal();
             EditorGUILayout.EndVertical();
@@ -276,7 +238,6 @@ namespace Flock.Editor
                 apiKey = existingConfig.ApiKey ?? "";
                 gameId = existingConfig.gameId ?? "";
                 gameVersionId = existingConfig.gameVersionId ?? "";
-                environment = existingConfig.environment;
                 enableDebugLogs = existingConfig.enableDebugLogs;
             }
             else
@@ -285,7 +246,6 @@ namespace Flock.Editor
                 apiKey = EditorPrefs.GetString("Flock_ApiKey", "");
                 gameId = EditorPrefs.GetString("Flock_GameId", "");
                 gameVersionId = EditorPrefs.GetString("Flock_GameVersionId", "");
-                environment = (FlockEnvironment)EditorPrefs.GetInt("Flock_Environment", (int)FlockEnvironment.Production);
                 enableDebugLogs = EditorPrefs.GetBool("Flock_EnableDebugLogs", false);
             }
 
@@ -343,7 +303,6 @@ namespace Flock.Editor
                 EditorPrefs.SetString("Flock_ApiKey", apiKey);
                 EditorPrefs.SetString("Flock_GameId", gameId);
                 EditorPrefs.SetString("Flock_GameVersionId", gameVersionId);
-                EditorPrefs.SetInt("Flock_Environment", (int)environment);
                 EditorPrefs.SetBool("Flock_EnableDebugLogs", enableDebugLogs);
 
                 string resourcesPath = "Assets/Resources";
@@ -367,7 +326,6 @@ namespace Flock.Editor
                 configAsset.ApiKey = apiKey;
                 configAsset.gameId = gameId;
                 configAsset.gameVersionId = gameVersionId;
-                configAsset.environment = environment;
                 configAsset.enableDebugLogs = enableDebugLogs;
 
                 EditorUtility.SetDirty(configAsset);
@@ -380,7 +338,7 @@ namespace Flock.Editor
                 successMessage = "Configuration saved successfully!";
                 messageTimer = EditorApplication.timeSinceStartup + 3;
 
-                Debug.Log($"Flock SDK configuration saved: API={apiUrl}, GameId={gameId}, GameVersionId={gameVersionId}, Environment={environment}");
+                Debug.Log($"Flock SDK configuration saved: API={apiUrl}, GameId={gameId}, GameVersionId={gameVersionId}");
             }
             catch (System.Exception ex)
             {
@@ -400,7 +358,6 @@ namespace Flock.Editor
                 apiKey = "";
                 gameId = "";
                 gameVersionId = "";
-                environment = FlockEnvironment.Production;
                 enableDebugLogs = false;
                 errorMessage = "";
                 successMessage = "";
@@ -446,7 +403,7 @@ namespace Flock.Editor
                 httpClient.DefaultRequestHeaders.Add("X-Flock-API-Key", apiKey);
                 httpClient.DefaultRequestHeaders.Add("X-Game-Version-ID", gameVersionId);
 
-                var response = await httpClient.GetAsync($"{apiUrl}/health");
+                var response = await httpClient.GetAsync($"{apiUrl}/healthz");
 
                 EditorUtility.DisplayProgressBar("Testing Configuration", "Verifying API key...", 0.6f);
 
@@ -459,7 +416,6 @@ namespace Flock.Editor
                                 $"API Key: {new string('*', Math.Min(apiKey.Length, 20))} (Authenticated)\n" +
                                 $"Game ID: {gameId}\n" +
                                 $"Game Version ID: {gameVersionId}\n" +
-                                $"Environment: {environment}\n" +
                                 $"Debug Logs: {(enableDebugLogs ? "Enabled" : "Disabled")}\n\n" +
                                 $"Configuration is valid and ready to use!";
 
@@ -503,7 +459,6 @@ namespace Flock.Editor
 
                 errorMessage = "Failed to connect to API!";
                 messageTimer = EditorApplication.timeSinceStartup + 3;
-
                 Debug.LogError($"Flock SDK Configuration Test Failed: {ex.Message}");
             }
             catch (System.Threading.Tasks.TaskCanceledException)
@@ -519,7 +474,6 @@ namespace Flock.Editor
 
                 errorMessage = "API connection timeout!";
                 messageTimer = EditorApplication.timeSinceStartup + 3;
-
                 Debug.LogError("Flock SDK Configuration Test: Connection timeout");
             }
             catch (Exception ex)
@@ -533,7 +487,6 @@ namespace Flock.Editor
 
                 errorMessage = "Configuration test failed!";
                 messageTimer = EditorApplication.timeSinceStartup + 3;
-
                 Debug.LogError($"Flock SDK Configuration Test Error: {ex}");
             }
         }
