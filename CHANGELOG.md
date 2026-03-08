@@ -5,6 +5,17 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-03-07
+
+### Added
+- Game commands (`FlockCommandProvider`) for server-side operations via `POST /v1/game_command/execute`
+- `client.Commands.UpdatePlayerDataAsync` — update player data through a backend command
+- `client.Commands.UpdatePlayerDataFieldAsync` — update a single field in player data
+- `client.Commands.AddGameFundsAsync` — add currency funds to a player
+- `client.Commands.PurchaseShopItemAsync` — execute a shop transaction via `POST /v1/shop/transaction`
+- `ICommandPayload` internal interface for type-safe command inputs
+- Models: `GameCommandExecutionResult`, `PlayerInventory`
+
 ## [1.1.0] - 2026-02-25
 
 ### Changed

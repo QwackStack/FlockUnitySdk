@@ -97,6 +97,21 @@ var data = await client.PlayerData.CreateAsync("player-id", new Dictionary<strin
 var data = await client.PlayerData.GetByIdAsync("player-data-id");
 var all = await client.PlayerData.GetAllAsync(page: 1, limit: 10);
 var updated = await client.PlayerData.UpdateAsync("player-data-id", new Dictionary<string, object> { { "score", 200 } });
+
+// Game commands — server-side operations
+var results = await client.Commands.UpdatePlayerDataAsync(
+    "player-data-id",
+    new Dictionary<string, object> { { "level", 5 }, { "xp", 1200 } });
+
+var results = await client.Commands.UpdatePlayerDataFieldAsync(
+    "player-data-id", "score", 9999);
+
+var results = await client.Commands.AddGameFundsAsync(
+    "player-data-id", "gold", 500);
+
+// Shop transaction
+var inventory = await client.Commands.PurchaseShopItemAsync(
+    "shop-item-id", client.CurrentPlayerId);
 ```
 
 ## Headers
@@ -127,3 +142,5 @@ Every API request includes these headers:
 | Game Info | `GET /v1/game` | API Key |
 | Game Version | `GET /v1/game_version` | API Key |
 | Player Data | `GET /v1/player_data` | API Key |
+| Execute Command | `POST /v1/game_command/execute` | API Key |
+| Shop Transaction | `POST /v1/shop/transaction` | API Key |

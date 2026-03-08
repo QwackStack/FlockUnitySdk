@@ -28,6 +28,7 @@ namespace Flock
         private FlockSchemaProvider _schema;
         private FlockGameService _game;
         private PlayerDataService _playerData;
+        private FlockCommandProvider _commands;
 
         public FlockClient(FlockInitConfig initConfig, IFlockLogger logger = null)
         {
@@ -44,6 +45,7 @@ namespace Flock
             _config = new FlockConfigProvider(this);
             _schema = new FlockSchemaProvider(this);
             _game = new FlockGameService(this);
+            _commands = new FlockCommandProvider(this);
         }
 
         internal IFlockLogger Logger => _logger;
@@ -54,6 +56,7 @@ namespace Flock
         public FlockSchemaProvider Schema => _schema;
         public FlockGameService Game => _game;
         public PlayerDataService PlayerData => _playerData;
+        public FlockCommandProvider Commands => _commands;
 
         public string CurrentPlayerId => _tokenClaims?.PlayerId;
         public string GameId => _initConfig.GameId;

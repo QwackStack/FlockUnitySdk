@@ -20,6 +20,7 @@ namespace Flock.Interfaces
         FlockSchemaProvider Schema { get; }
         FlockGameService Game { get; }
         PlayerDataService PlayerData { get; }
+        FlockCommandProvider Commands { get; }
 
         Task<PlayerLoginResponse> LoginWithEmailAsync(string email, string password, CancellationToken cancellationToken = default);
         Task<PlayerLoginResponse> LoginWithDeviceAsync(string deviceId, CancellationToken cancellationToken = default);
