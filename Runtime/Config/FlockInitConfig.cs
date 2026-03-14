@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Text;
 using Flock.Http;
 
 namespace Flock.Config
@@ -42,13 +41,5 @@ namespace Flock.Config
             return headers;
         }
 
-        public Dictionary<string, string> GetAuthenticatedHeaders(string accessToken)
-        {
-            var headers = GetBaseHeaders();
-            if (!string.IsNullOrEmpty(accessToken))
-                headers["Authorization"] = new StringBuilder().Append("Bearer ").Append(accessToken).ToString();
-
-            return headers;
-        }
     }
 }

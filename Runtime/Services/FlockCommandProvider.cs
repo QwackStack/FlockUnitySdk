@@ -34,7 +34,7 @@ namespace Flock.Services
         }
 
         public async Task<List<GameCommandExecutionResult>> UpdatePlayerDataAsync(
-            string playerDataId, Dictionary<string, object> data,
+            string gameCommandId, string playerDataId, Dictionary<string, object> data,
             CancellationToken cancellationToken = default)
         {
             RequireNotEmpty(playerDataId, "Player Data ID");
@@ -44,11 +44,11 @@ namespace Flock.Services
                 new UpdatePlayerDataInput { PlayerDataId = playerDataId, Data = data }
             };
 
-            return await ExecuteCommandAsync("update_player_data", inputs, cancellationToken);
+            return await ExecuteCommandAsync(gameCommandId, inputs, cancellationToken);
         }
 
         public async Task<List<GameCommandExecutionResult>> UpdatePlayerDataFieldAsync(
-            string playerDataId, string key, object value,
+            string gameCommandId, string playerDataId, string key, object value,
             CancellationToken cancellationToken = default)
         {
             RequireNotEmpty(playerDataId, "Player Data ID");
@@ -59,11 +59,11 @@ namespace Flock.Services
                 new UpdatePlayerDataKeyInput { PlayerDataId = playerDataId, Key = key, Value = value }
             };
 
-            return await ExecuteCommandAsync("update_player_data_key", inputs, cancellationToken);
+            return await ExecuteCommandAsync(gameCommandId, inputs, cancellationToken);
         }
 
         public async Task<List<GameCommandExecutionResult>> AddGameFundsAsync(
-            string playerDataId, string currency, int amount,
+            string gameCommandId, string playerDataId, string currency, int amount,
             CancellationToken cancellationToken = default)
         {
             RequireNotEmpty(playerDataId, "Player Data ID");
@@ -74,30 +74,7 @@ namespace Flock.Services
                 new AddGameFundsInput { PlayerDataId = playerDataId, Currency = currency, Amount = amount }
             };
 
-            return await ExecuteCommandAsync("add_game_funds", inputs, cancellationToken);
-        }
-
-        public async Task<PlayerInventory> PurchaseShopItemAsync(
-            string shopItemId, string playerId,
-            CancellationToken cancellationToken = default)
-        {
-            RequireNotEmpty(shopItemId, "Shop Item ID");
-            RequireNotEmpty(playerId, "Player ID");
-
-            return await ExecuteAsync(async () =>
-            {
-                var request = new ShopTransactionRequest
-                {
-                    ShopItemId = shopItemId,
-                    PlayerId = playerId
-                };
-
-                var response = await FlockHttpClient.PostAsync<PlayerInventory>(
-                    new StringBuilder().Append(Client.GetApiUrl())
-                        .Append("/v1/shop/transaction")
-                        .ToString(), request, Client.GetBaseHeaders(), cancellationToken);
-                return response;
-            }, "Purchase shop item", cancellationToken);
+            return await ExecuteCommandAsync(gameCommandId, inputs, cancellationToken);
         }
     }
 }

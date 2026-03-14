@@ -1,4 +1,3 @@
-using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Flock.Models;
@@ -21,17 +20,14 @@ namespace Flock.Interfaces
         FlockGameService Game { get; }
         PlayerDataService PlayerData { get; }
         FlockCommandProvider Commands { get; }
+        FlockShopProvider Shop { get; }
 
         Task<PlayerLoginResponse> LoginWithEmailAsync(string email, string password, CancellationToken cancellationToken = default);
         Task<PlayerLoginResponse> LoginWithDeviceAsync(string deviceId, CancellationToken cancellationToken = default);
         Task<PlayerLoginResponse> RegisterWithEmailAsync(string email, string password, string name = null, CancellationToken cancellationToken = default);
-        Task<PlayerLoginResponse> RegisterWithDeviceAsync( string deviceId, string name = null, CancellationToken cancellationToken = default);
+        Task<PlayerLoginResponse> RegisterWithDeviceAsync(string deviceId, string name = null, CancellationToken cancellationToken = default);
 
-        Task<string> GetValidAccessTokenAsync(CancellationToken cancellationToken = default);
-        string GetAccessToken();
         void ClearTokens();
-        bool IsTokenExpired();
-        TimeSpan? GetTimeUntilTokenExpiration();
         string GetApiUrl();
     }
 }

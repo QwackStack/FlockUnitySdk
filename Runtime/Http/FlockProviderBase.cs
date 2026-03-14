@@ -50,11 +50,6 @@ namespace Flock.Http
                     .ToString());
         }
 
-        protected async Task EnsureAuthenticatedAsync(CancellationToken ct)
-        {
-            await Client.GetValidAccessTokenAsync(ct);
-        }
-
         protected void ValidateResponse<T>(GenericResponse<T> response) where T : class
         {
             if (response?.Result == null)
