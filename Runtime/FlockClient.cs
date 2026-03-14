@@ -21,14 +21,15 @@ namespace Flock
         private readonly IFlockLogger _logger;
         private readonly RetryHandler _retryHandler;
         private string _accessToken;
+        private string _refreshToken;
         private JwtTokenClaims _tokenClaims;
-        private DateTime? _tokenExpirationTime;
 
         private FlockConfigProvider _config;
         private FlockSchemaProvider _schema;
         private FlockGameService _game;
         private PlayerDataService _playerData;
         private FlockCommandProvider _commands;
+        private FlockShopProvider _shop;
 
         public FlockClient(FlockInitConfig initConfig, IFlockLogger logger = null)
         {
@@ -46,6 +47,7 @@ namespace Flock
             _schema = new FlockSchemaProvider(this);
             _game = new FlockGameService(this);
             _commands = new FlockCommandProvider(this);
+            _shop = new FlockShopProvider(this);
         }
 
         internal IFlockLogger Logger => _logger;
@@ -57,21 +59,20 @@ namespace Flock
         public FlockGameService Game => _game;
         public PlayerDataService PlayerData => _playerData;
         public FlockCommandProvider Commands => _commands;
+        public FlockShopProvider Shop => _shop;
 
         public string CurrentPlayerId => _tokenClaims?.PlayerId;
         public string GameId => _initConfig.GameId;
         public string GameVersionId => _initConfig.GameVersionId;
-        public bool IsAuthenticated => !string.IsNullOrEmpty(_accessToken) && !IsTokenExpired();
+        public bool IsAuthenticated => !string.IsNullOrEmpty(_accessToken);
         public JwtTokenClaims TokenClaims => _tokenClaims;
 
         internal Dictionary<string, string> GetBaseHeaders()
         {
-            return _initConfig.GetBaseHeaders();
-        }
-
-        internal Dictionary<string, string> GetAuthenticatedHeaders()
-        {
-            return _initConfig.GetAuthenticatedHeaders(_accessToken);
+            var headers = _initConfig.GetBaseHeaders();
+            if (!string.IsNullOrEmpty(_accessToken))
+                headers["Authorization"] = new StringBuilder().Append("Bearer ").Append(_accessToken).ToString();
+            return headers;
         }
 
         public async Task<PlayerLoginResponse> LoginWithEmailAsync(string email, string password, CancellationToken cancellationToken = default)
@@ -127,7 +128,7 @@ namespace Flock
                         .Append(" response from server")
                         .ToString());
 
-                SetToken(response.AccessToken);
+                SetTokens(response.AccessToken, response.RefreshToken);
                 _logger.LogInfo(new StringBuilder().Append(context)
                     .Append(" successful for player: ")
                     .Append(CurrentPlayerId)
@@ -142,17 +143,12 @@ namespace Flock
             }
         }
 
-        public string GetAccessToken()
-        {
-            return _accessToken;
-        }
-
         public void ClearTokens()
         {
             _logger.LogInfo("Clearing authentication tokens");
             _accessToken = null;
+            _refreshToken = null;
             _tokenClaims = null;
-            _tokenExpirationTime = null;
         }
 
         public string GetApiUrl()
@@ -160,52 +156,18 @@ namespace Flock
             return _initConfig.ApiUrl;
         }
 
-        public bool IsTokenExpired()
-        {
-            if (string.IsNullOrEmpty(_accessToken))
-                return true;
-
-            if (_tokenExpirationTime.HasValue)
-                return DateTime.UtcNow >= _tokenExpirationTime.Value;
-
-            return false;
-        }
-
-        public TimeSpan? GetTimeUntilTokenExpiration()
-        {
-            if (_tokenExpirationTime.HasValue)
-            {
-                var remaining = _tokenExpirationTime.Value - DateTime.UtcNow;
-                return remaining.TotalSeconds > 0 ? remaining : TimeSpan.Zero;
-            }
-            return null;
-        }
-
-        public async Task<string> GetValidAccessTokenAsync(CancellationToken cancellationToken = default)
-        {
-            if (string.IsNullOrEmpty(_accessToken))
-                throw new FlockAuthException("No valid access token available. Please authenticate first.");
-
-            if (!IsTokenExpired())
-                return _accessToken;
-
-            throw new FlockAuthException("Access token expired. Please authenticate again.");
-        }
-
-        private void SetToken(string accessToken)
+        private void SetTokens(string accessToken, string refreshToken)
         {
             _accessToken = accessToken;
+            _refreshToken = refreshToken;
 
             if (!string.IsNullOrEmpty(accessToken))
             {
                 try
                 {
                     _tokenClaims = JwtTokenParser.Parse(accessToken);
-                    _tokenExpirationTime = _tokenClaims.ExpirationTime;
                     _logger.LogDebug(new StringBuilder().Append("Token set for PlayerId: ")
                         .Append(_tokenClaims.PlayerId)
-                        .Append(", Expires: ")
-                        .Append(_tokenExpirationTime)
                         .ToString());
                 }
                 catch (Exception ex)
@@ -214,7 +176,6 @@ namespace Flock
                         .Append(ex.Message)
                         .ToString());
                     _tokenClaims = null;
-                    _tokenExpirationTime = null;
                 }
             }
         }

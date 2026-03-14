@@ -5,6 +5,23 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-03-14
+
+### Added
+- Shop system (`FlockShopProvider`) with full v1 endpoint coverage
+- `client.Shop.GetAllAsync` — list shops (paginated)
+- `client.Shop.GetByIdAsync` — get shop by ID
+- `client.Shop.GetItemAsync` — get shop item by ID
+- `client.Shop.GetItemsByShopAsync` — get items by shop (with optional patch_id filter)
+- `client.Shop.PurchaseAsync` — execute shop transaction
+- `client.Shop.GetPlayerInventoryAsync` — get player inventory (paginated)
+- Models: `Shop`, `ShopItem`, `ShopData`
+
+### Changed
+- Moved `PurchaseShopItemAsync` and `GetPlayerInventoryAsync` from `FlockCommandProvider` to `FlockShopProvider`
+- `PlayerDataService` is now read-only (removed `CreateAsync` and `UpdateAsync` — use game commands instead)
+- `PlayerDataService` uses API key headers instead of bearer auth (matching spec)
+
 ## [1.2.0] - 2026-03-07
 
 ### Added
@@ -12,7 +29,6 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - `client.Commands.UpdatePlayerDataAsync` — update player data through a backend command
 - `client.Commands.UpdatePlayerDataFieldAsync` — update a single field in player data
 - `client.Commands.AddGameFundsAsync` — add currency funds to a player
-- `client.Commands.PurchaseShopItemAsync` — execute a shop transaction via `POST /v1/shop/transaction`
 - `ICommandPayload` internal interface for type-safe command inputs
 - Models: `GameCommandExecutionResult`, `PlayerInventory`
 

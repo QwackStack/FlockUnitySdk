@@ -8,7 +8,9 @@ The Flock Unity SDK provides access to Flock's game backend services from Unity 
 - Game configuration (fetched from game patch endpoints)
 - Config schema validation (backend validation of config types)
 - Game and game version metadata
-- Player data (CRUD with pagination)
+- Player data (read with pagination)
+- Shop (browse shops, items, purchase, inventory)
+- Game commands (server-side operations: update player data, add funds)
 - Automatic retry with exponential backoff
 - JWT token management
 
@@ -92,26 +94,28 @@ var configs = await client.Schema.GetSchemaConfigsAsync("schema-id");
 var game = await client.Game.GetGameAsync();
 var version = await client.Game.GetGameVersionAsync();
 
-// Player data
-var data = await client.PlayerData.CreateAsync("player-id", new Dictionary<string, object> { { "score", 100 } });
+// Player data (read-only, create/update via game commands)
 var data = await client.PlayerData.GetByIdAsync("player-data-id");
 var all = await client.PlayerData.GetAllAsync(page: 1, limit: 10);
-var updated = await client.PlayerData.UpdateAsync("player-data-id", new Dictionary<string, object> { { "score", 200 } });
 
-// Game commands — server-side operations
+// Game commands — server-side operations (gameCommandId from backend dashboard)
 var results = await client.Commands.UpdatePlayerDataAsync(
-    "player-data-id",
+    "game-command-id", "player-data-id",
     new Dictionary<string, object> { { "level", 5 }, { "xp", 1200 } });
 
 var results = await client.Commands.UpdatePlayerDataFieldAsync(
-    "player-data-id", "score", 9999);
+    "game-command-id", "player-data-id", "score", 9999);
 
 var results = await client.Commands.AddGameFundsAsync(
-    "player-data-id", "gold", 500);
+    "game-command-id", "player-data-id", "gold", 500);
 
-// Shop transaction
-var inventory = await client.Commands.PurchaseShopItemAsync(
-    "shop-item-id", client.CurrentPlayerId);
+// Shop
+var shops = await client.Shop.GetAllAsync(page: 1, limit: 10);
+var shop = await client.Shop.GetByIdAsync("shop-id");
+var item = await client.Shop.GetItemAsync("shop-item-id");
+var items = await client.Shop.GetItemsByShopAsync("shop-id");
+var inventory = await client.Shop.PurchaseAsync("shop-item-id", client.CurrentPlayerId);
+var playerItems = await client.Shop.GetPlayerInventoryAsync(client.CurrentPlayerId);
 ```
 
 ## Headers
@@ -143,4 +147,9 @@ Every API request includes these headers:
 | Game Version | `GET /v1/game_version` | API Key |
 | Player Data | `GET /v1/player_data` | API Key |
 | Execute Command | `POST /v1/game_command/execute` | API Key |
+| List Shops | `GET /v1/shop` | API Key |
+| Get Shop | `GET /v1/shop/{shop_id}` | API Key |
 | Shop Transaction | `POST /v1/shop/transaction` | API Key |
+| Get Shop Item | `GET /v1/shop_item/{shop_item_id}` | API Key |
+| Shop Items by Shop | `GET /v1/shop_item/shop/{shop_id}` | API Key |
+| Player Inventory | `GET /v1/player_inventory/player/{player_id}` | API Key |
