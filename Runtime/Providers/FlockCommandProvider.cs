@@ -5,7 +5,7 @@ using System.Threading.Tasks;
 using Flock.Models;
 using Flock.Http;
 
-namespace Flock.Services
+namespace Flock.Providers
 {
     public class FlockCommandProvider : FlockProviderBase
     {

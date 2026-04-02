@@ -3,7 +3,8 @@ using System.Threading.Tasks;
 using Flock.Models;
 using Flock.Auth;
 using Flock.Config;
-using Flock.Services;
+using Flock.Providers;
+using Flock.Analytics;
 
 namespace Flock.Interfaces
 {
@@ -17,10 +18,14 @@ namespace Flock.Interfaces
 
         FlockConfigProvider Config { get; }
         FlockSchemaProvider Schema { get; }
-        FlockGameService Game { get; }
-        PlayerDataService PlayerData { get; }
+        FlockGameProvider Game { get; }
+        PlayerDataProvider PlayerData { get; }
         FlockCommandProvider Commands { get; }
         FlockShopProvider Shop { get; }
+        FlockAnalyticsProvider Analytics { get; }
+
+        bool HasActiveSession { get; }
+        string CurrentSessionId { get; }
 
         Task<PlayerLoginResponse> LoginWithEmailAsync(string email, string password, CancellationToken cancellationToken = default);
         Task<PlayerLoginResponse> LoginWithDeviceAsync(string deviceId, CancellationToken cancellationToken = default);

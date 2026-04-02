@@ -38,6 +38,15 @@ namespace Flock.Http
             return SendAsync<T>(request, cancellationToken);
         }
 
+        public static Task<T> PatchAsync<T>(string url, object data, Dictionary<string, string> headers = null,
+            CancellationToken cancellationToken = default)
+        {
+            var request = new HttpRequestMessage(new HttpMethod("PATCH"), url);
+            ApplyHeaders(request, headers);
+            request.Content = new StringContent(JsonConvert.SerializeObject(data), Encoding.UTF8, "application/json");
+            return SendAsync<T>(request, cancellationToken);
+        }
+
         public static Task<T> DeleteAsync<T>(string url, Dictionary<string, string> headers = null,
             CancellationToken cancellationToken = default)
         {

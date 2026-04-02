@@ -5,6 +5,34 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-04-01
+
+### Added
+- Analytics system (`FlockAnalyticsProvider`) with full v1 endpoint coverage
+- `client.Analytics.StartSessionAsync` — start a player session
+- `client.Analytics.EndSessionAsync` — end the current session
+- `client.Analytics.TrackEventAsync` — track a single event
+- `client.Analytics.TrackEventsAsync` — track events in batch
+- `client.Analytics.RecordTransactionAsync` — record a purchase/transaction
+- `client.Analytics.RecordScreenView` — manually record a screen view
+- `FlockBehaviour` — DontDestroyOnLoad singleton for Unity lifecycle events
+- `FlockSession` — session state with pause tracking, FPS sampling, heartbeat, crash recovery
+- `FlockAnalyticsConfig` — configurable session timeout, heartbeat interval, bounce threshold, FPS tracking
+- `FlockSessionSnapshot` — serializable session state for persistence and server calls
+- `FlockDeviceInfo` — captures platform, OS, device model, screen, memory, SDK version
+- `FlockSdkVersion` — SDK version constant sent with session start requests
+- `PatchAsync` on `FlockHttpClient` for the session end endpoint
+- Session crash recovery via PlayerPrefs on next launch
+- Session timeout detection on app resume (configurable, default 30s)
+- Automatic analytics transaction recording on `Shop.PurchaseAsync`
+- Analytics config exposed on `FlockConfigAsset` ScriptableObject
+
+### Changed
+- Renamed `Services` folder to `Providers` (`FlockGameService` → `FlockGameProvider`, `PlayerDataService` → `PlayerDataProvider`)
+- `FlockInitConfig` now accepts `FlockAnalyticsConfig`
+- `ClearTokens` resets the active analytics session
+- `IFlockClient` now exposes `Analytics`, `HasActiveSession`, `CurrentSessionId`
+
 ## [1.3.0] - 2026-03-14
 
 ### Added

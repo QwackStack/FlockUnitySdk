@@ -4,11 +4,11 @@ using System.Threading.Tasks;
 using Flock.Models;
 using Flock.Http;
 
-namespace Flock.Services
+namespace Flock.Providers
 {
-    public class FlockGameService : FlockProviderBase
+    public class FlockGameProvider : FlockProviderBase
     {
-        public FlockGameService(FlockClient client) : base(client) { }
+        public FlockGameProvider(FlockClient client) : base(client) { }
 
         public async Task<GameSchema> GetGameAsync(CancellationToken cancellationToken = default)
         {
@@ -16,7 +16,7 @@ namespace Flock.Services
             {
                 string url = new StringBuilder().Append(Client.GetApiUrl()).Append("/v1/game").ToString();
                 var response = await FlockHttpClient.GetAsync<GenericResponse<GameSchema>>(
-                    url, Client.GetBaseHeaders(), cancellationToken);
+                    url, Client.GetBaseHeaders(), cancellationToken); 
                 ValidateResponse(response);
                 return response.Result;
             }, "Fetch game info", cancellationToken);
