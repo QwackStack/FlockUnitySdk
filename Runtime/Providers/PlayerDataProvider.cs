@@ -5,13 +5,13 @@ using Flock.Models;
 using Flock.Http;
 using Flock.Interfaces;
 
-namespace Flock.Services
+namespace Flock.Providers
 {
-    public class PlayerDataService : FlockProviderBase, IPlayerDataService
+    public class PlayerDataProvider : FlockProviderBase, IPlayerDataService
     {
         private readonly string _baseUrl;
 
-        public PlayerDataService(FlockClient client) : base(client)
+        public PlayerDataProvider(FlockClient client) : base(client)
         {
             _baseUrl = new StringBuilder().Append(client.GetApiUrl()).Append("/v1/player_data").ToString();
         }

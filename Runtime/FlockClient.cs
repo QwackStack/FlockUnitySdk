@@ -10,7 +10,8 @@ using Flock.Http;
 using Flock.Interfaces;
 using Flock.Logging;
 using Flock.Models;
-using Flock.Services;
+using Flock.Analytics;
+using Flock.Providers;
 using UnityEngine;
 
 namespace Flock
@@ -26,10 +27,12 @@ namespace Flock
 
         private FlockConfigProvider _config;
         private FlockSchemaProvider _schema;
-        private FlockGameService _game;
-        private PlayerDataService _playerData;
+        private FlockGameProvider _game;
+        private PlayerDataProvider _playerData;
         private FlockCommandProvider _commands;
         private FlockShopProvider _shop;
+        private FlockSession _session;
+        private FlockAnalyticsProvider _analytics;
 
         public FlockClient(FlockInitConfig initConfig, IFlockLogger logger = null)
         {
@@ -42,12 +45,18 @@ namespace Flock
 
         private void InitializeServices()
         {
-            _playerData = new PlayerDataService(this);
+            _playerData = new PlayerDataProvider(this);
             _config = new FlockConfigProvider(this);
             _schema = new FlockSchemaProvider(this);
-            _game = new FlockGameService(this);
+            _game = new FlockGameProvider(this);
             _commands = new FlockCommandProvider(this);
             _shop = new FlockShopProvider(this);
+
+            if (_initConfig.Analytics != null && _initConfig.Analytics.Enabled)
+            {
+                _session = new FlockSession(_initConfig.Analytics, _logger);
+                _analytics = new FlockAnalyticsProvider(this);
+            }
         }
 
         internal IFlockLogger Logger => _logger;
@@ -56,10 +65,15 @@ namespace Flock
 
         public FlockConfigProvider Config => _config;
         public FlockSchemaProvider Schema => _schema;
-        public FlockGameService Game => _game;
-        public PlayerDataService PlayerData => _playerData;
+        public FlockGameProvider Game => _game;
+        public PlayerDataProvider PlayerData => _playerData;
         public FlockCommandProvider Commands => _commands;
         public FlockShopProvider Shop => _shop;
+        public FlockAnalyticsProvider Analytics => _analytics;
+
+        internal FlockSession Session => _session;
+        public bool HasActiveSession => _session?.IsActive ?? false;
+        public string CurrentSessionId => _session?.ServerSessionId ?? _session?.SessionId;
 
         public string CurrentPlayerId => _tokenClaims?.PlayerId;
         public string GameId => _initConfig.GameId;
@@ -133,6 +147,22 @@ namespace Flock
                     .Append(" successful for player: ")
                     .Append(CurrentPlayerId)
                     .ToString());
+
+                if (_analytics != null)
+                {
+                    try
+                    {
+                        await _analytics.InitializeAsync(cancellationToken);
+                    }
+                    catch (Exception analyticsEx)
+                    {
+                        _logger.LogWarning(new StringBuilder()
+                            .Append("Analytics initialization failed (non-fatal): ")
+                            .Append(analyticsEx.Message)
+                            .ToString());
+                    }
+                }
+
                 return response;
             }
             catch (FlockException) { throw; }
@@ -146,6 +176,12 @@ namespace Flock
         public void ClearTokens()
         {
             _logger.LogInfo("Clearing authentication tokens");
+
+            if (_session != null && _session.IsActive)
+            {
+                _session.Reset();
+            }
+
             _accessToken = null;
             _refreshToken = null;
             _tokenClaims = null;

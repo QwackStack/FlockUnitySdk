@@ -5,8 +5,19 @@ using System.Threading.Tasks;
 using Flock.Models;
 using Flock.Http;
 
-namespace Flock.Services
+namespace Flock.Providers
 {
+    public enum PurchaseStatus
+    {
+        //Status will change once validation/flow changes
+        Started,
+        Purchased
+    }
+    public enum TransactionType
+    {
+        //Status will change once validation/flow changes
+        Purchase
+    }
     public class FlockShopProvider : FlockProviderBase
     {
         public FlockShopProvider(FlockClient client) : base(client) { }
@@ -89,7 +100,24 @@ namespace Flock.Services
             RequireNotEmpty(shopItemId, "Shop Item ID");
             RequireNotEmpty(playerId, "Player ID");
 
-            return await ExecuteAsync(async () =>
+            ShopItem shopItem = await GetItemAsync(shopItemId, cancellationToken);
+            try
+            {
+                await Client.Analytics.RecordTransactionAsync(
+                    new AnalyticsTransactionRequest
+                    {
+                        Amount = shopItem.Price,
+                        CurrencyCode = shopItem.Currency,
+                        ShopItemId = shopItemId,
+                        TransactionType = nameof(TransactionType.Purchase),
+                        Status = nameof(PurchaseStatus.Started)
+                    }, cancellationToken);
+            }
+            catch
+            {
+                Client.Logger.LogWarning("Failed to record purchase analytics");
+            }
+            var result = await ExecuteAsync(async () =>
             {
                 var request = new ShopTransactionRequest
                 {
@@ -102,6 +130,28 @@ namespace Flock.Services
                         .Append("/v1/shop/transaction")
                         .ToString(), request, Client.GetBaseHeaders(), cancellationToken);
             }, "Purchase shop item", cancellationToken);
+
+            if (Client.Analytics != null && shopItem != null)
+            {
+                try
+                {
+                    await Client.Analytics.RecordTransactionAsync(
+                        new AnalyticsTransactionRequest
+                        {
+                            Amount = shopItem.Price,
+                            CurrencyCode = shopItem.Currency,
+                            ShopItemId = shopItemId,
+                            TransactionType = nameof(TransactionType.Purchase),
+                            Status = nameof(PurchaseStatus.Purchased)
+                        }, cancellationToken);
+                }
+                catch
+                {
+                    Client.Logger.LogWarning("Failed to record purchase analytics");
+                }
+            }
+
+            return result;
         }
 
         public async Task<PaginatedResponse<PlayerInventory>> GetPlayerInventoryAsync(

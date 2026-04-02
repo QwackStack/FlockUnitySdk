@@ -1,3 +1,4 @@
+using Flock.Analytics;
 using UnityEngine;
 
 namespace Flock.Config
@@ -23,6 +24,34 @@ namespace Flock.Config
         [Tooltip("Enable detailed debug logging")]
         public bool enableDebugLogs = false;
 
+        [Header("Analytics")]
+        [Tooltip("Enable analytics tracking")]
+        public bool analyticsEnabled = true;
+
+        [Tooltip("Automatically start a session on SDK init")]
+        public bool analyticsAutoStartSession = true;
+
+        [Tooltip("Automatically end session on app quit")]
+        public bool analyticsAutoEndOnQuit = true;
+
+        [Tooltip("Background duration (seconds) before a new session starts")]
+        public float analyticsSessionTimeout = 30f;
+
+        [Tooltip("Heartbeat interval in seconds (0 to disable)")]
+        public float analyticsHeartbeatInterval = 60f;
+
+        [Tooltip("Sessions shorter than this are marked as bounces")]
+        public float analyticsBounceThreshold = 10f;
+
+        [Tooltip("Persist session to disk for crash recovery")]
+        public bool analyticsPersistSession = true;
+
+        [Tooltip("Track FPS metrics")]
+        public bool analyticsTrackFps = true;
+
+        [Tooltip("FPS sample interval in seconds")]
+        public float analyticsFpsSampleInterval = 1f;
+
         public string ApiKey
         {
             get => apiKey;
@@ -31,7 +60,19 @@ namespace Flock.Config
 
         public FlockInitConfig ToInitConfig()
         {
-            return new FlockInitConfig(apiUrl, apiKey, gameId, gameVersionId, enableDebugLogs);
+            return new FlockInitConfig(apiUrl, apiKey, gameId, gameVersionId, enableDebugLogs,
+                analytics: new FlockAnalyticsConfig
+                {
+                    Enabled = analyticsEnabled,
+                    AutoStartSession = analyticsAutoStartSession,
+                    AutoEndSessionOnQuit = analyticsAutoEndOnQuit,
+                    SessionTimeoutSeconds = analyticsSessionTimeout,
+                    HeartbeatIntervalSeconds = analyticsHeartbeatInterval,
+                    BounceThresholdSeconds = analyticsBounceThreshold,
+                    PersistSessionOnDisk = analyticsPersistSession,
+                    TrackFps = analyticsTrackFps,
+                    FpsSampleIntervalSeconds = analyticsFpsSampleInterval
+                });
         }
 
         public bool IsValid(out string errorMessage)
