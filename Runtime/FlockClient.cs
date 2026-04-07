@@ -31,6 +31,7 @@ namespace Flock
         private PlayerDataProvider _playerData;
         private FlockCommandProvider _commands;
         private FlockShopProvider _shop;
+        private FlockBanProvider _ban;
         private FlockSession _session;
         private FlockAnalyticsProvider _analytics;
 
@@ -51,6 +52,7 @@ namespace Flock
             _game = new FlockGameProvider(this);
             _commands = new FlockCommandProvider(this);
             _shop = new FlockShopProvider(this);
+            _ban = new FlockBanProvider(this);
 
             if (_initConfig.Analytics != null && _initConfig.Analytics.Enabled)
             {
@@ -69,6 +71,7 @@ namespace Flock
         public PlayerDataProvider PlayerData => _playerData;
         public FlockCommandProvider Commands => _commands;
         public FlockShopProvider Shop => _shop;
+        public FlockBanProvider Ban => _ban;
         public FlockAnalyticsProvider Analytics => _analytics;
 
         internal FlockSession Session => _session;
