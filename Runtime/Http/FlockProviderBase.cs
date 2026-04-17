@@ -1,5 +1,4 @@
 using System;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Flock.Exceptions;
@@ -25,29 +24,50 @@ namespace Flock.Http
             {
                 return await Client.RetryHandler.ExecuteAsync(operation, cancellationToken);
             }
-            catch (FlockException) { throw; }
+            //only try refresh if the auth is even successful
+            catch (FlockAuthException) when (Client.IsAuthenticated)
+            {
+                Client.Logger.LogDebug("Access token expired, attempting silent refresh");
+                bool refreshed = await Client.TryRefreshTokenAsync(cancellationToken);
+                if (!refreshed)
+                    throw;
+
+                try
+                {
+                    return await Client.RetryHandler.ExecuteAsync(operation, cancellationToken);
+                }
+                catch (FlockException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    Client.Logger.LogError($"{context} failed", ex);
+                    throw new FlockNetworkException($"{context} failed", ex);
+                }
+            }
+            catch (FlockException)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
-                Client.Logger.LogError(new StringBuilder().Append(context).Append(" failed").ToString(), ex);
-                throw new FlockNetworkException(new StringBuilder().Append(context).Append(" failed").ToString(), ex);
+                Client.Logger.LogError($"{context} failed", ex);
+                throw new FlockNetworkException($"{context} failed", ex);
             }
         }
 
         protected void RequireNotEmpty(string value, string name)
         {
+            // for cases that require params not to be null
             if (string.IsNullOrEmpty(value))
-                throw new FlockValidationException(new StringBuilder().Append(name).Append(" cannot be null or empty").ToString());
+                throw new FlockValidationException($"{name} cannot be null or empty");
         }
 
         protected void RequireRange(int value, int min, int max, string name)
         {
             if (value < min || value > max)
-                throw new FlockValidationException(new StringBuilder().Append(name)
-                    .Append(" must be between ")
-                    .Append(min)
-                    .Append(" and ")
-                    .Append(max)
-                    .ToString());
+                throw new FlockValidationException($"{name} must be between {min} and {max}");
         }
 
         protected void ValidateResponse<T>(GenericResponse<T> response) where T : class

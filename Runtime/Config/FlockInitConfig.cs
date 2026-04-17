@@ -7,35 +7,49 @@ namespace Flock.Config
     public class FlockInitConfig
     {
         public string ApiUrl { get; set; }
-        public string ApiKey { get; set; }
         public string GameId { get; set; }
         public string GameVersionId { get; set; }
         public bool EnableDebugLogs { get; set; }
         public RetryPolicy RetryPolicy { get; set; }
-        public FlockAnalyticsConfig Analytics { get; set; }
+        /// <summary>
+        /// Flock analytics Settings
+        /// </summary>
+        public FlockAnalyticsConfig AnalyticsConfig { get; set; }
+        private readonly string _apiKey;
+
         private Dictionary<string, string> _headers;
+        /// <summary>
+        /// Flock Initialization Config
+        /// <param name="apiUrl"> Flock endpoint.</param>
+        /// <param name="apiKey"> Flock game secret key.</param>
+        /// <param name="gameId"> Flock game ID</param>
+        /// <param name="gameVersionId"> Flock version ID</param>
+        /// <param name="enableDebugLogs"> enable debug logs , follows passed logger</param>
+        /// <param name="analyticsConfig"> Flock Analytics settings</param>
+        /// <param name="retryPolicy"> Flock Requests settings</param>
+        /// </summary>
         public FlockInitConfig(
             string apiUrl,
             string apiKey,
             string gameId,
             string gameVersionId,
             bool enableDebugLogs = false,
-            FlockAnalyticsConfig analytics = null,
+            FlockAnalyticsConfig analyticsConfig = null,
             RetryPolicy retryPolicy = null)
         {
             ApiUrl = apiUrl;
-            ApiKey = apiKey;
+            _apiKey = apiKey;
             GameId = gameId;
             GameVersionId = gameVersionId;
             EnableDebugLogs = enableDebugLogs;
-            Analytics = analytics;
+            AnalyticsConfig = analyticsConfig;
             RetryPolicy = retryPolicy ?? new RetryPolicy();
         }
 
         public Dictionary<string, string> GetBaseHeaders()
         {
             _headers ??= new Dictionary<string, string>();
-            _headers.TryAdd("X-Flock-API-Key", ApiKey);
+            _headers.TryAdd("X-Flock-API-Key", _apiKey);
             _headers.TryAdd("X-Game-Version-ID", GameVersionId);
             return _headers;
         }

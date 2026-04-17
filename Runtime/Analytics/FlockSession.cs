@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Text;
 using System.Threading;
 using Flock.Logging;
 using Newtonsoft.Json;
@@ -96,7 +95,7 @@ namespace Flock.Analytics
             if (!_config.PersistSessionOnDisk)
                 return null;
 
-            var json = PlayerPrefs.GetString(PrefKeySessionData, null);
+            string json = PlayerPrefs.GetString(PrefKeySessionData, null);
             if (string.IsNullOrEmpty(json))
                 return null;
 
@@ -105,23 +104,19 @@ namespace Flock.Analytics
 
             try
             {
-                var recovered = JsonConvert.DeserializeObject<FlockSessionSnapshot>(json);
+                FlockSessionSnapshot recovered = JsonConvert.DeserializeObject<FlockSessionSnapshot>(json);
                 if (recovered != null && recovered.IsActive)
                 {
                     recovered.IsActive = false;
                     recovered.WasCrash = true;
                     recovered.EndTimeUtc = recovered.LastHeartbeatUtc ?? recovered.StartTimeUtc;
-                    _logger.LogWarning(new StringBuilder()
-                        .Append("Recovered crashed session: ").Append(recovered.SessionId)
-                        .ToString());
+                    _logger.LogWarning($"Recovered crashed session: {recovered.SessionId}");
                     return recovered;
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(new StringBuilder()
-                    .Append("Failed to recover crashed session: ").Append(ex.Message)
-                    .ToString());
+                _logger.LogWarning($"Failed to recover crashed session: {ex.Message}");
             }
 
             return null;
@@ -173,10 +168,7 @@ namespace Flock.Analytics
             Subscribe();
             PersistState();
 
-            _logger.LogInfo(new StringBuilder()
-                .Append("Session started: ").Append(SessionId)
-                .Append(" (#").Append(SessionNumber).Append(")")
-                .ToString());
+            _logger.LogInfo($"Session started: {SessionId} (#{SessionNumber})");
 
             return SessionId;
         }
@@ -201,19 +193,12 @@ namespace Flock.Analytics
 
             Unsubscribe();
 
-            var snapshot = TakeSnapshot();
+            FlockSessionSnapshot snapshot = TakeSnapshot();
             snapshot.IsBounce = snapshot.DurationSeconds < _config.BounceThresholdSeconds;
 
             ClearPersistedState();
 
-            _logger.LogInfo(new StringBuilder()
-                .Append("Session ended: ").Append(SessionId)
-                .Append(" | Duration: ").Append(snapshot.DurationSeconds.ToString("F1")).Append("s")
-                .Append(" | Screens: ").Append(snapshot.ScreensViewed)
-                .Append(" | Pauses: ").Append(snapshot.PauseCount)
-                .Append(" | AvgFPS: ").Append(snapshot.AverageFps.ToString("F0"))
-                .Append(snapshot.IsBounce ? " [BOUNCE]" : "")
-                .ToString());
+            _logger.LogInfo($"Session ended: {SessionId} | Duration: {snapshot.DurationSeconds:F1}s | Screens: {snapshot.ScreensViewed} | Pauses: {snapshot.PauseCount} | AvgFPS: {snapshot.AverageFps:F0}{(snapshot.IsBounce ? " [BOUNCE]" : "")}");
 
             return snapshot;
         }
@@ -337,9 +322,7 @@ namespace Flock.Analytics
                 _isPaused = true;
                 _pausedAtRealtime = Time.realtimeSinceStartup;
                 PersistState();
-                _logger.LogDebug(new StringBuilder()
-                    .Append("Session paused: ").Append(SessionId)
-                    .ToString());
+                _logger.LogDebug($"Session paused: {SessionId}");
             }
             else
             {
@@ -350,14 +333,9 @@ namespace Flock.Analytics
 
                 if (pausedDuration > _config.SessionTimeoutSeconds)
                 {
-                    _logger.LogInfo(new StringBuilder()
-                        .Append("Session timeout exceeded (")
-                        .Append(pausedDuration.ToString("F0")).Append("s > ")
-                        .Append(_config.SessionTimeoutSeconds.ToString("F0"))
-                        .Append("s). New session required.")
-                        .ToString());
+                    _logger.LogInfo($"Session timeout exceeded ({pausedDuration:F0}s > {_config.SessionTimeoutSeconds:F0}s). New session required.");
 
-                    var snapshot = End();
+                    FlockSessionSnapshot snapshot = End();
                     if (snapshot != null)
                         OnSessionTimedOut?.Invoke(snapshot);
                 }
@@ -365,9 +343,7 @@ namespace Flock.Analytics
                 {
                     FinalizePause();
                     _isPaused = false;
-                    _logger.LogDebug(new StringBuilder()
-                        .Append("Session resumed: ").Append(SessionId)
-                        .ToString());
+                    _logger.LogDebug($"Session resumed: {SessionId}");
                 }
             }
         }
@@ -385,7 +361,7 @@ namespace Flock.Analytics
             EndTimeUtc = DateTime.UtcNow;
             EndRealtimeSinceStartup = Time.realtimeSinceStartup;
 
-            var snapshot = TakeSnapshot();
+            FlockSessionSnapshot snapshot = TakeSnapshot();
             snapshot.IsBounce = snapshot.DurationSeconds < _config.BounceThresholdSeconds;
 
             OnSessionEnding?.Invoke(snapshot);
@@ -394,10 +370,7 @@ namespace Flock.Analytics
 
             _active = false;
 
-            _logger.LogInfo(new StringBuilder()
-                .Append("Session persisted on quit: ").Append(SessionId)
-                .Append(" | Duration: ").Append(ElapsedSeconds.ToString("F1")).Append("s")
-                .ToString());
+            _logger.LogInfo($"Session persisted on quit: {SessionId} | Duration: {ElapsedSeconds:F1}s");
         }
 
         private void FinalizePause()
@@ -417,16 +390,14 @@ namespace Flock.Analytics
 
             try
             {
-                var snapshot = TakeSnapshot();
-                var json = JsonConvert.SerializeObject(snapshot);
+                FlockSessionSnapshot snapshot = TakeSnapshot();
+                string json = JsonConvert.SerializeObject(snapshot);
                 PlayerPrefs.SetString(PrefKeySessionData, json);
                 PlayerPrefs.Save();
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(new StringBuilder()
-                    .Append("Failed to persist session state: ").Append(ex.Message)
-                    .ToString());
+                _logger.LogWarning($"Failed to persist session state: {ex.Message}");
             }
         }
 

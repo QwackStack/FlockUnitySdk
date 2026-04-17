@@ -2,7 +2,8 @@ namespace Flock.Analytics
 {
     public class FlockAnalyticsConfig
     {
-        //Should be turned to false based on consent
+        //Should be turned to false based on consent 
+        //TODO add summary for all
         public bool Enabled { get; set; } = true;
         public bool AutoStartSession { get; set; } = true;
         public bool AutoEndSessionOnQuit { get; set; } = true;

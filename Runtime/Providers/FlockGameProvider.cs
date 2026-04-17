@@ -1,4 +1,3 @@
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Flock.Models;
@@ -14,9 +13,8 @@ namespace Flock.Providers
         {
             return await ExecuteAsync(async () =>
             {
-                string url = new StringBuilder().Append(Client.GetApiUrl()).Append("/v1/game").ToString();
-                var response = await FlockHttpClient.GetAsync<GenericResponse<GameSchema>>(
-                    url, Client.GetBaseHeaders(), cancellationToken); 
+                GenericResponse<GameSchema> response = await FlockHttpClient.GetAsync<GenericResponse<GameSchema>>(
+                    $"{Client.GetApiUrl()}/v1/game", Client.GetBaseHeaders(), cancellationToken);
                 ValidateResponse(response);
                 return response.Result;
             }, "Fetch game info", cancellationToken);
@@ -26,10 +24,8 @@ namespace Flock.Providers
         {
             return await ExecuteAsync(async () =>
             {
-                var response = await FlockHttpClient.GetAsync<GenericResponse<GameVersionSchema>>(
-                    new StringBuilder().Append(Client.GetApiUrl())
-                        .Append("/v1/game_version")
-                        .ToString(), Client.GetBaseHeaders(), cancellationToken);
+                GenericResponse<GameVersionSchema> response = await FlockHttpClient.GetAsync<GenericResponse<GameVersionSchema>>(
+                    $"{Client.GetApiUrl()}/v1/game_version", Client.GetBaseHeaders(), cancellationToken);
                 ValidateResponse(response);
                 return response.Result;
             }, "Fetch game version", cancellationToken);

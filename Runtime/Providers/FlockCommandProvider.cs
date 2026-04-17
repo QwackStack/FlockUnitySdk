@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Flock.Models;
@@ -18,16 +17,14 @@ namespace Flock.Providers
 
             return await ExecuteAsync(async () =>
             {
-                var request = new GameCommandExecutionRequest
+                GameCommandExecutionRequest request = new GameCommandExecutionRequest
                 {
                     GameCommandId = gameCommandId,
                     Inputs = inputs
                 };
 
-                var response = await FlockHttpClient.PostAsync<GenericResponse<List<GameCommandExecutionResult>>>(
-                    new StringBuilder().Append(Client.GetApiUrl())
-                        .Append("/v1/game_command/execute")
-                        .ToString(), request, Client.GetBaseHeaders(), cancellationToken);
+                GenericResponse<List<GameCommandExecutionResult>> response = await FlockHttpClient.PostAsync<GenericResponse<List<GameCommandExecutionResult>>>(
+                    $"{Client.GetApiUrl()}/v1/game_command/execute", request, Client.GetBaseHeaders(), cancellationToken);
                 ValidateResponse(response);
                 return response.Result;
             }, "Execute game command", cancellationToken);
@@ -39,7 +36,7 @@ namespace Flock.Providers
         {
             RequireNotEmpty(playerDataId, "Player Data ID");
 
-            var inputs = new List<ICommandPayload>
+            List<ICommandPayload> inputs = new List<ICommandPayload>
             {
                 new UpdatePlayerDataInput { PlayerDataId = playerDataId, Data = data }
             };
@@ -54,7 +51,7 @@ namespace Flock.Providers
             RequireNotEmpty(playerDataId, "Player Data ID");
             RequireNotEmpty(key, "Key");
 
-            var inputs = new List<ICommandPayload>
+            List<ICommandPayload> inputs = new List<ICommandPayload>
             {
                 new UpdatePlayerDataKeyInput { PlayerDataId = playerDataId, Key = key, Value = value }
             };
@@ -69,7 +66,7 @@ namespace Flock.Providers
             RequireNotEmpty(playerDataId, "Player Data ID");
             RequireNotEmpty(currency, "Currency");
 
-            var inputs = new List<ICommandPayload>
+            List<ICommandPayload> inputs = new List<ICommandPayload>
             {
                 new AddGameFundsInput { PlayerDataId = playerDataId, Currency = currency, Amount = amount }
             };

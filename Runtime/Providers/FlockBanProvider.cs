@@ -1,4 +1,3 @@
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Flock.Models;
@@ -17,13 +16,8 @@ namespace Flock.Providers
 
             return await ExecuteAsync(async () =>
             {
-                var url = new StringBuilder().Append(Client.GetApiUrl())
-                    .Append("/v1/player-ban")
-                    .Append("?player_id=").Append(playerId)
-                    .ToString();
-
-                var response = await FlockHttpClient.GetAsync<GenericResponse<PlayerBan>>(
-                    url, Client.GetBaseHeaders(), cancellationToken);
+                GenericResponse<PlayerBan> response = await FlockHttpClient.GetAsync<GenericResponse<PlayerBan>>(
+                    $"{Client.GetApiUrl()}/v1/player-ban?player_id={playerId}", Client.GetBaseHeaders(), cancellationToken);
                 ValidateResponse(response);
                 return response.Result;
             }, "Get player ban", cancellationToken);

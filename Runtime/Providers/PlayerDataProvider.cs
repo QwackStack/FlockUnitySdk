@@ -1,4 +1,3 @@
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Flock.Models;
@@ -13,7 +12,7 @@ namespace Flock.Providers
 
         public PlayerDataProvider(FlockClient client) : base(client)
         {
-            _baseUrl = new StringBuilder().Append(client.GetApiUrl()).Append("/v1/player_data").ToString();
+            _baseUrl = $"{client.GetApiUrl()}/v1/player_data";
         }
 
         public async Task<PlayerData> GetByIdAsync(string playerDataId, CancellationToken cancellationToken = default)
@@ -22,26 +21,21 @@ namespace Flock.Providers
 
             return await ExecuteAsync(async () =>
             {
-                var response = await FlockHttpClient.GetAsync<GenericResponse<PlayerData>>(
-                    new StringBuilder().Append(_baseUrl).Append("/").Append(playerDataId).ToString(), Client.GetBaseHeaders(), cancellationToken);
+                GenericResponse<PlayerData> response = await FlockHttpClient.GetAsync<GenericResponse<PlayerData>>(
+                    $"{_baseUrl}/{playerDataId}", Client.GetBaseHeaders(), cancellationToken);
                 ValidateResponse(response);
                 return response.Result;
-            }, new StringBuilder().Append("Fetch player data ").Append(playerDataId).ToString(), cancellationToken);
+            }, $"Fetch player data {playerDataId}", cancellationToken);
         }
 
         public async Task<PaginatedResponse<PlayerData>> GetAllAsync(int page = 1, int limit = 100, string playerId = null, CancellationToken cancellationToken = default)
         {
             return await ExecuteAsync(async () =>
             {
-                var url = new StringBuilder().Append(_baseUrl)
-                    .Append("?page=").Append(page)
-                    .Append("&limit=").Append(limit);
-
-                if (!string.IsNullOrEmpty(playerId))
-                    url.Append("&player_id=").Append(playerId);
+                string url = $"{_baseUrl}?page={page}&limit={limit}{(!string.IsNullOrEmpty(playerId) ? $"&player_id={playerId}" : "")}";
 
                 return await FlockHttpClient.GetAsync<PaginatedResponse<PlayerData>>(
-                    url.ToString(), Client.GetBaseHeaders(), cancellationToken);
+                    url, Client.GetBaseHeaders(), cancellationToken);
             }, "Fetch player data list", cancellationToken);
         }
     }
