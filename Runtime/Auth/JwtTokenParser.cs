@@ -16,22 +16,18 @@ namespace Flock.Auth
         public static JwtTokenClaims Parse(string token)
         {
             if (string.IsNullOrWhiteSpace(token))
-            {
                 throw new ArgumentException("Token cannot be null or empty", nameof(token));
-            }
 
-            var parts = token.Split('.');
+            string[] parts = token.Split('.');
             if (parts.Length != 3)
-            {
                 throw new ArgumentException("Invalid JWT token format. Expected 3 parts separated by dots.");
-            }
 
             try
             {
                 // Decode the payload (second part)
-                var payload = parts[1];
-                var jsonPayload = Base64UrlDecode(payload);
-                var claims = JsonConvert.DeserializeObject<Dictionary<string, object>>(jsonPayload);
+                string payload = parts[1];
+                string jsonPayload = Base64UrlDecode(payload);
+                Dictionary<string, object> claims = JsonConvert.DeserializeObject<Dictionary<string, object>>(jsonPayload);
 
                 return new JwtTokenClaims
                 {
@@ -49,19 +45,16 @@ namespace Flock.Auth
             }
             catch (Exception ex)
             {
-                throw new ArgumentException(
-                    new StringBuilder().Append("Failed to parse JWT token: ").Append(ex.Message).ToString(), ex);
+                throw new ArgumentException($"Failed to parse JWT token: {ex.Message}", ex);
             }
         }
 
         private static string GetClaimValue(Dictionary<string, object> claims, params string[] possibleKeys)
         {
-            foreach (var key in possibleKeys)
+            foreach (string key in possibleKeys)
             {
                 if (claims.ContainsKey(key) && claims[key] != null)
-                {
                     return claims[key].ToString();
-                }
             }
             return null;
         }
@@ -75,10 +68,7 @@ namespace Flock.Auth
                     long exp = Convert.ToInt64(claims["exp"]);
                     return DateTimeOffset.FromUnixTimeSeconds(exp).UtcDateTime;
                 }
-                catch
-                {
-                    return null;
-                }
+                catch { return null; }
             }
             return null;
         }
@@ -92,10 +82,7 @@ namespace Flock.Auth
                     long iat = Convert.ToInt64(claims["iat"]);
                     return DateTimeOffset.FromUnixTimeSeconds(iat).UtcDateTime;
                 }
-                catch
-                {
-                    return null;
-                }
+                catch { return null; }
             }
             return null;
         }
@@ -109,14 +96,13 @@ namespace Flock.Auth
             // Pad with trailing '='s
             switch (output.Length % 4)
             {
-                case 0: break; // No pad chars in this case
-                case 2: output += "=="; break; // Two pad chars
-                case 3: output += "="; break; // One pad char
-                default:
-                    throw new ArgumentException("Invalid base64url string");
+                case 0: break;
+                case 2: output += "=="; break;
+                case 3: output += "="; break;
+                default: throw new ArgumentException("Invalid base64url string");
             }
 
-            var converted = Convert.FromBase64String(output);
+            byte[] converted = Convert.FromBase64String(output);
             return Encoding.UTF8.GetString(converted);
         }
     }

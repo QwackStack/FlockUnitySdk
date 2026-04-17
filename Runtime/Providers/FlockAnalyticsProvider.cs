@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Flock.Analytics;
@@ -21,7 +20,7 @@ namespace Flock.Providers
 
         public FlockAnalyticsProvider(FlockClient client) : base(client)
         {
-            _config = client.InitConfig.Analytics;
+            _config = client.InitConfig.AnalyticsConfig;
         }
 
         public string CurrentSessionId => _session?.ServerSessionId;
@@ -33,21 +32,17 @@ namespace Flock.Providers
             if (!_config.Enabled)
                 return;
 
-            var newPlayerId = Client.CurrentPlayerId;
+            string newPlayerId = Client.CurrentPlayerId;
 
             if (_initialized && _currentPlayerId != newPlayerId)
             {
-                Client.Logger.LogInfo(new StringBuilder()
-                    .Append("Player changed (").Append(_currentPlayerId)
-                    .Append(" -> ").Append(newPlayerId)
-                    .Append("), resetting analytics session")
-                    .ToString());
+                Client.Logger.LogInfo($"Player changed ({_currentPlayerId} -> {newPlayerId}), resetting analytics session");
 
                 if (_session != null)
                 {
                     if (_session.IsActive)
                     {
-                        var oldSnapshot = _session.End();
+                        FlockSessionSnapshot oldSnapshot = _session.End();
                         if (oldSnapshot != null)
                             await SendEndSessionAsync(oldSnapshot, cancellationToken);
                     }
@@ -72,16 +67,12 @@ namespace Flock.Providers
             _session.OnSessionTimedOut += HandleSessionTimedOut;
             _session.OnSessionEnding += HandleSessionEnding;
 
-            var crashed = _session.RecoverCrashedSession();
+            FlockSessionSnapshot crashed = _session.RecoverCrashedSession();
             if (crashed != null)
-            {
                 await SendEndSessionAsync(crashed, cancellationToken);
-            }
 
             if (_config.AutoStartSession)
-            {
                 await StartSessionAsync(cancellationToken);
-            }
         }
 
         public async Task<string> StartSessionAsync(CancellationToken cancellationToken = default)
@@ -94,9 +85,9 @@ namespace Flock.Providers
                 return null;
             }
 
-            var localId = _session.Start();
+            string localId = _session.Start();
 
-            var request = new SessionStartRequest
+            SessionStartRequest request = new SessionStartRequest
             {
                 PlayerId = Client.CurrentPlayerId,
                 Platform = _session.DeviceInfo?.Platform,
@@ -108,28 +99,21 @@ namespace Flock.Providers
 
             try
             {
-                var response = await ExecuteAsync(
+                SessionStartResponse response = await ExecuteAsync(
                     () => FlockHttpClient.PostAsync<SessionStartResponse>(
-                        new StringBuilder().Append(Client.GetApiUrl())
-                            .Append("/v1/analytics/sessions")
-                            .ToString(),
+                        $"{Client.GetApiUrl()}/v1/analytics/sessions",
                         request, Client.GetBaseHeaders(), cancellationToken),
                     "Start session", cancellationToken);
 
                 _session.ServerSessionId = response.SessionId;
 
-                Client.Logger.LogInfo(new StringBuilder()
-                    .Append("Session registered with server: ").Append(response.SessionId)
-                    .ToString());
+                Client.Logger.LogInfo($"Session registered with server: {response.SessionId}");
 
                 return response.SessionId;
             }
             catch (Exception ex)
             {
-                Client.Logger.LogWarning(new StringBuilder()
-                    .Append("Failed to register session with server, continuing locally: ")
-                    .Append(ex.Message)
-                    .ToString());
+                Client.Logger.LogWarning($"Failed to register session with server, continuing locally: {ex.Message}");
                 return localId;
             }
         }
@@ -142,11 +126,9 @@ namespace Flock.Providers
                 return;
             }
 
-            var snapshot = _session.End();
+            FlockSessionSnapshot snapshot = _session.End();
             if (snapshot != null)
-            {
                 await SendEndSessionAsync(snapshot, cancellationToken);
-            }
         }
 
         public void RecordScreenView(string screenName)
@@ -156,9 +138,7 @@ namespace Flock.Providers
 
             _session.RecordScreenView(screenName);
 
-            Client.Logger.LogDebug(new StringBuilder()
-                .Append("Screen view recorded: ").Append(screenName)
-                .ToString());
+            Client.Logger.LogDebug($"Screen view recorded: {screenName}");
         }
 
         public async Task TrackEventAsync(
@@ -170,7 +150,7 @@ namespace Flock.Providers
             RequireAuth();
             RequireNotEmpty(eventName, "Event name");
 
-            var request = new AnalyticsEventRequest
+            AnalyticsEventRequest request = new AnalyticsEventRequest
             {
                 PlayerId = Client.CurrentPlayerId,
                 EventName = eventName,
@@ -182,14 +162,11 @@ namespace Flock.Providers
 
             await ExecuteAsync(
                 () => FlockHttpClient.PostAsync<Dictionary<string, object>>(
-                    new StringBuilder().Append(Client.GetApiUrl())
-                        .Append("/v1/analytics/events/single")
-                        .ToString(),
+                    $"{Client.GetApiUrl()}/v1/analytics/events/single",
                     request, Client.GetBaseHeaders(), cancellationToken),
                 "Track event", cancellationToken);
 
-            Client.Logger.LogDebug(new StringBuilder()
-                .Append("Event tracked: ").Append(eventName).ToString());
+            Client.Logger.LogDebug($"Event tracked: {eventName}");
         }
 
         public async Task TrackEventsAsync(
@@ -201,7 +178,7 @@ namespace Flock.Providers
             if (events == null || events.Count == 0)
                 return;
 
-            foreach (var evt in events)
+            foreach (AnalyticsEventRequest evt in events)
             {
                 if (string.IsNullOrEmpty(evt.PlayerId))
                     evt.PlayerId = Client.CurrentPlayerId;
@@ -211,19 +188,15 @@ namespace Flock.Providers
                     evt.Timestamp = DateTime.UtcNow.ToString("o");
             }
 
-            var request = new AnalyticsEventsRequest { Events = events };
+            AnalyticsEventsRequest request = new AnalyticsEventsRequest { Events = events };
 
             await ExecuteAsync(
                 () => FlockHttpClient.PostAsync<Dictionary<string, object>>(
-                    new StringBuilder().Append(Client.GetApiUrl())
-                        .Append("/v1/analytics/events")
-                        .ToString(),
+                    $"{Client.GetApiUrl()}/v1/analytics/events",
                     request, Client.GetBaseHeaders(), cancellationToken),
                 "Track events batch", cancellationToken);
 
-            Client.Logger.LogDebug(new StringBuilder()
-                .Append("Batch events tracked: ").Append(events.Count).Append(" events")
-                .ToString());
+            Client.Logger.LogDebug($"Batch events tracked: {events.Count} events");
         }
 
         public async Task RecordTransactionAsync(
@@ -238,7 +211,7 @@ namespace Flock.Providers
             string currencyId = null,
             CancellationToken cancellationToken = default)
         {
-            var request = new AnalyticsTransactionRequest
+            AnalyticsTransactionRequest request = new AnalyticsTransactionRequest
             {
                 Amount = amount,
                 CurrencyCode = currencyCode,
@@ -261,10 +234,7 @@ namespace Flock.Providers
             RequireAuth();
 
             if (request.Amount <= 0)
-                throw new FlockValidationException(new StringBuilder()
-                    .Append("Transaction amount must be greater than zero, got: ")
-                    .Append(request.Amount)
-                    .ToString());
+                throw new FlockValidationException($"Transaction amount must be greater than zero, got: {request.Amount}");
 
             if (string.IsNullOrEmpty(request.PlayerId))
                 request.PlayerId = Client.CurrentPlayerId;
@@ -275,16 +245,11 @@ namespace Flock.Providers
 
             await ExecuteAsync(
                 () => FlockHttpClient.PostAsync<Dictionary<string, object>>(
-                    new StringBuilder().Append(Client.GetApiUrl())
-                        .Append("/v1/analytics/transactions")
-                        .ToString(),
+                    $"{Client.GetApiUrl()}/v1/analytics/transactions",
                     request, Client.GetBaseHeaders(), cancellationToken),
                 "Record transaction", cancellationToken);
 
-            Client.Logger.LogDebug(new StringBuilder()
-                .Append("Transaction recorded: ").Append(request.Amount)
-                .Append(" ").Append(request.CurrencyCode)
-                .ToString());
+            Client.Logger.LogDebug($"Transaction recorded: {request.Amount} {request.CurrencyCode}");
         }
 
         private async void HandleHeartbeat()
@@ -299,11 +264,11 @@ namespace Flock.Providers
                 return;
 
             _heartbeatInFlight = true;
-            var token = _session.SessionToken;
+            CancellationToken token = _session.SessionToken;
 
             try
             {
-                var snapshot = _session.TakeSnapshot();
+                FlockSessionSnapshot snapshot = _session.TakeSnapshot();
 
                 await TrackEventAsync(
                     "sdk_heartbeat",
@@ -322,10 +287,7 @@ namespace Flock.Providers
             }
             catch (Exception ex)
             {
-                Client.Logger.LogWarning(new StringBuilder()
-                    .Append("Heartbeat event failed: ")
-                    .Append(ex.Message)
-                    .ToString());
+                Client.Logger.LogWarning($"Heartbeat event failed: {ex.Message}");
             }
             finally
             {
@@ -342,10 +304,7 @@ namespace Flock.Providers
             }
             catch (Exception ex)
             {
-                Client.Logger.LogWarning(new StringBuilder()
-                    .Append("End session on quit failed: ")
-                    .Append(ex.Message)
-                    .ToString());
+                Client.Logger.LogWarning($"End session on quit failed: {ex.Message}");
             }
         }
 
@@ -358,10 +317,7 @@ namespace Flock.Providers
             }
             catch (Exception ex)
             {
-                Client.Logger.LogWarning(new StringBuilder()
-                    .Append("Session timeout rotation failed: ")
-                    .Append(ex.Message)
-                    .ToString());
+                Client.Logger.LogWarning($"Session timeout rotation failed: {ex.Message}");
             }
         }
 
@@ -369,14 +325,14 @@ namespace Flock.Providers
             FlockSessionSnapshot snapshot,
             CancellationToken cancellationToken = default)
         {
-            var sessionId = snapshot.ServerSessionId ?? snapshot.SessionId;
+            string sessionId = snapshot.ServerSessionId ?? snapshot.SessionId;
             if (string.IsNullOrEmpty(sessionId))
             {
                 Client.Logger.LogWarning("Cannot end session: no session ID available");
                 return;
             }
 
-            var request = new SessionEndRequest
+            SessionEndRequest request = new SessionEndRequest
             {
                 DurationSeconds = (int)snapshot.DurationSeconds,
                 ScreensViewed = snapshot.ScreensViewed,
@@ -388,31 +344,22 @@ namespace Flock.Providers
             {
                 await ExecuteAsync(
                     () => FlockHttpClient.PatchAsync<Dictionary<string, object>>(
-                        new StringBuilder().Append(Client.GetApiUrl())
-                            .Append("/v1/analytics/sessions/")
-                            .Append(sessionId)
-                            .ToString(),
+                        $"{Client.GetApiUrl()}/v1/analytics/sessions/{sessionId}",
                         request, Client.GetBaseHeaders(), cancellationToken),
                     "End session", cancellationToken);
 
-                Client.Logger.LogInfo(new StringBuilder()
-                    .Append("Session ended on server: ").Append(sessionId)
-                    .Append(snapshot.WasCrash ? " (recovered from crash)" : "")
-                    .ToString());
+                Client.Logger.LogInfo($"Session ended on server: {sessionId}{(snapshot.WasCrash ? " (recovered from crash)" : "")}");
             }
             catch (Exception ex)
             {
-                Client.Logger.LogWarning(new StringBuilder()
-                    .Append("Failed to end session on server: ").Append(ex.Message)
-                    .ToString());
+                Client.Logger.LogWarning($"Failed to end session on server: {ex.Message}");
             }
         }
 
         private void RequireAuth()
         {
             if (!Client.IsAuthenticated)
-                throw new FlockAuthException(
-                    "Analytics requires authentication. Call a login method first.");
+                throw new FlockAuthException("Analytics requires authentication. Call a login method first.");
         }
     }
 }

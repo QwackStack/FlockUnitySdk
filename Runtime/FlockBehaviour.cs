@@ -24,7 +24,7 @@ namespace Flock
                     if (_instance != null)
                         return _instance;
 
-                    var go = new GameObject("FlockBehaviour");
+                    GameObject go = new GameObject("FlockBehaviour");
                     go.hideFlags = HideFlags.HideInHierarchy | HideFlags.HideInInspector;
                     _instance = go.AddComponent<FlockBehaviour>();
                     DontDestroyOnLoad(go);

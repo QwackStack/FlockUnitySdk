@@ -1,5 +1,4 @@
 using System;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Flock.Exceptions;
@@ -50,13 +49,8 @@ namespace Flock.Http
                 {
                     attempt++;
                     if (attempt > 1)
-                    {
-                        _logger?.LogDebug(new StringBuilder().Append("Attempt ")
-                            .Append(attempt)
-                            .Append("/")
-                            .Append(_policy.MaxRetries + 1)
-                            .ToString());
-                    }
+                        _logger?.LogDebug($"Attempt {attempt}/{_policy.MaxRetries + 1}");
+
                     return await operation();
                 }
                 catch (Exception ex) when (shouldRetryOnException && attempt <= _policy.MaxRetries)
@@ -64,14 +58,7 @@ namespace Flock.Http
                     if (ex is FlockAuthException || ex is FlockValidationException)
                         throw;
 
-                    _logger?.LogWarning(new StringBuilder().Append("Attempt ")
-                        .Append(attempt)
-                        .Append(" failed: ")
-                        .Append(ex.Message)
-                        .Append(". Retrying in ")
-                        .Append(delay.TotalSeconds)
-                        .Append("s...")
-                        .ToString());
+                    _logger?.LogWarning($"Attempt {attempt} failed: {ex.Message}. Retrying in {delay.TotalSeconds}s...");
                     await Task.Delay(CalculateDelay(delay), cancellationToken);
 
                     delay = TimeSpan.FromSeconds(Math.Min(
@@ -81,11 +68,7 @@ namespace Flock.Http
                 }
                 catch (Exception ex)
                 {
-                    _logger?.LogError(
-                        new StringBuilder().Append("Operation failed after ")
-                            .Append(attempt)
-                            .Append(" attempt(s)")
-                            .ToString(), ex);
+                    _logger?.LogError($"Operation failed after {attempt} attempt(s)", ex);
                     throw;
                 }
             }

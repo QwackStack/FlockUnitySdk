@@ -61,7 +61,7 @@ namespace Flock.Config
         public FlockInitConfig ToInitConfig()
         {
             return new FlockInitConfig(apiUrl, apiKey, gameId, gameVersionId, enableDebugLogs,
-                analytics: new FlockAnalyticsConfig
+                analyticsConfig: new FlockAnalyticsConfig
                 {
                     Enabled = analyticsEnabled,
                     AutoStartSession = analyticsAutoStartSession,

@@ -76,4 +76,13 @@ namespace Flock.Models
         [JsonProperty("refresh_token")]
         public string RefreshToken { get; set; }
     }
+
+    public class PlayerRefreshTokenRequest
+    {
+        [JsonProperty("player_id")]
+        public string PlayerId { get; set; }
+
+        [JsonProperty("refresh_token")]
+        public string RefreshToken { get; set; }
+    }
 }
