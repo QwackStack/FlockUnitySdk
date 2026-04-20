@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Flock.Auth;
@@ -35,12 +36,12 @@ namespace Flock
         private FlockConfigProvider _config;
         private FlockSchemaProvider _schema;
         private FlockGameProvider _game;
-        private PlayerDataProvider _playerData;
+        private PlayerProvider _playerData;
         private FlockCommandProvider _commands;
         private FlockShopProvider _shop;
         private FlockBanProvider _ban;
         private FlockSession _session;
-        private FlockAnalyticsProvider _analytics;
+        private IAnalyticProvider _analytics;
 
         public FlockClient(FlockInitConfig initConfig, IFlockLogger logger = null)
         {
@@ -53,7 +54,7 @@ namespace Flock
 
         private void InitializeServices()
         {
-            _playerData = new PlayerDataProvider(this);
+            _playerData = new PlayerProvider(this);
             _config = new FlockConfigProvider(this);
             _schema = new FlockSchemaProvider(this);
             _game = new FlockGameProvider(this);
@@ -61,10 +62,15 @@ namespace Flock
             _shop = new FlockShopProvider(this);
             _ban = new FlockBanProvider(this);
 
-            if (_initConfig.AnalyticsConfig != null && _initConfig.AnalyticsConfig.Enabled)
+            if (_initConfig.AnalyticsConfig.Enabled)
             {
                 _session = new FlockSession(_initConfig.AnalyticsConfig, _logger);
                 _analytics = new FlockAnalyticsProvider(this);
+            }
+            else
+            {
+                _session = new FlockSession(_initConfig.AnalyticsConfig, _logger);
+                _analytics = new NullAnalyticsProvider(this);
             }
         }
 
@@ -75,11 +81,11 @@ namespace Flock
         public FlockConfigProvider Config => _config;
         public FlockSchemaProvider Schema => _schema;
         public FlockGameProvider Game => _game;
-        public PlayerDataProvider PlayerData => _playerData;
+        public PlayerProvider Player  => _playerData;
         public FlockCommandProvider Commands => _commands;
         public FlockShopProvider Shop => _shop;
         public FlockBanProvider Ban => _ban;
-        public FlockAnalyticsProvider Analytics => _analytics;
+        public IAnalyticProvider Analytics => _analytics;
 
         internal FlockSession Session => _session;
         public bool HasActiveSession => _session?.IsActive ?? false;
@@ -253,7 +259,9 @@ namespace Flock
             _logger.LogInfo("Clearing authentication tokens");
 
             if (_session != null && _session.IsActive)
+            {
                 _session.Reset();
+            }
 
             _accessToken = null;
             _refreshToken = null;

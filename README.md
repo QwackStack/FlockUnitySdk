@@ -5,12 +5,13 @@ The Flock Unity SDK provides access to Flock's game backend services from Unity 
 ## Features
 
 - Player authentication (email, device, registration)
-- Game configuration (fetched from game patch endpoints)
+- Game configuration (fetched from game patch endpoints, filterable by tag)
 - Config schema validation (backend validation of config types)
 - Game and game version metadata
-- Player data (read with pagination)
+- Player data and player templates (read with pagination, template lookup by ID or name)
 - Shop (browse shops, items, purchase, inventory)
 - Game commands (server-side operations: update player data, add funds)
+- Analytics (session tracking, events, transactions — no-op safe when disabled)
 - Automatic retry with exponential backoff
 - JWT token management
 
@@ -83,10 +84,14 @@ var configs = await client.Config.GetAllAsync<GameplayConfig>();
 var config = await client.Config.GetByIdAsync<GameplayConfig>("config-id");
 var bySchema = await client.Config.GetBySchemaAsync<GameplayConfig>("schema-id");
 
+// Game configs by tag (currency, gameplay — maps to /v1/game_config)
+var currencyConfigs = await client.Config.GetGameConfigsAsync(SchemaTag.currency);
+var gameplayConfigs = await client.Config.GetGameConfigsByVersionAsync(SchemaTag.gameplay);
+var typed = await client.Config.GetGameConfigsAsync<CurrencyConfig>(SchemaTag.currency);
+
 // Config schema validation (backend concern, most games skip this)
-var schemas = await client.Schema.GetAllSchemasAsync();
-var schemas = await client.Schema.GetAllSchemasAsync(tag: "gameplay");
-var versionSchemas = await client.Schema.GetSchemasByVersionAsync();
+var schemas = await client.Schema.GetAllSchemasAsync(SchemaTag.gameplay);
+var versionSchemas = await client.Schema.GetSchemasByVersionAsync(SchemaTag.currency);
 var schema = await client.Schema.GetSchemaByIdAsync("schema-id");
 var configs = await client.Schema.GetSchemaConfigsAsync("schema-id");
 
@@ -95,8 +100,15 @@ var game = await client.Game.GetGameAsync();
 var version = await client.Game.GetGameVersionAsync();
 
 // Player data (read-only, create/update via game commands)
-var data = await client.PlayerData.GetByIdAsync("player-data-id");
-var all = await client.PlayerData.GetAllAsync(page: 1, limit: 10);
+var data = await client.Player.GetDataByIdAsync("player-data-id");
+var all = await client.Player.GetAllDataAsync(page: 1, limit: 10);
+var byPlayer = await client.Player.GetAllDataAsync(playerId: "player-id");
+
+// Player templates
+var templates = await client.Player.GetTemplatesAsync();
+var template = await client.Player.GetTemplateByIdAsync("template-id");
+var template = await client.Player.GetTemplateByNameAsync("currency");
+var playerData = await client.Player.GetTemplatePlayerDataAsync("template-id");
 
 // Game commands — server-side operations (gameCommandId from backend dashboard)
 var results = await client.Commands.UpdatePlayerDataAsync(
@@ -146,6 +158,13 @@ Every API request includes these headers:
 | Game Info | `GET /v1/game` | API Key |
 | Game Version | `GET /v1/game_version` | API Key |
 | Player Data | `GET /v1/player_data` | API Key |
+| Player Data by ID | `GET /v1/player_data/{id}` | API Key |
+| Player Templates | `GET /v1/player_template` | API Key |
+| Player Template by ID | `GET /v1/player_template/{id}` | API Key |
+| Player Template by Name | `GET /v1/player_template/by-name/{name}` | API Key |
+| Template Player Data | `GET /v1/player_template/{id}/player-data` | API Key |
+| Game Configs by Tag | `GET /v1/game_config?tag=` | API Key |
+| Game Configs by Version/Tag | `GET /v1/game_config/version?tag=` | API Key |
 | Execute Command | `POST /v1/game_command/execute` | API Key |
 | List Shops | `GET /v1/shop` | API Key |
 | Get Shop | `GET /v1/shop/{shop_id}` | API Key |

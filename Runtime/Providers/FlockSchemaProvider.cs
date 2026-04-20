@@ -5,7 +5,7 @@ using Flock.Models;
 using Flock.Http;
 using Flock.Interfaces;
 
-namespace Flock.Config
+namespace Flock.Providers
 {
     public class FlockSchemaProvider : FlockProviderBase, ISchemaProvider
     {

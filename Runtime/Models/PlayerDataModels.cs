@@ -1,9 +1,44 @@
 using System;
 using System.Collections.Generic;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace Flock.Models
 {
+    public enum PlayerTemplateTag
+    {
+        gameplay,
+        currency,
+        achievement
+    }
+
+    public class PlayerTemplateSchema
+    {
+        [JsonProperty("id")]
+        public string Id { get; set; }
+
+        [JsonProperty("name")]
+        public string Name { get; set; }
+
+        [JsonProperty("game_version_id")]
+        public string GameVersionId { get; set; }
+
+        [JsonProperty("schema")]
+        public Dictionary<string, object> Schema { get; set; }
+
+        [JsonProperty("data")]
+        public Dictionary<string, object> Data { get; set; }
+
+        [JsonProperty("tag")]
+        public string Tag { get; set; }
+
+        public T GetDataAs<T>()
+        {
+            if (Data == null) return default;
+            return JObject.FromObject(Data).ToObject<T>();
+        }
+    }
+
     public class PlayerData
     {
         [JsonProperty("id")]
