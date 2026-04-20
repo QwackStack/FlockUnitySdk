@@ -4,12 +4,12 @@ using Flock.Models;
 using Flock.Auth;
 using Flock.Config;
 using Flock.Providers;
-using Flock.Analytics;
 
 namespace Flock.Interfaces
 {
     public interface IFlockClient
     {
+        //TODO add summaries
         string CurrentPlayerId { get; }
         string GameId { get; }
         string GameVersionId { get; }
@@ -19,10 +19,10 @@ namespace Flock.Interfaces
         FlockConfigProvider Config { get; }
         FlockSchemaProvider Schema { get; }
         FlockGameProvider Game { get; }
-        PlayerDataProvider PlayerData { get; }
+        PlayerProvider Player { get; }
         FlockCommandProvider Commands { get; }
         FlockShopProvider Shop { get; }
-        FlockAnalyticsProvider Analytics { get; }
+        IAnalyticProvider Analytics { get; }
 
         bool HasActiveSession { get; }
         string CurrentSessionId { get; }

@@ -5,12 +5,13 @@ using System.Threading.Tasks;
 using Flock.Analytics;
 using Flock.Exceptions;
 using Flock.Http;
+using Flock.Interfaces;
 using Flock.Models;
 using UnityEngine;
 
 namespace Flock.Providers
 {
-    public class FlockAnalyticsProvider : FlockProviderBase
+    public class FlockAnalyticsProvider : FlockProviderBase ,IAnalyticProvider
     {
         private readonly FlockAnalyticsConfig _config;
         private FlockSession _session;
@@ -24,10 +25,10 @@ namespace Flock.Providers
         }
 
         public string CurrentSessionId => _session?.ServerSessionId;
-        public bool HasActiveSession => _session?.IsActive ?? false;
+        private bool HasActiveSession => _session?.IsActive ?? false;
         public FlockSessionSnapshot CurrentSnapshot => _session?.IsActive == true ? _session.TakeSnapshot() : null;
 
-        internal async Task InitializeAsync(CancellationToken cancellationToken = default)
+        public async Task InitializeAsync(CancellationToken cancellationToken = default)
         {
             if (!_config.Enabled)
                 return;
@@ -75,7 +76,7 @@ namespace Flock.Providers
                 await StartSessionAsync(cancellationToken);
         }
 
-        public async Task<string> StartSessionAsync(CancellationToken cancellationToken = default)
+        private async Task<string> StartSessionAsync(CancellationToken cancellationToken = default)
         {
             RequireAuth();
 

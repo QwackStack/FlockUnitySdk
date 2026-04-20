@@ -5,6 +5,28 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-04-20
+
+### Added
+- `GetGameConfigsAsync(SchemaTag)` and `GetGameConfigsByVersionAsync(SchemaTag)` on `FlockConfigProvider` — fetch game configs filtered by tag (`currency`, `gameplay`, etc.) via `GET /v1/game_config` and `GET /v1/game_config/version`
+- Both methods have typed `<T>` overloads using `GetDataAs<T>()`
+- `PlayerProvider` — centralized provider for all player data and player template operations, replaces `PlayerDataProvider`
+- `client.Player.GetTemplatesAsync` — list all player templates for the game version
+- `client.Player.GetTemplateByIdAsync` — get a single player template by ID
+- `client.Player.GetTemplateByNameAsync` — get a single player template by name
+- `client.Player.GetTemplatePlayerDataAsync` — get all player data records for a template
+- `PlayerTemplateSchema` model with `GetDataAs<T>()` helper
+- `PlayerTemplateTag` enum (`gameplay`, `currency`, `achievement`)
+- `IAnalyticProvider` interface — decouples analytics callers from the concrete provider
+- `NullAnalyticsProvider` — no-op implementation used when analytics is disabled, eliminates null checks on `client.Analytics`
+
+### Changed
+- `PlayerDataProvider` renamed to `PlayerProvider`, exposed on `FlockClient` as `client.Player` (was `client.PlayerData`)
+- `IPlayerService` updated to include all player template methods
+- `IFlockClient.Analytics` now typed as `IAnalyticProvider` instead of `FlockAnalyticsProvider`
+- `FlockAnalyticsProvider` now implements `IAnalyticProvider`
+- Analytics no longer requires a null check before use — when `Enabled: false`, `client.Analytics` returns a `NullAnalyticsProvider` that silently no-ops all calls
+
 ## [1.4.0] - 2026-04-01
 
 ### Added

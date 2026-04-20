@@ -11,10 +11,12 @@ namespace Flock.Interfaces
         gameplay,
         currency,
         asset,
-        feature
+        feature,
+        empty
     }
     public interface ISchemaProvider
     {
+        //TODO add summaries
         Task<List<GameConfigSchema>> GetAllSchemasAsync(SchemaTag tag , CancellationToken cancellationToken = default);
         Task<List<GameConfigSchema>> GetSchemasByVersionAsync(SchemaTag tag , CancellationToken cancellationToken = default);
         Task<GameConfigSchema> GetSchemaByIdAsync(string schemaId, CancellationToken cancellationToken = default);
