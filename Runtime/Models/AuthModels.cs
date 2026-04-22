@@ -68,6 +68,51 @@ namespace Flock.Models
         public string Name { get; set; }
     }
 
+    public class PlayerGoogleLoginRequest
+    {
+        [JsonProperty("id_token")]
+        public string IdToken { get; set; }
+    }
+
+    public class PlayerGoogleRegistrationRequest
+    {
+        [JsonProperty("id_token")]
+        public string IdToken { get; set; }
+
+        [JsonProperty("name")]
+        public string Name { get; set; }
+    }
+
+    public class PlayerAppleLoginRequest
+    {
+        [JsonProperty("identity_token")]
+        public string IdentityToken { get; set; }
+    }
+
+    public class PlayerAppleRegistrationRequest
+    {
+        [JsonProperty("identity_token")]
+        public string IdentityToken { get; set; }
+
+        [JsonProperty("name")]
+        public string Name { get; set; }
+    }
+
+    public class PlayerSteamLoginRequest
+    {
+        [JsonProperty("session_ticket")]
+        public string SessionTicket { get; set; }
+    }
+
+    public class PlayerSteamRegistrationRequest
+    {
+        [JsonProperty("session_ticket")]
+        public string SessionTicket { get; set; }
+
+        [JsonProperty("name")]
+        public string Name { get; set; }
+    }
+
     public class PlayerLoginResponse
     {
         [JsonProperty("access_token")]

@@ -15,7 +15,7 @@ namespace Flock.Interfaces
         string GameVersionId { get; }
         bool IsAuthenticated { get; }
         JwtTokenClaims TokenClaims { get; }
-
+        FlockAuthProvider Authentication { get; }
         FlockConfigProvider Config { get; }
         FlockSchemaProvider Schema { get; }
         FlockGameProvider Game { get; }
@@ -23,16 +23,8 @@ namespace Flock.Interfaces
         FlockCommandProvider Commands { get; }
         FlockShopProvider Shop { get; }
         IAnalyticProvider Analytics { get; }
-
         bool HasActiveSession { get; }
         string CurrentSessionId { get; }
-
-        Task<PlayerLoginResponse> LoginWithEmailAsync(string email, string password, CancellationToken cancellationToken = default);
-        Task<PlayerLoginResponse> LoginWithDeviceAsync(string deviceId, CancellationToken cancellationToken = default);
-        Task<PlayerLoginResponse> RegisterWithEmailAsync(string email, string password, string name = null, CancellationToken cancellationToken = default);
-        Task<PlayerLoginResponse> RegisterWithDeviceAsync(string deviceId, string name = null, CancellationToken cancellationToken = default);
-
-        void ClearTokens();
         string GetApiUrl();
     }
 }
