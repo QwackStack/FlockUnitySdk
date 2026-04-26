@@ -41,6 +41,7 @@ namespace Flock
         private FlockCommandProvider _commands;
         private FlockShopProvider _shop;
         private FlockBanProvider _ban;
+        private FlockAssetProvider _asset;
         private FlockSession _session;
         private IAnalyticProvider _analytics;
 
@@ -62,6 +63,7 @@ namespace Flock
             _commands = new FlockCommandProvider(this);
             _shop = new FlockShopProvider(this);
             _ban = new FlockBanProvider(this);
+            _asset = new FlockAssetProvider(this);
             _authentication = new FlockAuthProvider(this);
 
             if (_initConfig.AnalyticsConfig.Enabled)
@@ -88,6 +90,7 @@ namespace Flock
         public FlockCommandProvider Commands => _commands;
         public FlockShopProvider Shop => _shop;
         public FlockBanProvider Ban => _ban;
+        public FlockAssetProvider Asset => _asset;
         public IAnalyticProvider Analytics => _analytics;
 
         internal FlockSession Session => _session;

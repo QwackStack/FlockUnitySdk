@@ -10,6 +10,25 @@ namespace Flock.Config
         public string GameId { get; set; }
         public string GameVersionId { get; set; }
         public bool EnableDebugLogs { get; set; }
+        /// <summary>
+        /// When true, asset downloads are cached on disk keyed by asset ID and the
+        /// asset's <c>UpdatedAt</c>. Later downloads of the same asset version
+        /// are served from disk without hitting S3.
+        /// </summary>
+        public bool EnableAssetCache { get; set; } = true;
+
+        /// <summary>
+        /// Absolute path for the asset cache directory. When null/empty, defaults to
+        /// <c>Application.persistentDataPath/flock_assets/</c>.
+        /// </summary>
+        public string AssetCacheDirectory { get; set; }
+
+        /// <summary>
+        /// Maximum size of the on-disk asset cache in megabytes. When the cache exceeds
+        /// this size, least-recently-used entries are evicted until it fits. Default
+        /// <c>100</c> MB; set to <c>0</c> for unlimited.
+        /// </summary>
+        public int AssetCacheMaxSizeMB { get; set; } = 100;
         public RetryPolicy RetryPolicy { get; set; }
         /// <summary>
         /// Flock analytics Settings

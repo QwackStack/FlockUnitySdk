@@ -22,5 +22,8 @@ namespace Flock.Interfaces
 
         Task<List<GameConfigSchema>> GetGameConfigsByVersionAsync(SchemaTag tag , CancellationToken cancellationToken = default);
         Task<List<T>> GetGameConfigsByVersionAsync<T>(SchemaTag tag, CancellationToken cancellationToken = default);
+
+        Task<GameConfigSchema> GetPlayerFeaturesAsync(string playerId, CancellationToken cancellationToken = default);
+        Task<T> GetPlayerFeaturesAsync<T>(string playerId, CancellationToken cancellationToken = default);
     }
 }
