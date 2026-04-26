@@ -22,6 +22,8 @@ namespace Flock.Interfaces
         PlayerProvider Player { get; }
         FlockCommandProvider Commands { get; }
         FlockShopProvider Shop { get; }
+        FlockBanProvider Ban { get; }
+        FlockAssetProvider Asset { get; }
         IAnalyticProvider Analytics { get; }
         bool HasActiveSession { get; }
         string CurrentSessionId { get; }

@@ -102,5 +102,25 @@ namespace Flock.Providers
             List<GameConfigSchema> configs = await GetGameConfigsByVersionAsync(tag, cancellationToken);
             return configs.Select(c => c.GetDataAs<T>()).ToList();
         }
+
+        public async Task<GameConfigSchema> GetPlayerFeaturesAsync(string playerId, CancellationToken cancellationToken = default)
+        {
+            RequireNotEmpty(playerId, "Player ID");
+
+            return await ExecuteAsync(async () =>
+            {
+                string url = $"{Client.GetApiUrl()}/v1/game_config/player/{playerId}/features";
+                GenericResponse<GameConfigSchema> response = await FlockHttpClient.GetAsync<GenericResponse<GameConfigSchema>>(
+                    url, Client.GetBaseHeaders(), cancellationToken);
+                ValidateResponse(response);
+                return response.Result;
+            }, $"Fetch feature config for player {playerId}", cancellationToken);
+        }
+
+        public async Task<T> GetPlayerFeaturesAsync<T>(string playerId, CancellationToken cancellationToken = default)
+        {
+            GameConfigSchema config = await GetPlayerFeaturesAsync(playerId, cancellationToken);
+            return config.GetDataAs<T>();
+        }
     }
 }

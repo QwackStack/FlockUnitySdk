@@ -5,6 +5,42 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] - 2026-04-26
+
+### Added
+- `FlockAssetProvider` — new provider exposed as `client.Asset`
+- `client.Asset.GetAllAsync` — list all assets for the game via `GET /v1/asset`
+- `client.Asset.GetByIdAsync` — fetch a single asset by ID via `GET /v1/asset/{asset_id}`
+- `client.Asset.DownloadAsync<T>` — generic typed download helper with four overloads:
+  - `(string assetId)` — fetches the schema then downloads
+  - `(AssetSchema asset)` — skips the lookup when the caller already has the schema
+  - `(IEnumerable<string> assetIds)` — batch download in parallel
+  - `(IEnumerable<AssetSchema> assets)` — batch download in parallel from pre-fetched schemas
+  - Supported `T`: `Texture2D`, `Sprite`, `AudioClip`, `string`, `byte[]`
+- `client.Asset.GetByNameAsync` — client-side stopgap that fetches all assets and filters by name (O(N) until a backend `/v1/asset/by-name/{name}` endpoint exists)
+- Disk cache for asset downloads under `Application.persistentDataPath/flock_assets/`, keyed by asset ID + `UpdatedAt`. Subsequent downloads of the same asset version are loaded from disk via `file://` URLs so all `T` types still go through the existing `UnityWebRequest` extractor.
+- `FlockInitConfig.EnableAssetCache` — toggle the disk cache (default `true`)
+- `FlockInitConfig.AssetCacheDirectory` — override the cache directory; defaults to `Application.persistentDataPath/flock_assets/` when null/empty
+- `FlockInitConfig.AssetCacheMaxSizeMB` — cap total cache size in MB; oldest entries are evicted (LRU) when exceeded. Default `100` MB; set to `0` for unlimited
+- `client.Asset.CacheDirectory` — resolved absolute path of the active cache directory
+- `client.Asset.ClearCache` — wipe the on-disk cache
+- Cache safety: atomic writes (`.tmp` + move), automatic deletion of older versions of the same asset on `UpdatedAt` change, and asset ID sanitization to prevent path traversal
+- README "Platform notes" — documents that the disk cache should be disabled on WebGL builds (`Application.persistentDataPath` is IndexedDB-backed and doesn't support synchronous file writes)
+- `AssetSchema` model with `S3DownloadUrl` for direct downloads
+- `IAssetProvider` interface
+- `client.Config.GetPlayerFeaturesAsync` — get the feature config for the game version a player was last logged into via `GET /v1/game_config/player/{player_id}/features`, with typed `<T>` overload
+- `client.Game.GetGameVersionByNameAsync` — fetch a game version by name via `GET /v1/game_version/by-name/{name}`
+- `client.RefreshTokenAsync` — explicit token refresh via `POST /v1/player/token/refresh`; the SDK already refreshes silently on 401, this exposes manual control
+- `client.OnSessionExpired` event — fires when a refresh attempt fails so the game can show a re-login UI
+- `FlockBanProvider` — exposed as `client.Ban`
+- `client.Ban.GetPlayerBanAsync` — fetch the active ban (if any) for a player via `GET /v1/player-ban`
+- `PlayerBan` and `FeatureBan` models
+- `IFlockClient` now exposes `Ban` and `Asset`
+
+### Changed
+- `IConfigProvider` extended with `GetPlayerFeaturesAsync` (and typed overload)
+- All v1 endpoints in the OpenAPI spec are now implemented in the SDK
+
 ## [1.6.0] - 2026-04-22
 
 ### Added
