@@ -257,7 +257,7 @@ namespace Flock.Analytics
         private void Subscribe()
         {
             _behaviour.OnTick += HandleTick;
-            _behaviour.OnPause += HandlePause;
+            _behaviour.OnAppBackgrounded += HandleAppBackgrounded;
             _behaviour.OnQuit += HandleQuit;
         }
 
@@ -267,7 +267,7 @@ namespace Flock.Analytics
                 return;
 
             _behaviour.OnTick -= HandleTick;
-            _behaviour.OnPause -= HandlePause;
+            _behaviour.OnAppBackgrounded -= HandleAppBackgrounded;
             _behaviour.OnQuit -= HandleQuit;
         }
 
@@ -311,18 +311,18 @@ namespace Flock.Analytics
             }
         }
 
-        private void HandlePause(bool paused)
+        private void HandleAppBackgrounded(bool isBackgrounded)
         {
             if (!_active)
                 return;
 
-            if (paused)
+            if (isBackgrounded)
             {
                 _pauseCount++;
                 _isPaused = true;
                 _pausedAtRealtime = Time.realtimeSinceStartup;
                 PersistState();
-                _logger.LogDebug($"Session paused: {SessionId}");
+                _logger.LogDebug($"Session backgrounded: {SessionId}");
             }
             else
             {

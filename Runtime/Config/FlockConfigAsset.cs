@@ -1,5 +1,6 @@
 using Flock.Analytics;
 using UnityEngine;
+using UnityEngine.Serialization;
 
 namespace Flock.Config
 {
@@ -11,14 +12,18 @@ namespace Flock.Config
         public string apiUrl = "https://api-flock.qwacks.com";
 
         [Tooltip("Your Flock API Key")]
-        [SerializeField, HideInInspector]
-        private string apiKey;
+        public string apiKey;
 
         [Tooltip("Your Game ID")]
         public string gameId;
 
-        [Tooltip("Your Game Version ID")]
-        public string gameVersionId;
+        [Tooltip("Your Game Version name. The matching version ID is fetched from the backend on SDK init.")]
+        [FormerlySerializedAs("gameVersionId")]
+        public string gameVersion;
+
+        [Header("Codegen")]
+        [Tooltip("Project-relative folder where 'Flock > Sync Schemas' writes generated .cs files (and 'Clean Generated' wipes). Must start with 'Assets/'. Created automatically if missing. Treat this folder as Flock-owned — files in it will be deleted on regen/clean.")]
+        public string generatedCodePath = "Assets/Flock/Generated";
 
         [Header("Optional Settings")]
         [Tooltip("Enable detailed debug logging")]
@@ -60,7 +65,7 @@ namespace Flock.Config
 
         public FlockInitConfig ToInitConfig()
         {
-            return new FlockInitConfig(apiUrl, apiKey, gameId, gameVersionId, enableDebugLogs,
+            return new FlockInitConfig(apiUrl, apiKey, gameId, gameVersion, enableDebugLogs,
                 analyticsConfig: new FlockAnalyticsConfig
                 {
                     Enabled = analyticsEnabled,
@@ -74,6 +79,29 @@ namespace Flock.Config
                     FpsSampleIntervalSeconds = analyticsFpsSampleInterval
                 });
         }
+
+#if UNITY_EDITOR
+        [System.NonSerialized] private string _lastSeenGameVersion;
+        [System.NonSerialized] private bool _versionTracked;
+
+        private void OnValidate()
+        {
+            if (!_versionTracked)
+            {
+                _lastSeenGameVersion = gameVersion;
+                _versionTracked = true;
+                return;
+            }
+
+            if (!string.Equals(_lastSeenGameVersion, gameVersion, System.StringComparison.Ordinal))
+            {
+                Debug.LogWarning(
+                    $"[Flock Config] gameVersion changed ('{_lastSeenGameVersion}' → '{gameVersion}'). " +
+                    "Run 'Flock > Sync Schemas' to regenerate.");
+                _lastSeenGameVersion = gameVersion;
+            }
+        }
+#endif
 
         public bool IsValid(out string errorMessage)
         {
@@ -95,9 +123,9 @@ namespace Flock.Config
                 return false;
             }
 
-            if (string.IsNullOrEmpty(gameVersionId))
+            if (string.IsNullOrEmpty(gameVersion))
             {
-                errorMessage = "Game Version ID is required";
+                errorMessage = "Game Version is required";
                 return false;
             }
 

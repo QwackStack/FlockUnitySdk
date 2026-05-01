@@ -37,7 +37,14 @@ namespace Flock
         internal static bool IsAvailable => _instance != null && !_isQuitting;
 
         internal event Action OnTick;
-        internal event Action<bool> OnPause;
+
+        /// <summary>
+        /// Fires from Unity's <c>OnApplicationPause</c> — i.e. the app moved to the
+        /// background (mobile) or lost foreground status with Run In Background off
+        /// (desktop). Not related to gameplay pause / <c>Time.timeScale</c>.
+        /// Argument is <c>true</c> when backgrounded, <c>false</c> when foregrounded again.
+        /// </summary>
+        internal event Action<bool> OnAppBackgrounded;
         internal event Action<bool> OnFocus;
         internal event Action OnQuit;
 
@@ -60,7 +67,7 @@ namespace Flock
 
         private void OnApplicationPause(bool paused)
         {
-            OnPause?.Invoke(paused);
+            OnAppBackgrounded?.Invoke(paused);
         }
 
         private void OnApplicationFocus(bool hasFocus)
@@ -79,7 +86,7 @@ namespace Flock
             if (_instance == this)
             {
                 OnTick = null;
-                OnPause = null;
+                OnAppBackgrounded = null;
                 OnFocus = null;
                 OnQuit = null;
                 _instance = null;

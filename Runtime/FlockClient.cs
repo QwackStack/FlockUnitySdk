@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Flock.Auth;
@@ -18,6 +17,28 @@ namespace Flock
 {
     public class FlockClient : IFlockClient
     {
+        private static FlockClient _instance;
+
+        /// <summary>
+        /// Global singleton instance. Set by <see cref="CreateAsync"/> and used as the
+        /// entry point for all SDK calls (e.g. <c>FlockClient.Instance.Authentication</c>).
+        /// Throws <see cref="FlockException"/> if accessed before <see cref="CreateAsync"/>
+        /// has completed — initialize the SDK at startup before any feature uses it.
+        /// </summary>
+        public static FlockClient Instance
+        {
+            get
+            {
+                if (_instance == null)
+                    throw new FlockException(
+                        "FlockClient has not been initialized. Call 'await FlockClient.CreateAsync(config)' once at startup before accessing FlockClient.Instance.");
+                return _instance;
+            }
+        }
+
+        /// <summary>True once <see cref="CreateAsync"/> has successfully run.</summary>
+        public static bool IsInitialized => _instance != null;
+
         private readonly FlockInitConfig _initConfig;
         private readonly IFlockLogger _logger;
         private readonly RetryHandler _retryHandler;
@@ -26,6 +47,14 @@ namespace Flock
         private string _accessToken;
         private string _refreshToken;
         private JwtTokenClaims _tokenClaims;
+
+        // Clears the static singleton when domain reload is disabled on enter-play-mode,
+        // so a fresh play session always starts with no SDK state.
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetStaticState()
+        {
+            _instance = null;
+        }
 
         /// <summary>
         /// Fired when a token refresh fails, meaning the player must log in again.
@@ -45,13 +74,76 @@ namespace Flock
         private FlockSession _session;
         private IAnalyticProvider _analytics;
 
-        public FlockClient(FlockInitConfig initConfig, IFlockLogger logger = null)
+        private FlockClient(FlockInitConfig initConfig, IFlockLogger logger)
         {
             _initConfig = initConfig ?? throw new ArgumentNullException(nameof(initConfig));
             _logger = logger ?? (initConfig.EnableDebugLogs ? new UnityFlockLogger() : new NullFlockLogger());
             _logger.LogInfo("Initializing Flock SDK");
             _retryHandler = new RetryHandler(initConfig.RetryPolicy, _logger);
-            InitializeServices();
+        }
+
+        /// <summary>
+        /// Creates and initializes a <see cref="FlockClient"/>. Resolves
+        /// <see cref="FlockInitConfig.GameVersion"/> against the backend to populate
+        /// <see cref="FlockInitConfig.GameVersionId"/> (used in the
+        /// <c>X-Game-Version-ID</c> header), then wires up service providers.
+        /// </summary>
+        public static async Task<FlockClient> CreateAsync(
+            FlockInitConfig initConfig,
+            IFlockLogger logger = null,
+            CancellationToken cancellationToken = default)
+        {
+            if (_instance != null)
+                throw new FlockException(
+                    "FlockClient is already initialized. Call FlockClient.Shutdown() first if you need to reinitialize with a different config.");
+
+            FlockClient client = new FlockClient(initConfig, logger);
+            await client.ResolveGameVersionAsync(cancellationToken);
+            client.InitializeServices();
+            CodeGenValidator.WarnIfDrifted(client._initConfig.GameVersionId, client._logger);
+            _instance = client;
+            return client;
+        }
+
+        /// <summary>
+        /// Clears the global <see cref="Instance"/>, allowing <see cref="CreateAsync"/> to be
+        /// called again. Logs out the current player first so token state is dropped.
+        /// </summary>
+        public static void Shutdown()
+        {
+            //Should we allow this?
+            if (_instance == null) return;
+            _instance.ClearTokens();
+            _instance = null;
+        }
+
+        private async Task ResolveGameVersionAsync(CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrEmpty(_initConfig.GameVersion))
+                throw new FlockValidationException("GameVersion is required to initialize the Flock SDK");
+
+            string url = $"{_initConfig.ApiUrl}/v1/game_version/by-name/{Uri.EscapeDataString(_initConfig.GameVersion)}";
+            try
+            {
+                GenericResponse<GameVersionSchema> response = await _retryHandler.ExecuteAsync(
+                    () => FlockHttpClient.GetAsync<GenericResponse<GameVersionSchema>>(
+                        url, _initConfig.GetBootstrapHeaders(), cancellationToken),
+                    cancellationToken);
+
+                if (response?.Result == null || string.IsNullOrEmpty(response.Result.Id))
+                    throw new FlockException($"Could not resolve GameVersionId for game version '{_initConfig.GameVersion}'");
+
+                _initConfig.GameVersionId = response.Result.Id;
+                _logger.LogInfo($"Resolved game version '{_initConfig.GameVersion}' -> id '{_initConfig.GameVersionId}'");
+            }
+            catch (FlockException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                throw new FlockException($"Failed to resolve GameVersionId for '{_initConfig.GameVersion}'", ex);
+            }
         }
 
         private void InitializeServices()

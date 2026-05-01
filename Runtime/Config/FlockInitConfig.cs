@@ -8,7 +8,8 @@ namespace Flock.Config
     {
         public string ApiUrl { get; set; }
         public string GameId { get; set; }
-        public string GameVersionId { get; set; }
+        public string GameVersion { get; set; }
+        public string GameVersionId { get; internal set; }
         public bool EnableDebugLogs { get; set; }
         /// <summary>
         /// When true, asset downloads are cached on disk keyed by asset ID and the
@@ -36,13 +37,12 @@ namespace Flock.Config
         public FlockAnalyticsConfig AnalyticsConfig { get; set; }
         private readonly string _apiKey;
 
-        private Dictionary<string, string> _headers;
         /// <summary>
         /// Flock Initialization Config
         /// <param name="apiUrl"> Flock endpoint.</param>
         /// <param name="apiKey"> Flock game secret key.</param>
         /// <param name="gameId"> Flock game ID</param>
-        /// <param name="gameVersionId"> Flock version ID</param>
+        /// <param name="gameVersion"> Flock version name. The matching version ID is resolved from the backend during <see cref="FlockClient.CreateAsync"/>.</param>
         /// <param name="enableDebugLogs"> enable debug logs , follows passed logger</param>
         /// <param name="analyticsConfig"> Flock Analytics settings</param>
         /// <param name="retryPolicy"> Flock Requests settings</param>
@@ -51,7 +51,7 @@ namespace Flock.Config
             string apiUrl,
             string apiKey,
             string gameId,
-            string gameVersionId,
+            string gameVersion,
             bool enableDebugLogs = false,
             FlockAnalyticsConfig analyticsConfig = null,
             RetryPolicy retryPolicy = null)
@@ -59,7 +59,7 @@ namespace Flock.Config
             ApiUrl = apiUrl;
             _apiKey = apiKey;
             GameId = gameId;
-            GameVersionId = gameVersionId;
+            GameVersion = gameVersion;
             EnableDebugLogs = enableDebugLogs;
             AnalyticsConfig = analyticsConfig;
             RetryPolicy = retryPolicy ?? new RetryPolicy();
@@ -67,10 +67,20 @@ namespace Flock.Config
 
         public Dictionary<string, string> GetBaseHeaders()
         {
-            _headers ??= new Dictionary<string, string>();
-            _headers.TryAdd("X-Flock-API-Key", _apiKey);
-            _headers.TryAdd("X-Game-Version-ID", GameVersionId);
-            return _headers;
+            var headers = new Dictionary<string, string>
+            {
+                { "X-Flock-API-Key", _apiKey }
+            };
+            headers["X-Game-Version-ID"] = GameVersionId;
+            return headers;
+        }
+
+        internal Dictionary<string, string> GetBootstrapHeaders()
+        {
+            return new Dictionary<string, string>
+            {
+                { "X-Flock-API-Key", _apiKey }
+            };
         }
     }
 }
