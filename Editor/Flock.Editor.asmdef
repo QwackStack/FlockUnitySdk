@@ -2,7 +2,8 @@
     "name": "Flock.Editor",
     "rootNamespace": "Flock.Editor",
     "references": [
-        "Flock.Runtime"
+        "Flock.Runtime",
+        "Unity.Newtonsoft.Json"
     ],
     "includePlatforms": [
         "Editor"

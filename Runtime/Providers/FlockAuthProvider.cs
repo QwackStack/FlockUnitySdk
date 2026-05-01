@@ -77,6 +77,10 @@ namespace Flock.Providers
         public async Task<PlayerLoginResponse> RegisterWithEmailAsync(string email, string password, string name = null,
             CancellationToken cancellationToken = default)
         {
+            //TODO
+            //once exception data is there , check if already registered is thrown
+            //otherwise a temp fix is to parse the exception and check if it is a regi issue
+            //do this for all registration methods?
             return await ExecuteAuthAsync(
                 () => FlockHttpClient.PostAsync<PlayerLoginResponse>(
                     $"{Client.GetApiUrl()}/v1/player/register",

@@ -12,6 +12,7 @@ namespace Flock.Interfaces
         currency,
         asset,
         feature,
+        achievement,
         empty
     }
     public interface ISchemaProvider
