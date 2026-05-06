@@ -33,7 +33,7 @@ namespace Flock.Providers
             if (!_config.Enabled)
                 return;
 
-            string newPlayerId = Client.CurrentPlayerId;
+            string newPlayerId = Client.CurrentPlayerId ?? "Default";
 
             if (_initialized && _currentPlayerId != newPlayerId)
             {
@@ -90,7 +90,7 @@ namespace Flock.Providers
 
             SessionStartRequest request = new SessionStartRequest
             {
-                PlayerId = Client.CurrentPlayerId,
+                PlayerId = Client.CurrentPlayerId ?? "Default",
                 Platform = _session.DeviceInfo?.Platform,
                 DeviceType = _session.DeviceInfo?.DeviceType,
                 GameVersionId = Client.GameVersionId,
@@ -153,7 +153,7 @@ namespace Flock.Providers
 
             AnalyticsEventRequest request = new AnalyticsEventRequest
             {
-                PlayerId = Client.CurrentPlayerId,
+                PlayerId = Client.CurrentPlayerId ?? "Default",
                 EventName = eventName,
                 EventCategory = eventCategory,
                 SessionId = CurrentSessionId,
@@ -182,7 +182,7 @@ namespace Flock.Providers
             foreach (AnalyticsEventRequest evt in events)
             {
                 if (string.IsNullOrEmpty(evt.PlayerId))
-                    evt.PlayerId = Client.CurrentPlayerId;
+                    evt.PlayerId = Client.CurrentPlayerId ?? "Default";
                 if (string.IsNullOrEmpty(evt.SessionId))
                     evt.SessionId = CurrentSessionId;
                 if (string.IsNullOrEmpty(evt.Timestamp))
@@ -238,7 +238,7 @@ namespace Flock.Providers
                 throw new FlockValidationException($"Transaction amount must be greater than zero, got: {request.Amount}");
 
             if (string.IsNullOrEmpty(request.PlayerId))
-                request.PlayerId = Client.CurrentPlayerId;
+                request.PlayerId = Client.CurrentPlayerId ?? "Default";
             if (string.IsNullOrEmpty(request.SessionId))
                 request.SessionId = CurrentSessionId;
             if (string.IsNullOrEmpty(request.CreatedAt))
@@ -360,7 +360,7 @@ namespace Flock.Providers
         private void RequireAuth()
         {
             if (!Client.IsAuthenticated)
-                throw new FlockAuthException("Analytics requires authentication. Call a login method first.");
+                Client.Logger.LogError("PlayerID set to Default. Call a login method to authenticate the player.");
         }
     }
 }
