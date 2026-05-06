@@ -1,5 +1,8 @@
+using System;
 using System.Collections.Generic;
 using Flock.Analytics;
+using Flock.Auth;
+using Flock.Exceptions;
 using Flock.Http;
 
 namespace Flock.Config
@@ -35,6 +38,16 @@ namespace Flock.Config
         /// Flock analytics Settings
         /// </summary>
         public FlockAnalyticsConfig AnalyticsConfig { get; set; }
+
+        /// <summary>
+        /// Persistence layer for auth tokens between app launches. Defaults to the
+        /// platform-appropriate <see cref="ITokenStore"/> selected by
+        /// <see cref="TokenStoreFactory.Create"/>. After init, call
+        /// <c>FlockClient.Instance.Authentication.TryRestoreSessionAsync()</c>
+        /// to resume a stored session.
+        /// </summary>
+        public ITokenStore TokenStore { get;}
+
         private readonly string _apiKey;
 
         /// <summary>
@@ -63,6 +76,7 @@ namespace Flock.Config
             EnableDebugLogs = enableDebugLogs;
             AnalyticsConfig = analyticsConfig;
             RetryPolicy = retryPolicy ?? new RetryPolicy();
+            TokenStore = TokenStoreFactory.Create();
         }
 
         public Dictionary<string, string> GetBaseHeaders()
@@ -82,5 +96,6 @@ namespace Flock.Config
                 { "X-Flock-API-Key", _apiKey }
             };
         }
+        
     }
 }

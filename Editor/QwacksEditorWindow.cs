@@ -33,7 +33,6 @@ namespace Flock.Editor
 
         private Tab activeTab = Tab.Configuration;
         private Vector2 scroll;
-        private bool analyticsExpanded;
         private bool analyticsEnabled;
 
         private FlockConfigAsset config;
@@ -208,22 +207,18 @@ namespace Flock.Editor
         private void DrawAnalyticsCard()
         {
             EditorGUILayout.BeginVertical(cardStyle);
-            analyticsExpanded = EditorGUILayout.Foldout(analyticsExpanded, "Analytics", true);
-            if (analyticsExpanded)
+            SerializedProperty prop = configSerialized.FindProperty("analyticsEnabled");
+            prop.boolValue = EditorGUILayout.Toggle("Analytics Enabled",prop.boolValue);
+            if (prop.boolValue)
             {
-                SerializedProperty prop = configSerialized.FindProperty("analyticsEnabled");
-                prop.boolValue = EditorGUILayout.Toggle("Analytics Enabled",prop.boolValue);
-                if (prop.boolValue)
-                {
-                    DrawProperty("analyticsAutoStartSession");
-                    DrawProperty("analyticsAutoEndOnQuit");
-                    DrawProperty("analyticsSessionTimeout");
-                    DrawProperty("analyticsHeartbeatInterval");
-                    DrawProperty("analyticsBounceThreshold");
-                    DrawProperty("analyticsPersistSession");
-                    DrawProperty("analyticsTrackFps");
-                    DrawProperty("analyticsFpsSampleInterval");
-                }
+                DrawProperty("analyticsAutoStartSession");
+                DrawProperty("analyticsAutoEndOnQuit");
+                DrawProperty("analyticsSessionTimeout");
+                DrawProperty("analyticsHeartbeatInterval");
+                DrawProperty("analyticsBounceThreshold");
+                DrawProperty("analyticsPersistSession");
+                DrawProperty("analyticsTrackFps");
+                DrawProperty("analyticsFpsSampleInterval");
             }
             EditorGUILayout.EndVertical();
         }

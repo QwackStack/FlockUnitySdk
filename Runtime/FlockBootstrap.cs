@@ -40,6 +40,15 @@ namespace Flock
             "Has no effect on child GameObjects (Unity restriction).")]
         private bool dontDestroyOnLoad = true;
 
+        [SerializeField]
+        [Tooltip(
+            "When ON, after CreateAsync succeeds the bootstrap calls " +
+            "Authentication.TryRestoreSessionAsync() to resume a session persisted " +
+            "from a previous launch. Listen to OnSessionRestored to branch between " +
+            "'go to game' (true) and 'show login UI' (false). Turn OFF if you want " +
+            "to drive the restore yourself.")]
+        private bool restoreSessionOnInit = true;
+
         private static FlockBootstrap _activeInstance;
 
         /// <summary>The asset this bootstrap is currently pointed at. Read-only.</summary>
@@ -56,6 +65,14 @@ namespace Flock
 
         /// <summary>Fired if initialization throws. The exception is passed through.</summary>
         public event Action<Exception> OnInitializationFailed;
+
+        /// <summary>
+        /// Fired after <see cref="FlockClient.Authentication"/>'s
+        /// <c>TryRestoreSessionAsync</c> completes when <c>restoreSessionOnInit</c>
+        /// is enabled. <c>true</c> = signed in (proceed to game), <c>false</c> =
+        /// no usable persisted session (show login UI).
+        /// </summary>
+        public event Action<bool> OnSessionRestored;
 
         private async void Awake()
         {
@@ -122,6 +139,12 @@ namespace Flock
             {
                 await FlockClient.CreateAsync(config.ToInitConfig(), cancellationToken: cancellationToken);
                 OnInitialized?.Invoke();
+
+                if (restoreSessionOnInit)
+                {
+                    bool resumed = await FlockClient.Instance.Authentication.TryRestoreSessionAsync(cancellationToken);
+                    OnSessionRestored?.Invoke(resumed);
+                }
             }
             catch (Exception ex)
             {

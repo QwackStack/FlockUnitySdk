@@ -18,7 +18,7 @@ namespace Flock.Providers
         public FlockAssetCache(string directory, int maxSizeMB = 0)
         {
             Directory = string.IsNullOrEmpty(directory)
-                ? Path.Combine(Application.persistentDataPath, DefaultFolder)
+                ? Path.Combine(FlockUtil.FlockFilePath, DefaultFolder)
                 : directory;
             MaxSizeBytes = maxSizeMB > 0 ? (long)maxSizeMB * 1024 * 1024 : 0;
         }
