@@ -15,6 +15,13 @@ namespace Flock.Editor.Codegen
 
         internal static async void SyncSchemas()
         {
+#if FLOCK_NO_SCHEMA
+            // Schema provider is excluded from this SDK build, so codegen has nothing to drive.
+            // Defines flow in via Editor/csc.rsp written by the Package Builder when SCHEMA is
+            // deselected. Await a completed task to keep the async signature warning-free.
+            Debug.Log("[Flock Codegen] Schema provider is excluded from this SDK build — codegen does nothing.");
+            await System.Threading.Tasks.Task.CompletedTask;
+#else
             if (!TryLoadConfig(out var config, out var error))
             {
                 Debug.LogError($"[Flock Codegen] {error}");
@@ -73,6 +80,7 @@ namespace Flock.Editor.Codegen
             {
                 Debug.LogError($"[Flock Codegen] Sync failed: {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}");
             }
+#endif
         }
 
         internal static void CleanGenerated()

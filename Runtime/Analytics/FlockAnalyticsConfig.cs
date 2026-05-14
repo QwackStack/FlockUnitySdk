@@ -13,5 +13,9 @@ namespace Flock.Analytics
         public bool PersistSessionOnDisk { get; set; } = true;
         public bool TrackFps { get; set; } = true;
         public float FpsSampleIntervalSeconds { get; set; } = 1f;
+
+        public bool CacheFailedEvents { get; set; } = true;
+        public int MaxCachedEvents { get; set; } = 1000;
+        public int CacheFlushBatchSize { get; set; } = 50;
     }
 }

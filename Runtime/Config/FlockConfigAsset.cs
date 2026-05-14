@@ -57,6 +57,26 @@ namespace Flock.Config
         [Tooltip("FPS sample interval in seconds")]
         public float analyticsFpsSampleInterval = 1f;
 
+        [Header("Analytics — Caching")]
+        [Tooltip("Cache failed analytics events (including log_event) on disk and retry on the next session.")]
+        public bool analyticsCacheFailedEvents = true;
+
+        [Tooltip("Maximum number of failed events kept on disk. Oldest entries are dropped when the cap is hit.")]
+        public int analyticsMaxCachedEvents = 1000;
+
+        [Tooltip("How many cached events are flushed per batch when retrying.")]
+        public int analyticsCacheFlushBatchSize = 50;
+
+        [Header("Asset Cache")]
+        [Tooltip("Cache asset downloads on disk, keyed by asset ID + UpdatedAt. Disable on WebGL — persistentDataPath there does not support synchronous writes.")]
+        public bool enableAssetCache = true;
+
+        [Tooltip("Absolute path for the asset cache. Leave empty to default to Application.persistentDataPath/flock_assets.")]
+        public string assetCacheDirectory = "";
+
+        [Tooltip("Maximum size of the on-disk asset cache, in MB. 0 means unlimited; LRU eviction otherwise.")]
+        public int assetCacheMaxSizeMB = 100;
+
         public string ApiKey
         {
             get => apiKey;
@@ -76,11 +96,19 @@ namespace Flock.Config
                     BounceThresholdSeconds = analyticsBounceThreshold,
                     PersistSessionOnDisk = analyticsPersistSession,
                     TrackFps = analyticsTrackFps,
-                    FpsSampleIntervalSeconds = analyticsFpsSampleInterval
-                });
+                    FpsSampleIntervalSeconds = analyticsFpsSampleInterval,
+                    CacheFailedEvents = analyticsCacheFailedEvents,
+                    MaxCachedEvents = analyticsMaxCachedEvents,
+                    CacheFlushBatchSize = analyticsCacheFlushBatchSize,
+                })
+            {
+                EnableAssetCache = enableAssetCache,
+                AssetCacheDirectory = assetCacheDirectory,
+                AssetCacheMaxSizeMB = assetCacheMaxSizeMB,
+            };
         }
 
-#if UNITY_EDITOR
+#if UNITY_EDITOR && !FLOCK_NO_SCHEMA
         [System.NonSerialized] private string _lastSeenGameVersion;
         [System.NonSerialized] private bool _versionTracked;
 

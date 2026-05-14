@@ -8,7 +8,10 @@ using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using Flock.Config;
+using Flock.Docs;
+#if !FLOCK_NO_SCHEMA
 using Flock.Editor.Codegen;
+#endif
 
 namespace Flock.Editor
 {
@@ -21,13 +24,15 @@ namespace Flock.Editor
     public class QwacksEditorWindow : EditorWindow
     {
         // Logos are looked up by filename anywhere in the project.
-        private const string QwacksLogoName = "QwacksLogo";
+        public const string QwacksLogoName = "QwacksLogo";
         private const string FlockLogoName = "FlockLogo";
 
         private const string ConfigAssetPath = "Assets/Resources/FlockConfig.asset";
+        private const string SdkGuideAssetPath = "Assets/Flock/FlockSdkGuide.asset";
 
         private static readonly Color PrimaryAction = new Color(0.30f, 0.70f, 0.40f);
         private static readonly Color DestructiveAction = new Color(0.85f, 0.40f, 0.40f);
+        private static readonly Color HighlightAction = new Color(0.95f, 0.75f, 0.25f);
 
         private enum Tab { Configuration, CodeGen }
 
@@ -87,7 +92,9 @@ namespace Flock.Editor
             switch (activeTab)
             {
                 case Tab.Configuration: DrawConfigurationTab(); break;
+#if !FLOCK_NO_SCHEMA
                 case Tab.CodeGen: DrawCodegenTab(); break;
+#endif
             }
             EditorGUILayout.EndScrollView();
 
@@ -143,7 +150,13 @@ namespace Flock.Editor
         {
             EditorGUILayout.BeginHorizontal(EditorStyles.toolbar);
             DrawTabButton("Configuration", Tab.Configuration);
+#if !FLOCK_NO_SCHEMA
             DrawTabButton("Code Generation", Tab.CodeGen);
+#else
+            // Schema provider is excluded — codegen folder isn't shipped, so the tab is hidden
+            // and we snap any stale selection back to Configuration.
+            if (activeTab == Tab.CodeGen) activeTab = Tab.Configuration;
+#endif
             GUILayout.FlexibleSpace();
             EditorGUILayout.EndHorizontal();
         }
@@ -167,6 +180,7 @@ namespace Flock.Editor
             DrawCredentialsCard();
             DrawOptionalCard();
             DrawAnalyticsCard();
+            DrawAssetCacheCard();
             DrawConfigToolsCard();
             configSerialized.ApplyModifiedProperties();
         }
@@ -223,7 +237,29 @@ namespace Flock.Editor
                     DrawProperty("analyticsPersistSession");
                     DrawProperty("analyticsTrackFps");
                     DrawProperty("analyticsFpsSampleInterval");
+
+                    GUILayout.Space(4);
+                    GUILayout.Label("Caching", EditorStyles.miniBoldLabel);
+                    DrawProperty("analyticsCacheFailedEvents");
+                    using (new EditorGUI.DisabledScope(!configSerialized.FindProperty("analyticsCacheFailedEvents").boolValue))
+                    {
+                        DrawProperty("analyticsMaxCachedEvents");
+                        DrawProperty("analyticsCacheFlushBatchSize");
+                    }
                 }
+            }
+            EditorGUILayout.EndVertical();
+        }
+
+        private void DrawAssetCacheCard()
+        {
+            EditorGUILayout.BeginVertical(cardStyle);
+            GUILayout.Label("Asset Cache", sectionHeaderStyle);
+            DrawProperty("enableAssetCache");
+            using (new EditorGUI.DisabledScope(!configSerialized.FindProperty("enableAssetCache").boolValue))
+            {
+                DrawProperty("assetCacheDirectory");
+                DrawProperty("assetCacheMaxSizeMB");
             }
             EditorGUILayout.EndVertical();
         }
@@ -238,7 +274,7 @@ namespace Flock.Editor
             using (new EditorGUI.DisabledScope(string.IsNullOrWhiteSpace(config.apiUrl) || string.IsNullOrWhiteSpace(config.apiKey)))
             {
                 if (GUILayout.Button(
-                        new GUIContent("Test Connection", "Pings /healthz with your API key. Confirms the URL is reachable and the key is accepted by the backend."),
+                        new GUIContent("Test Connection", "Resolves your Game Version against the backend with your API key — the same call FlockClient.CreateAsync makes. Green here means initialization will succeed."),
                         GUILayout.Height(28)))
                     TestConfiguration();
             }
@@ -255,21 +291,32 @@ namespace Flock.Editor
 
             using (new EditorGUI.DisabledScope(!config.IsValid(out _)))
             {
-                if (GUILayout.Button(
-                        new GUIContent(
-                            "Add Flock Bootstrap to Scene",
-                            "Creates a GameObject in the active scene with a FlockBootstrap component pointed at this asset. " +
-                            "Recommended for projects that don't want to write their own SDK init code — drop this in a Boot scene and forget about it."),
-                        GUILayout.Height(28)))
-                    AddBootstrapToScene();
+                bool bootstrapPresent = UnityEngine.Object.FindAnyObjectByType<FlockBootstrap>() != null;
+                GUIContent label = bootstrapPresent
+                    ? new GUIContent(
+                        "Bootstrap Already Added",
+                        "A FlockBootstrap component already exists in the active scene. Click to ping it in the Hierarchy.")
+                    : new GUIContent(
+                        "Add Flock Bootstrap to Scene",
+                        "Creates a GameObject in the active scene with a FlockBootstrap component pointed at this asset. " +
+                        "Recommended for projects that don't want to write their own SDK init code — drop this in a Boot scene and forget about it.");
+
+                // Highlight gold while the bootstrap is missing so the next-step action is obvious.
+                using (new BackgroundColorScope(bootstrapPresent ? GUI.backgroundColor : HighlightAction))
+                {
+                    if (GUILayout.Button(label, GUILayout.Height(28)))
+                        AddBootstrapToScene();
+                }
             }
 
             EditorGUILayout.EndVertical();
         }
 
 
-        // Codegen tab
-
+        // Codegen tab — only present when the SCHEMA provider is included in the build
+        // (codegen consumes SchemaTag from ISchemaProvider, and the Editor/Codegen folder
+        // isn't shipped without it).
+#if !FLOCK_NO_SCHEMA
         private void DrawCodegenTab()
         {
             if (!EnsureAssetExistsCard()) return;
@@ -291,7 +338,7 @@ namespace Flock.Editor
                     MessageType.Warning);
 
             using (new EditorGUI.DisabledScope(!config.IsValid(out _)))
-                
+
                 EditorGUILayout.BeginHorizontal();
             using (new BackgroundColorScope(PrimaryAction))
             {
@@ -331,6 +378,7 @@ namespace Flock.Editor
             DrawProperty("generatedCodePath");
             EditorGUILayout.EndVertical();
         }
+#endif
 
 
         // Asset binding / creation
@@ -404,6 +452,59 @@ namespace Flock.Editor
         }
 
 
+        // SDK Guide — opened from the Documentation link in the header bar.
+        // Loads the asset if it already exists anywhere in the project, otherwise
+        // creates one at the default path. The asset is just a ScriptableObject
+        // with TextArea fields, so the docs render in the Inspector on selection.
+
+        private void OpenSdkGuide()
+        {
+            FlockSdkGuide guide = AssetDatabase.LoadAssetAtPath<FlockSdkGuide>(SdkGuideAssetPath);
+
+            if (guide == null)
+            {
+                string[] guids = AssetDatabase.FindAssets("t:FlockSdkGuide");
+                if (guids != null && guids.Length > 0)
+                    guide = AssetDatabase.LoadAssetAtPath<FlockSdkGuide>(AssetDatabase.GUIDToAssetPath(guids[0]));
+            }
+
+            if (guide == null)
+                guide = CreateSdkGuideAsset();
+
+            if (guide == null) return;
+
+            Selection.activeObject = guide;
+            EditorGUIUtility.PingObject(guide);
+        }
+
+        private FlockSdkGuide CreateSdkGuideAsset()
+        {
+            try
+            {
+                string folder = Path.GetDirectoryName(SdkGuideAssetPath);
+                if (!string.IsNullOrEmpty(folder) && !Directory.Exists(folder))
+                {
+                    Directory.CreateDirectory(folder);
+                    AssetDatabase.Refresh();
+                }
+
+                FlockSdkGuide guide = CreateInstance<FlockSdkGuide>();
+                AssetDatabase.CreateAsset(guide, SdkGuideAssetPath);
+                AssetDatabase.SaveAssets();
+                AssetDatabase.Refresh();
+
+                ShowStatus($"Created SDK guide at {SdkGuideAssetPath}.", MessageType.Info);
+                return guide;
+            }
+            catch (Exception ex)
+            {
+                ShowStatus($"Failed to create SDK guide: {ex.Message}", MessageType.Error);
+                Debug.LogError($"[Flock] Failed to create SDK guide: {ex}");
+                return null;
+            }
+        }
+
+
         // Property helpers
 
         private void DrawProperty(string propertyName)
@@ -469,7 +570,7 @@ namespace Flock.Editor
             EditorGUILayout.BeginHorizontal(EditorStyles.helpBox);
             GUILayout.FlexibleSpace();
             if (GUILayout.Button("Documentation", EditorStyles.linkLabel))
-                Application.OpenURL("https://www.qwacks.com/flock");
+                OpenSdkGuide();
             GUILayout.Label("|", EditorStyles.miniLabel);
             if (GUILayout.Button("Support", EditorStyles.linkLabel))
                 Application.OpenURL("https://www.qwacks.com/flock");
@@ -492,25 +593,50 @@ namespace Flock.Editor
         private async void TestConfiguration()
         {
             if (config == null) return;
-            if (!Uri.IsWellFormedUriString(config.apiUrl, UriKind.Absolute))
+
+            string apiUrl = (config.apiUrl ?? string.Empty).Trim();
+            string apiKey = (config.apiKey ?? string.Empty).Trim();
+            string gameVersion = (config.gameVersion ?? string.Empty).Trim();
+
+            if (!Uri.IsWellFormedUriString(apiUrl, UriKind.Absolute))
             {
                 ShowStatus("API URL is invalid.", MessageType.Error);
                 return;
             }
+            if (string.IsNullOrEmpty(apiKey))
+            {
+                ShowStatus("API Key is required.", MessageType.Error);
+                return;
+            }
+
+            string baseUrl = apiUrl.TrimEnd('/');
+            // Mirror FlockClient.ResolveGameVersionAsync so a green test guarantees init will pass.
+            // When Game Version is missing, we can't run that call — fall back to a bare key check.
+            bool hasGameVersion = !string.IsNullOrEmpty(gameVersion);
+            string url = hasGameVersion
+                ? $"{baseUrl}/v1/game_version/by-name/{Uri.EscapeDataString(gameVersion)}"
+                : $"{baseUrl}/healthz";
 
             EditorUtility.DisplayProgressBar("Test Connection", "Pinging API...", 0.4f);
             try
             {
                 using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
-                http.DefaultRequestHeaders.Add("X-Flock-API-Key", config.apiKey);
+                http.DefaultRequestHeaders.Add("X-Flock-API-Key", apiKey);
 
-                HttpResponseMessage response = await http.GetAsync($"{config.apiUrl}/healthz");
+                HttpResponseMessage response = await http.GetAsync(url);
                 EditorUtility.ClearProgressBar();
 
                 if (response.IsSuccessStatusCode)
-                    ShowStatus("Connection OK.", MessageType.Info);
+                {
+                    if (hasGameVersion)
+                        ShowStatus($"Connection OK — Game Version '{gameVersion}' resolved.", MessageType.Info);
+                    else
+                        ShowStatus("API key accepted. Set Game Version to fully verify init will succeed.", MessageType.Warning);
+                }
                 else if (response.StatusCode == HttpStatusCode.Unauthorized || response.StatusCode == HttpStatusCode.Forbidden)
                     ShowStatus($"API key rejected ({(int)response.StatusCode} {response.StatusCode}).", MessageType.Error);
+                else if (response.StatusCode == HttpStatusCode.NotFound && hasGameVersion)
+                    ShowStatus($"Game Version '{gameVersion}' not found on the backend.", MessageType.Error);
                 else
                     ShowStatus($"API returned {(int)response.StatusCode} {response.StatusCode}.", MessageType.Warning);
             }
@@ -540,7 +666,7 @@ namespace Flock.Editor
             flockLogo = FindTextureByName(FlockLogoName);
         }
 
-        private static Texture2D FindTextureByName(string name)
+        public static Texture2D FindTextureByName(string name)
         {
             string[] guids = AssetDatabase.FindAssets($"{name} t:Texture2D");
             if (guids == null || guids.Length == 0) return null;

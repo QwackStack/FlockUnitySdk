@@ -47,6 +47,7 @@ namespace Flock
         internal event Action<bool> OnAppBackgrounded;
         internal event Action<bool> OnFocus;
         internal event Action OnQuit;
+        internal event Action<string,string> OnException;
 
         private void Awake()
         {
@@ -63,6 +64,24 @@ namespace Flock
         private void Update()
         {
             OnTick?.Invoke();
+        }
+
+        void OnEnable() {
+            Application.logMessageReceived += HandleLog;
+        }
+        void OnDisable() {
+            Application.logMessageReceived -= HandleLog;
+        }
+        private void HandleLog(string logMessage, string stackTrace, LogType type)
+        {
+            if (type == LogType.Exception)
+            {
+                if (string.IsNullOrEmpty(stackTrace))
+                {
+                    stackTrace = StackTraceUtility.ExtractStackTrace();
+                }
+                OnException?.Invoke(logMessage, stackTrace);
+            }
         }
 
         private void OnApplicationPause(bool paused)
@@ -89,6 +108,7 @@ namespace Flock
                 OnAppBackgrounded = null;
                 OnFocus = null;
                 OnQuit = null;
+                OnException = null;
                 _instance = null;
             }
         }

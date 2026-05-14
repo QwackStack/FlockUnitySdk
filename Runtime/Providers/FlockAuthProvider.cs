@@ -17,6 +17,7 @@ namespace Flock.Providers
         private async Task<PlayerLoginResponse> ExecuteAuthAsync(
             Func<Task<PlayerLoginResponse>> operation, string context, CancellationToken cancellationToken)
         {
+            Client.Logger.LogInfo($"{context} starting...");
             try
             {
                 PlayerLoginResponse response = await Client.RetryHandler.ExecuteAsync(operation, cancellationToken);
@@ -27,6 +28,7 @@ namespace Flock.Providers
                 Client.SetTokens(response.AccessToken, response.RefreshToken);
                 Client.Logger.LogInfo($"{context} successful for player: {Client.CurrentPlayerId}");
 
+#if !FLOCK_NO_ANALYTICS
                 if (Client.Analytics != null)
                 {
                     try
@@ -38,6 +40,7 @@ namespace Flock.Providers
                         Client.Logger.LogWarning($"Analytics initialization failed (non-fatal): {analyticsEx.Message}");
                     }
                 }
+#endif
 
                 return response;
             }
@@ -50,6 +53,32 @@ namespace Flock.Providers
                 Client.Logger.LogError($"{context} failed", ex);
                 throw new FlockAuthException($"{context} failed", ex);
             }
+        }
+
+        private async Task<PlayerLoginResponse> ExecuteRegistrationAsync(
+            Func<Task<PlayerLoginResponse>> operation, string context, CancellationToken cancellationToken)
+        {
+            try
+            {
+                return await ExecuteAuthAsync(operation, context, cancellationToken);
+            }
+            catch (FlockException ex) when (IsAlreadyRegisteredError(ex))
+            {
+                Client.Logger.LogWarning($"{context} skipped: player already registered.");
+                return null;
+            }
+        }
+
+        // Temp string-match until the API returns a structured "already registered" code.
+        private static bool IsAlreadyRegisteredError(Exception ex)
+        {
+            string msg = ex?.Message;
+            if (string.IsNullOrEmpty(msg)) return false;
+            return msg.IndexOf("already", StringComparison.OrdinalIgnoreCase) >= 0
+                && (msg.IndexOf("registered", StringComparison.OrdinalIgnoreCase) >= 0
+                    || msg.IndexOf("exists", StringComparison.OrdinalIgnoreCase) >= 0
+                    || msg.IndexOf("in use", StringComparison.OrdinalIgnoreCase) >= 0
+                    || msg.IndexOf("taken", StringComparison.OrdinalIgnoreCase) >= 0);
         }
 
         public async Task<PlayerLoginResponse> LoginWithEmailAsync(string email, string password,
@@ -77,11 +106,7 @@ namespace Flock.Providers
         public async Task<PlayerLoginResponse> RegisterWithEmailAsync(string email, string password, string name = null,
             CancellationToken cancellationToken = default)
         {
-            //TODO
-            //once exception data is there , check if already registered is thrown
-            //otherwise a temp fix is to parse the exception and check if it is a regi issue
-            //do this for all registration methods?
-            return await ExecuteAuthAsync(
+            return await ExecuteRegistrationAsync(
                 () => FlockHttpClient.PostAsync<PlayerLoginResponse>(
                     $"{Client.GetApiUrl()}/v1/player/register",
                     new PlayerEmailRegistrationRequest { Email = email, Password = password, Name = name },
@@ -92,7 +117,7 @@ namespace Flock.Providers
         public async Task<PlayerLoginResponse> RegisterWithDeviceAsync(string deviceId, string name = null,
             CancellationToken cancellationToken = default)
         {
-            return await ExecuteAuthAsync(
+            return await ExecuteRegistrationAsync(
                 () => FlockHttpClient.PostAsync<PlayerLoginResponse>(
                     $"{Client.GetApiUrl()}/v1/player/register/device",
                     new PlayerDeviceRegistrationRequest
@@ -114,7 +139,7 @@ namespace Flock.Providers
         public async Task<PlayerLoginResponse> RegisterWithGoogleAsync(string idToken, string name = null,
             CancellationToken cancellationToken = default)
         {
-            return await ExecuteAuthAsync(
+            return await ExecuteRegistrationAsync(
                 () => FlockHttpClient.PostAsync<PlayerLoginResponse>(
                     $"{Client.GetApiUrl()}/v1/player/register/google",
                     new PlayerGoogleRegistrationRequest { IdToken = idToken, Name = name },
@@ -136,7 +161,7 @@ namespace Flock.Providers
         public async Task<PlayerLoginResponse> RegisterWithAppleAsync(string identityToken, string name = null,
             CancellationToken cancellationToken = default)
         {
-            return await ExecuteAuthAsync(
+            return await ExecuteRegistrationAsync(
                 () => FlockHttpClient.PostAsync<PlayerLoginResponse>(
                     $"{Client.GetApiUrl()}/v1/player/register/apple",
                     new PlayerAppleRegistrationRequest { IdentityToken = identityToken, Name = name },
@@ -158,7 +183,7 @@ namespace Flock.Providers
         public async Task<PlayerLoginResponse> RegisterWithSteamAsync(string sessionTicket, string name = null,
             CancellationToken cancellationToken = default)
         {
-            return await ExecuteAuthAsync(
+            return await ExecuteRegistrationAsync(
                 () => FlockHttpClient.PostAsync<PlayerLoginResponse>(
                     $"{Client.GetApiUrl()}/v1/player/register/steam",
                     new PlayerSteamRegistrationRequest { SessionTicket = sessionTicket, Name = name },

@@ -64,12 +64,6 @@ namespace Flock.Http
                 throw new FlockValidationException($"{name} cannot be null or empty");
         }
 
-        protected void RequireRange(int value, int min, int max, string name)
-        {
-            if (value < min || value > max)
-                throw new FlockValidationException($"{name} must be between {min} and {max}");
-        }
-
         protected void ValidateResponse<T>(GenericResponse<T> response) where T : class
         {
             if (response?.Result == null)
