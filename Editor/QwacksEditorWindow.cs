@@ -225,7 +225,7 @@ namespace Flock.Editor
             prop.boolValue = EditorGUILayout.Toggle("Analytics Enabled",prop.boolValue);
             if (prop.boolValue)
             {
-                SerializedProperty prop = configSerialized.FindProperty("analyticsEnabled");
+                prop = configSerialized.FindProperty("analyticsEnabled");
                 prop.boolValue = EditorGUILayout.Toggle("Analytics Enabled",prop.boolValue);
                 if (prop.boolValue)
                 {
