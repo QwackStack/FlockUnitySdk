@@ -97,6 +97,7 @@ namespace Flock
             _initConfig = initConfig ?? throw new ArgumentNullException(nameof(initConfig));
             _logger = logger ?? (initConfig.EnableDebugLogs ? new UnityFlockLogger() : new NullFlockLogger());
             _logger.LogInfo("Initializing Flock SDK");
+            _logger.LogInfo($"Token persistence provider: {initConfig.TokenStore?.GetType().Name ?? "<disabled>"}");
             _retryHandler = new RetryHandler(initConfig.RetryPolicy, _logger);
         }
 
@@ -342,6 +343,8 @@ namespace Flock
             _accessToken = null;
             _refreshToken = null;
             _tokenClaims = null;
+
+            ClearPersistedTokens();
         }
 
         public string GetApiUrl()
@@ -349,23 +352,95 @@ namespace Flock
             return _initConfig.ApiUrl;
         }
 
+        /// <summary>
+        /// Sets in-memory auth state from the given tokens and persists them via
+        /// <see cref="FlockInitConfig.TokenStore"/>.
+        /// Throws <see cref="FlockAuthException"/> if the access token cannot be parsed
+        /// as a JWT — the SDK can't operate without claims, and silent fallback would
+        /// leave <see cref="CurrentPlayerId"/> null with no obvious cause.
+        /// </summary>
         internal void SetTokens(string accessToken, string refreshToken)
         {
-            _accessToken = accessToken;
-            _refreshToken = refreshToken;
-
+            JwtTokenClaims claims = null;
             if (!string.IsNullOrEmpty(accessToken))
             {
                 try
                 {
-                    _tokenClaims = JwtTokenParser.Parse(accessToken);
-                    _logger.LogDebug($"Token set for PlayerId: {_tokenClaims.PlayerId}");
+                    claims = JwtTokenParser.Parse(accessToken);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning($"Failed to parse JWT token: {ex.Message}");
-                    _tokenClaims = null;
+                    _logger.LogError("Failed to parse JWT access token", ex);
+                    throw new FlockAuthException(
+                        "Server returned an unparseable JWT access token. Cannot establish player " +
+                        "session — the auth response was malformed. Verify ApiUrl points at a " +
+                        "supported Flock backend.",
+                        ex);
                 }
+            }
+
+            _accessToken = accessToken;
+            _refreshToken = refreshToken;
+            _tokenClaims = claims;
+
+            if (claims != null)
+                _logger.LogDebug($"Token set for PlayerId: {claims.PlayerId}");
+
+            PersistTokens();
+        }
+
+        internal StoredTokens LoadPersistedTokens()
+        {
+            ITokenStore store = _initConfig.TokenStore;
+            if (store == null) return null;
+            try
+            {
+                StoredTokens loaded = store.Load();
+                _logger.LogDebug($"[{store.GetType().Name}] Load -> {(loaded == null ? "no stored session" : "tokens restored")}");
+                return loaded;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning($"[{store.GetType().Name}] Load failed: {ex.Message}");
+                return null;
+            }
+        }
+
+        private void PersistTokens()
+        {
+            ITokenStore store = _initConfig.TokenStore;
+            if (store == null) return;
+            try
+            {
+                if (string.IsNullOrEmpty(_accessToken))
+                {
+                    store.Clear();
+                    _logger.LogDebug($"[{store.GetType().Name}] Cleared (empty access token)");
+                }
+                else
+                {
+                    store.Save(_accessToken, _refreshToken);
+                    _logger.LogDebug($"[{store.GetType().Name}] Saved tokens");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning($"[{store.GetType().Name}] Persist failed: {ex.Message}");
+            }
+        }
+
+        private void ClearPersistedTokens()
+        {
+            ITokenStore store = _initConfig.TokenStore;
+            if (store == null) return;
+            try
+            {
+                store.Clear();
+                _logger.LogDebug($"[{store.GetType().Name}] Cleared");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning($"[{store.GetType().Name}] Clear failed: {ex.Message}");
             }
         }
     }

@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Flock.Auth;
 using Flock.Exceptions;
 using Flock.Http;
 using Flock.Models;
@@ -28,6 +29,7 @@ namespace Flock.Providers
                 Client.SetTokens(response.AccessToken, response.RefreshToken);
                 Client.Logger.LogInfo($"{context} successful for player: {Client.CurrentPlayerId}");
 
+
 #if !FLOCK_NO_ANALYTICS
                 if (Client.Analytics != null)
                 {
@@ -42,6 +44,8 @@ namespace Flock.Providers
                 }
 #endif
 
+                await TryInitializeAnalyticsAsync(cancellationToken);
+
                 return response;
             }
             catch (FlockException)
@@ -54,6 +58,7 @@ namespace Flock.Providers
                 throw new FlockAuthException($"{context} failed", ex);
             }
         }
+
 
         private async Task<PlayerLoginResponse> ExecuteRegistrationAsync(
             Func<Task<PlayerLoginResponse>> operation, string context, CancellationToken cancellationToken)
@@ -79,6 +84,54 @@ namespace Flock.Providers
                     || msg.IndexOf("exists", StringComparison.OrdinalIgnoreCase) >= 0
                     || msg.IndexOf("in use", StringComparison.OrdinalIgnoreCase) >= 0
                     || msg.IndexOf("taken", StringComparison.OrdinalIgnoreCase) >= 0);
+               
+         }
+        private async Task TryInitializeAnalyticsAsync(CancellationToken cancellationToken)
+        {
+            if (Client.Analytics == null) return;
+            try
+            {
+                await Client.Analytics.InitializeAsync(cancellationToken);
+            }
+            catch (Exception analyticsEx)
+            {
+                Client.Logger.LogWarning($"Analytics initialization failed (non-fatal): {analyticsEx.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Attempts to resume a previously persisted session from
+        /// <see cref="Flock.Config.FlockInitConfig.TokenStore"/>. If the stored access
+        /// token is still valid it is used as-is; if expired, a refresh is attempted.
+        /// Returns <c>true</c> when the player is signed in afterward, <c>false</c>
+        /// otherwise (no stored tokens, parse failure, or refresh rejected).
+        /// </summary>
+        public async Task<bool> TryRestoreSessionAsync(CancellationToken cancellationToken = default)
+        {
+            StoredTokens stored = Client.LoadPersistedTokens();
+            if (stored == null || string.IsNullOrEmpty(stored.AccessToken))
+                return false;
+
+            try
+            {
+                Client.SetTokens(stored.AccessToken, stored.RefreshToken);
+            }
+            catch (FlockAuthException ex)
+            {
+                Client.Logger.LogWarning($"Stored tokens unusable, clearing them: {ex.Message}");
+                Client.ClearTokens();
+                return false;
+            }
+
+            if (Client.IsTokenExpired)
+            {
+                bool refreshed = await Client.TryRefreshTokenAsync(cancellationToken);
+                if (!refreshed) return false;
+            }
+
+            Client.Logger.LogInfo($"Restored session for PlayerId: {Client.CurrentPlayerId}");
+            await TryInitializeAnalyticsAsync(cancellationToken);
+            return true;
         }
 
         public async Task<PlayerLoginResponse> LoginWithEmailAsync(string email, string password,
