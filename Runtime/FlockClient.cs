@@ -63,16 +63,34 @@ namespace Flock
         public event Action OnSessionExpired;
 
         private FlockAuthProvider _authentication;
+#if !FLOCK_NO_CONFIG
         private FlockConfigProvider _config;
+#endif
+#if !FLOCK_NO_SCHEMA
         private FlockSchemaProvider _schema;
+#endif
+#if !FLOCK_NO_GAME
         private FlockGameProvider _game;
+#endif
+#if !FLOCK_NO_PLAYER
         private PlayerProvider _playerData;
+#endif
+#if !FLOCK_NO_COMMANDS
         private FlockCommandProvider _commands;
+#endif
+#if !FLOCK_NO_SHOP
         private FlockShopProvider _shop;
+#endif
+#if !FLOCK_NO_BAN
         private FlockBanProvider _ban;
+#endif
+#if !FLOCK_NO_ASSET
         private FlockAssetProvider _asset;
+#endif
         private FlockSession _session;
+#if !FLOCK_NO_ANALYTICS
         private IAnalyticProvider _analytics;
+#endif
 
         private FlockClient(FlockInitConfig initConfig, IFlockLogger logger)
         {
@@ -101,7 +119,9 @@ namespace Flock
             FlockClient client = new FlockClient(initConfig, logger);
             await client.ResolveGameVersionAsync(cancellationToken);
             client.InitializeServices();
+#if !FLOCK_NO_SCHEMA
             CodeGenValidator.WarnIfDrifted(client._initConfig.GameVersionId, client._logger);
+#endif
             _instance = client;
             return client;
         }
@@ -137,8 +157,11 @@ namespace Flock
                 _initConfig.GameVersionId = response.Result.Id;
                 _logger.LogInfo($"Resolved game version '{_initConfig.GameVersion}' -> id '{_initConfig.GameVersionId}'");
             }
-            catch (FlockException)
+            catch (FlockException e)
             {
+                // Auth/network/validation errors must surface — otherwise InitializeServices runs
+                // with GameVersionId == null and every subsequent API call breaks silently.
+                _logger.LogError("Initialization failed", e);
                 throw;
             }
             catch (Exception ex)
@@ -149,26 +172,39 @@ namespace Flock
 
         private void InitializeServices()
         {
+#if !FLOCK_NO_PLAYER
             _playerData = new PlayerProvider(this);
+#endif
+#if !FLOCK_NO_CONFIG
             _config = new FlockConfigProvider(this);
+#endif
+#if !FLOCK_NO_SCHEMA
             _schema = new FlockSchemaProvider(this);
+#endif
+#if !FLOCK_NO_GAME
             _game = new FlockGameProvider(this);
+#endif
+#if !FLOCK_NO_COMMANDS
             _commands = new FlockCommandProvider(this);
+#endif
+#if !FLOCK_NO_SHOP
             _shop = new FlockShopProvider(this);
+#endif
+#if !FLOCK_NO_BAN
             _ban = new FlockBanProvider(this);
+#endif
+#if !FLOCK_NO_ASSET
             _asset = new FlockAssetProvider(this);
+#endif
             _authentication = new FlockAuthProvider(this);
 
+            _session = new FlockSession(_initConfig.AnalyticsConfig, _logger);
+#if !FLOCK_NO_ANALYTICS
             if (_initConfig.AnalyticsConfig.Enabled)
-            {
-                _session = new FlockSession(_initConfig.AnalyticsConfig, _logger);
                 _analytics = new FlockAnalyticsProvider(this);
-            }
             else
-            {
-                _session = new FlockSession(_initConfig.AnalyticsConfig, _logger);
                 _analytics = new NullAnalyticsProvider(this);
-            }
+#endif
         }
 
         internal IFlockLogger Logger => _logger;
@@ -176,16 +212,33 @@ namespace Flock
         internal FlockInitConfig InitConfig => _initConfig;
         
         public FlockAuthProvider Authentication => _authentication;
+#if !FLOCK_NO_CONFIG
         public FlockConfigProvider Config => _config;
+#endif
+#if !FLOCK_NO_SCHEMA
         public FlockSchemaProvider Schema => _schema;
+#endif
+#if !FLOCK_NO_GAME
         public FlockGameProvider Game => _game;
+#endif
+#if !FLOCK_NO_PLAYER
         public PlayerProvider Player  => _playerData;
+#endif
+#if !FLOCK_NO_COMMANDS
         public FlockCommandProvider Commands => _commands;
+#endif
+#if !FLOCK_NO_SHOP
         public FlockShopProvider Shop => _shop;
+#endif
+#if !FLOCK_NO_BAN
         public FlockBanProvider Ban => _ban;
+#endif
+#if !FLOCK_NO_ASSET
         public FlockAssetProvider Asset => _asset;
+#endif
+#if !FLOCK_NO_ANALYTICS
         public IAnalyticProvider Analytics => _analytics;
-
+#endif
         internal FlockSession Session => _session;
         public bool HasActiveSession => _session?.IsActive ?? false;
         public string CurrentSessionId => _session?.ServerSessionId ?? _session?.SessionId;

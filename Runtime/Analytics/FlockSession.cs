@@ -259,6 +259,7 @@ namespace Flock.Analytics
             _behaviour.OnTick += HandleTick;
             _behaviour.OnAppBackgrounded += HandleAppBackgrounded;
             _behaviour.OnQuit += HandleQuit;
+            _behaviour.OnException += HandleException;
         }
 
         private void Unsubscribe()
@@ -269,6 +270,14 @@ namespace Flock.Analytics
             _behaviour.OnTick -= HandleTick;
             _behaviour.OnAppBackgrounded -= HandleAppBackgrounded;
             _behaviour.OnQuit -= HandleQuit;
+            _behaviour.OnException -= HandleException;
+        }
+
+        private void HandleException(string logMessage, string stackTrace)
+        {
+            _logger.LogError($"Exception Triggered ,{logMessage} , Stack Trace:{stackTrace}");
+            //TODO these should write to disk and then sync to server if sync fail keep cached until it gets sent
+            // same as analytics
         }
 
         private void HandleTick()
@@ -373,6 +382,7 @@ namespace Flock.Analytics
             _logger.LogInfo($"Session persisted on quit: {SessionId} | Duration: {ElapsedSeconds:F1}s");
         }
 
+     
         private void FinalizePause()
         {
             if (_isPaused)
