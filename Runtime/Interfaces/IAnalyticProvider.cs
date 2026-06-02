@@ -27,25 +27,27 @@ namespace Flock.Interfaces
         /// </summary>
         Task RecordTransactionAsync(AnalyticsTransactionRequest request, CancellationToken cancellationToken = default);
 
-        /// <summary>
-        /// Tracks a batch of analytics events. Each entry is persisted to the local
-        /// write-ahead cache before sending; on success the batch is dropped, on
-        /// transient failure it stays for the next flush.
-        /// </summary>
-        Task TrackEventsAsync(
-            List<AnalyticsEventRequest> events,
-            CancellationToken cancellationToken = default);
+        // /// <summary>
+        // /// Tracks a batch of analytics events. Each entry is persisted to the local
+        // /// write-ahead cache before sending; on success the batch is dropped, on
+        // /// transient failure it stays for the next flush.
+        // /// </summary>
+        // Task TrackEventsAsync(
+        //     List<AnalyticsEventRequest> events,
+        //     CancellationToken cancellationToken = default);
 
-        /// <summary>
-        /// Tracks a single analytics event. Persisted to cache, sent, removed on
-        /// success. Events tracked before authentication are tagged with a
-        /// placeholder player id and rewritten after login.
-        /// </summary>
-        Task TrackEventAsync(
-            string eventName,
-            string eventCategory = null,
-            Dictionary<string, object> parameters = null,
-            CancellationToken cancellationToken = default);
+        
+        // Not exposed to user until log_event/analytic clean up
+        // /// <summary>
+        // /// Tracks a single analytics event. Persisted to cache, sent, removed on
+        // /// success. Events tracked before authentication are tagged with a
+        // /// placeholder player id and rewritten after login.
+        // /// </summary>
+        // Task TrackEventAsync(
+        //     string eventName,
+        //     string eventCategory = null,
+        //     Dictionary<string, object> parameters = null,
+        //     CancellationToken cancellationToken = default);
 
         /// <summary>
         /// Captures an <see cref="Exception"/> as a <c>LogEventType.Exception</c>
@@ -90,10 +92,6 @@ namespace Flock.Interfaces
         /// </summary>
         Task LogEventAsync(
             string message,
-            string logicalExpression = null,
-            string errorCode = null,
-            string errorMessage = null,
-            Dictionary<string, object> errorData = null,
             Dictionary<string, object> extraData = null,
             CancellationToken cancellationToken = default);
 

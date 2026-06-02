@@ -24,7 +24,7 @@ namespace Flock.Providers
                 };
 
                 GenericResponse<List<GameCommandExecutionResult>> response = await FlockHttpClient.PostAsync<GenericResponse<List<GameCommandExecutionResult>>>(
-                    $"{Client.GetApiUrl()}/v1/game_command/execute", request, Client.GetBaseHeaders(), cancellationToken);
+                    $"{Client.GetVersionedApiUrl()}/game_command/execute", request, Client.GetBaseHeaders(), cancellationToken);
                 ValidateResponse(response);
                 return response.Result;
             }, "Execute game command", cancellationToken);

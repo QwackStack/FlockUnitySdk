@@ -17,6 +17,13 @@ namespace Flock
 {
     public class FlockClient : IFlockClient
     {
+        /// <summary>
+        /// API version segment appended to <see cref="GetApiUrl"/> for all SDK HTTP calls.
+        /// Single source of truth — bump here (and in the Unreal SDK for parity) when the
+        /// backend cuts a new major API version.
+        /// </summary>
+        public const string ApiVersion = "v1";
+
         private static FlockClient _instance;
 
         /// <summary>
@@ -81,9 +88,6 @@ namespace Flock
 #if !FLOCK_NO_SHOP
         private FlockShopProvider _shop;
 #endif
-#if !FLOCK_NO_BAN
-        private FlockBanProvider _ban;
-#endif
 #if !FLOCK_NO_ASSET
         private FlockAssetProvider _asset;
 #endif
@@ -128,7 +132,7 @@ namespace Flock
 
         /// <summary>
         /// Clears the global <see cref="Instance"/>, allowing <see cref="CreateAsync"/> to be
-        /// called again. Logs out the current player first so token state is dropped.
+        /// called again. Logs out the current player first so the token state is dropped.
         /// </summary>
         public static void Shutdown()
         {
@@ -143,7 +147,7 @@ namespace Flock
             if (string.IsNullOrEmpty(_initConfig.GameVersion))
                 throw new FlockValidationException("GameVersion is required to initialize the Flock SDK");
 
-            string url = $"{_initConfig.ApiUrl}/v1/game_version/by-name/{Uri.EscapeDataString(_initConfig.GameVersion)}";
+            string url = $"{GetVersionedApiUrl()}/game_version/by-name/{Uri.EscapeDataString(_initConfig.GameVersion)}";
             try
             {
                 GenericResponse<GameVersionSchema> response = await _retryHandler.ExecuteAsync(
@@ -190,9 +194,6 @@ namespace Flock
 #if !FLOCK_NO_SHOP
             _shop = new FlockShopProvider(this);
 #endif
-#if !FLOCK_NO_BAN
-            _ban = new FlockBanProvider(this);
-#endif
 #if !FLOCK_NO_ASSET
             _asset = new FlockAssetProvider(this);
 #endif
@@ -229,9 +230,6 @@ namespace Flock
 #endif
 #if !FLOCK_NO_SHOP
         public FlockShopProvider Shop => _shop;
-#endif
-#if !FLOCK_NO_BAN
-        public FlockBanProvider Ban => _ban;
 #endif
 #if !FLOCK_NO_ASSET
         public FlockAssetProvider Asset => _asset;
@@ -294,10 +292,10 @@ namespace Flock
                     return true;
 
                 var refreshRequest = new PlayerRefreshTokenRequest { PlayerId = playerIdSnapshot, RefreshToken = refreshSnapshot };
-                _logger.LogDebug($"Refresh POST {_initConfig.ApiUrl}/v1/player/token/refresh body={Newtonsoft.Json.JsonConvert.SerializeObject(refreshRequest)}");
+                _logger.LogDebug($"Refresh POST {GetVersionedApiUrl()}/player/token/refresh body={Newtonsoft.Json.JsonConvert.SerializeObject(refreshRequest)}");
 
                 PlayerLoginResponse response = await FlockHttpClient.PostAsync<PlayerLoginResponse>(
-                    $"{_initConfig.ApiUrl}/v1/player/token/refresh",
+                    $"{GetVersionedApiUrl()}/player/token/refresh",
                     refreshRequest,
                     _initConfig.GetBaseHeaders(), cancellationToken);
 
@@ -350,6 +348,16 @@ namespace Flock
         public string GetApiUrl()
         {
             return _initConfig.ApiUrl;
+        }
+
+        /// <summary>
+        /// API base URL with the current <see cref="ApiVersion"/> segment appended
+        /// (e.g. <c>https://api.flock.example/v1</c>). Use this for every versioned
+        /// endpoint call so the version lives in exactly one place.
+        /// </summary>
+        public string GetVersionedApiUrl()
+        {
+            return $"{_initConfig.ApiUrl}/{ApiVersion}";
         }
 
         /// <summary>

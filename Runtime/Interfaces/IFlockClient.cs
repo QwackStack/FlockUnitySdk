@@ -34,9 +34,6 @@ namespace Flock.Interfaces
 #if !FLOCK_NO_SHOP
         FlockShopProvider Shop { get; }
 #endif
-#if !FLOCK_NO_BAN
-        FlockBanProvider Ban { get; }
-#endif
 #if !FLOCK_NO_ASSET
         FlockAssetProvider Asset { get; }
 #endif
@@ -46,5 +43,6 @@ namespace Flock.Interfaces
         bool HasActiveSession { get; }
         string CurrentSessionId { get; }
         string GetApiUrl();
+        string GetVersionedApiUrl();
     }
 }

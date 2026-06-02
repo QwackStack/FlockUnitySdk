@@ -1,4 +1,5 @@
 using Flock.Analytics;
+using Flock.Http;
 using UnityEngine;
 using UnityEngine.Serialization;
 
@@ -67,6 +68,9 @@ namespace Flock.Config
         [Tooltip("How many cached events are flushed per batch when retrying.")]
         public int analyticsCacheFlushBatchSize = 50;
 
+        [Tooltip("Interval (seconds) for the periodic event-buffer flush. The buffer is also drained on session pause, session end, and online-event triggers. Set to 0 to disable interval-based flushing.")]
+        public float analyticsEventBufferFlushInterval = 10f;
+
         [Header("Asset Cache")]
         [Tooltip("Cache asset downloads on disk, keyed by asset ID + UpdatedAt. Disable on WebGL — persistentDataPath there does not support synchronous writes.")]
         public bool enableAssetCache = true;
@@ -77,6 +81,13 @@ namespace Flock.Config
         [Tooltip("Maximum size of the on-disk asset cache, in MB. 0 means unlimited; LRU eviction otherwise.")]
         public int assetCacheMaxSizeMB = 100;
 
+        [Header("HTTP Retry Policy")]
+        [Tooltip("How many times to retry after the initial attempt fails. 0 disables retries. Delay between retries is exponential backoff with ±25% jitter — change the defaults via code (new RetryPolicy { ... }) if you need to tune them.")]
+        public int retryMaxRetries = 3;
+
+        [Tooltip("Adds ±25% randomness to each retry delay to avoid thundering-herd reconnects after a server outage. Leave on unless you have a specific reason.")]
+        public bool retryUseJitter = true;
+
         public string ApiKey
         {
             get => apiKey;
@@ -85,22 +96,32 @@ namespace Flock.Config
 
         public FlockInitConfig ToInitConfig()
         {
+            FlockAnalyticsConfig analyticsConfig = new FlockAnalyticsConfig
+            {
+                Enabled = analyticsEnabled,
+                AutoStartSession = analyticsAutoStartSession,
+                AutoEndSessionOnQuit = analyticsAutoEndOnQuit,
+                SessionTimeoutSeconds = analyticsSessionTimeout,
+                HeartbeatIntervalSeconds = analyticsHeartbeatInterval,
+                BounceThresholdSeconds = analyticsBounceThreshold,
+                PersistSessionOnDisk = analyticsPersistSession,
+                TrackFps = analyticsTrackFps,
+                FpsSampleIntervalSeconds = analyticsFpsSampleInterval,
+                CacheFailedEvents = analyticsCacheFailedEvents,
+                MaxCachedEvents = analyticsMaxCachedEvents,
+                CacheFlushBatchSize = analyticsCacheFlushBatchSize,
+                EventBufferFlushIntervalSeconds = analyticsEventBufferFlushInterval,
+            };
+
+            RetryPolicy retryPolicy = new RetryPolicy
+            {
+                MaxRetries = retryMaxRetries,
+                UseJitter = retryUseJitter,
+            };
+
             return new FlockInitConfig(apiUrl, apiKey, gameId, gameVersion, enableDebugLogs,
-                analyticsConfig: new FlockAnalyticsConfig
-                {
-                    Enabled = analyticsEnabled,
-                    AutoStartSession = analyticsAutoStartSession,
-                    AutoEndSessionOnQuit = analyticsAutoEndOnQuit,
-                    SessionTimeoutSeconds = analyticsSessionTimeout,
-                    HeartbeatIntervalSeconds = analyticsHeartbeatInterval,
-                    BounceThresholdSeconds = analyticsBounceThreshold,
-                    PersistSessionOnDisk = analyticsPersistSession,
-                    TrackFps = analyticsTrackFps,
-                    FpsSampleIntervalSeconds = analyticsFpsSampleInterval,
-                    CacheFailedEvents = analyticsCacheFailedEvents,
-                    MaxCachedEvents = analyticsMaxCachedEvents,
-                    CacheFlushBatchSize = analyticsCacheFlushBatchSize,
-                })
+                analyticsConfig: analyticsConfig,
+                retryPolicy: retryPolicy)
             {
                 EnableAssetCache = enableAssetCache,
                 AssetCacheDirectory = assetCacheDirectory,

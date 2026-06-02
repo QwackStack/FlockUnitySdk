@@ -1,33 +1,33 @@
 {
-    "name": "com.flock.sdk",
-    "version": "1.8.0",
-    "displayName": "Flock SDK",
-    "description": "A game backend SDK for Unity with authentication, game configuration, player data, shop, and analytics.",
-    "unity": "2020.3",
-    "dependencies": {
-        "com.unity.nuget.newtonsoft-json": "3.0.2"
-    },
-    "keywords": [
-        "backend",
-        "game",
-        "sdk",
-        "authentication",
-        "configuration",
-        "player-data",
-        "analytics",
-        "shop"
-    ],
-    "author": {
-        "name": "Flock",
-        "email": "support@qwacks.com",
-        "url": "https://flock.qwacks.com"
-    },
-    "license": "MIT",
-    "repository": {
-        "type": "git",
-        "url": "https://github.com/QwackStack/FlockUnitySDK.git"
-    },
-    "documentationUrl": "https://github.com/QwackStack/FlockUnitySDK",
-    "changelogUrl": "https://github.com/QwackStack/FlockUnitySDK/blob/main/CHANGELOG.md",
-    "licensesUrl": "https://github.com/QwackStack/FlockUnitySDK/blob/main/LICENSE"
-} 
+  "name": "com.flock.sdk",
+  "version": "1.8.0",
+  "displayName": "Flock SDK",
+  "description": "A game backend SDK for Unity with authentication, game configuration, player data, shop, and analytics.",
+  "unity": "2020.3",
+  "dependencies": {
+    "com.unity.nuget.newtonsoft-json": "3.0.2"
+  },
+  "keywords": [
+    "backend",
+    "game",
+    "sdk",
+    "authentication",
+    "configuration",
+    "player-data",
+    "analytics",
+    "shop"
+  ],
+  "author": {
+    "name": "Flock",
+    "email": "support@qwacks.com",
+    "url": "https://flock.qwacks.com"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/QwackStack/FlockUnitySDK.git"
+  },
+  "documentationUrl": "https://github.com/QwackStack/FlockUnitySDK",
+  "changelogUrl": "https://github.com/QwackStack/FlockUnitySDK/blob/main/CHANGELOG.md",
+  "licensesUrl": "https://github.com/QwackStack/FlockUnitySDK/blob/main/LICENSE"
+}

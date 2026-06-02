@@ -36,6 +36,9 @@ namespace Flock
 
         internal static bool IsAvailable => _instance != null && !_isQuitting;
 
+
+        // Fires from Unity's <c>Update</c>'
+        // Do not allocate memory on this.
         internal event Action OnTick;
 
         /// <summary>
@@ -45,9 +48,10 @@ namespace Flock
         /// Argument is <c>true</c> when backgrounded, <c>false</c> when foregrounded again.
         /// </summary>
         internal event Action<bool> OnAppBackgrounded;
+
         internal event Action<bool> OnFocus;
         internal event Action OnQuit;
-        internal event Action<string,string> OnException;
+        internal event Action<string, string> OnException;
 
         private void Awake()
         {
@@ -66,12 +70,16 @@ namespace Flock
             OnTick?.Invoke();
         }
 
-        void OnEnable() {
+        private void OnEnable()
+        {
             Application.logMessageReceived += HandleLog;
         }
-        void OnDisable() {
+
+        private void OnDisable()
+        {
             Application.logMessageReceived -= HandleLog;
         }
+
         private void HandleLog(string logMessage, string stackTrace, LogType type)
         {
             if (type == LogType.Exception)
@@ -80,6 +88,7 @@ namespace Flock
                 {
                     stackTrace = StackTraceUtility.ExtractStackTrace();
                 }
+
                 OnException?.Invoke(logMessage, stackTrace);
             }
         }

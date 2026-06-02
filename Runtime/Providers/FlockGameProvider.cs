@@ -13,7 +13,7 @@ namespace Flock.Providers
         {
             return await ExecuteAsync(async () =>
             {
-                string url = $"{Client.GetApiUrl()}/v1/game";
+                string url = $"{Client.GetVersionedApiUrl()}/game";
                 GenericResponse<GameSchema> response = await FlockHttpClient.GetAsync<GenericResponse<GameSchema>>(
                     url, Client.GetBaseHeaders(), cancellationToken);
                 ValidateResponse(response);
@@ -25,7 +25,7 @@ namespace Flock.Providers
         {
             return await ExecuteAsync(async () =>
             {
-                string url = $"{Client.GetApiUrl()}/v1/game_version";
+                string url = $"{Client.GetVersionedApiUrl()}/game_version";
                 GenericResponse<GameVersionSchema> response = await FlockHttpClient.GetAsync<GenericResponse<GameVersionSchema>>(
                     url, Client.GetBaseHeaders(), cancellationToken);
                 ValidateResponse(response);
@@ -36,7 +36,7 @@ namespace Flock.Providers
         {
             return await ExecuteAsync(async () =>
             {
-                string url = $"{Client.GetApiUrl()}/v1/game_version/by-name/{name}";
+                string url = $"{Client.GetVersionedApiUrl()}/game_version/by-name/{name}";
                 GenericResponse<GameVersionSchema> response = await FlockHttpClient.GetAsync<GenericResponse<GameVersionSchema>>(
                     url, Client.GetBaseHeaders(), cancellationToken);
                 ValidateResponse(response);

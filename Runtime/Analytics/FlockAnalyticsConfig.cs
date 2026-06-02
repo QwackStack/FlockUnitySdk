@@ -17,5 +17,6 @@ namespace Flock.Analytics
         public bool CacheFailedEvents { get; set; } = true;
         public int MaxCachedEvents { get; set; } = 1000;
         public int CacheFlushBatchSize { get; set; } = 50;
+        public float EventBufferFlushIntervalSeconds { get; set; } = 10f;
     }
 }

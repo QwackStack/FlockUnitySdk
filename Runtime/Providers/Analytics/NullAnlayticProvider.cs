@@ -31,18 +31,20 @@ namespace Flock.Providers
             return Task.CompletedTask;
         }
 
-        public Task TrackEventsAsync(List<AnalyticsEventRequest> events, CancellationToken cancellationToken = default)
-        {
-            this.Client.Logger.LogDebug("Analytics is disabled ,trying to track events");
-            return Task.CompletedTask;
-        }
+        // Not exposed to user until log_event/analytic clean up
+        // public Task TrackEventsAsync(List<AnalyticsEventRequest> events, CancellationToken cancellationToken = default)
+        // {
+        //     this.Client.Logger.LogDebug("Analytics is disabled ,trying to track events");
+        //     return Task.CompletedTask;
+        // }
 
-        public Task TrackEventAsync(string eventName, string eventCategory = null, Dictionary<string, object> parameters = null,
-            CancellationToken cancellationToken = default)
-        {
-            this.Client.Logger.LogDebug("Analytics is disabled ,trying to track event");
-            return Task.CompletedTask;
-        }
+        // Not exposed to user until log_event/analytic clean up
+        // public Task TrackEventAsync(string eventName, string eventCategory = null, Dictionary<string, object> parameters = null,
+        //     CancellationToken cancellationToken = default)
+        // {
+        //     this.Client.Logger.LogDebug("Analytics is disabled ,trying to track event");
+        //     return Task.CompletedTask;
+        // }
 
         public Task LogExceptionAsync(Exception exception, Dictionary<string, object> errorData = null,
             Dictionary<string, object> extraData = null, CancellationToken cancellationToken = default)
@@ -66,8 +68,7 @@ namespace Flock.Providers
             return Task.CompletedTask;
         }
 
-        public Task LogEventAsync(string message, string logicalExpression = null, string errorCode = null,
-            string errorMessage = null, Dictionary<string, object> errorData = null,
+        public Task LogEventAsync(string message, 
             Dictionary<string, object> extraData = null, CancellationToken cancellationToken = default)
         {
             this.Client.Logger.LogDebug("Analytics is disabled ,trying to log event");

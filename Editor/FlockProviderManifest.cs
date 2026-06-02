@@ -73,7 +73,7 @@ namespace Flock.Editor
             {
                 Id = "PLAYER",
                 DisplayName = "Player",
-                Description = "Player data and player templates.",
+                Description = "Player data, templates, and ban lookups.",
                 Files = new[]
                 {
                     "Runtime/Providers/PlayerProvider.cs",
@@ -116,17 +116,6 @@ namespace Flock.Editor
                 },
                 // Shop's purchase flow records analytics transactions unconditionally.
                 DependsOn = new[] { "ANALYTICS" },
-            },
-            new Entry
-            {
-                Id = "BAN",
-                DisplayName = "Ban",
-                Description = "Player ban lookups.",
-                Files = new[]
-                {
-                    "Runtime/Providers/FlockBanProvider.cs",
-                },
-                DependsOn = new string[0],
             },
             new Entry
             {

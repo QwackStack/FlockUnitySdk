@@ -38,7 +38,7 @@ namespace Flock.Editor
 
         private Tab activeTab = Tab.Configuration;
         private Vector2 scroll;
-        private bool analyticsEnabled;
+        private bool analyticsExpanded = true;
 
         private FlockConfigAsset config;
         private SerializedObject configSerialized;
@@ -180,6 +180,7 @@ namespace Flock.Editor
             DrawOptionalCard();
             DrawAnalyticsCard();
             DrawAssetCacheCard();
+            DrawRetryPolicyCard();
             DrawConfigToolsCard();
             configSerialized.ApplyModifiedProperties();
         }
@@ -221,13 +222,14 @@ namespace Flock.Editor
         private void DrawAnalyticsCard()
         {
             EditorGUILayout.BeginVertical(cardStyle);
-            SerializedProperty prop = configSerialized.FindProperty("analyticsEnabled");
-            prop.boolValue = EditorGUILayout.Toggle("Analytics Enabled",prop.boolValue);
-            if (prop.boolValue)
+
+            SerializedProperty enabledProp = configSerialized.FindProperty("analyticsEnabled");
+            enabledProp.boolValue = EditorGUILayout.Toggle("Analytics Enabled", enabledProp.boolValue);
+
+            if (enabledProp.boolValue)
             {
-                prop = configSerialized.FindProperty("analyticsEnabled");
-                prop.boolValue = EditorGUILayout.Toggle("Analytics Enabled",prop.boolValue);
-                if (prop.boolValue)
+                analyticsExpanded = EditorGUILayout.Foldout(analyticsExpanded, "Analytics Settings", toggleOnLabelClick: true);
+                if (analyticsExpanded)
                 {
                     DrawProperty("analyticsAutoStartSession");
                     DrawProperty("analyticsAutoEndOnQuit");
@@ -245,8 +247,22 @@ namespace Flock.Editor
                     {
                         DrawProperty("analyticsMaxCachedEvents");
                         DrawProperty("analyticsCacheFlushBatchSize");
+                        DrawProperty("analyticsEventBufferFlushInterval");
                     }
                 }
+            }
+
+            EditorGUILayout.EndVertical();
+        }
+
+        private void DrawRetryPolicyCard()
+        {
+            EditorGUILayout.BeginVertical(cardStyle);
+            GUILayout.Label("HTTP Retry Policy", sectionHeaderStyle);
+            DrawProperty("retryMaxRetries");
+            using (new EditorGUI.DisabledScope(configSerialized.FindProperty("retryMaxRetries").intValue <= 0))
+            {
+                DrawProperty("retryUseJitter");
             }
             EditorGUILayout.EndVertical();
         }
@@ -614,7 +630,7 @@ namespace Flock.Editor
             // When Game Version is missing, we can't run that call — fall back to a bare key check.
             bool hasGameVersion = !string.IsNullOrEmpty(gameVersion);
             string url = hasGameVersion
-                ? $"{baseUrl}/v1/game_version/by-name/{Uri.EscapeDataString(gameVersion)}"
+                ? $"{baseUrl}/{FlockClient.ApiVersion}/game_version/by-name/{Uri.EscapeDataString(gameVersion)}"
                 : $"{baseUrl}/healthz";
 
             EditorUtility.DisplayProgressBar("Test Connection", "Pinging API...", 0.4f);

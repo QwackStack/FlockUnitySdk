@@ -17,6 +17,15 @@ namespace Flock.Analytics
     // disk for the next run to retry.
     internal class FlockEventCache<T> : IEventCache<T> where T : class
     {
+        // Success: batch is gone from the server's perspective (Sent) — delete the files and move on.
+        // Drop: batch is gone from the server's perspective (permanently rejected) — delete the files and move on.
+        // Defer: leave the files on disk and stop the flush loop; try again on the next trigger.
+        private enum FlushOutcome
+        {
+            Success,
+            Drop, 
+            Defer
+        }
         private const string Extension = ".evt";
         private const string TmpExtension = ".evt.tmp";
 
@@ -78,9 +87,9 @@ namespace Flock.Analytics
                 Interlocked.Decrement(ref _pendingCount);
         }
 
-        public void Rewrite(Func<T, bool> shouldRewrite, Action<T> mutate)
+        public void Rewrite(Func<T, bool> shouldRewrite, Action<T> setAuthID)
         {
-            if (shouldRewrite == null || mutate == null)
+            if (shouldRewrite == null || setAuthID == null)
                 return;
 
             int rewritten = 0;
@@ -92,7 +101,7 @@ namespace Flock.Analytics
                     if (evt == null || !shouldRewrite(evt))
                         continue;
 
-                    mutate(evt);
+                    setAuthID(evt);
 
                     // Atomic swap: write tmp, replace original. File.Replace is atomic on the local FS
                     // and avoids the empty-file window that File.WriteAllText would leave behind.
@@ -142,11 +151,6 @@ namespace Flock.Analytics
                 Interlocked.Exchange(ref _flushing, 0);
             }
         }
-
-        // Success: batch is gone from the server's perspective (Sent) — delete the files and move on.
-        // Drop: batch is gone from the server's perspective (permanently rejected) — delete the files and move on.
-        // Defer: leave the files on disk and stop the flush loop; try again on the next trigger.
-        private enum FlushOutcome { Success, Drop, Defer }
 
         private async Task<FlushOutcome> TrySendBatch(
             Func<IReadOnlyList<T>, CancellationToken, Task> sender,
@@ -298,7 +302,10 @@ namespace Flock.Analytics
                     return true;
                 }
             }
-            catch { }
+            catch
+            {
+                //nothing to do here
+            }
             return false;
         }
 

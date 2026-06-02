@@ -29,7 +29,7 @@ namespace Flock.Providers
         {
             return await ExecuteAsync(async () =>
             {
-                string url = $"{Client.GetApiUrl()}/v1/asset";
+                string url = $"{Client.GetVersionedApiUrl()}/asset";
                 GenericResponse<List<AssetSchema>> response = await FlockHttpClient.GetAsync<GenericResponse<List<AssetSchema>>>(
                     url, Client.GetBaseHeaders(), cancellationToken);
                 ValidateResponse(response);
@@ -43,7 +43,7 @@ namespace Flock.Providers
 
             return await ExecuteAsync(async () =>
             {
-                string url = $"{Client.GetApiUrl()}/v1/asset/{assetId}";
+                string url = $"{Client.GetVersionedApiUrl()}/asset/{assetId}";
                 GenericResponse<AssetSchema> response = await FlockHttpClient.GetAsync<GenericResponse<AssetSchema>>(
                     url, Client.GetBaseHeaders(), cancellationToken);
                 ValidateResponse(response);
