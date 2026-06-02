@@ -18,8 +18,9 @@ namespace Flock.Analytics
         void Remove(string handle);
 
         // Walks every cached entry; for each one where `shouldRewrite` returns true,
-        // applies `mutate` and atomically rewrites the file. Used for retag-after-auth flows.
-        void Rewrite(Func<T, bool> shouldRewrite, Action<T> mutate);
+        // applies `mutate` and atomically rewrites the file.
+        // Used for retag-after-auth flows where user ID was defaulted due to auth failure.
+        void Rewrite(Func<T, bool> shouldRewrite, Action<T> setAuthID);
 
         // Drains the cache one batch at a time via the supplied sender.
         Task FlushAsync(

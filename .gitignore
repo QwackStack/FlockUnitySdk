@@ -55,4 +55,18 @@ crashlytics-build.properties
 
 # Temporary auto-generated Android Assets
 /[Aa]ssets/[Ss]treamingAssets/aa.meta
-/[Aa]ssets/[Ss]treamingAssets/aa/* 
+/[Aa]ssets/[Ss]treamingAssets/aa/*
+
+# Local Claude Code context (not shared)
+CLAUDE.md
+CLAUDE.md.meta
+CLAUDE.local.md
+CLAUDE.local.md.meta
+.claude/settings.local.json
+
+# graphify knowledge graph output (local-only)
+graphify-out/
+graphify-out.meta
+
+# JetBrains Rider / IntelliJ
+.idea/

@@ -15,5 +15,6 @@ namespace Flock.Interfaces
         Task<PlayerTemplateSchema> GetTemplateByIdAsync(string playerTemplateId, CancellationToken cancellationToken = default);
         Task<PlayerTemplateSchema> GetTemplateByNameAsync(string name, CancellationToken cancellationToken = default);
         Task<List<PlayerData>> GetTemplatePlayerDataAsync(string playerTemplateId, CancellationToken cancellationToken = default);
+        Task<PlayerBan> GetBanAsync(string playerId, CancellationToken cancellationToken = default);
     }
 }

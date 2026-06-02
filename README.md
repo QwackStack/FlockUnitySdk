@@ -118,6 +118,10 @@ var response = await FlockClient.Instance.Authentication.RegisterWithSteamAsync(
 FlockClient.Instance.Authentication.Logout();
 ```
 
+> **Note on `name` during registration.** The backend enforces a **unique** display name across registered players. The SDK has a temporary string-match (`IsAlreadyRegisteredError`) that swallows "already registered" errors and returns `null` from `RegisterWith*` instead of throwing — whether it catches name collisions specifically depends on the exact backend error wording, which isn't structured today (see [Backend backlog](#backend-backlog)).
+>
+> Until the backend ships a structured "name taken" error code (or a `name-available` endpoint), the recommended path is to **pass `null` (or omit `name`)** and let the backend assign a default. If you need a display name, collect it on a separate post-registration screen where retrying on collision is natural UX.
+
 ### Token Refresh
 
 The SDK silently refreshes the access token on `401` responses. You can also
@@ -194,7 +198,7 @@ var inventory = await FlockClient.Instance.Shop.PurchaseAsync("shop-item-id", Fl
 var playerItems = await FlockClient.Instance.Shop.GetPlayerInventoryAsync(FlockClient.Instance.CurrentPlayerId);
 
 // Player ban — returns active ban data keyed by feature, or null if not banned
-var ban = await FlockClient.Instance.Ban.GetPlayerBanAsync(FlockClient.Instance.CurrentPlayerId);
+var ban = await FlockClient.Instance.Player.GetBanAsync(FlockClient.Instance.CurrentPlayerId);
 
 // Assets — list / lookup
 var assets = await FlockClient.Instance.Asset.GetAllAsync();
@@ -221,6 +225,42 @@ List<Sprite> sprites = await FlockClient.Instance.Asset.DownloadAsync<Sprite>(as
 // are deleted automatically when a newer UpdatedAt is cached.
 string cacheDir = FlockClient.Instance.Asset.CacheDirectory; // resolved absolute path
 FlockClient.Instance.Asset.ClearCache();
+```
+
+### Analytics
+
+> **Auth dependency.** All analytics endpoints (`/v1/analytics/*` and `/v1/log_event*`) are **bearer-authenticated** — see the [endpoint table](#api-endpoints). Behavior depends on the call:
+>
+> - `TrackEventAsync`, `TrackEventsAsync`, `LogExceptionAsync`, `LogErrorAsync`, `LogEventAsync` — **safe to call before login**. They enqueue to the on-disk cache and drain automatically after authentication (entries tagged with the unauthenticated placeholder are retagged with the real `PlayerId` at login). They also drain on interval (`EventBufferFlushIntervalSeconds`, default 10s), on session pause, and on session end.
+> - `RecordTransactionAsync`, `StartSessionAsync` — **best-effort.** They attempt an immediate send and will 401 if called before login; session start swallows the error and continues locally, transaction does not.
+>
+> A console warning ("Player must be authenticated for analytics") is logged whenever a pre-auth call is made, but the SDK never throws for analytics — observability should not break the game.
+
+```csharp
+// Sessions auto-start at login when AutoStartSession is true (default). Otherwise:
+await FlockClient.Instance.Analytics.StartSessionAsync();
+await FlockClient.Instance.Analytics.EndSessionAsync();
+
+// Events — queued to disk, drained on interval/pause/end/login
+await FlockClient.Instance.Analytics.TrackEventAsync(
+    "level_complete",
+    eventCategory: "gameplay",
+    parameters: new Dictionary<string, object> { { "level", 5 }, { "stars", 3 } });
+
+// Batch
+await FlockClient.Instance.Analytics.TrackEventsAsync(eventList);
+
+// Logs — same queue-and-drain semantics
+await FlockClient.Instance.Analytics.LogExceptionAsync(exception);
+await FlockClient.Instance.Analytics.LogErrorAsync("inventory desync", errorCode: "INV_001");
+
+// Transactions — immediate send, requires auth
+await FlockClient.Instance.Analytics.RecordTransactionAsync(new AnalyticsTransactionRequest {
+    Amount = 4.99f, CurrencyCode = "USD", TransactionType = "Purchase", Status = "Purchased"
+});
+
+// Screen views — local-only, contributes to session ScreensViewed counter
+FlockClient.Instance.Analytics.RecordScreenView("MainMenu");
 ```
 
 ## Codegen
@@ -266,6 +306,7 @@ A few SDK behaviors are constrained by the current backend surface and will impr
 - **Nested object schemas in codegen** — schema `object` maps to `Newtonsoft.Json.Linq.JObject` (call `.ToObject<T>()` for typed views). Once the backend serializes nested object schemas inline rather than as opaque `object`, codegen will emit nested classes.
 - **Game command IDs in codegen** — generated `Update*Async` and `Update*FieldAsync` extension methods read command IDs from `Editor/Codegen/CommandLookup.cs`, which currently has placeholder constants you must replace with your dashboard's `UpdatePlayerData` and `UpdatePlayerDataKey` IDs. Will resolve automatically once the backend exposes a "command by name" lookup endpoint.
 - **Asset by name** — `client.Asset.GetByNameAsync` lists all assets and filters client-side (O(N)). Will switch to `GET /v1/asset/by-name/{name}` once the backend adds it.
+- **Structured registration error codes** — `POST /v1/player/register*` failures are returned as plain text without an error-code field. The SDK uses string-matching (`IsAlreadyRegisteredError`) to swallow "already registered" cases and return `null` from `RegisterWith*`, which is brittle and conflates name collisions with credential collisions. Once the backend returns structured codes (e.g. `NAME_TAKEN`, `EMAIL_REGISTERED`, `DEVICE_REGISTERED`), the SDK can surface them as typed exceptions and the `RegisterWith*` methods can take `name` again with reliable error UX. A `GET /v1/player/name-available?name=` endpoint would also let callers validate as the user types.
 
 ## Headers
 

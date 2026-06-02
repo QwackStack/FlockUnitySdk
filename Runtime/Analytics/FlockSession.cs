@@ -20,6 +20,7 @@ namespace Flock.Analytics
         private float _totalPauseDuration;
         private int _pauseCount;
         private float _lastHeartbeatTime;
+        private float _lastFlushTime;
 
         private int _frameCount;
         private float _fpsAccumulator;
@@ -80,6 +81,8 @@ namespace Flock.Analytics
         internal float MaxFps => _fpsSampleCount > 0 ? _fpsMax : 0f;
 
         internal event Action OnHeartbeat;
+        internal event Action OnFlushInterval;
+        internal event Action OnSessionPaused;
         internal event Action<FlockSessionSnapshot> OnSessionTimedOut;
         internal event Action<FlockSessionSnapshot> OnSessionEnding;
 
@@ -90,7 +93,7 @@ namespace Flock.Analytics
             _behaviour = FlockBehaviour.Instance;
         }
 
-        internal FlockSessionSnapshot RecoverCrashedSession()
+        internal FlockSessionSnapshot RecoverOrphanedSession()
         {
             if (!_config.PersistSessionOnDisk)
                 return null;
@@ -108,15 +111,14 @@ namespace Flock.Analytics
                 if (recovered != null && recovered.IsActive)
                 {
                     recovered.IsActive = false;
-                    recovered.WasCrash = true;
                     recovered.EndTimeUtc = recovered.LastHeartbeatUtc ?? recovered.StartTimeUtc;
-                    _logger.LogWarning($"Recovered crashed session: {recovered.SessionId}");
+                    _logger.LogWarning($"Recovering orphaned session: {recovered.SessionId}");
                     return recovered;
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning($"Failed to recover crashed session: {ex.Message}");
+                _logger.LogWarning($"Failed to recover orphaned session: {ex.Message}");
             }
 
             return null;
@@ -143,6 +145,7 @@ namespace Flock.Analytics
             _totalPauseDuration = 0f;
             _pauseCount = 0;
             _lastHeartbeatTime = Time.realtimeSinceStartup;
+            _lastFlushTime = Time.realtimeSinceStartup;
 
             _frameCount = 0;
             _fpsAccumulator = 0f;
@@ -166,7 +169,7 @@ namespace Flock.Analytics
             DeviceInfo = FlockDeviceInfo.Capture();
 
             Subscribe();
-            PersistState();
+            SaveState();
 
             _logger.LogInfo($"Session started: {SessionId} (#{SessionNumber})");
 
@@ -214,6 +217,8 @@ namespace Flock.Analytics
 
             Unsubscribe();
             OnHeartbeat = null;
+            OnFlushInterval = null;
+            OnSessionPaused = null;
             OnSessionTimedOut = null;
             OnSessionEnding = null;
         }
@@ -249,7 +254,6 @@ namespace Flock.Analytics
                 DeviceInfo = DeviceInfo,
                 IsActive = _active,
                 IsBounce = false,
-                WasCrash = false,
                 IsFirstSession = SessionNumber == 1
             };
         }
@@ -259,7 +263,6 @@ namespace Flock.Analytics
             _behaviour.OnTick += HandleTick;
             _behaviour.OnAppBackgrounded += HandleAppBackgrounded;
             _behaviour.OnQuit += HandleQuit;
-            _behaviour.OnException += HandleException;
         }
 
         private void Unsubscribe()
@@ -270,15 +273,9 @@ namespace Flock.Analytics
             _behaviour.OnTick -= HandleTick;
             _behaviour.OnAppBackgrounded -= HandleAppBackgrounded;
             _behaviour.OnQuit -= HandleQuit;
-            _behaviour.OnException -= HandleException;
         }
 
-        private void HandleException(string logMessage, string stackTrace)
-        {
-            _logger.LogError($"Exception Triggered ,{logMessage} , Stack Trace:{stackTrace}");
-            //TODO these should write to disk and then sync to server if sync fail keep cached until it gets sent
-            // same as analytics
-        }
+        
 
         private void HandleTick()
         {
@@ -314,8 +311,18 @@ namespace Flock.Analytics
                 if (now - _lastHeartbeatTime >= _config.HeartbeatIntervalSeconds)
                 {
                     _lastHeartbeatTime = now;
-                    PersistState();
+                    SaveState();
                     OnHeartbeat?.Invoke();
+                }
+            }
+
+            if (_config.EventBufferFlushIntervalSeconds > 0f)
+            {
+                float now = Time.realtimeSinceStartup;
+                if (now - _lastFlushTime >= _config.EventBufferFlushIntervalSeconds)
+                {
+                    _lastFlushTime = now;
+                    OnFlushInterval?.Invoke();
                 }
             }
         }
@@ -330,7 +337,8 @@ namespace Flock.Analytics
                 _pauseCount++;
                 _isPaused = true;
                 _pausedAtRealtime = Time.realtimeSinceStartup;
-                PersistState();
+                SaveState();
+                OnSessionPaused?.Invoke();
                 _logger.LogDebug($"Session backgrounded: {SessionId}");
             }
             else
@@ -375,11 +383,9 @@ namespace Flock.Analytics
 
             OnSessionEnding?.Invoke(snapshot);
 
-            PersistState();
-
             _active = false;
 
-            _logger.LogInfo($"Session persisted on quit: {SessionId} | Duration: {ElapsedSeconds:F1}s");
+            _logger.LogInfo($"Session ending on quit: {SessionId} | Duration: {ElapsedSeconds:F1}s");
         }
 
      
@@ -393,7 +399,7 @@ namespace Flock.Analytics
             }
         }
 
-        private void PersistState()
+        private void SaveState()
         {
             if (!_config.PersistSessionOnDisk || !_active)
                 return;

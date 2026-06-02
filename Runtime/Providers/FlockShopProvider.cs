@@ -27,7 +27,7 @@ namespace Flock.Providers
             return await ExecuteAsync(async () =>
             {
                 return await FlockHttpClient.GetAsync<PaginatedResponse<Shop>>(
-                    $"{Client.GetApiUrl()}/v1/shop?page={page}&limit={limit}", Client.GetBaseHeaders(), cancellationToken);
+                    $"{Client.GetVersionedApiUrl()}/shop?page={page}&limit={limit}", Client.GetBaseHeaders(), cancellationToken);
             }, "Fetch shops", cancellationToken);
         }
 
@@ -37,7 +37,7 @@ namespace Flock.Providers
             RequireNotEmpty(shopId, "Shop ID");
 
             return await ExecuteAsync(async () => await FlockHttpClient.GetAsync<Shop>(
-                $"{Client.GetApiUrl()}/v1/shop/{shopId}", Client.GetBaseHeaders(), cancellationToken), "Fetch shop", cancellationToken);
+                $"{Client.GetVersionedApiUrl()}/shop/{shopId}", Client.GetBaseHeaders(), cancellationToken), "Fetch shop", cancellationToken);
         }
 
         public async Task<ShopItem> GetItemAsync(
@@ -48,7 +48,7 @@ namespace Flock.Providers
             return await ExecuteAsync(async () =>
             {
                 return await FlockHttpClient.GetAsync<ShopItem>(
-                    $"{Client.GetApiUrl()}/v1/shop_item/{shopItemId}", Client.GetBaseHeaders(), cancellationToken);
+                    $"{Client.GetVersionedApiUrl()}/shop_item/{shopItemId}", Client.GetBaseHeaders(), cancellationToken);
             }, "Fetch shop item", cancellationToken);
         }
 
@@ -59,7 +59,7 @@ namespace Flock.Providers
 
             return await ExecuteAsync(async () =>
             {
-                string url = $"{Client.GetApiUrl()}/v1/shop_item/shop/{shopId}{(!string.IsNullOrEmpty(patchId) ? $"?patch_id={patchId}" : "")}";
+                string url = $"{Client.GetVersionedApiUrl()}/shop_item/shop/{shopId}{(!string.IsNullOrEmpty(patchId) ? $"?patch_id={patchId}" : "")}";
 
                 GenericResponse<List<ShopItem>> response = await FlockHttpClient.GetAsync<GenericResponse<List<ShopItem>>>(
                     url, Client.GetBaseHeaders(), cancellationToken);
@@ -102,7 +102,7 @@ namespace Flock.Providers
                 };
 
                 return await FlockHttpClient.PostAsync<PlayerInventory>(
-                    $"{Client.GetApiUrl()}/v1/shop/transaction", request, Client.GetBaseHeaders(), cancellationToken);
+                    $"{Client.GetVersionedApiUrl()}/shop/transaction", request, Client.GetBaseHeaders(), cancellationToken);
             }, "Purchase shop item", cancellationToken);
 
             if (Client.Analytics != null && shopItem != null)
@@ -137,7 +137,7 @@ namespace Flock.Providers
             return await ExecuteAsync(async () =>
             {
                 return await FlockHttpClient.GetAsync<PaginatedResponse<PlayerInventory>>(
-                    $"{Client.GetApiUrl()}/v1/player_inventory/player/{playerId}?page={page}&limit={limit}",
+                    $"{Client.GetVersionedApiUrl()}/player_inventory/player/{playerId}?page={page}&limit={limit}",
                     Client.GetBaseHeaders(), cancellationToken);
             }, "Get player inventory", cancellationToken);
         }

@@ -63,13 +63,14 @@ namespace Flock.Models
         public string Timestamp { get; set; }
 
         [JsonProperty("properties")]
-        public Dictionary<string, object> Properties { get; set; } = new Dictionary<string, object>();
+        public Dictionary<string, object> Properties { get; set; }
     }
 
     public class AnalyticsEventsRequest
     {
+        // No field initializer: the only construction site assigns Events directly.
         [JsonProperty("events")]
-        public List<AnalyticsEventRequest> Events { get; set; } = new List<AnalyticsEventRequest>();
+        public List<AnalyticsEventRequest> Events { get; set; }
     }
 
     public class AnalyticsTransactionRequest

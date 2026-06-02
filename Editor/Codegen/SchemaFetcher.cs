@@ -36,8 +36,8 @@ namespace Flock.Editor.Codegen
                 FetchedAt = DateTime.UtcNow,
             };
 
-            snapshot.PlayerTemplates = await GetList<PlayerTemplateSchema>($"{baseUrl}/v1/player_template", headers);
-            snapshot.GameConfigs     = await GetList<GameConfigSchema>($"{baseUrl}/v1/game_config", headers);
+            snapshot.PlayerTemplates = await GetList<PlayerTemplateSchema>($"{baseUrl}/{FlockClient.ApiVersion}/player_template", headers);
+            snapshot.GameConfigs     = await GetList<GameConfigSchema>($"{baseUrl}/{FlockClient.ApiVersion}/game_config", headers);
 
             return snapshot;
         }
@@ -50,7 +50,7 @@ namespace Flock.Editor.Codegen
                 return null;
             }
 
-            string url = $"{baseUrl}/v1/game_version/by-name/{Uri.EscapeDataString(gameVersion)}";
+            string url = $"{baseUrl}/{FlockClient.ApiVersion}/game_version/by-name/{Uri.EscapeDataString(gameVersion)}";
             try
             {
                 var response = await FlockHttpClient.GetAsync<GenericResponse<GameVersionSchema>>(url, headers);

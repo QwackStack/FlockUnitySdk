@@ -9,6 +9,7 @@ namespace Flock.Config
         private const string ManifestTypeName = "Flock.Generated.SchemasManifest";
         private const string GameVersionIdField = "GameVersionId";
 
+        //version changed
         public static void WarnIfDrifted(string configuredGameVersionId, IFlockLogger logger)
         {
             if (logger == null || string.IsNullOrEmpty(configuredGameVersionId)) return;

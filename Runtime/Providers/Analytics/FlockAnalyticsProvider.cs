@@ -92,12 +92,14 @@ namespace Flock.Providers
             _currentPlayerId = newPlayerId;
 
             _session.OnHeartbeat += HandleHeartbeat;
+            _session.OnFlushInterval += HandleFlushInterval;
+            _session.OnSessionPaused += HandleSessionPaused;
             _session.OnSessionTimedOut += HandleSessionTimedOut;
             _session.OnSessionEnding += HandleSessionEnding;
 
-            FlockSessionSnapshot crashed = _session.RecoverCrashedSession();
-            if (crashed != null)
-                await SendEndSessionAsync(crashed, cancellationToken);
+            FlockSessionSnapshot orphaned = _session.RecoverOrphanedSession();
+            if (orphaned != null)
+                await SendEndSessionAsync(orphaned, cancellationToken);
 
             if (_config.AutoStartSession)
                 await StartSessionAsync(cancellationToken);
@@ -107,8 +109,7 @@ namespace Flock.Providers
             if (_eventCache != null && Client.IsAuthenticated)
             {
                 _eventCache.Rewrite(
-                    evt => evt.PlayerId == FlockConstant.DummyUserID,
-                    evt => evt.PlayerId = newPlayerId);
+                    evt => evt.PlayerId == FlockConstant.DummyUserID, evt => evt.PlayerId = newPlayerId);
             }
 
             InstallGlobalExceptionHook();
@@ -170,7 +171,7 @@ namespace Flock.Providers
             {
                 SessionStartResponse response = await ExecuteAsync(
                     () => FlockHttpClient.PostAsync<SessionStartResponse>(
-                        $"{Client.GetApiUrl()}/v1/analytics/sessions",
+                        $"{Client.GetVersionedApiUrl()}/analytics/sessions",
                         request, Client.GetBaseHeaders(), cancellationToken),
                     "Start session", cancellationToken);
 
@@ -210,7 +211,15 @@ namespace Flock.Providers
             Client.Logger.LogDebug($"Screen view recorded: {screenName}");
         }
 
-        public async Task TrackEventAsync(
+        // Not exposed to user until log_event/analytic clean up
+        /// <summary>
+        /// Tracks a single analytics event. Safe to call before login — the event is
+        /// enqueued to the on-disk cache and drains automatically after authentication
+        /// (retagged from the unauthenticated placeholder to the real <c>PlayerId</c>) and
+        /// on interval / pause / session end thereafter. A console warning is logged on
+        /// pre-auth calls but this method never throws for auth reasons.
+        /// </summary>
+        private Task TrackEventAsync(
             string eventName,
             string eventCategory = null,
             Dictionary<string, object> parameters = null,
@@ -230,42 +239,10 @@ namespace Flock.Providers
             };
 
             EnsureSerializable(request, eventName);
+            _eventCache?.Enqueue(request);
+            Client.Logger.LogDebug($"Event queued: {eventName}");
 
-            //Save to cache
-            //Try to sync to server
-            //If reaches server , delete from cache
-            //otherwise try to flush whenever possible
-            string handle = _eventCache?.Enqueue(request);
-
-            // Not authenticated yet — hold the event in the cache. InitializeAsync retags
-            // "Default" entries with the real player ID after login, then flushes.
-            if (!Client.IsAuthenticated)
-            {
-                Client.Logger.LogDebug($"Event queued (awaiting auth): {eventName}");
-                return;
-            }
-
-            try
-            {
-                await SendEventAsync(request, cancellationToken).ConfigureAwait(false);
-                Client.Logger.LogDebug($"Event tracked: {eventName}");
-                _eventCache?.Remove(handle);
-                FlushCacheInBackground();
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (FlockValidationException)
-            {
-                _eventCache?.Remove(handle);
-                throw;
-            }
-            catch (FlockException ex) when (_eventCache != null)
-            {
-                Client.Logger.LogDebug($"Event queued for retry: {eventName} ({ex.Message})");
-                FlushCacheInBackground();
-            }
+            return Task.CompletedTask;
         }
         public Task LogExceptionAsync(
             Exception exception,
@@ -319,22 +296,16 @@ namespace Flock.Providers
             return EnqueueAndSendLogAsync(request, cancellationToken);
         }
 
-        public Task LogEventAsync(
-            string message,
-            string logicalExpression = null,
-            string errorCode = null,
-            string errorMessage = null,
-            Dictionary<string, object> errorData = null,
-            Dictionary<string, object> extraData = null,
-            CancellationToken cancellationToken = default)
+        public Task LogEventAsync(string message, 
+            Dictionary<string, object> extraData = null, CancellationToken cancellationToken = default)
         {
             LogEventRequest request = BuildLogEvent(
                 LogEventType.Debug,
                 message: message,
-                logicalExpression: logicalExpression,
-                errorCode: errorCode,
-                errorMessage: errorMessage,
-                errorData: errorData,
+                logicalExpression: null,
+                errorCode: null,
+                errorMessage: null,
+                errorData: null,
                 extraData: extraData);
 
             return EnqueueAndSendLogAsync(request, cancellationToken);
@@ -379,48 +350,21 @@ namespace Flock.Providers
             return new List<string>(lines);
         }
 
-        // Mirrors TrackEventAsync: write-ahead persist, send live, drop on success,
-        // leave on transient failure for the next flush trigger.
-        private async Task EnqueueAndSendLogAsync(LogEventRequest request, CancellationToken cancellationToken)
+        private Task EnqueueAndSendLogAsync(LogEventRequest request, CancellationToken cancellationToken)
         {
             EnsureSerializable(request, "log_event");
-
-            string handle = _logEventCache?.Enqueue(request);
-
-            // Pre-auth: hold in cache; FlushCacheInBackground will drain after login.
-            if (!Client.IsAuthenticated)
-            {
-                Client.Logger.LogDebug("Log event queued (awaiting auth)");
-                return;
-            }
-
-            try
-            {
-                await SendLogEventAsync(request, cancellationToken).ConfigureAwait(false);
-                _logEventCache?.Remove(handle);
-                FlushCacheInBackground();
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (FlockValidationException)
-            {
-                _logEventCache?.Remove(handle);
-                throw;
-            }
-            catch (FlockException ex) when (_logEventCache != null)
-            {
-                Client.Logger.LogDebug($"Log event queued for retry ({ex.Message})");
-                FlushCacheInBackground();
-            }
+            _logEventCache?.Enqueue(request);
+            Client.Logger.LogDebug("Log event queued");
+            return Task.CompletedTask;
         }
 
+        // Kept as an escape hatch for ad-hoc, critical sends that must bypass the buffer.
+        // Public APIs go through the cache; the buffered flush uses the batch endpoint.
         private Task SendLogEventAsync(LogEventRequest request, CancellationToken cancellationToken)
         {
             return ExecuteAsync(
                 () => FlockHttpClient.PostAsync<Dictionary<string, object>>(
-                    $"{Client.GetApiUrl()}/v1/log_event/single",
+                    $"{Client.GetVersionedApiUrl()}/log_event/single",
                     request, Client.GetBaseHeaders(), cancellationToken),
                 "Log event (single)", cancellationToken);
         }
@@ -435,70 +379,72 @@ namespace Flock.Providers
 
             return ExecuteAsync(
                 () => FlockHttpClient.PostAsync<Dictionary<string, object>>(
-                    $"{Client.GetApiUrl()}/v1/log_event",
+                    $"{Client.GetVersionedApiUrl()}/log_event",
                     payload, Client.GetBaseHeaders(), cancellationToken),
                 "Log events (batch)", cancellationToken);
         }
-
-        public async Task TrackEventsAsync(
-            List<AnalyticsEventRequest> events,
-            CancellationToken cancellationToken = default)
-        {
-            RequireAuth();
-
-            if (events == null || events.Count == 0)
-                return;
-
-            foreach (AnalyticsEventRequest evt in events)
-            {
-                if (string.IsNullOrEmpty(evt.PlayerId))
-                    evt.PlayerId = Client.CurrentPlayerId ?? FlockConstant.DummyUserID;
-                if (string.IsNullOrEmpty(evt.SessionId))
-                    evt.SessionId = CurrentSessionId;
-                if (string.IsNullOrEmpty(evt.Timestamp))
-                    evt.Timestamp = DateTime.UtcNow.ToString("o");
-            }
-
-            EnsureSerializable(events, "events batch");
-
-            // Write-ahead: persist every event first, send live, delete the whole batch on success.
-            List<string> handles = null;
-            if (_eventCache != null)
-            {
-                handles = new List<string>(events.Count);
-                foreach (AnalyticsEventRequest evt in events)
-                    handles.Add(_eventCache.Enqueue(evt));
-            }
-
-            // Not authenticated yet — hold the batch in the cache for retag-and-flush after auth.
-            if (!Client.IsAuthenticated)
-            {
-                Client.Logger.LogDebug($"Batch events queued (awaiting auth): {events.Count} events");
-                return;
-            }
-
-            try
-            {
-                await SendEventsAsync(events, cancellationToken).ConfigureAwait(false);
-                Client.Logger.LogDebug($"Batch events tracked: {events.Count} events");
-                RemoveHandles(handles);
-                FlushCacheInBackground();
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (FlockValidationException)
-            {
-                RemoveHandles(handles);
-                throw;
-            }
-            catch (FlockException ex) when (_eventCache != null)
-            {
-                Client.Logger.LogDebug($"Batch events queued for retry: {events.Count} events ({ex.Message})");
-                FlushCacheInBackground();
-            }
-        }
+        // Not exposed to user until log_event/analytic clean up
+        // public async Task TrackEventsAsync(
+        //     List<AnalyticsEventRequest> events,
+        //     CancellationToken cancellationToken = default)
+        // {
+        //     RequireAuth();
+        //
+        //     if (events == null || events.Count == 0)
+        //         return;
+        //
+        //     foreach (AnalyticsEventRequest evt in events)
+        //     {
+        //         if (string.IsNullOrEmpty(evt.PlayerId))
+        //             evt.PlayerId = Client.CurrentPlayerId ?? FlockConstant.DummyUserID;
+        //         if (string.IsNullOrEmpty(evt.SessionId))
+        //             evt.SessionId = CurrentSessionId;
+        //         if (string.IsNullOrEmpty(evt.Timestamp))
+        //             evt.Timestamp = DateTime.UtcNow.ToString("o");
+        //         if (evt.Properties == null)
+        //             evt.Properties = new Dictionary<string, object>();
+        //     }
+        //
+        //     EnsureSerializable(events, "events batch");
+        //
+        //     // Write-ahead: persist every event first, send live, delete the whole batch on success.
+        //     List<string> handles = null;
+        //     if (_eventCache != null)
+        //     {
+        //         handles = new List<string>(events.Count);
+        //         foreach (AnalyticsEventRequest evt in events)
+        //             handles.Add(_eventCache.Enqueue(evt));
+        //     }
+        //
+        //     // Not authenticated yet — hold the batch in the cache for retag-and-flush after auth.
+        //     if (!Client.IsAuthenticated)
+        //     {
+        //         Client.Logger.LogDebug($"Batch events queued (awaiting auth): {events.Count} events");
+        //         return;
+        //     }
+        //
+        //     try
+        //     {
+        //         await SendEventsAsync(events, cancellationToken).ConfigureAwait(false);
+        //         Client.Logger.LogDebug($"Batch events tracked: {events.Count} events");
+        //         RemoveHandles(handles);
+        //         FlushCacheInBackground();
+        //     }
+        //     catch (OperationCanceledException)
+        //     {
+        //         throw;
+        //     }
+        //     catch (FlockValidationException)
+        //     {
+        //         RemoveHandles(handles);
+        //         throw;
+        //     }
+        //     catch (FlockException ex) when (_eventCache != null)
+        //     {
+        //         Client.Logger.LogDebug($"Batch events queued for retry: {events.Count} events ({ex.Message})");
+        //         FlushCacheInBackground();
+        //     }
+        // }
 
         private void RemoveHandles(List<string> handles)
         {
@@ -521,13 +467,15 @@ namespace Flock.Providers
                 throw new FlockValidationException($"'{label}' has non-serializable parameters: {ex.Message}", ex);
             }
         }
+        // Kept as an escape hatch for ad-hoc, critical sends that must bypass the buffer.
+        // Public APIs go through the cache; the buffered flush uses the batch endpoint.
         private Task SendEventAsync(
             AnalyticsEventRequest eve,
             CancellationToken cancellationToken)
         {
             return ExecuteAsync(
                 () => FlockHttpClient.PostAsync<Dictionary<string, object>>(
-                    $"{Client.GetApiUrl()}/v1/analytics/events/single",
+                    $"{Client.GetVersionedApiUrl()}/analytics/events/single",
                     eve, Client.GetBaseHeaders(), cancellationToken),
                 "Track single event", cancellationToken);
         }
@@ -543,7 +491,7 @@ namespace Flock.Providers
 
             return ExecuteAsync(
                 () => FlockHttpClient.PostAsync<Dictionary<string, object>>(
-                    $"{Client.GetApiUrl()}/v1/analytics/events",
+                    $"{Client.GetVersionedApiUrl()}/analytics/events",
                     payload, Client.GetBaseHeaders(), cancellationToken),
                 "Track events", cancellationToken);
         }
@@ -551,10 +499,27 @@ namespace Flock.Providers
         // Drains every cache the provider owns. Each cache flushes to its own endpoint —
         // analytics events to /v1/analytics/events, log events to /v1/log_event — but the
         // trigger is unified so a single online-event opportunistically empties both.
+        // async void is intentional fire-and-forget; try/catch is non-negotiable because
+        // any escaping exception would land at the SynchronizationContext root unhandled.
+        // ConfigureAwait(false) because flush is pure I/O — no Unity APIs touched.
         private async void FlushCacheInBackground()
         {
-            CancellationToken token = _session?.SessionToken ?? CancellationToken.None;
+            try
+            {
+                CancellationToken token = _session?.SessionToken ?? CancellationToken.None;
+                await FlushAllAsync(token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception ex)
+            {
+                Client.Logger.LogWarning($"Background flush failed: {ex.Message}");
+            }
+        }
 
+        private async Task FlushAllAsync(CancellationToken token)
+        {
             await TryFlush(_eventCache, SendEventsAsync, token).ConfigureAwait(false);
             await TryFlush(_logEventCache, SendLogEventsAsync, token).ConfigureAwait(false);
         }
@@ -580,7 +545,7 @@ namespace Flock.Providers
             }
         }
 
-        public Task RecordTransactionAsync(
+        public async Task RecordTransactionAsync(
             double amount,
             string currencyCode = "USD",
             string shopItemId = null,
@@ -593,23 +558,28 @@ namespace Flock.Providers
             CancellationToken cancellationToken = default)
         {
             Client.Logger.LogDebug("Tracking transactions is Not Supported");
-            // AnalyticsTransactionRequest request = new AnalyticsTransactionRequest
-            // {
-            //     Amount = amount,
-            //     CurrencyCode = currencyCode,
-            //     CurrencyId = currencyId,
-            //     ShopItemId = shopItemId,
-            //     Quantity = quantity,
-            //     TransactionType = transactionType,
-            //     Status = status,
-            //     PaymentProvider = paymentProvider,
-            //     ExternalTransactionId = externalTransactionId
-            // };
-            //
-            // await RecordTransactionAsync(request, cancellationToken);
-            return Task.CompletedTask;
+            AnalyticsTransactionRequest request = new AnalyticsTransactionRequest
+            {
+                Amount = amount,
+                CurrencyCode = currencyCode,
+                CurrencyId = currencyId,
+                ShopItemId = shopItemId,
+                Quantity = quantity,
+                TransactionType = transactionType,
+                Status = status,
+                PaymentProvider = paymentProvider,
+                ExternalTransactionId = externalTransactionId
+            };
+            
+            await RecordTransactionAsync(request, cancellationToken);
         }
 
+        /// <summary>
+        /// Records a monetary transaction. <b>Requires an authenticated session</b> — unlike
+        /// <see cref="TrackEventAsync"/> this is sent immediately and is not queued, so pre-auth
+        /// calls will fail with a 401 from the server. Call after a successful
+        /// <see cref="FlockAuthProvider"/> login.
+        /// </summary>
         public async Task RecordTransactionAsync(
             AnalyticsTransactionRequest request,
             CancellationToken cancellationToken = default)
@@ -628,11 +598,21 @@ namespace Flock.Providers
 
             await ExecuteAsync(
                 () => FlockHttpClient.PostAsync<Dictionary<string, object>>(
-                    $"{Client.GetApiUrl()}/v1/analytics/transactions",
+                    $"{Client.GetVersionedApiUrl()}/analytics/transactions",
                     request, Client.GetBaseHeaders(), cancellationToken),
                 "Record transaction", cancellationToken);
 
             Client.Logger.LogDebug($"Transaction recorded: {request.Amount} {request.CurrencyCode}");
+        }
+
+        private void HandleFlushInterval()
+        {
+            FlushCacheInBackground();
+        }
+
+        private void HandleSessionPaused()
+        {
+            FlushCacheInBackground();
         }
 
         private async void HandleHeartbeat()
@@ -684,6 +664,11 @@ namespace Flock.Providers
         {
             try
             {
+                // Best-effort: unreliable on quit since the app may exit before completion.
+                // Anything not flushed stays on disk and drains on next launch.
+                using (CancellationTokenSource cts = new CancellationTokenSource(TimeSpan.FromSeconds(2)))
+                    await FlushAllAsync(cts.Token).ConfigureAwait(false);
+
                 await SendEndSessionAsync(snapshot);
                 _session?.ClearPersistedState();
             }
@@ -729,11 +714,11 @@ namespace Flock.Providers
             {
                 await ExecuteAsync(
                     () => FlockHttpClient.PatchAsync<Dictionary<string, object>>(
-                        $"{Client.GetApiUrl()}/v1/analytics/sessions/{sessionId}",
+                        $"{Client.GetVersionedApiUrl()}/analytics/sessions/{sessionId}",
                         request, Client.GetBaseHeaders(), cancellationToken),
                     "End session", cancellationToken);
 
-                Client.Logger.LogInfo($"Session ended on server: {sessionId}{(snapshot.WasCrash ? " (recovered from crash)" : "")}");
+                Client.Logger.LogInfo($"Session ended on server: {sessionId}");
             }
             catch (Exception ex)
             {

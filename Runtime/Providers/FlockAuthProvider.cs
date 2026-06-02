@@ -139,7 +139,7 @@ namespace Flock.Providers
         {
             return await ExecuteAuthAsync(
                 () => FlockHttpClient.PostAsync<PlayerLoginResponse>(
-                    $"{Client.GetApiUrl()}/v1/player/login",
+                    $"{Client.GetVersionedApiUrl()}/player/login",
                     new PlayerLoginRequest { LoginType = "email", Email = email, Password = password },
                     Client.GetBaseHeaders(), cancellationToken),
                 "Email login", cancellationToken);
@@ -150,29 +150,31 @@ namespace Flock.Providers
         {
             return await ExecuteAuthAsync(
                 () => FlockHttpClient.PostAsync<PlayerLoginResponse>(
-                    $"{Client.GetApiUrl()}/v1/player/login/device",
+                    $"{Client.GetVersionedApiUrl()}/player/login/device",
                     new PlayerDeviceLoginRequest { DeviceType = SystemInfo.deviceType.ToString(), DeviceId = deviceId },
                     Client.GetBaseHeaders(), cancellationToken),
                 "Device login", cancellationToken);
         }
 
+        /// <param name="name">Optional display name. <b>Server-enforced unique</b>; recommended to pass <c>null</c> until the backend returns structured error codes — see the README "Backend backlog" entry on structured registration errors.</param>
         public async Task<PlayerLoginResponse> RegisterWithEmailAsync(string email, string password, string name = null,
             CancellationToken cancellationToken = default)
         {
             return await ExecuteRegistrationAsync(
                 () => FlockHttpClient.PostAsync<PlayerLoginResponse>(
-                    $"{Client.GetApiUrl()}/v1/player/register",
+                    $"{Client.GetVersionedApiUrl()}/player/register",
                     new PlayerEmailRegistrationRequest { Email = email, Password = password, Name = name },
                     Client.GetBaseHeaders(), cancellationToken),
                 "Email registration", cancellationToken);
         }
 
+        /// <param name="name">Optional display name. <b>Server-enforced unique</b>; recommended to pass <c>null</c> until the backend returns structured error codes — see the README "Backend backlog" entry on structured registration errors.</param>
         public async Task<PlayerLoginResponse> RegisterWithDeviceAsync(string deviceId, string name = null,
             CancellationToken cancellationToken = default)
         {
             return await ExecuteRegistrationAsync(
                 () => FlockHttpClient.PostAsync<PlayerLoginResponse>(
-                    $"{Client.GetApiUrl()}/v1/player/register/device",
+                    $"{Client.GetVersionedApiUrl()}/player/register/device",
                     new PlayerDeviceRegistrationRequest
                         { DeviceType = SystemInfo.deviceType.ToString(), DeviceId = deviceId, Name = name },
                     Client.GetBaseHeaders(), cancellationToken),
@@ -183,18 +185,19 @@ namespace Flock.Providers
         {
             return await ExecuteAuthAsync(
                 () => FlockHttpClient.PostAsync<PlayerLoginResponse>(
-                    $"{Client.GetApiUrl()}/v1/player/login/google",
+                    $"{Client.GetVersionedApiUrl()}/player/login/google",
                     new PlayerGoogleLoginRequest { IdToken = idToken },
                     Client.GetBaseHeaders(), cancellationToken),
                 "Google login", cancellationToken);
         }
         
+        /// <param name="name">Optional display name. <b>Server-enforced unique</b>; recommended to pass <c>null</c> until the backend returns structured error codes — see the README "Backend backlog" entry on structured registration errors.</param>
         public async Task<PlayerLoginResponse> RegisterWithGoogleAsync(string idToken, string name = null,
             CancellationToken cancellationToken = default)
         {
             return await ExecuteRegistrationAsync(
                 () => FlockHttpClient.PostAsync<PlayerLoginResponse>(
-                    $"{Client.GetApiUrl()}/v1/player/register/google",
+                    $"{Client.GetVersionedApiUrl()}/player/register/google",
                     new PlayerGoogleRegistrationRequest { IdToken = idToken, Name = name },
                     Client.GetBaseHeaders(), cancellationToken),
                 "Google registration", cancellationToken);
@@ -205,18 +208,19 @@ namespace Flock.Providers
         {
             return await ExecuteAuthAsync(
                 () => FlockHttpClient.PostAsync<PlayerLoginResponse>(
-                    $"{Client.GetApiUrl()}/v1/player/login/apple",
+                    $"{Client.GetVersionedApiUrl()}/player/login/apple",
                     new PlayerAppleLoginRequest { IdentityToken = identityToken },
                     Client.GetBaseHeaders(), cancellationToken),
                 "Apple login", cancellationToken);
         }
         
+        /// <param name="name">Optional display name. <b>Server-enforced unique</b>; recommended to pass <c>null</c> until the backend returns structured error codes — see the README "Backend backlog" entry on structured registration errors.</param>
         public async Task<PlayerLoginResponse> RegisterWithAppleAsync(string identityToken, string name = null,
             CancellationToken cancellationToken = default)
         {
             return await ExecuteRegistrationAsync(
                 () => FlockHttpClient.PostAsync<PlayerLoginResponse>(
-                    $"{Client.GetApiUrl()}/v1/player/register/apple",
+                    $"{Client.GetVersionedApiUrl()}/player/register/apple",
                     new PlayerAppleRegistrationRequest { IdentityToken = identityToken, Name = name },
                     Client.GetBaseHeaders(), cancellationToken),
                 "Apple registration", cancellationToken);
@@ -227,18 +231,19 @@ namespace Flock.Providers
         {
             return await ExecuteAuthAsync(
                 () => FlockHttpClient.PostAsync<PlayerLoginResponse>(
-                    $"{Client.GetApiUrl()}/v1/player/login/steam",
+                    $"{Client.GetVersionedApiUrl()}/player/login/steam",
                     new PlayerSteamLoginRequest { SessionTicket = sessionTicket },
                     Client.GetBaseHeaders(), cancellationToken),
                 "Steam login", cancellationToken);
         }
         
+        /// <param name="name">Optional display name. <b>Server-enforced unique</b>; recommended to pass <c>null</c> until the backend returns structured error codes — see the README "Backend backlog" entry on structured registration errors.</param>
         public async Task<PlayerLoginResponse> RegisterWithSteamAsync(string sessionTicket, string name = null,
             CancellationToken cancellationToken = default)
         {
             return await ExecuteRegistrationAsync(
                 () => FlockHttpClient.PostAsync<PlayerLoginResponse>(
-                    $"{Client.GetApiUrl()}/v1/player/register/steam",
+                    $"{Client.GetVersionedApiUrl()}/player/register/steam",
                     new PlayerSteamRegistrationRequest { SessionTicket = sessionTicket, Name = name },
                     Client.GetBaseHeaders(), cancellationToken),
                 "Steam registration", cancellationToken);

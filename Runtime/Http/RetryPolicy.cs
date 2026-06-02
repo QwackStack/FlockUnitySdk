@@ -96,7 +96,7 @@ namespace Flock.Http
             if (!_policy.UseJitter)
                 return baseDelay;
 
-            double jitterFactor = 0.75 + (_random.NextDouble() * 0.5); // ±25% , should I expose this?
+            double jitterFactor = 0.75 + (_random.NextDouble() * 0.5); // ±25%
             return TimeSpan.FromSeconds(baseDelay.TotalSeconds * jitterFactor);
         }
     }

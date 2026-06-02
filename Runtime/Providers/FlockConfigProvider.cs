@@ -38,7 +38,7 @@ namespace Flock.Providers
             return await ExecuteAsync(async () =>
             {
                 GenericResponse<List<GamePatchSchema>> response = await FlockHttpClient.GetAsync<GenericResponse<List<GamePatchSchema>>>(
-                    $"{Client.GetApiUrl()}/v1/game_patch", Client.GetBaseHeaders(), cancellationToken);
+                    $"{Client.GetVersionedApiUrl()}/game_patch", Client.GetBaseHeaders(), cancellationToken);
                 ValidateResponse(response);
                 _allPatchesCache = response.Result;
                 return response.Result;
@@ -59,7 +59,7 @@ namespace Flock.Providers
             return await ExecuteAsync(async () =>
             {
                 GenericResponse<GamePatchSchema> response = await FlockHttpClient.GetAsync<GenericResponse<GamePatchSchema>>(
-                    $"{Client.GetApiUrl()}/v1/game_patch/{configId}", Client.GetBaseHeaders(), cancellationToken);
+                    $"{Client.GetVersionedApiUrl()}/game_patch/{configId}", Client.GetBaseHeaders(), cancellationToken);
                 ValidateResponse(response);
                 _patchByIdCache[configId] = response.Result;
                 return response.Result;
@@ -79,7 +79,7 @@ namespace Flock.Providers
 
             return await ExecuteAsync(async () =>
             {
-                string url = $"{Client.GetApiUrl()}/v1/game_patch/config/{schemaId}";
+                string url = $"{Client.GetVersionedApiUrl()}/game_patch/config/{schemaId}";
                 GenericResponse<List<GamePatchSchema>> response = await FlockHttpClient.GetAsync<GenericResponse<List<GamePatchSchema>>>(url, Client.GetBaseHeaders(), cancellationToken);
                 ValidateResponse(response);
                 _patchesBySchemaCache[schemaId] = response.Result;
@@ -99,7 +99,7 @@ namespace Flock.Providers
 
             return await ExecuteAsync(async () =>
             {
-                string url = tag != SchemaTag.empty ? $"{Client.GetApiUrl()}/v1/game_config?tag={tag}" : $"{Client.GetApiUrl()}/v1/game_config";
+                string url = tag != SchemaTag.empty ? $"{Client.GetVersionedApiUrl()}/game_config?tag={tag}" : $"{Client.GetVersionedApiUrl()}/game_config";
                 GenericResponse<List<GameConfigSchema>> response = await FlockHttpClient.GetAsync<GenericResponse<List<GameConfigSchema>>>(
                     url, Client.GetBaseHeaders(), cancellationToken);
                 ValidateResponse(response);
@@ -120,7 +120,7 @@ namespace Flock.Providers
 
             return await ExecuteAsync(async () =>
             {
-                string url = tag != SchemaTag.empty ? $"{Client.GetApiUrl()}/v1/game_config/version?tag={tag}" : $"{Client.GetApiUrl()}/v1/game_config/version";
+                string url = tag != SchemaTag.empty ? $"{Client.GetVersionedApiUrl()}/game_config/version?tag={tag}" : $"{Client.GetVersionedApiUrl()}/game_config/version";
                 GenericResponse<List<GameConfigSchema>> response = await FlockHttpClient.GetAsync<GenericResponse<List<GameConfigSchema>>>(
                     url, Client.GetBaseHeaders(), cancellationToken);
                 ValidateResponse(response);
@@ -141,7 +141,7 @@ namespace Flock.Providers
 
             return await ExecuteAsync(async () =>
             {
-                string url = $"{Client.GetApiUrl()}/v1/game_config/player/{playerId}/features";
+                string url = $"{Client.GetVersionedApiUrl()}/game_config/player/{playerId}/features";
                 GenericResponse<GameConfigSchema> response = await FlockHttpClient.GetAsync<GenericResponse<GameConfigSchema>>(
                     url, Client.GetBaseHeaders(), cancellationToken);
                 ValidateResponse(response);

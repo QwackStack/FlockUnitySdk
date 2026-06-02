@@ -57,9 +57,6 @@ namespace Flock.Analytics
         [JsonProperty("is_bounce")]
         public bool IsBounce { get; set; }
 
-        [JsonProperty("was_crash")]
-        public bool WasCrash { get; set; }
-
         [JsonProperty("is_first_session")]
         public bool IsFirstSession { get; set; }
     }

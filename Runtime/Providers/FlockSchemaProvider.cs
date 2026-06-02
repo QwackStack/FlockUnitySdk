@@ -16,7 +16,7 @@ namespace Flock.Providers
             return await ExecuteAsync(async () =>
             {
                 GenericResponse<List<GameConfigSchema>> response = await FlockHttpClient.GetAsync<GenericResponse<List<GameConfigSchema>>>(
-                    $"{Client.GetApiUrl()}/v1/game_config?tag={tag}", Client.GetBaseHeaders(), cancellationToken);
+                    $"{Client.GetVersionedApiUrl()}/game_config?tag={tag}", Client.GetBaseHeaders(), cancellationToken);
                 ValidateResponse(response);
                 return response.Result;
             }, "Fetch config schemas", cancellationToken);
@@ -27,7 +27,7 @@ namespace Flock.Providers
             return await ExecuteAsync(async () =>
             {
                 GenericResponse<List<GameConfigSchema>> response = await FlockHttpClient.GetAsync<GenericResponse<List<GameConfigSchema>>>(
-                    $"{Client.GetApiUrl()}/v1/game_config/version?tag={tag}", Client.GetBaseHeaders(), cancellationToken);
+                    $"{Client.GetVersionedApiUrl()}/game_config/version?tag={tag}", Client.GetBaseHeaders(), cancellationToken);
                 ValidateResponse(response);
                 return response.Result;
             }, "Fetch config schemas by version", cancellationToken);
@@ -40,7 +40,7 @@ namespace Flock.Providers
             return await ExecuteAsync(async () =>
             {
                 GenericResponse<GameConfigSchema> response = await FlockHttpClient.GetAsync<GenericResponse<GameConfigSchema>>(
-                    $"{Client.GetApiUrl()}/v1/game_config/{schemaId}", Client.GetBaseHeaders(), cancellationToken);
+                    $"{Client.GetVersionedApiUrl()}/game_config/{schemaId}", Client.GetBaseHeaders(), cancellationToken);
                 ValidateResponse(response);
                 return response.Result;
             }, $"Fetch schema {schemaId}", cancellationToken);
@@ -53,7 +53,7 @@ namespace Flock.Providers
             return await ExecuteAsync(async () =>
             {
                 GenericResponse<List<GamePatchSchema>> response = await FlockHttpClient.GetAsync<GenericResponse<List<GamePatchSchema>>>(
-                    $"{Client.GetApiUrl()}/v1/game_config/{schemaId}/patches", Client.GetBaseHeaders(), cancellationToken);
+                    $"{Client.GetVersionedApiUrl()}/game_config/{schemaId}/patches", Client.GetBaseHeaders(), cancellationToken);
                 ValidateResponse(response);
                 return response.Result;
             }, $"Fetch configs for schema {schemaId}", cancellationToken);
