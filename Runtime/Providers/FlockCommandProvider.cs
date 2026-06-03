@@ -10,68 +10,89 @@ namespace Flock.Providers
     {
         public FlockCommandProvider(FlockClient client) : base(client) { }
 
-        internal async Task<List<GameCommandExecutionResult>> ExecuteCommandAsync(
-            string gameCommandId, List<ICommandPayload> inputs, CancellationToken cancellationToken = default)
-        {
-            RequireNotEmpty(gameCommandId, "Game Command ID");
-
-            return await ExecuteAsync(async () =>
-            {
-                GameCommandExecutionRequest request = new GameCommandExecutionRequest
-                {
-                    GameCommandId = gameCommandId,
-                    Inputs = inputs
-                };
-
-                GenericResponse<List<GameCommandExecutionResult>> response = await FlockHttpClient.PostAsync<GenericResponse<List<GameCommandExecutionResult>>>(
-                    $"{Client.GetVersionedApiUrl()}/game_command/execute", request, Client.GetBaseHeaders(), cancellationToken);
-                ValidateResponse(response);
-                return response.Result;
-            }, "Execute game command", cancellationToken);
-        }
-
-        public async Task<List<GameCommandExecutionResult>> UpdatePlayerDataAsync(
-            string gameCommandId, string playerDataId, Dictionary<string, object> data,
+        public async Task<PlayerData> UpdatePlayerDataAsync(
+            string playerDataId, List<DataField> data,
             CancellationToken cancellationToken = default)
         {
             RequireNotEmpty(playerDataId, "Player Data ID");
 
-            List<ICommandPayload> inputs = new List<ICommandPayload>
+            return await ExecuteAsync(async () =>
             {
-                new UpdatePlayerDataInput { PlayerDataId = playerDataId, Data = data }
-            };
+                UpdatePlayerDataInput request = new UpdatePlayerDataInput
+                {
+                    PlayerDataId = playerDataId,
+                    Data = data
+                };
 
-            return await ExecuteCommandAsync(gameCommandId, inputs, cancellationToken);
+                return await FlockHttpClient.PostAsync<PlayerData>(
+                    $"{Client.GetVersionedApiUrl()}/game_command/update_player_data",
+                    request, Client.GetBaseHeaders(), cancellationToken);
+            }, "Update player data", cancellationToken);
         }
 
-        public async Task<List<GameCommandExecutionResult>> UpdatePlayerDataFieldAsync(
-            string gameCommandId, string playerDataId, string key, object value,
+        public async Task<PlayerData> UpdatePlayerDataFieldAsync(
+            string playerDataId, string key, object value,
             CancellationToken cancellationToken = default)
         {
             RequireNotEmpty(playerDataId, "Player Data ID");
             RequireNotEmpty(key, "Key");
 
-            List<ICommandPayload> inputs = new List<ICommandPayload>
+            return await ExecuteAsync(async () =>
             {
-                new UpdatePlayerDataKeyInput { PlayerDataId = playerDataId, Key = key, Value = value }
-            };
+                UpdatePlayerDataKeyInput request = new UpdatePlayerDataKeyInput
+                {
+                    PlayerDataId = playerDataId,
+                    Key = key,
+                    Value = value
+                };
 
-            return await ExecuteCommandAsync(gameCommandId, inputs, cancellationToken);
+                return await FlockHttpClient.PostAsync<PlayerData>(
+                    $"{Client.GetVersionedApiUrl()}/game_command/update_player_data_key",
+                    request, Client.GetBaseHeaders(), cancellationToken);
+            }, "Update player data field", cancellationToken);
         }
 
-        public async Task<List<GameCommandExecutionResult>> AddGameFundsAsync(
-            string gameCommandId, string playerDataId, string currency, int amount,
+        public async Task<PlayerData> AddGameFundsAsync(
+            string playerDataId, string currency, int amount,
             CancellationToken cancellationToken = default)
         {
             RequireNotEmpty(playerDataId, "Player Data ID");
             RequireNotEmpty(currency, "Currency");
 
-            List<ICommandPayload> inputs = new List<ICommandPayload>
+            return await ExecuteAsync(async () =>
             {
-                new AddGameFundsInput { PlayerDataId = playerDataId, Currency = currency, Amount = amount }
-            };
+                AddGameFundsInput request = new AddGameFundsInput
+                {
+                    PlayerDataId = playerDataId,
+                    Currency = currency,
+                    Amount = amount
+                };
 
-            return await ExecuteCommandAsync(gameCommandId, inputs, cancellationToken);
+                return await FlockHttpClient.PostAsync<PlayerData>(
+                    $"{Client.GetVersionedApiUrl()}/game_command/add_game_funds",
+                    request, Client.GetBaseHeaders(), cancellationToken);
+            }, "Add game funds", cancellationToken);
+        }
+
+        public async Task<PlayerData> UnlockAchievementAsync(
+            string playerDataId, string achievementName,
+            CancellationToken cancellationToken = default)
+        {
+            RequireNotEmpty(playerDataId, "Player Data ID");
+            RequireNotEmpty(achievementName, "Achievement Name");
+
+            return await ExecuteAsync(async () =>
+            {
+                UnlockAchievementInput request = new UnlockAchievementInput
+                {
+                    PlayerDataId = playerDataId,
+                    AchievementName = achievementName
+                };
+
+                return await FlockHttpClient.PostAsync<PlayerData>(
+                    $"{Client.GetVersionedApiUrl()}/game_command/unlock_achievement",
+                    request, Client.GetBaseHeaders(), cancellationToken);
+            }, "Unlock achievement", cancellationToken);
         }
     }
 }

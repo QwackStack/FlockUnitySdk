@@ -118,7 +118,13 @@ namespace Flock.Providers
             RequireNotEmpty(playerId, "Current Player ID (sign in first)");
 
             Dictionary<string, PlayerData> byTemplate = await GetOrFetchByTemplateAsync(playerId, cancellationToken);
-            return byTemplate.GetValueOrDefault(playerTemplateId);
+            bool tryGetValue = byTemplate.TryGetValue(playerTemplateId, out PlayerData pd);
+            if (tryGetValue)
+            {
+                return pd;
+            }
+            Client.Logger.LogError($"No player data found for template {playerTemplateId} for player {playerId}");
+            return null;
         }
 
         private Task<Dictionary<string, PlayerData>> GetOrFetchByTemplateAsync(string playerId, CancellationToken cancellationToken)

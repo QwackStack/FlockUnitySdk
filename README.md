@@ -178,16 +178,20 @@ var template = await FlockClient.Instance.Player.GetTemplateByIdAsync("template-
 var template = await FlockClient.Instance.Player.GetTemplateByNameAsync("currency");
 var playerData = await FlockClient.Instance.Player.GetTemplatePlayerDataAsync("template-id");
 
-// Game commands — server-side operations (gameCommandId from backend dashboard)
-var results = await FlockClient.Instance.Commands.UpdatePlayerDataAsync(
-    "game-command-id", "player-data-id",
-    new Dictionary<string, object> { { "level", 5 }, { "xp", 1200 } });
+// Game commands — server-side operations. Each posts to its own typed endpoint
+// under /v1/game_command/* and returns the updated PlayerData.
+PlayerData updated = await FlockClient.Instance.Commands.UpdatePlayerDataAsync(
+    "player-data-id",
+    new List<DataField> { /* flattened typed fields */ });
 
-var results = await FlockClient.Instance.Commands.UpdatePlayerDataFieldAsync(
-    "game-command-id", "player-data-id", "score", 9999);
+PlayerData updated = await FlockClient.Instance.Commands.UpdatePlayerDataFieldAsync(
+    "player-data-id", "score", 9999);
 
-var results = await FlockClient.Instance.Commands.AddGameFundsAsync(
-    "game-command-id", "player-data-id", "gold", 500);
+PlayerData updated = await FlockClient.Instance.Commands.AddGameFundsAsync(
+    "player-data-id", "gold", 500);
+
+PlayerData updated = await FlockClient.Instance.Commands.UnlockAchievementAsync(
+    "player-data-id", "first_win");
 
 // Shop
 var shops = await FlockClient.Instance.Shop.GetAllAsync(page: 1, limit: 10);
@@ -267,7 +271,7 @@ FlockClient.Instance.Analytics.RecordScreenView("MainMenu");
 
 Run **Flock > Sync Schemas** (or the Codegen tab in **Qwacks > Editor**) to fetch your game's player templates from the backend and generate typed C# accessors. Output goes to `Assets/Flock/Generated/` by default; change the path on the FlockConfig asset if you want it elsewhere. Treat the folder as Flock-owned — sync wipes the `Templates/` subdirectory on each run, and **Delete Generated Code** clears the whole tree.
 
-> **GameConfig and game-command codegen are paused as of 1.9.0.** While GameConfig and the command write path are being re-aligned with the backend's new flattened typed-schema shape, `Flock > Sync Schemas` only regenerates Templates (and the matching `FlockPlayerProviderExtensions`). The `Configs/` and `Commands/` directories are not touched — any `.g.cs` files left over from an earlier sync stay where they are; new entries appear once the rest of the pipeline lands.
+> **GameConfig codegen is paused as of 1.9.0.** While GameConfig is being re-aligned with the backend's new flattened typed-schema shape, `Flock > Sync Schemas` skips the `Configs/` directory. Templates, Player accessors, and Command accessors all regenerate normally; any leftover `.g.cs` under `Configs/` from an earlier sync stays where it is until the pipeline lands.
 
 What gets generated, given a player template named `PlayerProgress`:
 
@@ -285,7 +289,15 @@ int xp = progress.Xp;
 string id = PlayerProgressTemplate.SourceId;
 string name = PlayerProgressTemplate.SourceName;
 IReadOnlyList<TypedSchema> schema = PlayerProgressTemplate.Schema;
+
+// Commands — extension method on the template itself. Mutate the populated POCO
+// and call .UpdateAsync() on it directly. Same one-liner per template.
+progress.Level = 5;
+progress.Xp = 1200;
+PlayerData updated = await progress.UpdateAsync();
 ```
+
+`UpdateAsync` is emitted as an extension method on each generated template type, so it lights up in IntelliSense the moment you have `using Flock.Generated.Templates;` (which you need anyway for the typed class). It validates `template.PlayerDataId` (set automatically by the matching `Get*Async`), turns the populated POCO back into a flattened DataField list via `{Template}.Schema.ToDataFieldList(template)`, and routes through `FlockCommandProvider.UpdatePlayerDataAsync`. After a write you typically want fresh reads — call `client.Player.ClearCache()` before the next `Get*Async` if you need to bypass the per-player snapshot cache.
 
 Method names come from the template name on the backend (PascalCase). Field names follow each `TypedSchema.field_name`, also PascalCased.
 
@@ -301,7 +313,6 @@ Type mapping for primitives lives in `Editor/Codegen/TypeMap.cs` (`integer` → 
 A few SDK behaviors are constrained by the current backend surface and will improve as the backend grows. None of these block normal usage; they all surface as warnings in the console with workarounds in place.
 
 - **GameConfig codegen on the new typed-schema shape** — `GameConfigSchema.Schema` / `.Data` still come back as `Dictionary<string, object>` (legacy shape) and the GameConfig branch of `Flock > Sync Schemas` is paused while the same walker player templates use is wired through. Game configs read fine via `client.Config.GetGameConfigsAsync` etc.; just no generated `*Config` classes until this lands.
-- **Game command codegen** — `Update*Async` and `Update*FieldAsync` generation is paused with the rest of the command path while the new `List<DataField>` write-shape is being finalized end-to-end (`ToDataFieldList` extension + `UpdatePlayerDataInput.Data` shape). In the meantime, call `client.Commands.UpdatePlayerDataAsync(commandId, playerDataId, dict)` directly; command IDs still come from `Editor/Codegen/CommandLookup.cs` placeholders pending a backend "command by name" endpoint.
 - **Asset by name** — `client.Asset.GetByNameAsync` lists all assets and filters client-side (O(N)). Will switch to `GET /v1/asset/by-name/{name}` once the backend adds it.
 - **Structured registration error codes** — `POST /v1/player/register*` failures are returned as plain text without an error-code field. The SDK uses string-matching (`IsAlreadyRegisteredError`) to swallow "already registered" cases and return `null` from `RegisterWith*`, which is brittle and conflates name collisions with credential collisions. Once the backend returns structured codes (e.g. `NAME_TAKEN`, `EMAIL_REGISTERED`, `DEVICE_REGISTERED`), the SDK can surface them as typed exceptions and the `RegisterWith*` methods can take `name` again with reliable error UX. A `GET /v1/player/name-available?name=` endpoint would also let callers validate as the user types.
 
@@ -349,7 +360,10 @@ Every API request includes these headers:
 | Template Player Data | `GET /v1/player_template/{id}/player-data` | API Key |
 | Game Configs by Tag | `GET /v1/game_config?tag=` | API Key |
 | Game Configs by Version/Tag | `GET /v1/game_config/version?tag=` | API Key |
-| Execute Command | `POST /v1/game_command/execute` | API Key |
+| Update Player Data | `POST /v1/game_command/update_player_data` | API Key |
+| Update Player Data Field | `POST /v1/game_command/update_player_data_key` | API Key |
+| Add Game Funds | `POST /v1/game_command/add_game_funds` | API Key |
+| Unlock Achievement | `POST /v1/game_command/unlock_achievement` | API Key |
 | List Shops | `GET /v1/shop` | API Key |
 | Get Shop | `GET /v1/shop/{shop_id}` | API Key |
 | Shop Transaction | `POST /v1/shop/transaction` | API Key |
