@@ -23,7 +23,7 @@ namespace Flock.Editor.Codegen
             sb.AppendLine("{");
             sb.AppendLine("    public static class SchemasManifest");
             sb.AppendLine("    {");
-            sb.AppendLine($"        public const string GameVersionId = \"{Naming.EscapeStringLiteral(snapshot.GameVersionId)}\";");
+            sb.AppendLine($"        public const string GameVersionId = \"{CodeGenNamingHelpers.EscapeStringLiteral(snapshot.GameVersionId)}\";");
             sb.AppendLine($"        public const string GeneratedAtUtc = \"{snapshot.FetchedAt.ToString("o", CultureInfo.InvariantCulture)}\";");
             sb.AppendLine($"        public const int PlayerTemplateCount = {snapshot.PlayerTemplates.Count};");
             sb.AppendLine($"        public const int GameConfigCount = {snapshot.GameConfigs.Count};");

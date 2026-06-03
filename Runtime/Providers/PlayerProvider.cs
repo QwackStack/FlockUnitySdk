@@ -13,7 +13,7 @@ namespace Flock.Providers
         private readonly Dictionary<string, PlayerTemplateSchema> _templateByIdCache = new Dictionary<string, PlayerTemplateSchema>();
         private readonly Dictionary<string, PlayerTemplateSchema> _templateByNameCache = new Dictionary<string, PlayerTemplateSchema>();
         private readonly Dictionary<string, Dictionary<string, PlayerData>> _playerDataByPlayerCache = new Dictionary<string, Dictionary<string, PlayerData>>();
-        private readonly Dictionary<string, Task<Dictionary<string, PlayerData>>> _inFlightPlayerDataFetches = new Dictionary<string, Task<Dictionary<string, PlayerData>>>();
+        private readonly Dictionary<string, Task<Dictionary<string, PlayerData>>> _tempPlayerDataFetchTasks = new Dictionary<string, Task<Dictionary<string, PlayerData>>>();
 
         public PlayerProvider(FlockClient client) : base(client) { }
 
@@ -27,7 +27,7 @@ namespace Flock.Providers
             _templateByIdCache.Clear();
             _templateByNameCache.Clear();
             _playerDataByPlayerCache.Clear();
-            _inFlightPlayerDataFetches.Clear();
+            _tempPlayerDataFetchTasks.Clear();
         }
 
         public async Task<PlayerData> GetDataByIdAsync(string playerDataId, CancellationToken cancellationToken = default)
@@ -58,7 +58,8 @@ namespace Flock.Providers
 
         public async Task<List<PlayerTemplateSchema>> GetTemplatesAsync(CancellationToken cancellationToken = default)
         {
-            if (_allTemplatesCache != null) return _allTemplatesCache;
+            if (_allTemplatesCache != null) 
+                return _allTemplatesCache;
 
             return await ExecuteAsync(async () =>
             {
@@ -74,7 +75,8 @@ namespace Flock.Providers
         public async Task<PlayerTemplateSchema> GetTemplateByIdAsync(string playerTemplateId, CancellationToken cancellationToken = default)
         {
             RequireNotEmpty(playerTemplateId, "Player Template ID");
-            if (_templateByIdCache.TryGetValue(playerTemplateId, out PlayerTemplateSchema cached)) return cached;
+            if (_templateByIdCache.TryGetValue(playerTemplateId, out PlayerTemplateSchema cached)) 
+                return cached;
 
             return await ExecuteAsync(async () =>
             {
@@ -89,7 +91,8 @@ namespace Flock.Providers
         public async Task<PlayerTemplateSchema> GetTemplateByNameAsync(string name, CancellationToken cancellationToken = default)
         {
             RequireNotEmpty(name, "Player Template Name");
-            if (_templateByNameCache.TryGetValue(name, out PlayerTemplateSchema cached)) return cached;
+            if (_templateByNameCache.TryGetValue(name, out PlayerTemplateSchema cached)) 
+                return cached;
 
             return await ExecuteAsync(async () =>
             {
@@ -101,11 +104,11 @@ namespace Flock.Providers
                 return response.Result;
             }, $"Fetch player template by name {name}", cancellationToken);
         }
-
+        
         /// <summary>
         /// Resolves the current authenticated player's PlayerData for a given template,
         /// using <see cref="FlockClient.CurrentPlayerId"/>. Returns null if no row exists.
-        /// First call paginates and caches all of the player's PlayerData; subsequent
+        /// First call paginates and caches all  the player's PlayerData; subsequent
         /// calls (any template) are served from memory until <see cref="ClearCache"/>.
         /// </summary>
         public async Task<PlayerData> GetMyDataByTemplateAsync(string playerTemplateId, CancellationToken cancellationToken = default)
@@ -115,18 +118,18 @@ namespace Flock.Providers
             RequireNotEmpty(playerId, "Current Player ID (sign in first)");
 
             Dictionary<string, PlayerData> byTemplate = await GetOrFetchByTemplateAsync(playerId, cancellationToken);
-            return byTemplate.TryGetValue(playerTemplateId, out PlayerData pd) ? pd : null;
+            return byTemplate.GetValueOrDefault(playerTemplateId);
         }
 
         private Task<Dictionary<string, PlayerData>> GetOrFetchByTemplateAsync(string playerId, CancellationToken cancellationToken)
         {
             if (_playerDataByPlayerCache.TryGetValue(playerId, out Dictionary<string, PlayerData> cached))
                 return Task.FromResult(cached);
-            if (_inFlightPlayerDataFetches.TryGetValue(playerId, out Task<Dictionary<string, PlayerData>> inFlight))
+            if (_tempPlayerDataFetchTasks.TryGetValue(playerId, out Task<Dictionary<string, PlayerData>> inFlight))
                 return inFlight;
 
             Task<Dictionary<string, PlayerData>> task = FetchAndCacheAsync(playerId, cancellationToken);
-            _inFlightPlayerDataFetches[playerId] = task;
+            _tempPlayerDataFetchTasks[playerId] = task;
             return task;
         }
 
@@ -140,7 +143,7 @@ namespace Flock.Providers
             }
             finally
             {
-                _inFlightPlayerDataFetches.Remove(playerId);
+                _tempPlayerDataFetchTasks.Remove(playerId);
             }
         }
 
@@ -152,7 +155,12 @@ namespace Flock.Providers
             while (true)
             {
                 PaginatedResponse<PlayerData> response = await GetAllDataAsync(playerId, page, pageSize, cancellationToken);
-                if (response?.Items == null || response.Items.Length == 0) break;
+                if (response?.Items == null || response.Items.Length == 0)
+                {
+                    Client.Logger.LogInfo($"No player data found for player {playerId}");
+                    break;
+                    
+                }
                 foreach (PlayerData pd in response.Items)
                 {
                     if (!string.IsNullOrEmpty(pd.PlayerTemplateId))

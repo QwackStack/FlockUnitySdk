@@ -9,7 +9,7 @@ namespace Flock.Editor.Codegen
     internal static class FlockCodegenMenu
     {
         private const string DefaultGeneratedPath = "Assets/Flock/Generated";
-        private const string TemplatesSubdir = "Templates";
+        private const string TemplatesSubdir = "Player";
         private const string ConfigsSubdir = "Configs";
         private const string CommandsSubdir = "Commands";
 
@@ -58,12 +58,15 @@ namespace Flock.Editor.Codegen
                 // PlayerAccessorEmitter must run after PlayerTemplateEmitter wipes the dir.
                 int playerAccessors = PlayerAccessorEmitter.Emit(
                     snapshot.PlayerTemplates, templateResult.ClassNamesById, Path.Combine(generatedRoot, TemplatesSubdir));
-                GameConfigEmitter.EmitResult configResult = GameConfigEmitter.Emit(
-                    snapshot.GameConfigs, Path.Combine(generatedRoot, ConfigsSubdir));
-                int accessors = ConfigAccessorEmitter.Emit(
-                    snapshot.GameConfigs, configResult.ClassNamesById, Path.Combine(generatedRoot, ConfigsSubdir));
-                int commandAccessors = CommandAccessorEmitter.Emit(
-                    snapshot.PlayerTemplates, templateResult.ClassNamesById, Path.Combine(generatedRoot, CommandsSubdir));
+                // GameConfig and Command codegen are paused while the typed-schema pipeline
+                // is being rebuilt around PlayerTemplate. Re-enable once the new shape is
+                // wired through GameConfigEmitter / CommandAccessorEmitter.
+                // GameConfigEmitter.EmitResult configResult = GameConfigEmitter.Emit(
+                //     snapshot.GameConfigs, Path.Combine(generatedRoot, ConfigsSubdir));
+                // int accessors = ConfigAccessorEmitter.Emit(
+                //     snapshot.GameConfigs, configResult.ClassNamesById, Path.Combine(generatedRoot, ConfigsSubdir));
+                // int commandAccessors = CommandAccessorEmitter.Emit(
+                //     snapshot.PlayerTemplates, templateResult.ClassNamesById, Path.Combine(generatedRoot, CommandsSubdir));
                 ManifestEmitter.Emit(snapshot, generatedRoot);
 
                 AssetDatabase.Refresh();
@@ -71,9 +74,6 @@ namespace Flock.Editor.Codegen
                     "[Flock Codegen] Sync complete\n" +
                     $"  Templates:        {templateResult.Count}\n" +
                     $"  Player accessors: {playerAccessors}\n" +
-                    $"  Configs:          {configResult.Count}\n" +
-                    $"  Config accessors: {accessors}\n" +
-                    $"  Command methods:  {commandAccessors}\n" +
                     $"  Output:           {generatedRoot}");
             }
             catch (Exception ex)
