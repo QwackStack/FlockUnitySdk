@@ -54,7 +54,7 @@ namespace Flock.Editor.Codegen
 
         private static void EmitReadMethod(StringBuilder sb, string className, string sourceName, HashSet<string> usedMethodNames)
         {
-            string methodName = Naming.Disambiguate("Get" + Naming.ToPascalCase(sourceName) + "Async", usedMethodNames);
+            string methodName = CodeGenNamingHelpers.UnDuplicate("Get" + CodeGenNamingHelpers.ToPascalCase(sourceName) + "Async", usedMethodNames);
 
             sb.AppendLine($"        public static async Task<{className}> {methodName}(");
             sb.AppendLine($"            this PlayerProvider provider,");
@@ -62,7 +62,7 @@ namespace Flock.Editor.Codegen
             sb.AppendLine("        {");
             sb.AppendLine($"            PlayerData pd = await provider.GetMyDataByTemplateAsync({className}.SourceId, cancellationToken);");
             sb.AppendLine("            if (pd == null || pd.Data == null) return null;");
-            sb.AppendLine($"            {className} result = JObject.FromObject(pd.Data).ToObject<{className}>();");
+            sb.AppendLine($"            {className} result = pd.Data.ToFlatObject().ToObject<{className}>();");
             sb.AppendLine("            result.PlayerDataId = pd.Id;");
             sb.AppendLine("            return result;");
             sb.AppendLine("        }");

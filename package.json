@@ -1,6 +1,6 @@
 {
   "name": "com.flock.sdk",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "displayName": "Flock SDK",
   "description": "A game backend SDK for Unity with authentication, game configuration, player data, shop, and analytics.",
   "unity": "2020.3",

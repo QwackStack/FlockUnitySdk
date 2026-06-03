@@ -2,11 +2,15 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
-using Newtonsoft.Json.Linq;
+using Flock.Models;
 using UnityEngine;
 
 namespace Flock.Editor.Codegen
 {
+    // Walks a flattened typed-schema list and emits C# properties for each field.
+    // Same walker is used for PlayerTemplate and GameConfig because both share the
+    // TypedSchema shape (OpenAPI PlayerTemplateTypedSchema / GameConfigTypedSchema
+    // are structurally identical).
     internal static class SchemaPropertyEmitter
     {
         private static readonly string[] SystemObjectMembers =
@@ -15,7 +19,7 @@ namespace Flock.Editor.Codegen
         };
 
         public static int EmitProperties(
-            IDictionary<string, object> schema,
+            IList<TypedSchema> fields,
             string parentClassName,
             string propertyAccessor,
             StringBuilder body,
@@ -24,140 +28,118 @@ namespace Flock.Editor.Codegen
             IEnumerable<string> reservedPropertyNames,
             string contextLogName)
         {
-            var usedPropertyNames = new HashSet<string>(SystemObjectMembers);
+            HashSet<string> usedPropertyNames = new HashSet<string>(SystemObjectMembers);
             if (reservedPropertyNames != null)
             {
                 foreach (string n in reservedPropertyNames) usedPropertyNames.Add(n);
             }
 
             int emitted = 0;
-            foreach (var field in schema.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+            foreach (TypedSchema field in fields.OrderBy(f => f?.FieldName ?? "", StringComparer.Ordinal))
             {
-                string rawProp = Naming.ToPascalCase(field.Key);
-                string propName = Naming.Disambiguate(rawProp, usedPropertyNames);
-                string jsonName = Naming.EscapeStringLiteral(field.Key);
-                string keyForComment = Naming.SanitizeForLineComment(field.Key);
+                if (field == null || string.IsNullOrEmpty(field.FieldName))
+                    continue;
 
-                if (field.Value is string typeStr)
+                string rawProp = CodeGenNamingHelpers.ToPascalCase(field.FieldName);
+                string propName = CodeGenNamingHelpers.UnDuplicate(rawProp, usedPropertyNames);
+                string jsonName = CodeGenNamingHelpers.EscapeStringLiteral(field.FieldName);
+                string keyForComment = CodeGenNamingHelpers.SanitizeForLineComment(field.FieldName);
+
+                string csType = ResolveType(field, parentClassName, propName, propertyAccessor,
+                                            nestedClasses, usedClassNames, contextLogName);
+                if (csType == null)
                 {
-                    string csType = TypeMap.MapTypeString(typeStr);
-                    if (csType == null)
-                    {
-                        body.AppendLine($"        // Skipped '{keyForComment}': unknown type '{Naming.SanitizeForLineComment(typeStr)}'.");
-                        body.AppendLine();
-                        Debug.LogWarning($"[Flock Codegen] {contextLogName}: unknown type '{typeStr}' for field '{field.Key}'.");
-                        continue;
-                    }
-                    body.AppendLine($"        [JsonProperty(\"{jsonName}\")]");
-                    body.AppendLine($"        public {csType} {propName} {propertyAccessor}");
+                    body.AppendLine($"        // Skipped '{keyForComment}': unable to resolve type '{CodeGenNamingHelpers.SanitizeForLineComment(field.Type)}'.");
                     body.AppendLine();
-                    emitted++;
                     continue;
                 }
 
-                IDictionary<string, object> nestedDict = TryAsDict(field.Value);
-                if (nestedDict != null)
-                {
-                    string nestedClassName = Naming.Disambiguate(parentClassName + propName, usedClassNames);
-                    string nestedSource = BuildNestedClass(nestedClassName, nestedDict, propertyAccessor, nestedClasses, usedClassNames);
-                    nestedClasses.Add(nestedSource);
-                    body.AppendLine($"        [JsonProperty(\"{jsonName}\")]");
-                    body.AppendLine($"        public {nestedClassName} {propName} {propertyAccessor}");
-                    body.AppendLine();
-                    emitted++;
-                    continue;
-                }
-
-                if (field.Value is JArray jarray)
-                {
-                    string elementCsType = ResolveArrayElementCsType(
-                        jarray, parentClassName, propName, propertyAccessor,
-                        nestedClasses, usedClassNames, contextLogName, field.Key);
-                    if (elementCsType == null)
-                    {
-                        body.AppendLine($"        // Skipped '{keyForComment}': unsupported typed array element.");
-                        body.AppendLine();
-                        continue;
-                    }
-                    body.AppendLine($"        [JsonProperty(\"{jsonName}\")]");
-                    body.AppendLine($"        public global::System.Collections.Generic.List<{elementCsType}> {propName} {propertyAccessor}");
-                    body.AppendLine();
-                    emitted++;
-                    continue;
-                }
-
-                string shape = field.Value == null ? "null" : field.Value.GetType().Name;
-                body.AppendLine($"        // Skipped '{keyForComment}': unsupported shape '{shape}'.");
+                body.AppendLine($"        [JsonProperty(\"{jsonName}\")]");
+                body.AppendLine($"        public {csType} {propName} {propertyAccessor}");
                 body.AppendLine();
-                Debug.LogWarning($"[Flock Codegen] {contextLogName}: unsupported shape '{shape}' for field '{field.Key}'.");
+                emitted++;
             }
 
             return emitted;
         }
 
+        private static string ResolveType(
+            TypedSchema field,
+            string parentClassName,
+            string propName,
+            string propertyAccessor,
+            List<string> nestedClasses,
+            HashSet<string> usedClassNames,
+            string contextLogName)
+        {
+            string typeLower = (field.Type ?? "").Trim().ToLowerInvariant();
+
+            if (typeLower == "object")
+            {
+                List<TypedSchema> children = field.SchemaAsList();
+                if (children == null || children.Count == 0)
+                {
+                    Debug.LogWarning($"[Flock Codegen] {contextLogName}: object field '{field.FieldName}' missing nested schema list; emitting JObject.");
+                    return "JObject";
+                }
+                string nestedClassName = CodeGenNamingHelpers.UnDuplicate(parentClassName + propName, usedClassNames);
+                nestedClasses.Add(BuildNestedClass(nestedClassName, children, propertyAccessor, nestedClasses, usedClassNames));
+                return nestedClassName;
+            }
+
+            if (typeLower == "list" || typeLower == "array")
+            {
+                TypedSchema element = field.SchemaAsSingle();
+                if (element == null)
+                {
+                    Debug.LogWarning($"[Flock Codegen] {contextLogName}: list field '{field.FieldName}' missing element schema; emitting List<object>.");
+                    return "List<object>";
+                }
+                string elementType = ResolveType(element, parentClassName, propName + "Item", propertyAccessor,
+                                                  nestedClasses, usedClassNames, contextLogName);
+                if (elementType == null) return null;
+                return $"List<{elementType}>";
+            }
+
+            if (typeLower == "dict")
+            {
+                TypedSchema valueSchema = field.SchemaAsSingle();
+                if (valueSchema == null)
+                {
+                    Debug.LogWarning($"[Flock Codegen] {contextLogName}: dict field '{field.FieldName}' missing value schema; emitting Dictionary<string, object>.");
+                    return "Dictionary<string, object>";
+                }
+                string valueType = ResolveType(valueSchema, parentClassName, propName + "Value", propertyAccessor,
+                                                nestedClasses, usedClassNames, contextLogName);
+                if (valueType == null) return null;
+                return $"Dictionary<string, {valueType}>";
+            }
+
+            string mapped = TypeMap.MapPrimitiveTypeString(typeLower);
+            if (mapped == null)
+            {
+                Debug.LogWarning($"[Flock Codegen] {contextLogName}: unknown type '{field.Type}' for field '{field.FieldName}'.");
+            }
+            return mapped;
+        }
+
         private static string BuildNestedClass(
             string className,
-            IDictionary<string, object> schema,
+            IList<TypedSchema> fields,
             string propertyAccessor,
             List<string> nestedClasses,
             HashSet<string> usedClassNames)
         {
-            var inner = new StringBuilder();
-            EmitProperties(schema, className, propertyAccessor, inner, nestedClasses, usedClassNames, new[] { className }, className);
+            StringBuilder inner = new StringBuilder();
+            EmitProperties(fields, className, propertyAccessor, inner, nestedClasses, usedClassNames, new[] { className }, className);
 
-            var sb = new StringBuilder();
+            StringBuilder sb = new StringBuilder();
             sb.AppendLine($"    public partial class {className}");
             sb.AppendLine("    {");
             sb.Append(inner);
             sb.AppendLine("    }");
             sb.AppendLine();
             return sb.ToString();
-        }
-
-        private static string ResolveArrayElementCsType(
-            JArray jarray,
-            string parentClassName,
-            string propName,
-            string propertyAccessor,
-            List<string> nestedClasses,
-            HashSet<string> usedClassNames,
-            string contextLogName,
-            string fieldKey)
-        {
-            if (jarray.Count == 0)
-            {
-                Debug.LogWarning($"[Flock Codegen] {contextLogName}: empty typed array for '{fieldKey}'; use 'array' for List<object>.");
-                return null;
-            }
-
-            JToken first = jarray[0];
-
-            IDictionary<string, object> elementDict = TryAsDict(first);
-            if (elementDict != null)
-            {
-                string itemClassName = Naming.Disambiguate(parentClassName + propName + "Item", usedClassNames);
-                nestedClasses.Add(BuildNestedClass(itemClassName, elementDict, propertyAccessor, nestedClasses, usedClassNames));
-                return itemClassName;
-            }
-
-            if (first.Type == JTokenType.String)
-            {
-                string typeStr = first.Value<string>();
-                string csType = TypeMap.MapTypeString(typeStr);
-                if (csType == null)
-                    Debug.LogWarning($"[Flock Codegen] {contextLogName}: unknown array element type '{typeStr}' for '{fieldKey}'.");
-                return csType;
-            }
-
-            Debug.LogWarning($"[Flock Codegen] {contextLogName}: unsupported array element shape '{first.Type}' for '{fieldKey}'.");
-            return null;
-        }
-
-        private static IDictionary<string, object> TryAsDict(object value)
-        {
-            if (value is IDictionary<string, object> dict) return dict;
-            if (value is JObject jobj) return jobj.ToObject<Dictionary<string, object>>();
-            return null;
         }
     }
 }

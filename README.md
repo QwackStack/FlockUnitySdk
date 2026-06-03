@@ -265,9 +265,11 @@ FlockClient.Instance.Analytics.RecordScreenView("MainMenu");
 
 ## Codegen
 
-Run **Flock > Sync Schemas** (or the Codegen tab in **Qwacks > Editor**) to fetch your game's player templates and game configs from the backend and generate typed C# accessors. Output goes to `Assets/Flock/Generated/` by default; change the path on the FlockConfig asset if you want it elsewhere. Treat the folder as Flock-owned — sync wipes its subdirectories on each run, and **Delete Generated Code** clears the whole tree.
+Run **Flock > Sync Schemas** (or the Codegen tab in **Qwacks > Editor**) to fetch your game's player templates from the backend and generate typed C# accessors. Output goes to `Assets/Flock/Generated/` by default; change the path on the FlockConfig asset if you want it elsewhere. Treat the folder as Flock-owned — sync wipes the `Templates/` subdirectory on each run, and **Delete Generated Code** clears the whole tree.
 
-What gets generated, given a player template named `PlayerProgress` and a game config named `Gameplay`:
+> **GameConfig and game-command codegen are paused as of 1.9.0.** While GameConfig and the command write path are being re-aligned with the backend's new flattened typed-schema shape, `Flock > Sync Schemas` only regenerates Templates (and the matching `FlockPlayerProviderExtensions`). The `Configs/` and `Commands/` directories are not touched — any `.g.cs` files left over from an earlier sync stay where they are; new entries appear once the rest of the pipeline lands.
+
+What gets generated, given a player template named `PlayerProgress`:
 
 ```csharp
 // Templates — Flock.Generated.Templates.PlayerProgressTemplate
@@ -279,32 +281,27 @@ PlayerProgressTemplate progress = await FlockClient.Instance.Player.GetPlayerPro
 int level = progress.Level;
 int xp = progress.Xp;
 
-// Configs — Flock.Generated.Configs.GameplayConfig
-GameplayConfig gameplay = await FlockClient.Instance.Config.GetGameplayAsync();
-float baseMoveSpeed = gameplay.BaseMoveSpeed;
-
-// Commands — typed wrappers over UpdatePlayerData / UpdatePlayerDataKey
-progress.Level = 5;
-await FlockClient.Instance.Commands.UpdatePlayerProgressAsync(progress);
-await FlockClient.Instance.Commands.UpdatePlayerProgressFieldAsync(progress, "xp", 1200);
+// Each generated template class carries its source identity and its typed schema:
+string id = PlayerProgressTemplate.SourceId;
+string name = PlayerProgressTemplate.SourceName;
+IReadOnlyList<TypedSchema> schema = PlayerProgressTemplate.Schema;
 ```
 
-Method names come from the template / config name on the backend (PascalCase). Field names follow the schema keys, also PascalCased. Source identifiers are exposed as `const`s on each generated class (`PlayerProgressTemplate.SourceId`, `GameplayConfig.SourceId`, `GameplayConfig.SourceTag`).
+Method names come from the template name on the backend (PascalCase). Field names follow each `TypedSchema.field_name`, also PascalCased.
 
 Re-run sync whenever:
-- You change the schema of a template or config in the dashboard
+- You change the schema of a template in the dashboard
 - You change **Game Version** on the FlockConfig asset (the SDK warns at init if the generated `SchemasManifest.GameVersionId` doesn't match the configured version)
-- You add or remove templates / configs
+- You add or remove templates
 
-Type mapping is in `Editor/Codegen/TypeMap.cs`: primitives map directly, `datetime`/`date`/`timestamp` to `System.DateTime`, nested objects emit nested classes, `list<T>` resolves recursively. See [Backend backlog](#backend-backlog) for current limits.
+Type mapping for primitives lives in `Editor/Codegen/TypeMap.cs` (`integer` → `int`, `string` → `string`, `datetime`/`date`/`timestamp` → `System.DateTime`, etc.). Composite types are walked structurally by `SchemaPropertyEmitter`: `object` fields emit a nested partial class, `list`/`array` emit `List<T>`, `dict` emits `Dictionary<string, T>`, all resolved recursively through the same walker.
 
 ## Backend backlog
 
 A few SDK behaviors are constrained by the current backend surface and will improve as the backend grows. None of these block normal usage; they all surface as warnings in the console with workarounds in place.
 
-- **Typed arrays in codegen** — schema `array` and `list` types map to `List<object>` because the schema response sends bare `"array"` with no element type info. The codegen `TypeMap` already handles `list<T>` recursively, so once the backend emits typed element info, generated code picks it up with no SDK change.
-- **Nested object schemas in codegen** — schema `object` maps to `Newtonsoft.Json.Linq.JObject` (call `.ToObject<T>()` for typed views). Once the backend serializes nested object schemas inline rather than as opaque `object`, codegen will emit nested classes.
-- **Game command IDs in codegen** — generated `Update*Async` and `Update*FieldAsync` extension methods read command IDs from `Editor/Codegen/CommandLookup.cs`, which currently has placeholder constants you must replace with your dashboard's `UpdatePlayerData` and `UpdatePlayerDataKey` IDs. Will resolve automatically once the backend exposes a "command by name" lookup endpoint.
+- **GameConfig codegen on the new typed-schema shape** — `GameConfigSchema.Schema` / `.Data` still come back as `Dictionary<string, object>` (legacy shape) and the GameConfig branch of `Flock > Sync Schemas` is paused while the same walker player templates use is wired through. Game configs read fine via `client.Config.GetGameConfigsAsync` etc.; just no generated `*Config` classes until this lands.
+- **Game command codegen** — `Update*Async` and `Update*FieldAsync` generation is paused with the rest of the command path while the new `List<DataField>` write-shape is being finalized end-to-end (`ToDataFieldList` extension + `UpdatePlayerDataInput.Data` shape). In the meantime, call `client.Commands.UpdatePlayerDataAsync(commandId, playerDataId, dict)` directly; command IDs still come from `Editor/Codegen/CommandLookup.cs` placeholders pending a backend "command by name" endpoint.
 - **Asset by name** — `client.Asset.GetByNameAsync` lists all assets and filters client-side (O(N)). Will switch to `GET /v1/asset/by-name/{name}` once the backend adds it.
 - **Structured registration error codes** — `POST /v1/player/register*` failures are returned as plain text without an error-code field. The SDK uses string-matching (`IsAlreadyRegisteredError`) to swallow "already registered" cases and return `null` from `RegisterWith*`, which is brittle and conflates name collisions with credential collisions. Once the backend returns structured codes (e.g. `NAME_TAKEN`, `EMAIL_REGISTERED`, `DEVICE_REGISTERED`), the SDK can surface them as typed exceptions and the `RegisterWith*` methods can take `name` again with reliable error UX. A `GET /v1/player/name-available?name=` endpoint would also let callers validate as the user types.
 
