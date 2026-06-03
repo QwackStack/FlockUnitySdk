@@ -3,27 +3,16 @@ using Newtonsoft.Json;
 
 namespace Flock.Models
 {
-    internal interface ICommandPayload { }
-
-    internal class GameCommandExecutionRequest
-    {
-        [JsonProperty("game_command_id")]
-        public string GameCommandId { get; set; }
-
-        [JsonProperty("inputs")]
-        public List<ICommandPayload> Inputs { get; set; }
-    }
-
-    internal class UpdatePlayerDataInput : ICommandPayload
+    internal class UpdatePlayerDataInput
     {
         [JsonProperty("player_data_id")]
         public string PlayerDataId { get; set; }
 
         [JsonProperty("data")]
-        public Dictionary<string, object> Data { get; set; }
+        public List<DataField> Data { get; set; }
     }
 
-    internal class UpdatePlayerDataKeyInput : ICommandPayload
+    internal class UpdatePlayerDataKeyInput
     {
         [JsonProperty("player_data_id")]
         public string PlayerDataId { get; set; }
@@ -35,7 +24,7 @@ namespace Flock.Models
         public object Value { get; set; }
     }
 
-    internal class AddGameFundsInput : ICommandPayload
+    internal class AddGameFundsInput
     {
         [JsonProperty("player_data_id")]
         public string PlayerDataId { get; set; }
@@ -47,7 +36,16 @@ namespace Flock.Models
         public int Amount { get; set; }
     }
 
-    internal class ShopTransactionRequest : ICommandPayload
+    internal class UnlockAchievementInput
+    {
+        [JsonProperty("player_data_id")]
+        public string PlayerDataId { get; set; }
+
+        [JsonProperty("achievement_name")]
+        public string AchievementName { get; set; }
+    }
+
+    internal class ShopTransactionRequest
     {
         [JsonProperty("shop_item_id")]
         public string ShopItemId { get; set; }
@@ -75,14 +73,5 @@ namespace Flock.Models
 
         [JsonProperty("used_at")]
         public string UsedAt { get; set; }
-    }
-
-    public class GameCommandExecutionResult
-    {
-        [JsonProperty("command")]
-        public string Command { get; set; }
-
-        [JsonProperty("output")]
-        public object Output { get; set; }
     }
 }
