@@ -137,7 +137,7 @@ bool refreshed = await FlockClient.Instance.RefreshTokenAsync();
 ### Services
 
 ```csharp
-// Game configuration — raw (returns GamePatchSchema with Data dictionary)
+// Game configuration — raw (returns GamePatchSchema with a flattened DataField list)
 var configs = await FlockClient.Instance.Config.GetAllAsync();
 var config = await FlockClient.Instance.Config.GetByIdAsync("config-id");
 var bySchema = await FlockClient.Instance.Config.GetBySchemaAsync("schema-id");
@@ -269,11 +269,9 @@ FlockClient.Instance.Analytics.RecordScreenView("MainMenu");
 
 ## Codegen
 
-Run **Flock > Sync Schemas** (or the Codegen tab in **Qwacks > Editor**) to fetch your game's player templates from the backend and generate typed C# accessors. Output goes to `Assets/Flock/Generated/` by default; change the path on the FlockConfig asset if you want it elsewhere. Treat the folder as Flock-owned — sync wipes the `Templates/` subdirectory on each run, and **Delete Generated Code** clears the whole tree.
+Run **Flock > Sync Schemas** (or the Codegen tab in **Qwacks > Editor**) to fetch your game's player templates and game configs from the backend and generate typed C# accessors. Output goes to `Assets/Flock/Generated/` by default; change the path on the FlockConfig asset if you want it elsewhere. Treat the folder as Flock-owned — sync wipes the `Templates/`, `Commands/`, and `Configs/` subdirectories on each run, and **Delete Generated Code** clears the whole tree.
 
-> **GameConfig codegen is paused as of 1.9.0.** While GameConfig is being re-aligned with the backend's new flattened typed-schema shape, `Flock > Sync Schemas` skips the `Configs/` directory. Templates, Player accessors, and Command accessors all regenerate normally; any leftover `.g.cs` under `Configs/` from an earlier sync stays where it is until the pipeline lands.
-
-What gets generated, given a player template named `PlayerProgress`:
+What gets generated, given a player template named `PlayerProgress` and a game config named `Gameplay`:
 
 ```csharp
 // Templates — Flock.Generated.Templates.PlayerProgressTemplate
@@ -285,7 +283,7 @@ PlayerProgressTemplate progress = await FlockClient.Instance.Player.GetPlayerPro
 int level = progress.Level;
 int xp = progress.Xp;
 
-// Each generated template class carries its source identity and its typed schema:
+// Each generated class carries its source identity and its typed schema:
 string id = PlayerProgressTemplate.SourceId;
 string name = PlayerProgressTemplate.SourceName;
 IReadOnlyList<TypedSchema> schema = PlayerProgressTemplate.Schema;
@@ -295,9 +293,17 @@ IReadOnlyList<TypedSchema> schema = PlayerProgressTemplate.Schema;
 progress.Level = 5;
 progress.Xp = 1200;
 PlayerData updated = await progress.UpdateAsync();
+
+// Configs — Flock.Generated.Configs.GameplayConfig
+GameplayConfig gameplay = await FlockClient.Instance.Config.GetGameplayAsync();
+float baseMoveSpeed = gameplay.BaseMoveSpeed;
+// SourceId / SourceName / Schema / SourceTag are exposed on the generated class:
+SchemaTag tag = GameplayConfig.SourceTag;
 ```
 
 `UpdateAsync` is emitted as an extension method on each generated template type, so it lights up in IntelliSense the moment you have `using Flock.Generated.Templates;` (which you need anyway for the typed class). It validates `template.PlayerDataId` (set automatically by the matching `Get*Async`), turns the populated POCO back into a flattened DataField list via `{Template}.Schema.ToDataFieldList(template)`, and routes through `FlockCommandProvider.UpdatePlayerDataAsync`. After a write you typically want fresh reads — call `client.Player.ClearCache()` before the next `Get*Async` if you need to bypass the per-player snapshot cache.
+
+Generated config classes have read-only properties (`{ get; private set; }`) — configs are game-wide and shouldn't be mutated client-side; mutations are admin-only on the backend.
 
 Method names come from the template name on the backend (PascalCase). Field names follow each `TypedSchema.field_name`, also PascalCased.
 
