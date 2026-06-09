@@ -117,7 +117,7 @@ namespace Flock.Providers
 
             return await ExecuteAsync(async () =>
             {
-                string url = $"{Client.GetVersionedApiUrl()}/player_template/by-name/{name}";
+                string url = $"{Client.GetVersionedApiUrl()}/player_template/by-name/{System.Uri.EscapeDataString(name)}";
                 GenericResponse<PlayerTemplateSchema> response = await FlockHttpClient.GetAsync<GenericResponse<PlayerTemplateSchema>>(
                     url, Client.GetBaseHeaders(), cancellationToken);
                 ValidateResponse(response);

@@ -17,9 +17,6 @@ namespace Flock.Models
         [JsonProperty("game_version_id")]
         public string GameVersionId { get; set; }
 
-        [JsonProperty("sdk_version")]
-        public string SdkVersion { get; set; }
-
         [JsonProperty("started_at")]
         public string StartedAt { get; set; }
     }

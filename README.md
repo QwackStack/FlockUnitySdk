@@ -204,6 +204,13 @@ var playerItems = await FlockClient.Instance.Shop.GetPlayerInventoryAsync(FlockC
 // Player ban — returns active ban data keyed by feature, or null if not banned
 var ban = await FlockClient.Instance.Player.GetBanAsync(FlockClient.Instance.CurrentPlayerId);
 
+// Assets are stand-alone files you upload via the Flock dashboard (images, audio,
+// JSON, raw bytes) and download at runtime — think "files on a CDN with metadata".
+// Good for content you want to swap without rebuilding the game (icons, sound effects,
+// art swaps), and for content shared with the Unreal SDK. NOT a replacement for Unity
+// Addressables: prefabs, scenes, ScriptableObjects, materials and shaders still need
+// Unity's own pipeline.
+
 // Assets — list / lookup
 var assets = await FlockClient.Instance.Asset.GetAllAsync();
 var asset = await FlockClient.Instance.Asset.GetByIdAsync("asset-id");
@@ -229,6 +236,13 @@ List<Sprite> sprites = await FlockClient.Instance.Asset.DownloadAsync<Sprite>(as
 // are deleted automatically when a newer UpdatedAt is cached.
 string cacheDir = FlockClient.Instance.Asset.CacheDirectory; // resolved absolute path
 FlockClient.Instance.Asset.ClearCache();
+
+// Warm the disk cache at boot without decoding into a Unity type.
+// Cache-hit short-circuits, so re-calling for an unchanged asset is cheap.
+await FlockClient.Instance.Asset.PreloadAsync(asset);
+
+// Ask "is this asset already on disk for this UpdatedAt?" without downloading.
+bool ready = FlockClient.Instance.Asset.IsCached(asset);
 ```
 
 ### Analytics
@@ -318,7 +332,6 @@ Type mapping for primitives lives in `Editor/Codegen/TypeMap.cs` (`integer` → 
 
 A few SDK behaviors are constrained by the current backend surface and will improve as the backend grows. None of these block normal usage; they all surface as warnings in the console with workarounds in place.
 
-- **GameConfig codegen on the new typed-schema shape** — `GameConfigSchema.Schema` / `.Data` still come back as `Dictionary<string, object>` (legacy shape) and the GameConfig branch of `Flock > Sync Schemas` is paused while the same walker player templates use is wired through. Game configs read fine via `client.Config.GetGameConfigsAsync` etc.; just no generated `*Config` classes until this lands.
 - **Asset by name** — `client.Asset.GetByNameAsync` lists all assets and filters client-side (O(N)). Will switch to `GET /v1/asset/by-name/{name}` once the backend adds it.
 - **Structured registration error codes** — `POST /v1/player/register*` failures are returned as plain text without an error-code field. The SDK uses string-matching (`IsAlreadyRegisteredError`) to swallow "already registered" cases and return `null` from `RegisterWith*`, which is brittle and conflates name collisions with credential collisions. Once the backend returns structured codes (e.g. `NAME_TAKEN`, `EMAIL_REGISTERED`, `DEVICE_REGISTERED`), the SDK can surface them as typed exceptions and the `RegisterWith*` methods can take `name` again with reliable error UX. A `GET /v1/player/name-available?name=` endpoint would also let callers validate as the user types.
 

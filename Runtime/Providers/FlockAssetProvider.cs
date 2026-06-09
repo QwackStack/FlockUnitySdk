@@ -72,11 +72,19 @@ namespace Flock.Providers
                 throw new FlockValidationException($"Asset '{asset.Name ?? asset.Id}' has no download URL");
 
             bool cacheEnabled = Client.InitConfig.EnableAssetCache;
+            if (cacheEnabled && _cache.MaxSizeBytes > 0
+                && asset.SizeBytes.HasValue && asset.SizeBytes.Value > _cache.MaxSizeBytes)
+            {
+                Client.Logger.LogWarning(
+                    $"Asset '{asset.Name ?? asset.Id}' ({asset.SizeBytes.Value} bytes) exceeds cache cap " +
+                    $"({_cache.MaxSizeBytes} bytes); caching disabled for this asset.");
+                cacheEnabled = false;
+            }
             bool tryGetCachedFileUrl = _cache.TryGetCachedFileUrl(asset.Id, asset.UpdatedAt, out string cachedUrl);
             bool cacheHit = cacheEnabled && tryGetCachedFileUrl;
             string sourceUrl = cacheHit ? cachedUrl : asset.S3DownloadUrl;
 
-            UnityWebRequest req = BuildRequest<T>(sourceUrl);
+            UnityWebRequest req = BuildRequest<T>(sourceUrl, asset);
             using (req)
             {
                 await SendAsync(req, $"Download asset '{asset.Name}'", cancellationToken);
@@ -129,15 +137,54 @@ namespace Flock.Providers
             }
         }
 
+        // Reports literal on-disk presence; does not consult EnableAssetCache.
+        public bool IsCached(string assetId, DateTime updatedAt)
+        {
+            if (string.IsNullOrEmpty(assetId)) return false;
+            return _cache.TryGetCachedFileUrl(assetId, updatedAt, out _);
+        }
+
+        public bool IsCached(AssetSchema asset)
+        {
+            return asset != null && IsCached(asset.Id, asset.UpdatedAt);
+        }
+
+        // Downloads bytes into the disk cache without decoding into a typed Unity
+        // object. Cache hits short-circuit, so calling twice for an unchanged asset
+        // is cheap.
+        public Task PreloadAsync(string assetId, CancellationToken cancellationToken = default)
+        {
+            return DownloadAsync<byte[]>(assetId, cancellationToken);
+        }
+
+        public Task PreloadAsync(AssetSchema asset, CancellationToken cancellationToken = default)
+        {
+            return DownloadAsync<byte[]>(asset, cancellationToken);
+        }
+
         
-        private static UnityWebRequest BuildRequest<T>(string url) where T : class
+        private static UnityWebRequest BuildRequest<T>(string url, AssetSchema asset) where T : class
         {
             Type t = typeof(T);
             if (t == typeof(Texture2D) || t == typeof(Sprite))
                 return UnityWebRequestTexture.GetTexture(url);
             if (t == typeof(AudioClip))
-                return UnityWebRequestMultimedia.GetAudioClip(url, AudioType.UNKNOWN);
+                return UnityWebRequestMultimedia.GetAudioClip(url, ResolveAudioType(asset?.ExtensionType));
             return UnityWebRequest.Get(url);
+        }
+
+        private static AudioType ResolveAudioType(string extensionType)
+        {
+            if (string.IsNullOrEmpty(extensionType)) return AudioType.UNKNOWN;
+            switch (extensionType.Trim().TrimStart('.').ToLowerInvariant())
+            {
+                case "mp3": return AudioType.MPEG;
+                case "wav": return AudioType.WAV;
+                case "ogg": return AudioType.OGGVORBIS;
+                case "aif":
+                case "aiff": return AudioType.AIFF;
+                default: return AudioType.UNKNOWN;
+            }
         }
 
         private static T Extract<T>(UnityWebRequest req) where T : class
