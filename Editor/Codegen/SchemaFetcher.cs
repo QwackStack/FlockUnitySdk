@@ -37,7 +37,7 @@ namespace Flock.Editor.Codegen
             };
 
             snapshot.PlayerTemplates = await GetList<PlayerTemplateSchema>($"{baseUrl}/{FlockClient.ApiVersion}/player_template", headers);
-            snapshot.GameConfigs     = await GetList<GameConfigSchema>($"{baseUrl}/{FlockClient.ApiVersion}/game_config", headers);
+            snapshot.GameConfigs     = await GetList<GameConfigSchema>($"{baseUrl}/{FlockClient.ApiVersion}/game_config/version", headers);
 
             return snapshot;
         }

@@ -9,11 +9,13 @@ namespace Flock.Providers
 {
     public class PlayerProvider : FlockProviderBase, IPlayerService
     {
-        private List<PlayerTemplateSchema> _allTemplatesCache;
-        private readonly Dictionary<string, PlayerTemplateSchema> _templateByIdCache = new Dictionary<string, PlayerTemplateSchema>();
-        private readonly Dictionary<string, PlayerTemplateSchema> _templateByNameCache = new Dictionary<string, PlayerTemplateSchema>();
+        private readonly Dictionary<string, PlayerTemplateSchema> _templatesById = new Dictionary<string, PlayerTemplateSchema>();
+        private readonly Dictionary<string, string> _templateIdByName = new Dictionary<string, string>();
+        private bool _allTemplatesFetched;
+        private Task<List<PlayerTemplateSchema>> _allTemplatesFetchTask;
+
         private readonly Dictionary<string, Dictionary<string, PlayerData>> _playerDataByPlayerCache = new Dictionary<string, Dictionary<string, PlayerData>>();
-        private readonly Dictionary<string, Task<Dictionary<string, PlayerData>>> _tempPlayerDataFetchTasks = new Dictionary<string, Task<Dictionary<string, PlayerData>>>();
+        private readonly Dictionary<string, Task<Dictionary<string, PlayerData>>> _playerDataFetchTasks = new Dictionary<string, Task<Dictionary<string, PlayerData>>>();
 
         public PlayerProvider(FlockClient client) : base(client) { }
 
@@ -23,11 +25,12 @@ namespace Flock.Providers
         /// </summary>
         public void ClearCache()
         {
-            _allTemplatesCache = null;
-            _templateByIdCache.Clear();
-            _templateByNameCache.Clear();
+            _templatesById.Clear();
+            _templateIdByName.Clear();
+            _allTemplatesFetched = false;
+            _allTemplatesFetchTask = null;
             _playerDataByPlayerCache.Clear();
-            _tempPlayerDataFetchTasks.Clear();
+            _playerDataFetchTasks.Clear();
         }
 
         public async Task<PlayerData> GetDataByIdAsync(string playerDataId, CancellationToken cancellationToken = default)
@@ -43,7 +46,7 @@ namespace Flock.Providers
             }, $"Fetch player data {playerDataId}", cancellationToken);
         }
 
-        public async Task<PaginatedResponse<PlayerData>> GetAllDataAsync( string playerId = null,int page = 1, int limit = 100, CancellationToken cancellationToken = default)
+        public async Task<PaginatedResponse<PlayerData>> GetAllDataAsync(string playerId = null, int page = 1, int limit = 100, CancellationToken cancellationToken = default)
         {
             return await ExecuteAsync(async () =>
             {
@@ -56,34 +59,52 @@ namespace Flock.Providers
             }, "Fetch player data list", cancellationToken);
         }
 
-        public async Task<List<PlayerTemplateSchema>> GetTemplatesAsync(CancellationToken cancellationToken = default)
+        public Task<List<PlayerTemplateSchema>> GetTemplatesAsync(CancellationToken cancellationToken = default)
         {
-            if (_allTemplatesCache != null) 
-                return _allTemplatesCache;
+            if (_allTemplatesFetched)
+                return Task.FromResult(new List<PlayerTemplateSchema>(_templatesById.Values));
+            if (_allTemplatesFetchTask != null)
+                return _allTemplatesFetchTask;
 
-            return await ExecuteAsync(async () =>
+            _allTemplatesFetchTask = FetchAllTemplatesAsync(cancellationToken);
+            return _allTemplatesFetchTask;
+        }
+
+        private async Task<List<PlayerTemplateSchema>> FetchAllTemplatesAsync(CancellationToken cancellationToken)
+        {
+            try
             {
-                string url = $"{Client.GetVersionedApiUrl()}/player_template";
-                GenericResponse<List<PlayerTemplateSchema>> response = await FlockHttpClient.GetAsync<GenericResponse<List<PlayerTemplateSchema>>>(
-                    url, Client.GetBaseHeaders(), cancellationToken);
-                ValidateResponse(response);
-                _allTemplatesCache = response.Result;
-                return response.Result;
-            }, "Fetch player templates", cancellationToken);
+                return await ExecuteAsync(async () =>
+                {
+                    string url = $"{Client.GetVersionedApiUrl()}/player_template";
+                    GenericResponse<List<PlayerTemplateSchema>> response = await FlockHttpClient.GetAsync<GenericResponse<List<PlayerTemplateSchema>>>(
+                        url, Client.GetBaseHeaders(), cancellationToken);
+                    ValidateResponse(response);
+                    foreach (PlayerTemplateSchema t in response.Result)
+                        IndexTemplate(t);
+                    _allTemplatesFetched = true;
+                    return response.Result;
+                }, "Fetch player templates", cancellationToken);
+            }
+            finally
+            {
+                _allTemplatesFetchTask = null;
+            }
         }
 
         public async Task<PlayerTemplateSchema> GetTemplateByIdAsync(string playerTemplateId, CancellationToken cancellationToken = default)
         {
             RequireNotEmpty(playerTemplateId, "Player Template ID");
-            if (_templateByIdCache.TryGetValue(playerTemplateId, out PlayerTemplateSchema cached)) 
+            if (_templatesById.TryGetValue(playerTemplateId, out PlayerTemplateSchema cached))
                 return cached;
 
             return await ExecuteAsync(async () =>
             {
                 string url = $"{Client.GetVersionedApiUrl()}/player_template/{playerTemplateId}";
-                GenericResponse<PlayerTemplateSchema> response = await FlockHttpClient.GetAsync<GenericResponse<PlayerTemplateSchema>>(url, Client.GetBaseHeaders(), cancellationToken);
+                GenericResponse<PlayerTemplateSchema> response = await FlockHttpClient.GetAsync<GenericResponse<PlayerTemplateSchema>>(
+                    url, Client.GetBaseHeaders(), cancellationToken);
                 ValidateResponse(response);
-                _templateByIdCache[playerTemplateId] = response.Result;
+                IndexTemplate(response.Result);
                 return response.Result;
             }, $"Fetch player template {playerTemplateId}", cancellationToken);
         }
@@ -91,7 +112,7 @@ namespace Flock.Providers
         public async Task<PlayerTemplateSchema> GetTemplateByNameAsync(string name, CancellationToken cancellationToken = default)
         {
             RequireNotEmpty(name, "Player Template Name");
-            if (_templateByNameCache.TryGetValue(name, out PlayerTemplateSchema cached)) 
+            if (_templateIdByName.TryGetValue(name, out string id) && _templatesById.TryGetValue(id, out PlayerTemplateSchema cached))
                 return cached;
 
             return await ExecuteAsync(async () =>
@@ -100,15 +121,23 @@ namespace Flock.Providers
                 GenericResponse<PlayerTemplateSchema> response = await FlockHttpClient.GetAsync<GenericResponse<PlayerTemplateSchema>>(
                     url, Client.GetBaseHeaders(), cancellationToken);
                 ValidateResponse(response);
-                _templateByNameCache[name] = response.Result;
+                IndexTemplate(response.Result);
                 return response.Result;
             }, $"Fetch player template by name {name}", cancellationToken);
         }
-        
+
+        private void IndexTemplate(PlayerTemplateSchema t)
+        {
+            if (t == null || string.IsNullOrEmpty(t.Id)) return;
+            _templatesById[t.Id] = t;
+            if (!string.IsNullOrEmpty(t.Name))
+                _templateIdByName[t.Name] = t.Id;
+        }
+
         /// <summary>
         /// Resolves the current authenticated player's PlayerData for a given template,
         /// using <see cref="FlockClient.CurrentPlayerId"/>. Returns null if no row exists.
-        /// First call paginates and caches all  the player's PlayerData; subsequent
+        /// First call paginates and caches all the player's PlayerData; subsequent
         /// calls (any template) are served from memory until <see cref="ClearCache"/>.
         /// </summary>
         public async Task<PlayerData> GetMyDataByTemplateAsync(string playerTemplateId, CancellationToken cancellationToken = default)
@@ -118,11 +147,9 @@ namespace Flock.Providers
             RequireNotEmpty(playerId, "Current Player ID (sign in first)");
 
             Dictionary<string, PlayerData> byTemplate = await GetOrFetchByTemplateAsync(playerId, cancellationToken);
-            bool tryGetValue = byTemplate.TryGetValue(playerTemplateId, out PlayerData pd);
-            if (tryGetValue)
-            {
+            if (byTemplate.TryGetValue(playerTemplateId, out PlayerData pd))
                 return pd;
-            }
+
             Client.Logger.LogError($"No player data found for template {playerTemplateId} for player {playerId}");
             return null;
         }
@@ -131,11 +158,11 @@ namespace Flock.Providers
         {
             if (_playerDataByPlayerCache.TryGetValue(playerId, out Dictionary<string, PlayerData> cached))
                 return Task.FromResult(cached);
-            if (_tempPlayerDataFetchTasks.TryGetValue(playerId, out Task<Dictionary<string, PlayerData>> inFlight))
+            if (_playerDataFetchTasks.TryGetValue(playerId, out Task<Dictionary<string, PlayerData>> inFlight))
                 return inFlight;
 
             Task<Dictionary<string, PlayerData>> task = FetchAndCacheAsync(playerId, cancellationToken);
-            _tempPlayerDataFetchTasks[playerId] = task;
+            _playerDataFetchTasks[playerId] = task;
             return task;
         }
 
@@ -149,13 +176,13 @@ namespace Flock.Providers
             }
             finally
             {
-                _tempPlayerDataFetchTasks.Remove(playerId);
+                _playerDataFetchTasks.Remove(playerId);
             }
         }
 
         private async Task<Dictionary<string, PlayerData>> FetchAllMyDataAsync(string playerId, CancellationToken cancellationToken)
         {
-            var byTemplate = new Dictionary<string, PlayerData>();
+            Dictionary<string, PlayerData> byTemplate = new Dictionary<string, PlayerData>();
             const int pageSize = 100;
             int page = 1;
             while (true)
@@ -165,7 +192,6 @@ namespace Flock.Providers
                 {
                     Client.Logger.LogInfo($"No player data found for player {playerId}");
                     break;
-                    
                 }
                 foreach (PlayerData pd in response.Items)
                 {

@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
 
 namespace Flock.Models
 {
@@ -20,10 +19,10 @@ namespace Flock.Models
         public string GameVersionId { get; set; }
 
         [JsonProperty("schema")]
-        public Dictionary<string, object> Schema { get; set; }
+        public List<TypedSchema> Schema { get; set; }
 
         [JsonProperty("data")]
-        public Dictionary<string, object> Data { get; set; }
+        public List<DataField> Data { get; set; }
 
         [JsonProperty("tag")]
         public string Tag { get; set; }
@@ -37,7 +36,7 @@ namespace Flock.Models
         public T GetDataAs<T>()
         {
             if (Data == null) return default;
-            return JObject.FromObject(Data).ToObject<T>();
+            return Data.ToFlatObject().ToObject<T>();
         }
     }
 
@@ -53,7 +52,7 @@ namespace Flock.Models
         public string GameConfigId { get; set; }
 
         [JsonProperty("data")]
-        public Dictionary<string, object> Data { get; set; }
+        public List<DataField> Data { get; set; }
 
         [JsonProperty("created_at")]
         public DateTime CreatedAt { get; set; }
@@ -64,7 +63,7 @@ namespace Flock.Models
         public T GetDataAs<T>()
         {
             if (Data == null) return default;
-            return JObject.FromObject(Data).ToObject<T>();
+            return Data.ToFlatObject().ToObject<T>();
         }
     }
 }

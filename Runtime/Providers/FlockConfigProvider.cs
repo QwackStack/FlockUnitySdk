@@ -10,9 +10,11 @@ namespace Flock.Providers
 {
     public class FlockConfigProvider : FlockProviderBase, IConfigProvider
     {
-        private List<GamePatchSchema> _allPatchesCache;
-        private readonly Dictionary<string, GamePatchSchema> _patchByIdCache = new Dictionary<string, GamePatchSchema>();
+        private readonly Dictionary<string, GamePatchSchema> _patchesById = new Dictionary<string, GamePatchSchema>();
         private readonly Dictionary<string, List<GamePatchSchema>> _patchesBySchemaCache = new Dictionary<string, List<GamePatchSchema>>();
+        private bool _allPatchesFetched;
+        private Task<List<GamePatchSchema>> _allPatchesFetchTask;
+
         private readonly Dictionary<SchemaTag, List<GameConfigSchema>> _gameConfigsByTagCache = new Dictionary<SchemaTag, List<GameConfigSchema>>();
         private readonly Dictionary<SchemaTag, List<GameConfigSchema>> _gameConfigsByVersionCache = new Dictionary<SchemaTag, List<GameConfigSchema>>();
 
@@ -24,25 +26,44 @@ namespace Flock.Providers
         /// </summary>
         public void ClearCache()
         {
-            _allPatchesCache = null;
-            _patchByIdCache.Clear();
+            _patchesById.Clear();
             _patchesBySchemaCache.Clear();
+            _allPatchesFetched = false;
+            _allPatchesFetchTask = null;
             _gameConfigsByTagCache.Clear();
             _gameConfigsByVersionCache.Clear();
         }
 
-        public async Task<List<GamePatchSchema>> GetAllAsync(CancellationToken cancellationToken = default)
+        public Task<List<GamePatchSchema>> GetAllAsync(CancellationToken cancellationToken = default)
         {
-            if (_allPatchesCache != null) return _allPatchesCache;
+            if (_allPatchesFetched)
+                return Task.FromResult(new List<GamePatchSchema>(_patchesById.Values));
+            if (_allPatchesFetchTask != null)
+                return _allPatchesFetchTask;
 
-            return await ExecuteAsync(async () =>
+            _allPatchesFetchTask = FetchAllPatchesAsync(cancellationToken);
+            return _allPatchesFetchTask;
+        }
+
+        private async Task<List<GamePatchSchema>> FetchAllPatchesAsync(CancellationToken cancellationToken)
+        {
+            try
             {
-                GenericResponse<List<GamePatchSchema>> response = await FlockHttpClient.GetAsync<GenericResponse<List<GamePatchSchema>>>(
-                    $"{Client.GetVersionedApiUrl()}/game_patch", Client.GetBaseHeaders(), cancellationToken);
-                ValidateResponse(response);
-                _allPatchesCache = response.Result;
-                return response.Result;
-            }, "Fetch game configs", cancellationToken);
+                return await ExecuteAsync(async () =>
+                {
+                    GenericResponse<List<GamePatchSchema>> response = await FlockHttpClient.GetAsync<GenericResponse<List<GamePatchSchema>>>(
+                        $"{Client.GetVersionedApiUrl()}/game_patch", Client.GetBaseHeaders(), cancellationToken);
+                    ValidateResponse(response);
+                    foreach (GamePatchSchema p in response.Result)
+                        IndexPatch(p);
+                    _allPatchesFetched = true;
+                    return response.Result;
+                }, "Fetch game configs", cancellationToken);
+            }
+            finally
+            {
+                _allPatchesFetchTask = null;
+            }
         }
 
         public async Task<List<T>> GetAllAsync<T>(CancellationToken cancellationToken = default)
@@ -54,14 +75,14 @@ namespace Flock.Providers
         public async Task<GamePatchSchema> GetByIdAsync(string configId, CancellationToken cancellationToken = default)
         {
             RequireNotEmpty(configId, "Config ID");
-            if (_patchByIdCache.TryGetValue(configId, out GamePatchSchema cached)) return cached;
+            if (_patchesById.TryGetValue(configId, out GamePatchSchema cached)) return cached;
 
             return await ExecuteAsync(async () =>
             {
                 GenericResponse<GamePatchSchema> response = await FlockHttpClient.GetAsync<GenericResponse<GamePatchSchema>>(
                     $"{Client.GetVersionedApiUrl()}/game_patch/{configId}", Client.GetBaseHeaders(), cancellationToken);
                 ValidateResponse(response);
-                _patchByIdCache[configId] = response.Result;
+                IndexPatch(response.Result);
                 return response.Result;
             }, $"Fetch config {configId}", cancellationToken);
         }
@@ -83,6 +104,8 @@ namespace Flock.Providers
                 GenericResponse<List<GamePatchSchema>> response = await FlockHttpClient.GetAsync<GenericResponse<List<GamePatchSchema>>>(url, Client.GetBaseHeaders(), cancellationToken);
                 ValidateResponse(response);
                 _patchesBySchemaCache[schemaId] = response.Result;
+                foreach (GamePatchSchema p in response.Result)
+                    IndexPatch(p);
                 return response.Result;
             }, $"Fetch configs for schema {schemaId}", cancellationToken);
         }
@@ -91,6 +114,28 @@ namespace Flock.Providers
         {
             List<GamePatchSchema> configs = await GetBySchemaAsync(schemaId, cancellationToken);
             return configs.Select(c => c.GetDataAs<T>()).ToList();
+        }
+
+        /// <summary>
+        /// Resolves the current patch for a game config and returns its data typed as <typeparamref name="T"/>.
+        /// Returns <c>default</c> and logs a warning if the config has no patches yet.
+        /// </summary>
+        public async Task<T> GetByConfigIdAsync<T>(string configId, CancellationToken cancellationToken = default)
+        {
+            RequireNotEmpty(configId, "Config ID");
+            List<GamePatchSchema> patches = await GetBySchemaAsync(configId, cancellationToken);
+            if (patches == null || patches.Count == 0)
+            {
+                Client.Logger.LogWarning($"No patches found for config {configId} — has a patch been created for it on the current game version?");
+                return default;
+            }
+            return patches[0].GetDataAs<T>();
+        }
+
+        private void IndexPatch(GamePatchSchema patch)
+        {
+            if (patch == null || string.IsNullOrEmpty(patch.Id)) return;
+            _patchesById[patch.Id] = patch;
         }
 
         public async Task<List<GameConfigSchema>> GetGameConfigsAsync(SchemaTag tag, CancellationToken cancellationToken = default)

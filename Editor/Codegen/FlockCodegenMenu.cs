@@ -60,11 +60,10 @@ namespace Flock.Editor.Codegen
                     snapshot.PlayerTemplates, templateResult.ClassNamesById, Path.Combine(generatedRoot, TemplatesSubdir));
                 int commandAccessors = CommandAccessorEmitter.Emit(
                     snapshot.PlayerTemplates, templateResult.ClassNamesById, Path.Combine(generatedRoot, CommandsSubdir));
-                // GameConfig codegen is paused while the typed-schema pipeline is being rebuilt around PlayerTemplate.
-                // GameConfigEmitter.EmitResult configResult = GameConfigEmitter.Emit(
-                //     snapshot.GameConfigs, Path.Combine(generatedRoot, ConfigsSubdir));
-                // int accessors = ConfigAccessorEmitter.Emit(
-                //     snapshot.GameConfigs, configResult.ClassNamesById, Path.Combine(generatedRoot, ConfigsSubdir));
+                GameConfigEmitter.EmitResult configResult = GameConfigEmitter.Emit(
+                    snapshot.GameConfigs, Path.Combine(generatedRoot, ConfigsSubdir));
+                int configAccessors = ConfigAccessorEmitter.Emit(
+                    snapshot.GameConfigs, configResult.ClassNamesById, Path.Combine(generatedRoot, ConfigsSubdir));
                 ManifestEmitter.Emit(snapshot, generatedRoot);
 
                 AssetDatabase.Refresh();
@@ -73,6 +72,8 @@ namespace Flock.Editor.Codegen
                     $"  Templates:        {templateResult.Count}\n" +
                     $"  Player accessors: {playerAccessors}\n" +
                     $"  Command methods:  {commandAccessors}\n" +
+                    $"  Configs:          {configResult.Count}\n" +
+                    $"  Config accessors: {configAccessors}\n" +
                     $"  Output:           {generatedRoot}");
             }
             catch (Exception ex)
