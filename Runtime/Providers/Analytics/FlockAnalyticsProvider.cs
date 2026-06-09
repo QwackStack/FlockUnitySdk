@@ -163,7 +163,6 @@ namespace Flock.Providers
                 Platform = _session.DeviceInfo?.Platform,
                 DeviceType = _session.DeviceInfo?.DeviceType,
                 GameVersionId = Client.GameVersionId,
-                SdkVersion = FlockSdkVersion.Current,
                 StartedAt = _session.StartTimeUtc.ToString("o")
             };
 
@@ -325,7 +324,7 @@ namespace Flock.Providers
             return new LogEventRequest
             {
                 Message = message ?? string.Empty,
-                TsUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                Timestamp = DateTime.UtcNow.ToString("o"),
                 Data = new LogEventDataSchema
                 {
                     Type = type,

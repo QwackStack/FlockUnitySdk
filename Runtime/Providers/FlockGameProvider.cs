@@ -36,7 +36,7 @@ namespace Flock.Providers
         {
             return await ExecuteAsync(async () =>
             {
-                string url = $"{Client.GetVersionedApiUrl()}/game_version/by-name/{name}";
+                string url = $"{Client.GetVersionedApiUrl()}/game_version/by-name/{System.Uri.EscapeDataString(name)}";
                 GenericResponse<GameVersionSchema> response = await FlockHttpClient.GetAsync<GenericResponse<GameVersionSchema>>(
                     url, Client.GetBaseHeaders(), cancellationToken);
                 ValidateResponse(response);

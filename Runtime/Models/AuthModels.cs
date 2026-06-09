@@ -115,6 +115,9 @@ namespace Flock.Models
 
     public class PlayerLoginResponse
     {
+        [JsonProperty("player_id")]
+        public string PlayerId { get; set; }
+
         [JsonProperty("access_token")]
         public string AccessToken { get; set; }
 

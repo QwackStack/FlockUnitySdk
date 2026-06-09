@@ -11,6 +11,12 @@ namespace Flock.Models
         [JsonProperty("name")]
         public string Name { get; set; }
 
+        [JsonProperty("extension_type")]
+        public string ExtensionType { get; set; }
+
+        [JsonProperty("size_bytes")]
+        public long? SizeBytes { get; set; }
+
         [JsonProperty("s3_download_url")]
         public string S3DownloadUrl { get; set; }
 

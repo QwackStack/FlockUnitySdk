@@ -56,8 +56,8 @@ namespace Flock.Models
         [JsonProperty("data")]
         public LogEventDataSchema Data { get; set; }
 
-        [JsonProperty("ts_unix")]
-        public long TsUnix { get; set; }
+        [JsonProperty("timestamp")]
+        public string Timestamp { get; set; }
     }
 
     public class LogEventsRequest
