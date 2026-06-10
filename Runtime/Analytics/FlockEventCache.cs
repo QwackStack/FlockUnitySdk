@@ -174,7 +174,7 @@ namespace Flock.Analytics
                 _logger?.LogWarning($"Pending events batch dropped (validation): {ex.Message}");
                 return FlushOutcome.Drop;
             }
-            catch (FlockNetworkException ex) when (IsPermanentStatus(ex.StatusCode))
+            catch (FlockNetworkException ex) when (FlockNetworkException.IsPermanentStatus(ex.StatusCode))
             {
                 _logger?.LogWarning($"Pending events batch dropped (HTTP {ex.StatusCode}): {ex.Message}");
                 return FlushOutcome.Drop;
@@ -230,20 +230,6 @@ namespace Flock.Analytics
                 if (TryDelete(item.Path))
                     Interlocked.Decrement(ref _pendingCount);
             }
-        }
-
-        // 4xx is the server saying "this payload is wrong" — retrying won't change the answer.
-        // 408 (timeout) and 429 (rate limit) are 4xx but transient by spec.
-        private bool IsPermanentStatus(int? statusCode)
-        {
-            if (!statusCode.HasValue)
-                return false;
-
-            int code = statusCode.Value;
-            if (code == 408 || code == 429)
-                return false;
-
-            return code >= 400 && code < 500;
         }
 
         private void TrimOldest()

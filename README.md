@@ -17,6 +17,7 @@ The Flock Unity SDK provides access to Flock's game backend services from Unity 
 - Asset listing and lookup by ID
 - Analytics (session tracking, events, transactions — no-op safe when disabled)
 - Automatic retry with exponential backoff
+- Offline caching — SDK init and static content keep working without network after one online session
 - JWT token management
 - Strongly typed codegen for player templates, game configs, and game commands (`Flock > Sync Schemas`)
 - Drop-in `FlockBootstrap` scene component for hands-off SDK initialization
@@ -281,6 +282,31 @@ await FlockClient.Instance.Analytics.RecordTransactionAsync(new AnalyticsTransac
 FlockClient.Instance.Analytics.RecordScreenView("MainMenu");
 ```
 
+## Offline caching
+
+The SDK keeps a disk snapshot of everything it reads from the server
+(`persistentDataPath/Flock/snapshots/`). When the device is offline or the
+server can't be reached, the last-known data is served instead of throwing —
+this works after at least one online session. Online behavior is unchanged:
+the server is always fetched first, and there are no TTLs to tune.
+
+When data refreshes:
+
+| Data | Refreshes |
+|---|---|
+| Configs, schemas, shop catalog, game info, asset metadata, player templates, player features | Once per game launch (first access). Newly published content shows up on the next launch. |
+| Player data | At launch, and automatically after every game command — the command's response updates the cache for you. |
+| Ban status, inventory, purchases | Never cached — always live. |
+
+Settings (`FlockInitConfig` / the FlockConfig asset, under "Offline Cache"):
+
+- `EnableOfflineCache` (default `true`) — master switch. Set `false` on WebGL (see Platform notes).
+- `OfflineCacheDirectory` — optional custom location for the snapshots.
+
+Each service has a `ClearCache()` that drops both its in-memory cache and its
+disk snapshots. Purchases always require a connection — they are never cached
+or queued.
+
 ## Codegen
 
 Run **Flock > Sync Schemas** (or the Codegen tab in **Qwacks > Editor**) to fetch your game's player templates and game configs from the backend and generate typed C# accessors. Output goes to `Assets/Flock/Generated/` by default; change the path on the FlockConfig asset if you want it elsewhere. Treat the folder as Flock-owned — sync wipes the `Templates/`, `Commands/`, and `Configs/` subdirectories on each run, and **Delete Generated Code** clears the whole tree.
@@ -400,7 +426,9 @@ Every API request includes these headers:
 
 ## Platform notes
 
-- **WebGL**: the asset cache is backed by `Application.persistentDataPath`, which
-  on WebGL is IndexedDB-backed and does not support synchronous file writes
-  (`File.WriteAllBytes` will fail). Set `FlockInitConfig.EnableAssetCache = false`
-  on WebGL builds — assets will still download, just without the disk cache.
+- **WebGL**: the asset cache and the offline snapshot cache are backed by
+  `Application.persistentDataPath`, which on WebGL is IndexedDB-backed and does
+  not support synchronous file writes (`File.WriteAllBytes` will fail). Set
+  `FlockInitConfig.EnableAssetCache = false` and
+  `FlockInitConfig.EnableOfflineCache = false` on WebGL builds — everything still
+  works online, just without the disk caches. See the "Offline caching" section.

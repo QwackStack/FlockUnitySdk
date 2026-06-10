@@ -14,7 +14,14 @@ namespace Flock.Providers
 {
     public class FlockAssetProvider : FlockProviderBase, IAssetProvider
     {
+        private const string SnapshotCategory = "asset";
+        private const string IndexKey = "asset_index";
+
         private readonly FlockAssetCache _cache;
+        private readonly Dictionary<string, AssetSchema> _assetsById = new Dictionary<string, AssetSchema>();
+        private bool _allAssetsFetched;
+        private bool _diskIndexLoaded;
+        private Task<List<AssetSchema>> _allAssetsFetchTask;
 
         public FlockAssetProvider(FlockClient client) : base(client)
         {
@@ -25,37 +32,112 @@ namespace Flock.Providers
 
         public string CacheDirectory => _cache.Directory;
 
-        public async Task<List<AssetSchema>> GetAllAsync(CancellationToken cancellationToken = default)
+        public Task<List<AssetSchema>> GetAllAsync(CancellationToken cancellationToken = default)
         {
-            return await ExecuteAsync(async () =>
+            if (_allAssetsFetched)
+                return Task.FromResult(new List<AssetSchema>(_assetsById.Values));
+            if (_allAssetsFetchTask != null)
+                return _allAssetsFetchTask;
+
+            _allAssetsFetchTask = FetchAllAssetsAsync(cancellationToken);
+            return _allAssetsFetchTask;
+        }
+
+        private async Task<List<AssetSchema>> FetchAllAssetsAsync(CancellationToken cancellationToken)
+        {
+            try
             {
-                string url = $"{Client.GetVersionedApiUrl()}/asset";
-                GenericResponse<List<AssetSchema>> response = await FlockHttpClient.GetAsync<GenericResponse<List<AssetSchema>>>(
-                    url, Client.GetBaseHeaders(), cancellationToken);
-                ValidateResponse(response);
-                return response.Result;
-            }, "Fetch assets", cancellationToken);
+                if (Application.internetReachability == NetworkReachability.NotReachable
+                    && TryLoadDiskIndex())
+                    return new List<AssetSchema>(_assetsById.Values);
+
+                try
+                {
+                    List<AssetSchema> assets = await ExecuteAsync(async () =>
+                    {
+                        string url = $"{Client.GetVersionedApiUrl()}/asset";
+                        GenericResponse<List<AssetSchema>> response = await FlockHttpClient.GetAsync<GenericResponse<List<AssetSchema>>>(
+                            url, Client.GetBaseHeaders(), cancellationToken);
+                        ValidateResponse(response);
+                        return response.Result;
+                    }, "Fetch assets", cancellationToken);
+
+                    _assetsById.Clear();
+                    foreach (AssetSchema asset in assets)
+                        IndexAsset(asset);
+                    _allAssetsFetched = true;
+                    _diskIndexLoaded = true;
+                    PersistIndex();
+                    return new List<AssetSchema>(_assetsById.Values);
+                }
+                catch (FlockNetworkException e)
+                {
+                    if (!FlockNetworkException.IsPermanentStatus(e.StatusCode) && TryLoadDiskIndex())
+                    {
+                        Client.Logger.LogWarning("Fetch assets: serving cached snapshot (network unavailable)");
+                        return new List<AssetSchema>(_assetsById.Values);
+                    }
+                    throw;
+                }
+            }
+            finally
+            {
+                _allAssetsFetchTask = null;
+            }
         }
 
         public async Task<AssetSchema> GetByIdAsync(string assetId, CancellationToken cancellationToken = default)
         {
             RequireNotEmpty(assetId, "Asset ID");
+            if (_assetsById.TryGetValue(assetId, out AssetSchema indexed))
+                return indexed;
 
-            return await ExecuteAsync(async () =>
+            if (Application.internetReachability == NetworkReachability.NotReachable
+                && TryLoadDiskIndex()
+                && _assetsById.TryGetValue(assetId, out AssetSchema offline))
+                return offline;
+
+            try
             {
-                string url = $"{Client.GetVersionedApiUrl()}/asset/{assetId}";
-                GenericResponse<AssetSchema> response = await FlockHttpClient.GetAsync<GenericResponse<AssetSchema>>(
-                    url, Client.GetBaseHeaders(), cancellationToken);
-                ValidateResponse(response);
-                return response.Result;
-            }, $"Fetch asset {assetId}", cancellationToken);
+                AssetSchema asset = await ExecuteAsync(async () =>
+                {
+                    string url = $"{Client.GetVersionedApiUrl()}/asset/{assetId}";
+                    GenericResponse<AssetSchema> response = await FlockHttpClient.GetAsync<GenericResponse<AssetSchema>>(
+                        url, Client.GetBaseHeaders(), cancellationToken);
+                    ValidateResponse(response);
+                    return response.Result;
+                }, $"Fetch asset {assetId}", cancellationToken);
+
+                TryLoadDiskIndex();
+                IndexAsset(asset);
+                PersistIndex();
+                return asset;
+            }
+            catch (FlockNetworkException e)
+            {
+                if (!FlockNetworkException.IsPermanentStatus(e.StatusCode)
+                    && TryLoadDiskIndex()
+                    && _assetsById.TryGetValue(assetId, out AssetSchema fallback))
+                {
+                    Client.Logger.LogWarning($"Fetch asset {assetId}: serving cached snapshot (network unavailable)");
+                    return fallback;
+                }
+                throw;
+            }
         }
 
         public async Task<AssetSchema> GetByNameAsync(string name, CancellationToken cancellationToken = default)
         {
             RequireNotEmpty(name, "Asset Name");
-            List<AssetSchema> all = await GetAllAsync(cancellationToken);
-            return all?.Find(a => a.Name == name);
+            if (!_allAssetsFetched)
+                await GetAllAsync(cancellationToken);
+
+            foreach (AssetSchema asset in _assetsById.Values)
+            {
+                if (asset.Name == name)
+                    return asset;
+            }
+            return null;
         }
 
         public async Task<T> DownloadAsync<T>(string assetId, CancellationToken cancellationToken = default) where T : class
@@ -135,6 +217,45 @@ namespace Flock.Providers
             {
                 Client.Logger.LogWarning($"Failed to clear asset cache: {ex.Message}");
             }
+
+            _assetsById.Clear();
+            _allAssetsFetched = false;
+            _diskIndexLoaded = false;
+            Client.SnapshotStore?.DeleteScope(GetSnapshotScope(SnapshotCategory));
+        }
+
+        private void IndexAsset(AssetSchema asset)
+        {
+            if (asset == null || string.IsNullOrEmpty(asset.Id))
+                return;
+            _assetsById[asset.Id] = asset;
+        }
+
+        // Merges last-known disk entries under live ones so a partial run never clobbers a fuller index.
+        private bool TryLoadDiskIndex()
+        {
+            if (_diskIndexLoaded)
+                return _assetsById.Count > 0;
+
+            _diskIndexLoaded = true;
+            FlockSnapshotStore store = Client.SnapshotStore;
+            if (store == null)
+                return false;
+
+            if (!store.TryRead(GetSnapshotScope(SnapshotCategory), IndexKey, out List<AssetSchema> assets))
+                return false;
+
+            foreach (AssetSchema asset in assets)
+            {
+                if (asset != null && !string.IsNullOrEmpty(asset.Id) && !_assetsById.ContainsKey(asset.Id))
+                    _assetsById[asset.Id] = asset;
+            }
+            return _assetsById.Count > 0;
+        }
+
+        private void PersistIndex()
+        {
+            Client.SnapshotStore?.Write(GetSnapshotScope(SnapshotCategory), IndexKey, new List<AssetSchema>(_assetsById.Values));
         }
 
         // Reports literal on-disk presence; does not consult EnableAssetCache.

@@ -16,7 +16,7 @@ namespace Flock.Providers
         {
             RequireNotEmpty(playerDataId, "Player Data ID");
 
-            return await ExecuteAsync(async () =>
+            PlayerData result = await ExecuteAsync(async () =>
             {
                 UpdatePlayerDataInput request = new UpdatePlayerDataInput
                 {
@@ -28,6 +28,8 @@ namespace Flock.Providers
                     $"{Client.GetVersionedApiUrl()}/game_command/update_player_data",
                     request, Client.GetBaseHeaders(), cancellationToken);
             }, "Update player data", cancellationToken);
+
+            return ApplyToPlayerCache(result);
         }
 
         public async Task<PlayerData> UpdatePlayerDataFieldAsync(
@@ -37,7 +39,7 @@ namespace Flock.Providers
             RequireNotEmpty(playerDataId, "Player Data ID");
             RequireNotEmpty(key, "Key");
 
-            return await ExecuteAsync(async () =>
+            PlayerData result = await ExecuteAsync(async () =>
             {
                 UpdatePlayerDataKeyInput request = new UpdatePlayerDataKeyInput
                 {
@@ -50,6 +52,8 @@ namespace Flock.Providers
                     $"{Client.GetVersionedApiUrl()}/game_command/update_player_data_key",
                     request, Client.GetBaseHeaders(), cancellationToken);
             }, "Update player data field", cancellationToken);
+
+            return ApplyToPlayerCache(result);
         }
 
         public async Task<PlayerData> AddGameFundsAsync(
@@ -59,7 +63,7 @@ namespace Flock.Providers
             RequireNotEmpty(playerDataId, "Player Data ID");
             RequireNotEmpty(currency, "Currency");
 
-            return await ExecuteAsync(async () =>
+            PlayerData result = await ExecuteAsync(async () =>
             {
                 AddGameFundsInput request = new AddGameFundsInput
                 {
@@ -72,6 +76,8 @@ namespace Flock.Providers
                     $"{Client.GetVersionedApiUrl()}/game_command/add_game_funds",
                     request, Client.GetBaseHeaders(), cancellationToken);
             }, "Add game funds", cancellationToken);
+
+            return ApplyToPlayerCache(result);
         }
 
         public async Task<PlayerData> UnlockAchievementAsync(
@@ -81,7 +87,7 @@ namespace Flock.Providers
             RequireNotEmpty(playerDataId, "Player Data ID");
             RequireNotEmpty(achievementName, "Achievement Name");
 
-            return await ExecuteAsync(async () =>
+            PlayerData result = await ExecuteAsync(async () =>
             {
                 UnlockAchievementInput request = new UnlockAchievementInput
                 {
@@ -93,6 +99,16 @@ namespace Flock.Providers
                     $"{Client.GetVersionedApiUrl()}/game_command/unlock_achievement",
                     request, Client.GetBaseHeaders(), cancellationToken);
             }, "Unlock achievement", cancellationToken);
+
+            return ApplyToPlayerCache(result);
+        }
+
+        private PlayerData ApplyToPlayerCache(PlayerData data)
+        {
+#if !FLOCK_NO_PLAYER
+            Client.Player?.ApplyServerPlayerData(data);
+#endif
+            return data;
         }
     }
 }

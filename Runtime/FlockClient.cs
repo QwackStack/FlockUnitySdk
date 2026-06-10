@@ -49,6 +49,7 @@ namespace Flock
         private readonly FlockInitConfig _initConfig;
         private readonly IFlockLogger _logger;
         private readonly RetryHandler _retryHandler;
+        private readonly FlockSnapshotStore _snapshotStore;
         //To avoid refresh deadlocks
         private readonly SemaphoreSlim _refreshSemaphore = new SemaphoreSlim(1, 1);
         private string _accessToken;
@@ -103,6 +104,9 @@ namespace Flock
             _logger.LogInfo("Initializing Flock SDK");
             _logger.LogInfo($"Token persistence provider: {initConfig.TokenStore?.GetType().Name ?? "<disabled>"}");
             _retryHandler = new RetryHandler(initConfig.RetryPolicy, _logger);
+            _snapshotStore = initConfig.EnableOfflineCache
+                ? new FlockSnapshotStore(initConfig.OfflineCacheDirectory, _logger)
+                : null;
         }
 
         /// <summary>
@@ -122,6 +126,7 @@ namespace Flock
 
             FlockClient client = new FlockClient(initConfig, logger);
             await client.ResolveGameVersionAsync(cancellationToken);
+            client._snapshotStore?.PruneOtherVersions(client._initConfig.GameVersionId);
             client.InitializeServices();
 #if !FLOCK_NO_SCHEMA
             CodeGenValidator.WarnIfDrifted(client._initConfig.GameVersionId, client._logger);
@@ -147,6 +152,17 @@ namespace Flock
             if (string.IsNullOrEmpty(_initConfig.GameVersion))
                 throw new FlockValidationException("GameVersion is required to initialize the Flock SDK");
 
+            string snapshotKey = $"{_initConfig.ApiUrl}|{_initConfig.GameVersion}";
+
+            if (_snapshotStore != null
+                && Application.internetReachability == NetworkReachability.NotReachable
+                && _snapshotStore.TryRead(FlockSnapshotStore.BootstrapScope, snapshotKey, out GameVersionSchema offline))
+            {
+                _initConfig.GameVersionId = offline.Id;
+                _logger.LogInfo($"Offline: using cached game version '{_initConfig.GameVersion}' -> id '{offline.Id}'");
+                return;
+            }
+
             string url = $"{GetVersionedApiUrl()}/game_version/by-name/{Uri.EscapeDataString(_initConfig.GameVersion)}";
             try
             {
@@ -159,7 +175,22 @@ namespace Flock
                     throw new FlockException($"Could not resolve GameVersionId for game version '{_initConfig.GameVersion}'");
 
                 _initConfig.GameVersionId = response.Result.Id;
+                _snapshotStore?.Write(FlockSnapshotStore.BootstrapScope, snapshotKey, response.Result);
                 _logger.LogInfo($"Resolved game version '{_initConfig.GameVersion}' -> id '{_initConfig.GameVersionId}'");
+            }
+            catch (FlockNetworkException e)
+            {
+                if (_snapshotStore != null
+                    && !FlockNetworkException.IsPermanentStatus(e.StatusCode)
+                    && _snapshotStore.TryRead(FlockSnapshotStore.BootstrapScope, snapshotKey, out GameVersionSchema cached))
+                {
+                    _initConfig.GameVersionId = cached.Id;
+                    _logger.LogWarning($"Could not reach server; using cached game version '{_initConfig.GameVersion}' -> id '{cached.Id}'");
+                    return;
+                }
+
+                _logger.LogError("Initialization failed", e);
+                throw;
             }
             catch (FlockException e)
             {
@@ -211,6 +242,7 @@ namespace Flock
         internal IFlockLogger Logger => _logger;
         internal RetryHandler RetryHandler => _retryHandler;
         internal FlockInitConfig InitConfig => _initConfig;
+        internal FlockSnapshotStore SnapshotStore => _snapshotStore;
         
         public FlockAuthProvider Authentication => _authentication;
 #if !FLOCK_NO_CONFIG

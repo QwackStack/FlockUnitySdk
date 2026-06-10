@@ -3,6 +3,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Flock.Exceptions;
 using Flock.Models;
+using Flock.Providers;
+using UnityEngine;
 
 namespace Flock.Http
 {
@@ -54,6 +56,43 @@ namespace Flock.Http
             {
                 Client.Logger.LogError($"{context} failed", ex);
                 throw new FlockNetworkException($"{context} failed", ex);
+            }
+        }
+
+        protected string GetSnapshotScope(string category)
+        {
+            return $"{Client.GameVersionId}/{category}";
+        }
+
+        protected async Task<T> FetchWithSnapshotAsync<T>(
+            string scope,
+            string key,
+            Func<Task<T>> operation,
+            string context,
+            CancellationToken cancellationToken) where T : class
+        {
+            FlockSnapshotStore store = Client.SnapshotStore;
+            if (store == null)
+                return await ExecuteAsync(operation, context, cancellationToken);
+
+            if (Application.internetReachability == NetworkReachability.NotReachable && store.TryRead(scope, key, out T offline))
+                return offline;
+
+            try
+            {
+                T result = await ExecuteAsync(operation, context, cancellationToken);
+                store.Write(scope, key, result);
+                return result;
+            }
+            catch (FlockNetworkException e)
+            {
+                if (!FlockNetworkException.IsPermanentStatus(e.StatusCode)
+                    && store.TryRead(scope, key, out T cached))
+                {
+                    Client.Logger.LogWarning($"{context}: serving cached snapshot (network unavailable)");
+                    return cached;
+                }
+                throw;
             }
         }
 
