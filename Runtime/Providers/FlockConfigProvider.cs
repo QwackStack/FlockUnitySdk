@@ -17,6 +17,9 @@ namespace Flock.Providers
 
         private readonly Dictionary<SchemaTag, List<GameConfigSchema>> _gameConfigsByTagCache = new Dictionary<SchemaTag, List<GameConfigSchema>>();
         private readonly Dictionary<SchemaTag, List<GameConfigSchema>> _gameConfigsByVersionCache = new Dictionary<SchemaTag, List<GameConfigSchema>>();
+        private readonly Dictionary<string, GameConfigSchema> _playerFeaturesByPlayer = new Dictionary<string, GameConfigSchema>();
+
+        private const string SnapshotCategory = "config";
 
         public FlockConfigProvider(FlockClient client) : base(client) { }
 
@@ -32,6 +35,8 @@ namespace Flock.Providers
             _allPatchesFetchTask = null;
             _gameConfigsByTagCache.Clear();
             _gameConfigsByVersionCache.Clear();
+            _playerFeaturesByPlayer.Clear();
+            Client.SnapshotStore?.DeleteScope(GetSnapshotScope(SnapshotCategory));
         }
 
         public Task<List<GamePatchSchema>> GetAllAsync(CancellationToken cancellationToken = default)
@@ -49,16 +54,19 @@ namespace Flock.Providers
         {
             try
             {
-                return await ExecuteAsync(async () =>
-                {
-                    GenericResponse<List<GamePatchSchema>> response = await FlockHttpClient.GetAsync<GenericResponse<List<GamePatchSchema>>>(
-                        $"{Client.GetVersionedApiUrl()}/game_patch", Client.GetBaseHeaders(), cancellationToken);
-                    ValidateResponse(response);
-                    foreach (GamePatchSchema p in response.Result)
-                        IndexPatch(p);
-                    _allPatchesFetched = true;
-                    return response.Result;
-                }, "Fetch game configs", cancellationToken);
+                List<GamePatchSchema> patches = await FetchWithSnapshotAsync(
+                    GetSnapshotScope(SnapshotCategory), "game_patch_all", async () =>
+                    {
+                        GenericResponse<List<GamePatchSchema>> response = await FlockHttpClient.GetAsync<GenericResponse<List<GamePatchSchema>>>(
+                            $"{Client.GetVersionedApiUrl()}/game_patch", Client.GetBaseHeaders(), cancellationToken);
+                        ValidateResponse(response);
+                        return response.Result;
+                    }, "Fetch game configs", cancellationToken);
+
+                foreach (GamePatchSchema p in patches)
+                    IndexPatch(p);
+                _allPatchesFetched = true;
+                return patches;
             }
             finally
             {
@@ -77,14 +85,17 @@ namespace Flock.Providers
             RequireNotEmpty(configId, "Config ID");
             if (_patchesById.TryGetValue(configId, out GamePatchSchema cached)) return cached;
 
-            return await ExecuteAsync(async () =>
-            {
-                GenericResponse<GamePatchSchema> response = await FlockHttpClient.GetAsync<GenericResponse<GamePatchSchema>>(
-                    $"{Client.GetVersionedApiUrl()}/game_patch/{configId}", Client.GetBaseHeaders(), cancellationToken);
-                ValidateResponse(response);
-                IndexPatch(response.Result);
-                return response.Result;
-            }, $"Fetch config {configId}", cancellationToken);
+            GamePatchSchema patch = await FetchWithSnapshotAsync(
+                GetSnapshotScope(SnapshotCategory), $"game_patch_{configId}", async () =>
+                {
+                    GenericResponse<GamePatchSchema> response = await FlockHttpClient.GetAsync<GenericResponse<GamePatchSchema>>(
+                        $"{Client.GetVersionedApiUrl()}/game_patch/{configId}", Client.GetBaseHeaders(), cancellationToken);
+                    ValidateResponse(response);
+                    return response.Result;
+                }, $"Fetch config {configId}", cancellationToken);
+
+            IndexPatch(patch);
+            return patch;
         }
 
         public async Task<T> GetByIdAsync<T>(string configId, CancellationToken cancellationToken = default)
@@ -98,16 +109,19 @@ namespace Flock.Providers
             RequireNotEmpty(schemaId, "Schema ID");
             if (_patchesBySchemaCache.TryGetValue(schemaId, out List<GamePatchSchema> cached)) return cached;
 
-            return await ExecuteAsync(async () =>
-            {
-                string url = $"{Client.GetVersionedApiUrl()}/game_patch/config/{schemaId}";
-                GenericResponse<List<GamePatchSchema>> response = await FlockHttpClient.GetAsync<GenericResponse<List<GamePatchSchema>>>(url, Client.GetBaseHeaders(), cancellationToken);
-                ValidateResponse(response);
-                _patchesBySchemaCache[schemaId] = response.Result;
-                foreach (GamePatchSchema p in response.Result)
-                    IndexPatch(p);
-                return response.Result;
-            }, $"Fetch configs for schema {schemaId}", cancellationToken);
+            List<GamePatchSchema> patches = await FetchWithSnapshotAsync(
+                GetSnapshotScope(SnapshotCategory), $"game_patch_schema_{schemaId}", async () =>
+                {
+                    string url = $"{Client.GetVersionedApiUrl()}/game_patch/config/{schemaId}";
+                    GenericResponse<List<GamePatchSchema>> response = await FlockHttpClient.GetAsync<GenericResponse<List<GamePatchSchema>>>(url, Client.GetBaseHeaders(), cancellationToken);
+                    ValidateResponse(response);
+                    return response.Result;
+                }, $"Fetch configs for schema {schemaId}", cancellationToken);
+
+            _patchesBySchemaCache[schemaId] = patches;
+            foreach (GamePatchSchema p in patches)
+                IndexPatch(p);
+            return patches;
         }
 
         public async Task<List<T>> GetBySchemaAsync<T>(string schemaId, CancellationToken cancellationToken = default)
@@ -142,15 +156,18 @@ namespace Flock.Providers
         {
             if (_gameConfigsByTagCache.TryGetValue(tag, out List<GameConfigSchema> cached)) return cached;
 
-            return await ExecuteAsync(async () =>
-            {
-                string url = tag != SchemaTag.empty ? $"{Client.GetVersionedApiUrl()}/game_config?tag={tag}" : $"{Client.GetVersionedApiUrl()}/game_config";
-                GenericResponse<List<GameConfigSchema>> response = await FlockHttpClient.GetAsync<GenericResponse<List<GameConfigSchema>>>(
-                    url, Client.GetBaseHeaders(), cancellationToken);
-                ValidateResponse(response);
-                _gameConfigsByTagCache[tag] = response.Result;
-                return response.Result;
-            }, "Fetch game configs", cancellationToken);
+            List<GameConfigSchema> configs = await FetchWithSnapshotAsync(
+                GetSnapshotScope(SnapshotCategory), $"game_config_tag_{tag}", async () =>
+                {
+                    string url = tag != SchemaTag.empty ? $"{Client.GetVersionedApiUrl()}/game_config?tag={tag}" : $"{Client.GetVersionedApiUrl()}/game_config";
+                    GenericResponse<List<GameConfigSchema>> response = await FlockHttpClient.GetAsync<GenericResponse<List<GameConfigSchema>>>(
+                        url, Client.GetBaseHeaders(), cancellationToken);
+                    ValidateResponse(response);
+                    return response.Result;
+                }, "Fetch game configs", cancellationToken);
+
+            _gameConfigsByTagCache[tag] = configs;
+            return configs;
         }
 
         public async Task<List<T>> GetGameConfigsAsync<T>(SchemaTag tag, CancellationToken cancellationToken = default)
@@ -163,15 +180,18 @@ namespace Flock.Providers
         {
             if (_gameConfigsByVersionCache.TryGetValue(tag, out List<GameConfigSchema> cached)) return cached;
 
-            return await ExecuteAsync(async () =>
-            {
-                string url = tag != SchemaTag.empty ? $"{Client.GetVersionedApiUrl()}/game_config/version?tag={tag}" : $"{Client.GetVersionedApiUrl()}/game_config/version";
-                GenericResponse<List<GameConfigSchema>> response = await FlockHttpClient.GetAsync<GenericResponse<List<GameConfigSchema>>>(
-                    url, Client.GetBaseHeaders(), cancellationToken);
-                ValidateResponse(response);
-                _gameConfigsByVersionCache[tag] = response.Result;
-                return response.Result;
-            }, "Fetch game configs by version", cancellationToken);
+            List<GameConfigSchema> configs = await FetchWithSnapshotAsync(
+                GetSnapshotScope(SnapshotCategory), $"game_config_version_tag_{tag}", async () =>
+                {
+                    string url = tag != SchemaTag.empty ? $"{Client.GetVersionedApiUrl()}/game_config/version?tag={tag}" : $"{Client.GetVersionedApiUrl()}/game_config/version";
+                    GenericResponse<List<GameConfigSchema>> response = await FlockHttpClient.GetAsync<GenericResponse<List<GameConfigSchema>>>(
+                        url, Client.GetBaseHeaders(), cancellationToken);
+                    ValidateResponse(response);
+                    return response.Result;
+                }, "Fetch game configs by version", cancellationToken);
+
+            _gameConfigsByVersionCache[tag] = configs;
+            return configs;
         }
 
         public async Task<List<T>> GetGameConfigsByVersionAsync<T>(SchemaTag tag, CancellationToken cancellationToken = default)
@@ -183,8 +203,10 @@ namespace Flock.Providers
         public async Task<GameConfigSchema> GetPlayerFeaturesAsync(string playerId, CancellationToken cancellationToken = default)
         {
             RequireNotEmpty(playerId, "Player ID");
+            if (_playerFeaturesByPlayer.TryGetValue(playerId, out GameConfigSchema cachedFeatures))
+                return cachedFeatures;
 
-            return await ExecuteAsync(async () =>
+            GameConfigSchema features = await ExecuteAsync(async () =>
             {
                 string url = $"{Client.GetVersionedApiUrl()}/game_config/player/{playerId}/features";
                 GenericResponse<GameConfigSchema> response = await FlockHttpClient.GetAsync<GenericResponse<GameConfigSchema>>(
@@ -192,6 +214,9 @@ namespace Flock.Providers
                 ValidateResponse(response);
                 return response.Result;
             }, $"Fetch feature config for player {playerId}", cancellationToken);
+
+            _playerFeaturesByPlayer[playerId] = features;
+            return features;
         }
 
         public async Task<T> GetPlayerFeaturesAsync<T>(string playerId, CancellationToken cancellationToken = default)

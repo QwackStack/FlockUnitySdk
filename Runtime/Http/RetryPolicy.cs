@@ -59,8 +59,7 @@ namespace Flock.Http
                         throw;
 
                     // Don't retry permanent 4xx (404, 409, etc.) — the server's answer won't change.
-                    // 408 (timeout) and 429 (rate limit) are 4xx but transient by spec, so they still retry.
-                    if (ex is FlockNetworkException net && IsPermanentStatus(net.StatusCode))
+                    if (ex is FlockNetworkException net && FlockNetworkException.IsPermanentStatus(net.StatusCode))
                         throw;
 
                     _logger?.LogWarning($"Attempt {attempt} failed: {ex.Message}. Retrying in {delay.TotalSeconds}s...");
@@ -77,18 +76,6 @@ namespace Flock.Http
                     throw;
                 }
             }
-        }
-
-        private static bool IsPermanentStatus(int? statusCode)
-        {
-            if (!statusCode.HasValue)
-                return false;
-
-            int code = statusCode.Value;
-            if (code == 408 || code == 429)
-                return false;
-
-            return code >= 400 && code < 500;
         }
 
         private TimeSpan CalculateDelay(TimeSpan baseDelay)

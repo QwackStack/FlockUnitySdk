@@ -33,6 +33,20 @@ namespace Flock.Config
         /// <c>100</c> MB; set to <c>0</c> for unlimited.
         /// </summary>
         public int AssetCacheMaxSizeMB { get; set; } = 100;
+
+        /// <summary>
+        /// When true, read-API responses are snapshotted to disk and served as a fallback
+        /// when the network is unavailable. Disable on WebGL — persistentDataPath there
+        /// does not support synchronous writes.
+        /// </summary>
+        public bool EnableOfflineCache { get; set; } = true;
+
+        /// <summary>
+        /// Absolute path for snapshot storage. When null/empty, defaults to
+        /// <c>Application.persistentDataPath/Flock/snapshots/</c>.
+        /// </summary>
+        public string OfflineCacheDirectory { get; set; }
+
         public RetryPolicy RetryPolicy { get; set; }
         /// <summary>
         /// Flock analytics Settings

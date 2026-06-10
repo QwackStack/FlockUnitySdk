@@ -81,6 +81,13 @@ namespace Flock.Config
         [Tooltip("Maximum size of the on-disk asset cache, in MB. 0 means unlimited; LRU eviction otherwise.")]
         public int assetCacheMaxSizeMB = 100;
 
+        [Header("Offline Cache")]
+        [Tooltip("Snapshot read-API responses to disk and serve them when the network is unavailable. Disable on WebGL — persistentDataPath there does not support synchronous writes.")]
+        public bool enableOfflineCache = true;
+
+        [Tooltip("Absolute path for snapshot storage. Leave empty to default to Application.persistentDataPath/Flock/snapshots.")]
+        public string offlineCacheDirectory = "";
+
         [Header("HTTP Retry Policy")]
         [Tooltip("How many times to retry after the initial attempt fails. 0 disables retries. Delay between retries is exponential backoff with ±25% jitter — change the defaults via code (new RetryPolicy { ... }) if you need to tune them.")]
         public int retryMaxRetries = 3;
@@ -126,6 +133,8 @@ namespace Flock.Config
                 EnableAssetCache = enableAssetCache,
                 AssetCacheDirectory = assetCacheDirectory,
                 AssetCacheMaxSizeMB = assetCacheMaxSizeMB,
+                EnableOfflineCache = enableOfflineCache,
+                OfflineCacheDirectory = offlineCacheDirectory,
             };
         }
 

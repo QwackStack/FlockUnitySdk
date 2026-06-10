@@ -17,6 +17,8 @@ namespace Flock.Providers
         private readonly Dictionary<string, Dictionary<string, PlayerData>> _playerDataByPlayerCache = new Dictionary<string, Dictionary<string, PlayerData>>();
         private readonly Dictionary<string, Task<Dictionary<string, PlayerData>>> _playerDataFetchTasks = new Dictionary<string, Task<Dictionary<string, PlayerData>>>();
 
+        private const string SnapshotCategory = "player_template";
+
         public PlayerProvider(FlockClient client) : base(client) { }
 
         /// <summary>
@@ -31,6 +33,17 @@ namespace Flock.Providers
             _allTemplatesFetchTask = null;
             _playerDataByPlayerCache.Clear();
             _playerDataFetchTasks.Clear();
+            Client.SnapshotStore?.DeleteScope(GetSnapshotScope(SnapshotCategory));
+        }
+
+        // Class B write-through: game commands hand their server-returned row here.
+        internal void ApplyServerPlayerData(PlayerData data)
+        {
+            if (data == null || string.IsNullOrEmpty(data.PlayerId) || string.IsNullOrEmpty(data.PlayerTemplateId))
+                return;
+
+            if (_playerDataByPlayerCache.TryGetValue(data.PlayerId, out Dictionary<string, PlayerData> byTemplate))
+                byTemplate[data.PlayerTemplateId] = data;
         }
 
         public async Task<PlayerData> GetDataByIdAsync(string playerDataId, CancellationToken cancellationToken = default)
@@ -74,17 +87,20 @@ namespace Flock.Providers
         {
             try
             {
-                return await ExecuteAsync(async () =>
-                {
-                    string url = $"{Client.GetVersionedApiUrl()}/player_template";
-                    GenericResponse<List<PlayerTemplateSchema>> response = await FlockHttpClient.GetAsync<GenericResponse<List<PlayerTemplateSchema>>>(
-                        url, Client.GetBaseHeaders(), cancellationToken);
-                    ValidateResponse(response);
-                    foreach (PlayerTemplateSchema t in response.Result)
-                        IndexTemplate(t);
-                    _allTemplatesFetched = true;
-                    return response.Result;
-                }, "Fetch player templates", cancellationToken);
+                List<PlayerTemplateSchema> templates = await FetchWithSnapshotAsync(
+                    GetSnapshotScope(SnapshotCategory), "all", async () =>
+                    {
+                        string url = $"{Client.GetVersionedApiUrl()}/player_template";
+                        GenericResponse<List<PlayerTemplateSchema>> response = await FlockHttpClient.GetAsync<GenericResponse<List<PlayerTemplateSchema>>>(
+                            url, Client.GetBaseHeaders(), cancellationToken);
+                        ValidateResponse(response);
+                        return response.Result;
+                    }, "Fetch player templates", cancellationToken);
+
+                foreach (PlayerTemplateSchema t in templates)
+                    IndexTemplate(t);
+                _allTemplatesFetched = true;
+                return templates;
             }
             finally
             {

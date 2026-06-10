@@ -23,6 +23,19 @@ namespace Flock.Exceptions
         {
             StatusCode = statusCode;
         }
+
+        // Permanent 4xx is an authoritative server answer; 408/429 are 4xx but transient by spec.
+        public static bool IsPermanentStatus(int? statusCode)
+        {
+            if (!statusCode.HasValue)
+                return false;
+
+            int code = statusCode.Value;
+            if (code == 408 || code == 429)
+                return false;
+
+            return code >= 400 && code < 500;
+        }
     }
 
     public class FlockAuthException : FlockException
