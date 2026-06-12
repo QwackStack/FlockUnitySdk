@@ -11,6 +11,9 @@ namespace Flock.Analytics
     {
         private const string PrefKeySessionData = "flock_session_active";
         private const string PrefKeySessionNumber = "flock_session_number";
+        // The name list is serialized into PlayerPrefs on every heartbeat, so it is capped;
+        // ScreensViewed keeps the full count.
+        private const int MaxTrackedScreenNames = 100;
 
         private readonly IFlockLogger _logger;
         private readonly FlockAnalyticsConfig _config;
@@ -37,9 +40,10 @@ namespace Flock.Analytics
 
         private bool _isPaused;
         private float _pausedAtRealtime;
+        private string _playerId;
 
         internal string SessionId { get; private set; }
-        internal string ServerSessionId { get; set; }
+        internal string ServerSessionId { get; private set; }
         internal DateTime StartTimeUtc { get; private set; }
         internal DateTime? EndTimeUtc { get; private set; }
         internal float StartRealtimeSinceStartup { get; private set; }
@@ -84,7 +88,11 @@ namespace Flock.Analytics
         internal event Action OnFlushInterval;
         internal event Action OnSessionPaused;
         internal event Action<FlockSessionSnapshot> OnSessionTimedOut;
-        internal event Action<FlockSessionSnapshot> OnSessionEnding;
+        // Fired synchronously from inside End() for every end path (including logout via
+        // Reset); handlers must persist the snapshot before returning.
+        internal event Action<FlockSessionSnapshot> OnSessionEnded;
+        // Quit-only: requests a best-effort delivery attempt before the process dies.
+        internal event Action<FlockSessionSnapshot> OnQuitFlush;
 
         internal FlockSession(FlockAnalyticsConfig config, IFlockLogger logger)
         {
@@ -102,14 +110,12 @@ namespace Flock.Analytics
             if (string.IsNullOrEmpty(json))
                 return null;
 
-            PlayerPrefs.DeleteKey(PrefKeySessionData);
-            PlayerPrefs.Save();
-
             try
             {
                 FlockSessionSnapshot recovered = JsonConvert.DeserializeObject<FlockSessionSnapshot>(json);
                 if (recovered != null && recovered.IsActive)
                 {
+                    // Not cleared here: the caller spools the end durably, then clears.
                     recovered.IsActive = false;
                     recovered.EndTimeUtc = recovered.LastHeartbeatUtc ?? recovered.StartTimeUtc;
                     _logger.LogWarning($"Recovering orphaned session: {recovered.SessionId}");
@@ -121,17 +127,22 @@ namespace Flock.Analytics
                 _logger.LogWarning($"Failed to recover orphaned session: {ex.Message}");
             }
 
+            // Corrupt or non-active payload — clear it so it can't poison future launches.
+            ClearPersistedState();
             return null;
         }
 
-        internal string Start()
+        internal string Start(string playerId)
         {
             if (_active)
             {
+                // The end is spooled via OnSessionEnded; callers should still End() and
+                // deliver explicitly so the send is awaited.
                 _logger.LogWarning("Session already active, ending previous session before starting new one");
                 End();
             }
 
+            _playerId = playerId;
             SessionId = Guid.NewGuid().ToString();
             ServerSessionId = null;
             StartTimeUtc = DateTime.UtcNow;
@@ -176,6 +187,13 @@ namespace Flock.Analytics
             return SessionId;
         }
 
+        internal void SetServerSessionId(string serverSessionId)
+        {
+            ServerSessionId = serverSessionId;
+            // Persist immediately so a crash can't strand a registered session without its id.
+            SaveState();
+        }
+
         internal FlockSessionSnapshot End()
         {
             if (!_active)
@@ -199,6 +217,10 @@ namespace Flock.Analytics
             FlockSessionSnapshot snapshot = TakeSnapshot();
             snapshot.IsBounce = snapshot.DurationSeconds < _config.BounceThresholdSeconds;
 
+            // Spool-before-clear: the handler persists the end durably; only then is the
+            // live marker safe to drop.
+            OnSessionEnded?.Invoke(snapshot);
+
             ClearPersistedState();
 
             _logger.LogInfo($"Session ended: {SessionId} | Duration: {snapshot.DurationSeconds:F1}s | Screens: {snapshot.ScreensViewed} | Pauses: {snapshot.PauseCount} | AvgFPS: {snapshot.AverageFps:F0}{(snapshot.IsBounce ? " [BOUNCE]" : "")}");
@@ -220,7 +242,8 @@ namespace Flock.Analytics
             OnFlushInterval = null;
             OnSessionPaused = null;
             OnSessionTimedOut = null;
-            OnSessionEnding = null;
+            OnSessionEnded = null;
+            OnQuitFlush = null;
         }
 
         internal void RecordScreenView(string screenName)
@@ -229,8 +252,12 @@ namespace Flock.Analytics
                 return;
 
             _screensViewed++;
-            if (!string.IsNullOrEmpty(screenName))
+            if (!string.IsNullOrEmpty(screenName) && _screenNames.Count < MaxTrackedScreenNames)
+            {
                 _screenNames.Add(screenName);
+                if (_screenNames.Count == MaxTrackedScreenNames)
+                    _logger.LogDebug($"Screen name list reached cap ({MaxTrackedScreenNames}); further names are dropped, ScreensViewed keeps counting");
+            }
         }
 
         internal FlockSessionSnapshot TakeSnapshot()
@@ -239,6 +266,7 @@ namespace Flock.Analytics
             {
                 SessionId = SessionId,
                 ServerSessionId = ServerSessionId,
+                PlayerId = _playerId,
                 SessionNumber = SessionNumber,
                 StartTimeUtc = StartTimeUtc,
                 EndTimeUtc = EndTimeUtc,
@@ -260,6 +288,12 @@ namespace Flock.Analytics
 
         private void Subscribe()
         {
+            if (_behaviour == null)
+            {
+                _logger.LogWarning("FlockBehaviour unavailable; session lifecycle events (tick/pause/quit) will not fire");
+                return;
+            }
+
             _behaviour.OnTick += HandleTick;
             _behaviour.OnAppBackgrounded += HandleAppBackgrounded;
             _behaviour.OnQuit += HandleQuit;
@@ -267,7 +301,8 @@ namespace Flock.Analytics
 
         private void Unsubscribe()
         {
-            if (!FlockBehaviour.IsAvailable)
+            // Not IsAvailable — that is false during quit, exactly when detaching must still work.
+            if (_behaviour == null)
                 return;
 
             _behaviour.OnTick -= HandleTick;
@@ -275,7 +310,7 @@ namespace Flock.Analytics
             _behaviour.OnQuit -= HandleQuit;
         }
 
-        
+
 
         private void HandleTick()
         {
@@ -370,22 +405,15 @@ namespace Flock.Analytics
             if (!_active || !_config.AutoEndSessionOnQuit)
                 return;
 
-            _sessionCts?.Cancel();
-            _sessionCts?.Dispose();
-            _sessionCts = null;
+            // End() spools the snapshot (OnSessionEnded) and clears the live marker; the
+            // quit flush is just the last-chance network attempt.
+            FlockSessionSnapshot snapshot = End();
+            if (snapshot == null)
+                return;
 
-            FinalizePause();
-            EndTimeUtc = DateTime.UtcNow;
-            EndRealtimeSinceStartup = Time.realtimeSinceStartup;
+            OnQuitFlush?.Invoke(snapshot);
 
-            FlockSessionSnapshot snapshot = TakeSnapshot();
-            snapshot.IsBounce = snapshot.DurationSeconds < _config.BounceThresholdSeconds;
-
-            OnSessionEnding?.Invoke(snapshot);
-
-            _active = false;
-
-            _logger.LogInfo($"Session ending on quit: {SessionId} | Duration: {ElapsedSeconds:F1}s");
+            _logger.LogInfo($"Session ending on quit: {SessionId} | Duration: {snapshot.DurationSeconds:F1}s");
         }
 
      
@@ -419,8 +447,16 @@ namespace Flock.Analytics
 
         internal void ClearPersistedState()
         {
-            PlayerPrefs.DeleteKey(PrefKeySessionData);
-            PlayerPrefs.Save();
+            try
+            {
+                PlayerPrefs.DeleteKey(PrefKeySessionData);
+                PlayerPrefs.Save();
+            }
+            catch (Exception ex)
+            {
+                // PlayerPrefs throws off the main thread; a surviving marker is re-delivered next launch.
+                _logger.LogWarning($"Failed to clear persisted session state: {ex.Message}");
+            }
         }
     }
 }

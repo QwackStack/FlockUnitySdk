@@ -36,9 +36,19 @@ namespace Flock
 
         internal static bool IsAvailable => _instance != null && !_isQuitting;
 
+        // With domain reload disabled, _isQuitting would persist from the previous play
+        // session and Instance would return null forever.
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetStaticState()
+        {
+            _instance = null;
+            _isQuitting = false;
+        }
 
-        // Fires from Unity's <c>Update</c>'
-        // Do not allocate memory on this.
+        /// <summary>
+        /// Fires from Unity's <c>Update</c>
+        /// Do not allocate memory on this.
+        /// </summary>
         internal event Action OnTick;
 
         /// <summary>
