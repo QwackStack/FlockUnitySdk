@@ -20,6 +20,18 @@ namespace Flock.Providers
             return Task.CompletedTask;
         }
 
+        public Task<string> StartSessionAsync(CancellationToken cancellationToken = default)
+        {
+            this.Client.Logger.LogDebug("Analytics is disabled , trying to start session");
+            return Task.FromResult<string>(null);
+        }
+
+        public Task EndSessionAsync(CancellationToken cancellationToken = default)
+        {
+            this.Client.Logger.LogDebug("Analytics is disabled , trying to end session");
+            return Task.CompletedTask;
+        }
+
         public void RecordScreenView(string screenName)
         {
             this.Client.Logger.LogDebug("Analytics is disabled , trying to RecordScreenView");

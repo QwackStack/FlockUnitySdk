@@ -80,12 +80,12 @@ namespace Flock.Providers
                 {
                     if (_session.IsActive)
                     {
-                        FlockSessionSnapshot oldSnapshot = _session.End();
+                        FlockSessionSnapshot oldSnapshot = _session.End(FlockSessionEndReason.Restarted);
                         if (oldSnapshot != null)
                             await DeliverSessionEndAsync(oldSnapshot, cancellationToken);
                     }
 
-                    _session.Reset();
+                    _session.Reset(FlockSessionEndReason.Restarted);
                 }
 
                 _initialized = false;
@@ -181,7 +181,7 @@ namespace Flock.Providers
             }
         }
 
-        private async Task<string> StartSessionAsync(CancellationToken cancellationToken = default)
+        public async Task<string> StartSessionAsync(CancellationToken cancellationToken = default)
         {
             RequireAuth();
 
@@ -194,7 +194,7 @@ namespace Flock.Providers
             // Deliver the previous session's end before the new one registers.
             if (_session.IsActive)
             {
-                FlockSessionSnapshot stale = _session.End();
+                FlockSessionSnapshot stale = _session.End(FlockSessionEndReason.Restarted);
                 if (stale != null)
                     await DeliverSessionEndAsync(stale, cancellationToken);
             }
@@ -285,7 +285,7 @@ namespace Flock.Providers
                 return;
             }
 
-            FlockSessionSnapshot snapshot = _session.End();
+            FlockSessionSnapshot snapshot = _session.End(FlockSessionEndReason.Manual);
             if (snapshot != null)
                 await DeliverSessionEndAsync(snapshot, cancellationToken);
         }

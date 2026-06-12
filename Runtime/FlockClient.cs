@@ -64,10 +64,7 @@ namespace Flock
             _instance = null;
         }
 
-        /// <summary>
-        /// Fired when a token refresh fails, meaning the player must log in again.
-        /// Subscribe to this to show your re-login UI.
-        /// </summary>
+        /// <summary>Token refresh failed — re-login required. Prefer <see cref="FlockEvents.OnAuthExpired"/>; kept for back-compat.</summary>
         public event Action OnSessionExpired;
 
         private FlockAuthProvider _authentication;
@@ -101,6 +98,7 @@ namespace Flock
         {
             _initConfig = initConfig ?? throw new ArgumentNullException(nameof(initConfig));
             _logger = logger ?? (initConfig.EnableDebugLogs ? new UnityFlockLogger() : new NullFlockLogger());
+            FlockEvents.Logger = _logger;
             _logger.LogInfo("Initializing Flock SDK");
             _logger.LogInfo($"Token persistence provider: {initConfig.TokenStore?.GetType().Name ?? "<disabled>"}");
             _retryHandler = new RetryHandler(initConfig.RetryPolicy, _logger);
@@ -114,30 +112,43 @@ namespace Flock
         /// <see cref="FlockInitConfig.GameVersion"/> against the backend to populate
         /// <see cref="FlockInitConfig.GameVersionId"/> (used in the
         /// <c>X-Game-Version-ID</c> header), then wires up service providers.
+        /// Raises <see cref="FlockEvents.OnInitialized"/> or <see cref="FlockEvents.OnInitializationFailed"/> (still throws).
         /// </summary>
         public static async Task<FlockClient> CreateAsync(
             FlockInitConfig initConfig,
             IFlockLogger logger = null,
             CancellationToken cancellationToken = default)
         {
+            // Misuse guard — no OnInitializationFailed: the SDK is already initialized and working.
             if (_instance != null)
                 throw new FlockException(
                     "FlockClient is already initialized. Call FlockClient.Shutdown() first if you need to reinitialize with a different config.");
 
-            FlockClient client = new FlockClient(initConfig, logger);
-            await client.ResolveGameVersionAsync(cancellationToken);
-            client._snapshotStore?.PruneOtherVersions(client._initConfig.GameVersionId);
-            client.InitializeServices();
+            try
+            {
+                FlockClient client = new FlockClient(initConfig, logger);
+                await client.ResolveGameVersionAsync(cancellationToken);
+                client._snapshotStore?.PruneOtherVersions(client._initConfig.GameVersionId);
+                client.InitializeServices();
 #if !FLOCK_NO_SCHEMA
-            CodeGenValidator.WarnIfDrifted(client._initConfig.GameVersionId, client._logger);
+                CodeGenValidator.WarnIfDrifted(client._initConfig.GameVersionId, client._logger);
 #endif
-            _instance = client;
-            return client;
+                _instance = client;
+            }
+            catch (Exception ex)
+            {
+                FlockEvents.RaiseInitializationFailed(ex);
+                throw;
+            }
+
+            FlockEvents.RaiseInitialized();
+            return _instance;
         }
 
         /// <summary>
         /// Clears the global <see cref="Instance"/>, allowing <see cref="CreateAsync"/> to be
         /// called again. Logs out the current player first so the token state is dropped.
+        /// Raises <see cref="FlockEvents.OnShutdown"/> last, then clears all <see cref="FlockEvents"/> subscriptions.
         /// </summary>
         public static void Shutdown()
         {
@@ -145,6 +156,9 @@ namespace Flock
             if (_instance == null) return;
             _instance.ClearTokens();
             _instance = null;
+            FlockEvents.RaiseShutdown();
+            FlockEvents.ClearAll();
+            FlockEvents.Logger = null;
         }
 
         private async Task ResolveGameVersionAsync(CancellationToken cancellationToken)
@@ -323,7 +337,7 @@ namespace Flock
                 if (_refreshToken != refreshSnapshot && !string.IsNullOrEmpty(_accessToken))
                     return true;
 
-                var refreshRequest = new PlayerRefreshTokenRequest { PlayerId = playerIdSnapshot, RefreshToken = refreshSnapshot };
+                PlayerRefreshTokenRequest refreshRequest = new PlayerRefreshTokenRequest { PlayerId = playerIdSnapshot, RefreshToken = refreshSnapshot };
                 _logger.LogDebug($"Refresh POST {GetVersionedApiUrl()}/player/token/refresh body={Newtonsoft.Json.JsonConvert.SerializeObject(refreshRequest)}");
 
                 PlayerLoginResponse response = await FlockHttpClient.PostAsync<PlayerLoginResponse>(
@@ -335,11 +349,13 @@ namespace Flock
                 {
                     ClearTokens();
                     OnSessionExpired?.Invoke();
+                    FlockEvents.RaiseAuthExpired();
                     return false;
                 }
 
                 SetTokens(response.AccessToken, response.RefreshToken);
                 _logger.LogInfo("Token refresh successful");
+                FlockEvents.RaiseTokenRefreshed();
                 return true;
             }
             catch (FlockAuthException e)
@@ -348,6 +364,7 @@ namespace Flock
                 _logger.LogException(e);
                 ClearTokens();
                 OnSessionExpired?.Invoke();
+                FlockEvents.RaiseAuthExpired();
                 return false;
             }
             catch (Exception ex)
@@ -367,7 +384,7 @@ namespace Flock
 
             if (_session != null && _session.IsActive)
             {
-                _session.Reset();
+                _session.Reset(FlockSessionEndReason.Logout);
             }
 
             _accessToken = null;
