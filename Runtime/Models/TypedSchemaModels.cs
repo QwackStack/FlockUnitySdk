@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -41,6 +42,30 @@ namespace Flock.Models
 
         public List<DataField> ValueAsList() => Value as List<DataField>;
         public Dictionary<string, DataField> ValueAsDict() => Value as Dictionary<string, DataField>;
+
+        /// <summary>
+        /// Returns <see cref="Value"/> converted to <typeparamref name="T"/>. JSON numbers
+        /// deserialize boxed as <c>long</c> (integers) or <c>double</c> (decimals), so a
+        /// direct cast like <c>(int)Value</c> throws <see cref="InvalidCastException"/> —
+        /// use this instead. Returns <c>default</c> when <see cref="Value"/> is null;
+        /// throws when no conversion exists (e.g. <c>GetValue&lt;int&gt;()</c> on text).
+        /// </summary>
+        public T GetValue<T>()
+        {
+            object raw = Value;
+
+            if (raw == null)
+                return default;
+
+            if (raw is T typed)
+                return typed;
+
+            if (raw is JToken token)
+                return token.ToObject<T>();
+
+            Type target = Nullable.GetUnderlyingType(typeof(T)) ?? typeof(T);
+            return (T)Convert.ChangeType(raw, target, CultureInfo.InvariantCulture);
+        }
     }
 
     public static class DataFieldExtensions
