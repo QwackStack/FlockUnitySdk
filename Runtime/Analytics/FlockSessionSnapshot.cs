@@ -12,6 +12,11 @@ namespace Flock.Analytics
         [JsonProperty("server_session_id")]
         public string ServerSessionId { get; set; }
 
+        // Lets recovery register a session that never obtained a server id. Absent in
+        // snapshots persisted by older SDK versions.
+        [JsonProperty("player_id")]
+        public string PlayerId { get; set; }
+
         [JsonProperty("session_number")]
         public int SessionNumber { get; set; }
 
