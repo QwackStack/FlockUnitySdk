@@ -179,6 +179,16 @@ var template = await FlockClient.Instance.Player.GetTemplateByIdAsync("template-
 var template = await FlockClient.Instance.Player.GetTemplateByNameAsync("currency");
 var playerData = await FlockClient.Instance.Player.GetTemplatePlayerDataAsync("template-id");
 
+// Reading player data — preferred path: the codegen'd accessors. `Flock > Sync Schemas`
+// emits one Get<TemplateName>Async() extension per template returning a generated typed
+// class; numeric conversion is handled by the deserializer.
+var currency = await FlockClient.Instance.Player.GetCurrencyAsync(); // generated
+
+// Raw fields (no codegen, ad-hoc fields, or schema drift): JSON integers arrive boxed
+// as long and decimals as double, so read through GetValue<T>() instead of casting
+// Value directly — (int)field.Value throws on a boxed long.
+int score = playerData.Data.Find(f => f.FieldName == "score").GetValue<int>();
+
 // Game commands — server-side operations. Each posts to its own typed endpoint
 // under /v1/game_command/* and returns the updated PlayerData.
 PlayerData updated = await FlockClient.Instance.Commands.UpdatePlayerDataAsync(
