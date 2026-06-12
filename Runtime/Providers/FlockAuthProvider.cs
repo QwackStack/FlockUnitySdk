@@ -16,7 +16,8 @@ namespace Flock.Providers
         }
 
         private async Task<PlayerLoginResponse> ExecuteAuthAsync(
-            Func<Task<PlayerLoginResponse>> operation, string context, CancellationToken cancellationToken)
+            Func<Task<PlayerLoginResponse>> operation, string context, FlockAuthMethod method,
+            CancellationToken cancellationToken)
         {
             Client.Logger.LogInfo($"{context} starting...");
             try
@@ -28,6 +29,8 @@ namespace Flock.Providers
 
                 Client.SetTokens(response.AccessToken, response.RefreshToken);
                 Client.Logger.LogInfo($"{context} successful for player: {Client.CurrentPlayerId}");
+
+                FlockEvents.RaiseAuthenticated(new FlockAuthInfo(Client.CurrentPlayerId, method));
 
 
 #if !FLOCK_NO_ANALYTICS
@@ -61,11 +64,12 @@ namespace Flock.Providers
 
 
         private async Task<PlayerLoginResponse> ExecuteRegistrationAsync(
-            Func<Task<PlayerLoginResponse>> operation, string context, CancellationToken cancellationToken)
+            Func<Task<PlayerLoginResponse>> operation, string context, FlockAuthMethod method,
+            CancellationToken cancellationToken)
         {
             try
             {
-                return await ExecuteAuthAsync(operation, context, cancellationToken);
+                return await ExecuteAuthAsync(operation, context, method, cancellationToken);
             }
             catch (FlockException ex) when (IsAlreadyRegisteredError(ex))
             {
@@ -130,6 +134,7 @@ namespace Flock.Providers
             }
 
             Client.Logger.LogInfo($"Restored session for PlayerId: {Client.CurrentPlayerId}");
+            FlockEvents.RaiseAuthenticated(new FlockAuthInfo(Client.CurrentPlayerId, FlockAuthMethod.SessionRestore));
             await TryInitializeAnalyticsAsync(cancellationToken);
             return true;
         }
@@ -142,7 +147,7 @@ namespace Flock.Providers
                     $"{Client.GetVersionedApiUrl()}/player/login",
                     new PlayerLoginRequest { LoginType = "email", Email = email, Password = password },
                     Client.GetBaseHeaders(), cancellationToken),
-                "Email login", cancellationToken);
+                "Email login", FlockAuthMethod.Email, cancellationToken);
         }
 
         public async Task<PlayerLoginResponse> LoginWithDeviceAsync(string deviceId,
@@ -153,7 +158,7 @@ namespace Flock.Providers
                     $"{Client.GetVersionedApiUrl()}/player/login/device",
                     new PlayerDeviceLoginRequest { DeviceType = SystemInfo.deviceType.ToString(), DeviceId = deviceId },
                     Client.GetBaseHeaders(), cancellationToken),
-                "Device login", cancellationToken);
+                "Device login", FlockAuthMethod.Device, cancellationToken);
         }
 
         /// <param name="name">Optional display name. <b>Server-enforced unique</b>; recommended to pass <c>null</c> until the backend returns structured error codes — see the README "Backend backlog" entry on structured registration errors.</param>
@@ -165,7 +170,7 @@ namespace Flock.Providers
                     $"{Client.GetVersionedApiUrl()}/player/register",
                     new PlayerEmailRegistrationRequest { Email = email, Password = password, Name = name },
                     Client.GetBaseHeaders(), cancellationToken),
-                "Email registration", cancellationToken);
+                "Email registration", FlockAuthMethod.Email, cancellationToken);
         }
 
         /// <param name="name">Optional display name. <b>Server-enforced unique</b>; recommended to pass <c>null</c> until the backend returns structured error codes — see the README "Backend backlog" entry on structured registration errors.</param>
@@ -178,7 +183,7 @@ namespace Flock.Providers
                     new PlayerDeviceRegistrationRequest
                         { DeviceType = SystemInfo.deviceType.ToString(), DeviceId = deviceId, Name = name },
                     Client.GetBaseHeaders(), cancellationToken),
-                "Device registration", cancellationToken);
+                "Device registration", FlockAuthMethod.Device, cancellationToken);
         }
         public async Task<PlayerLoginResponse> LoginWithGoogleAsync(string idToken,
             CancellationToken cancellationToken = default)
@@ -188,7 +193,7 @@ namespace Flock.Providers
                     $"{Client.GetVersionedApiUrl()}/player/login/google",
                     new PlayerGoogleLoginRequest { IdToken = idToken },
                     Client.GetBaseHeaders(), cancellationToken),
-                "Google login", cancellationToken);
+                "Google login", FlockAuthMethod.Google, cancellationToken);
         }
         
         /// <param name="name">Optional display name. <b>Server-enforced unique</b>; recommended to pass <c>null</c> until the backend returns structured error codes — see the README "Backend backlog" entry on structured registration errors.</param>
@@ -200,7 +205,7 @@ namespace Flock.Providers
                     $"{Client.GetVersionedApiUrl()}/player/register/google",
                     new PlayerGoogleRegistrationRequest { IdToken = idToken, Name = name },
                     Client.GetBaseHeaders(), cancellationToken),
-                "Google registration", cancellationToken);
+                "Google registration", FlockAuthMethod.Google, cancellationToken);
         }
         
         public async Task<PlayerLoginResponse> LoginWithAppleAsync(string identityToken,
@@ -211,7 +216,7 @@ namespace Flock.Providers
                     $"{Client.GetVersionedApiUrl()}/player/login/apple",
                     new PlayerAppleLoginRequest { IdentityToken = identityToken },
                     Client.GetBaseHeaders(), cancellationToken),
-                "Apple login", cancellationToken);
+                "Apple login", FlockAuthMethod.Apple, cancellationToken);
         }
         
         /// <param name="name">Optional display name. <b>Server-enforced unique</b>; recommended to pass <c>null</c> until the backend returns structured error codes — see the README "Backend backlog" entry on structured registration errors.</param>
@@ -223,7 +228,7 @@ namespace Flock.Providers
                     $"{Client.GetVersionedApiUrl()}/player/register/apple",
                     new PlayerAppleRegistrationRequest { IdentityToken = identityToken, Name = name },
                     Client.GetBaseHeaders(), cancellationToken),
-                "Apple registration", cancellationToken);
+                "Apple registration", FlockAuthMethod.Apple, cancellationToken);
         }
         
         public async Task<PlayerLoginResponse> LoginWithSteamAsync(string sessionTicket,
@@ -234,7 +239,7 @@ namespace Flock.Providers
                     $"{Client.GetVersionedApiUrl()}/player/login/steam",
                     new PlayerSteamLoginRequest { SessionTicket = sessionTicket },
                     Client.GetBaseHeaders(), cancellationToken),
-                "Steam login", cancellationToken);
+                "Steam login", FlockAuthMethod.Steam, cancellationToken);
         }
         
         /// <param name="name">Optional display name. <b>Server-enforced unique</b>; recommended to pass <c>null</c> until the backend returns structured error codes — see the README "Backend backlog" entry on structured registration errors.</param>
@@ -246,7 +251,7 @@ namespace Flock.Providers
                     $"{Client.GetVersionedApiUrl()}/player/register/steam",
                     new PlayerSteamRegistrationRequest { SessionTicket = sessionTicket, Name = name },
                     Client.GetBaseHeaders(), cancellationToken),
-                "Steam registration", cancellationToken);
+                "Steam registration", FlockAuthMethod.Steam, cancellationToken);
         }
 
         /// <summary>
@@ -255,7 +260,10 @@ namespace Flock.Providers
         /// </summary>
         public void Logout()
         {
+            bool wasAuthenticated = Client.IsAuthenticated;
             Client.ClearTokens();
+            if (wasAuthenticated)
+                FlockEvents.RaiseLoggedOut();
         }
     }
 }

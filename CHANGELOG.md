@@ -5,6 +5,20 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [1.12.0] - 2026-06-12
+
+### Added
+- `FlockEvents` — static hub exposing 11 public SDK lifecycle events: `OnInitialized`, `OnInitializationFailed`, `OnShutdown`, `OnAuthenticated`, `OnTokenRefreshed`, `OnAuthExpired`, `OnLoggedOut`, `OnSessionStarted`, `OnSessionEnded`, `OnSessionPaused`, `OnSessionResumed`. Subscribe anytime (the hub never throws, unlike `FlockClient.Instance` pre-init); events are raised on the Unity main thread; a throwing subscriber is logged and never breaks the SDK or other subscribers. All subscriptions are cleared automatically on `Shutdown()` and on play-session start with domain reload disabled. Every raise is debug-logged with its subscriber count when `EnableDebugLogs` is on.
+- Event payload types: `FlockAuthInfo` (`PlayerId` + `FlockAuthMethod`: Email/Device/Google/Apple/Steam/SessionRestore) and `FlockSessionEndedArgs` (`FlockSessionSnapshot` + `FlockSessionEndReason`: Logout/Timeout/Quit/Restarted/Manual). Sessions recovered from a crashed previous launch do not raise `OnSessionEnded`.
+- `IAnalyticProvider.StartSessionAsync` / `EndSessionAsync` — manual session control is now on the public interface (`StartSessionAsync` was previously private on the concrete provider), making `AutoStartSession = false` actually usable and the existing README session examples compile. For game-defined session boundaries (foreground idle, kiosk user switching, consent toggles) — not needed on quit/logout, which end the session automatically. Manual end raises `OnSessionEnded` with reason `Manual`.
+
+### Changed
+- `FlockClient.OnSessionExpired` still works unchanged; its doc now points at `FlockEvents.OnAuthExpired` (same moment, clearer name — the old name collided with the analytics session concept).
+- Internal: `FlockSession.End`/`Reset` now require an explicit end reason at every call site (no public API impact).
+
+### Documentation
+- README — "Events" subsection under Analytics: the full event table (lifecycle/auth/session), subscription contract, and an OnEnable/OnDisable example.
+
 ## [1.11.0] - 2026-06-10
 
 ### Added

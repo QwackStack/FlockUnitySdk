@@ -16,6 +16,20 @@ namespace Flock.Interfaces
         Task InitializeAsync(CancellationToken ct);
 
         /// <summary>
+        /// Starts a session manually — pair with <c>AutoStartSession = false</c> for
+        /// game-defined session boundaries. Returns the server session id, or the local id
+        /// until registration succeeds (pre-login: logs an error, session runs locally).
+        /// </summary>
+        Task<string> StartSessionAsync(CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Ends the active session and delivers its end (raises
+        /// <c>FlockEvents.OnSessionEnded</c> with reason <c>Manual</c>). Warns when no
+        /// session is active. Not needed on quit/logout — those end the session automatically.
+        /// </summary>
+        Task EndSessionAsync(CancellationToken cancellationToken = default);
+
+        /// <summary>
         /// Records that the player navigated to a named screen. Aggregated into the
         /// active session's screen-view counter; no immediate network call.
         /// </summary>

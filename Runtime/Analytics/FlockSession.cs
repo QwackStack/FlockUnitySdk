@@ -139,7 +139,7 @@ namespace Flock.Analytics
                 // The end is spooled via OnSessionEnded; callers should still End() and
                 // deliver explicitly so the send is awaited.
                 _logger.LogWarning("Session already active, ending previous session before starting new one");
-                End();
+                End(FlockSessionEndReason.Restarted);
             }
 
             _playerId = playerId;
@@ -184,6 +184,8 @@ namespace Flock.Analytics
 
             _logger.LogInfo($"Session started: {SessionId} (#{SessionNumber})");
 
+            FlockEvents.RaiseSessionStarted(SessionId);
+
             return SessionId;
         }
 
@@ -194,7 +196,7 @@ namespace Flock.Analytics
             SaveState();
         }
 
-        internal FlockSessionSnapshot End()
+        internal FlockSessionSnapshot End(FlockSessionEndReason reason)
         {
             if (!_active)
             {
@@ -225,13 +227,15 @@ namespace Flock.Analytics
 
             _logger.LogInfo($"Session ended: {SessionId} | Duration: {snapshot.DurationSeconds:F1}s | Screens: {snapshot.ScreensViewed} | Pauses: {snapshot.PauseCount} | AvgFPS: {snapshot.AverageFps:F0}{(snapshot.IsBounce ? " [BOUNCE]" : "")}");
 
+            FlockEvents.RaiseSessionEnded(new FlockSessionEndedArgs(snapshot, reason));
+
             return snapshot;
         }
 
-        internal void Reset()
+        internal void Reset(FlockSessionEndReason reason)
         {
             if (_active)
-                End();
+                End(reason);
 
             _sessionCts?.Cancel();
             _sessionCts?.Dispose();
@@ -374,6 +378,7 @@ namespace Flock.Analytics
                 _pausedAtRealtime = Time.realtimeSinceStartup;
                 SaveState();
                 OnSessionPaused?.Invoke();
+                FlockEvents.RaiseSessionPaused();
                 _logger.LogDebug($"Session backgrounded: {SessionId}");
             }
             else
@@ -387,7 +392,7 @@ namespace Flock.Analytics
                 {
                     _logger.LogInfo($"Session timeout exceeded ({pausedDuration:F0}s > {_config.SessionTimeoutSeconds:F0}s). New session required.");
 
-                    FlockSessionSnapshot snapshot = End();
+                    FlockSessionSnapshot snapshot = End(FlockSessionEndReason.Timeout);
                     if (snapshot != null)
                         OnSessionTimedOut?.Invoke(snapshot);
                 }
@@ -396,6 +401,7 @@ namespace Flock.Analytics
                     FinalizePause();
                     _isPaused = false;
                     _logger.LogDebug($"Session resumed: {SessionId}");
+                    FlockEvents.RaiseSessionResumed();
                 }
             }
         }
@@ -407,7 +413,7 @@ namespace Flock.Analytics
 
             // End() spools the snapshot (OnSessionEnded) and clears the live marker; the
             // quit flush is just the last-chance network attempt.
-            FlockSessionSnapshot snapshot = End();
+            FlockSessionSnapshot snapshot = End(FlockSessionEndReason.Quit);
             if (snapshot == null)
                 return;
 
