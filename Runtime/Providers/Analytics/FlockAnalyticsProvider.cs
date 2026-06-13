@@ -101,11 +101,18 @@ namespace Flock.Providers
             _initialized = true;
             _currentPlayerId = newPlayerId;
 
+            // -= first — a logout with no active session leaves these attached (Reset never ran).
+            _session.OnHeartbeat -= HandleHeartbeat;
             _session.OnHeartbeat += HandleHeartbeat;
+            _session.OnFlushInterval -= HandleFlushInterval;
             _session.OnFlushInterval += HandleFlushInterval;
+            _session.OnSessionPaused -= HandleSessionPaused;
             _session.OnSessionPaused += HandleSessionPaused;
+            _session.OnSessionTimedOut -= HandleSessionTimedOut;
             _session.OnSessionTimedOut += HandleSessionTimedOut;
+            _session.OnSessionEnded -= HandleSessionEnded;
             _session.OnSessionEnded += HandleSessionEnded;
+            _session.OnQuitFlush -= HandleQuitFlush;
             _session.OnQuitFlush += HandleQuitFlush;
 
             FlockSessionSnapshot orphaned = _session.RecoverOrphanedSession();
@@ -151,6 +158,12 @@ namespace Flock.Providers
             InstallGlobalExceptionHook();
 
             FlushCacheInBackground();
+        }
+
+        // Logout funnel (ClearTokens): session handlers were detached — force a full re-wire on next InitializeAsync.
+        internal void HandleAuthCleared()
+        {
+            _initialized = false;
         }
 
         // Subscribed once per provider lifetime; FlockBehaviour.OnException fires for

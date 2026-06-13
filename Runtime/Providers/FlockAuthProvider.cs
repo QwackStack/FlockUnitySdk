@@ -32,21 +32,6 @@ namespace Flock.Providers
 
                 FlockEvents.RaiseAuthenticated(new FlockAuthInfo(Client.CurrentPlayerId, method));
 
-
-#if !FLOCK_NO_ANALYTICS
-                if (Client.Analytics != null)
-                {
-                    try
-                    {
-                        await Client.Analytics.InitializeAsync(cancellationToken);
-                    }
-                    catch (Exception analyticsEx)
-                    {
-                        Client.Logger.LogWarning($"Analytics initialization failed (non-fatal): {analyticsEx.Message}");
-                    }
-                }
-#endif
-
                 await TryInitializeAnalyticsAsync(cancellationToken);
 
                 return response;
@@ -92,6 +77,7 @@ namespace Flock.Providers
          }
         private async Task TryInitializeAnalyticsAsync(CancellationToken cancellationToken)
         {
+#if !FLOCK_NO_ANALYTICS
             if (Client.Analytics == null) return;
             try
             {
@@ -101,6 +87,9 @@ namespace Flock.Providers
             {
                 Client.Logger.LogWarning($"Analytics initialization failed (non-fatal): {analyticsEx.Message}");
             }
+#else
+            await Task.CompletedTask;
+#endif
         }
 
         /// <summary>
