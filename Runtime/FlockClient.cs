@@ -387,6 +387,10 @@ namespace Flock
                 _session.Reset(FlockSessionEndReason.Logout);
             }
 
+#if !FLOCK_NO_ANALYTICS
+            (_analytics as FlockAnalyticsProvider)?.HandleAuthCleared();
+#endif
+
             _accessToken = null;
             _refreshToken = null;
             _tokenClaims = null;
