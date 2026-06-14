@@ -2,11 +2,32 @@
 
 The Flock Unity SDK provides access to Flock's game backend services from Unity games.
 
+## Contents
+
+- [Features](#features)
+- [Installation](#installation)
+- [Requirements](#requirements)
+- [Setup](#setup)
+  - [Editor Configuration](#editor-configuration)
+  - [Drop-in Initialization](#drop-in-initialization)
+  - [Code-Based Configuration](#code-based-configuration)
+- [Quick Start](#quick-start)
+  - [Minimal example](#minimal-example)
+  - [Authentication](#authentication)
+  - [Token Refresh](#token-refresh)
+  - [Services](#services)
+  - [Analytics](#analytics)
+  - [Events](#events)
+- [Offline caching](#offline-caching)
+- [Codegen](#codegen)
+- [Backend backlog](#backend-backlog)
+- [Platform notes](#platform-notes)
+
 ## Features
 
 - Player authentication (email, device, Google, Apple, Steam)
 - Token refresh with automatic silent retry, plus a session-expired event
-- Game configuration (fetched from game patch endpoints, filterable by tag)
+- Game configuration (fetched from the backend, filterable by tag)
 - Config schema validation (backend validation of config types)
 - Per-player feature config lookup
 - Game and game version metadata (lookup by ID or name)
@@ -24,7 +45,17 @@ The Flock Unity SDK provides access to Flock's game backend services from Unity 
 
 ## Installation
 
-Add via Unity Package Manager using the git URL or import the `.unitypackage`.
+The SDK is distributed through the Flock website — download the latest release, then add it to your Unity project one of two ways:
+
+**Download: [FLOCK LINK]**
+
+- **Import the `.unitypackage`** — double-click the downloaded file (or use **Assets > Import Package > Custom Package**) and import all items.
+- **Unity Package Manager (git URL)** — in **Window > Package Manager**, click **+ → Add package from git URL**, then paste the git URL shown on the download page.
+
+## Requirements
+
+- **Unity 2020.3 or newer.**
+- **Newtonsoft Json for Unity** (`com.unity.nuget.newtonsoft-json`, 3.0.2+) — the SDK depends on it for serialization. Installing through the Package Manager git URL resolves this automatically; if you import the `.unitypackage` instead, add it first via **Window > Package Manager > + → Add package by name** using `com.unity.nuget.newtonsoft-json`.
 
 ## Setup
 
@@ -72,7 +103,7 @@ var config = new FlockInitConfig(
 );
 
 // CreateAsync resolves the game version name to its ID via the backend,
-// uses that ID for the X-Game-Version-ID header on every request, and
+// applies that ID to every request, and
 // stores the singleton in FlockClient.Instance.
 await FlockClient.CreateAsync(config);
 
@@ -88,6 +119,28 @@ await FlockClient.CreateAsync(configAsset.ToInitConfig());
 ```
 
 ## Quick Start
+
+### Minimal example
+
+The shortest path from zero to reading data — initialize once at startup, log a player in, then read something back. Everything else in this section is the same pattern with more surface area.
+
+```csharp
+using Flock;
+
+// 1. Initialize the SDK exactly once at startup (see Setup for where these values come from).
+await FlockClient.CreateAsync(new FlockInitConfig(
+    apiUrl: "https://api-flock.qwacks.com",
+    apiKey: "your-api-key",
+    gameId: "your-game-id",
+    gameVersion: "your-game-version-name"));
+
+// 2. Log the player in. Auth methods throw on failure.
+await FlockClient.Instance.Authentication.LoginWithDeviceAsync("device-uuid");
+
+// 3. Read something back — call any service via FlockClient.Instance.
+var game = await FlockClient.Instance.Game.GetGameAsync();
+Debug.Log($"Signed in as {FlockClient.Instance.CurrentPlayerId}, playing {game.Name}");
+```
 
 ### Authentication
 
@@ -121,7 +174,7 @@ FlockClient.Instance.Authentication.Logout();
 
 > **Note on `name` during registration.** The backend enforces a **unique** display name across registered players. The SDK has a temporary string-match (`IsAlreadyRegisteredError`) that swallows "already registered" errors and returns `null` from `RegisterWith*` instead of throwing — whether it catches name collisions specifically depends on the exact backend error wording, which isn't structured today (see [Backend backlog](#backend-backlog)).
 >
-> Until the backend ships a structured "name taken" error code (or a `name-available` endpoint), the recommended path is to **pass `null` (or omit `name`)** and let the backend assign a default. If you need a display name, collect it on a separate post-registration screen where retrying on collision is natural UX.
+> Until the backend ships a structured "name taken" error code (or a name-availability check), the recommended path is to **pass `null` (or omit `name`)** and let the backend assign a default. If you need a display name, collect it on a separate post-registration screen where retrying on collision is natural UX.
 
 ### Token Refresh
 
@@ -148,7 +201,7 @@ var configs = await FlockClient.Instance.Config.GetAllAsync<GameplayConfig>();
 var config = await FlockClient.Instance.Config.GetByIdAsync<GameplayConfig>("config-id");
 var bySchema = await FlockClient.Instance.Config.GetBySchemaAsync<GameplayConfig>("schema-id");
 
-// Game configs by tag (currency, gameplay — maps to /v1/game_config)
+// Game configs by tag (currency, gameplay)
 var currencyConfigs = await FlockClient.Instance.Config.GetGameConfigsAsync(SchemaTag.currency);
 var gameplayConfigs = await FlockClient.Instance.Config.GetGameConfigsByVersionAsync(SchemaTag.gameplay);
 var typed = await FlockClient.Instance.Config.GetGameConfigsAsync<CurrencyConfig>(SchemaTag.currency);
@@ -189,8 +242,8 @@ var currency = await FlockClient.Instance.Player.GetCurrencyAsync(); // generate
 // Value directly — (int)field.Value throws on a boxed long.
 int score = playerData.Data.Find(f => f.FieldName == "score").GetValue<int>();
 
-// Game commands — server-side operations. Each posts to its own typed endpoint
-// under /v1/game_command/* and returns the updated PlayerData.
+// Game commands — server-side operations. Each runs its own typed command
+// and returns the updated PlayerData.
 PlayerData updated = await FlockClient.Instance.Commands.UpdatePlayerDataAsync(
     "player-data-id",
     new List<DataField> { /* flattened typed fields */ });
@@ -229,7 +282,7 @@ var asset = await FlockClient.Instance.Asset.GetByNameAsync("iconTest"); // O(N)
 // asset.S3DownloadUrl is the direct download URL
 
 // Assets — generic typed download. Supported T: Texture2D, Sprite, AudioClip, string, byte[]
-// By id (extra GET /v1/asset/{id} round-trip):
+// By id (extra lookup round-trip):
 Sprite sprite = await FlockClient.Instance.Asset.DownloadAsync<Sprite>("asset-id");
 // By already-fetched schema (skips the lookup):
 Sprite sprite = await FlockClient.Instance.Asset.DownloadAsync<Sprite>(asset);
@@ -258,7 +311,7 @@ bool ready = FlockClient.Instance.Asset.IsCached(asset);
 
 ### Analytics
 
-> **Auth dependency.** All analytics endpoints (`/v1/analytics/*` and `/v1/log_event*`) are **bearer-authenticated** — see the [endpoint table](#api-endpoints). Behavior depends on the call:
+> **Auth dependency.** All analytics calls are **bearer-authenticated** (they require a logged-in player). Behavior depends on the call:
 >
 > - `TrackEventAsync`, `TrackEventsAsync`, `LogExceptionAsync`, `LogErrorAsync`, `LogEventAsync` — **safe to call before login**. They enqueue to the on-disk cache and drain automatically after authentication (entries tagged with the unauthenticated placeholder are retagged with the real `PlayerId` at login). They also drain on interval (`EventBufferFlushIntervalSeconds`, default 10s), on session pause, and on session end.
 > - `RecordTransactionAsync`, `StartSessionAsync` — **best-effort.** They attempt an immediate send and will 401 if called before login; session start swallows the error and continues locally, transaction does not.
@@ -294,7 +347,13 @@ FlockClient.Instance.Analytics.RecordScreenView("MainMenu");
 
 #### Events
 
-All SDK lifecycle events live on the static `FlockEvents` class (`using Flock;`). Subscribe anytime — even before `FlockClient.CreateAsync` (unlike `FlockClient.Instance`, the hub never throws). Events are raised on the Unity main thread. With `EnableDebugLogs` on, every raise is logged (`[Flock SDK] OnSessionStarted fired -> 1 subscriber(s)`), so wiring can be verified straight from the console. Every subscription is cleared automatically on `FlockClient.Shutdown()` and on play-session start with domain reload disabled, so a leaked handler never outlives one play session — still, subscribe in `OnEnable` and unsubscribe in `OnDisable` (prefer method groups over lambdas; lambdas can't be unsubscribed). A subscriber that throws is logged via `Debug.LogError` and never breaks the SDK or other subscribers.
+All SDK lifecycle events live on the static `FlockEvents` class (`using Flock;`). Key behaviors:
+
+- **Subscribe anytime** — even before `FlockClient.CreateAsync`. Unlike `FlockClient.Instance`, the hub never throws.
+- **Raised on the Unity main thread** — you can touch Unity objects directly inside handlers.
+- **Logged when `EnableDebugLogs` is on** — every raise prints `[Flock SDK] OnSessionStarted fired -> 1 subscriber(s)`, so you can verify wiring straight from the console.
+- **Cleared automatically** on `FlockClient.Shutdown()` and on play-session start (with domain reload disabled), so a leaked handler never outlives one play session. Still, subscribe in `OnEnable` and unsubscribe in `OnDisable`, and prefer method groups over lambdas (lambdas can't be unsubscribed).
+- **Isolated from your bugs** — a subscriber that throws is logged via `Debug.LogError` and never breaks the SDK or other subscribers.
 
 ```csharp
 private void OnEnable()
@@ -422,72 +481,9 @@ Type mapping for primitives lives in `Editor/Codegen/TypeMap.cs` (`integer` → 
 
 A few SDK behaviors are constrained by the current backend surface and will improve as the backend grows. None of these block normal usage; they all surface as warnings in the console with workarounds in place.
 
-- **Asset by name** — `client.Asset.GetByNameAsync` lists all assets and filters client-side (O(N)). Will switch to `GET /v1/asset/by-name/{name}` once the backend adds it.
-- **Structured registration error codes** — `POST /v1/player/register*` failures are returned as plain text without an error-code field. The SDK uses string-matching (`IsAlreadyRegisteredError`) to swallow "already registered" cases and return `null` from `RegisterWith*`, which is brittle and conflates name collisions with credential collisions. Once the backend returns structured codes (e.g. `NAME_TAKEN`, `EMAIL_REGISTERED`, `DEVICE_REGISTERED`), the SDK can surface them as typed exceptions and the `RegisterWith*` methods can take `name` again with reliable error UX. A `GET /v1/player/name-available?name=` endpoint would also let callers validate as the user types.
-- **Retry-safe session registration** — `POST /v1/analytics/sessions` creates a brand-new session row on every call, and only the server knows the issued id. If the app quits (or the session rotates) while a registration request is still on the wire, the client never learns that id; on the next launch it has to register the session again just to close it, leaving the server with two rows for one play session — and the first row stays open forever. The SDK logs a warning when it detects this. Fix: accept the client's own session id (`client_session_id`) on the POST and, when the same id is sent twice, return the existing row instead of creating another. A retried registration then maps back to the original session.
-
-## Headers
-
-Every API request includes these headers:
-
-| Header | Source | Description |
-|--------|--------|-------------|
-| `X-Flock-API-Key` | `FlockInitConfig.ApiKey` | Required. Identifies the game. |
-| `X-Game-Version-ID` | `FlockInitConfig.GameVersionId` | Resolved from `GameVersion` (name) during `FlockClient.CreateAsync`. |
-| `Authorization` | Bearer token from login | Added after authentication. |
-
-## API Endpoints
-
-| Service | Endpoint | Auth |
-|---------|----------|------|
-| Email Login | `POST /v1/player/login` | API Key |
-| Device Login | `POST /v1/player/login/device` | API Key |
-| Google Login | `POST /v1/player/login/google` | API Key |
-| Apple Login | `POST /v1/player/login/apple` | API Key |
-| Steam Login | `POST /v1/player/login/steam` | API Key |
-| Email Register | `POST /v1/player/register` | API Key |
-| Device Register | `POST /v1/player/register/device` | API Key |
-| Google Register | `POST /v1/player/register/google` | API Key |
-| Apple Register | `POST /v1/player/register/apple` | API Key |
-| Steam Register | `POST /v1/player/register/steam` | API Key |
-| Refresh Token | `POST /v1/player/token/refresh` | API Key |
-| Game Configs | `GET /v1/game_patch` | API Key |
-| Config by ID | `GET /v1/game_patch/{id}` | API Key |
-| Configs by Schema | `GET /v1/game_patch/config/{id}` | API Key |
-| Config Schemas | `GET /v1/game_config` | API Key |
-| Schemas by Version | `GET /v1/game_config/version` | API Key |
-| Schema by ID | `GET /v1/game_config/{id}` | API Key |
-| Schema Configs | `GET /v1/game_config/{id}/patches` | API Key |
-| Player Feature Config | `GET /v1/game_config/player/{player_id}/features` | API Key |
-| Game Info | `GET /v1/game` | API Key |
-| Game Version | `GET /v1/game_version` | API Key |
-| Game Version by Name | `GET /v1/game_version/by-name/{name}` | API Key |
-| Player Data | `GET /v1/player_data` | API Key |
-| Player Data by ID | `GET /v1/player_data/{id}` | API Key |
-| Player Templates | `GET /v1/player_template` | API Key |
-| Player Template by ID | `GET /v1/player_template/{id}` | API Key |
-| Player Template by Name | `GET /v1/player_template/by-name/{name}` | API Key |
-| Template Player Data | `GET /v1/player_template/{id}/player-data` | API Key |
-| Game Configs by Tag | `GET /v1/game_config?tag=` | API Key |
-| Game Configs by Version/Tag | `GET /v1/game_config/version?tag=` | API Key |
-| Update Player Data | `POST /v1/game_command/update_player_data` | API Key |
-| Update Player Data Field | `POST /v1/game_command/update_player_data_key` | API Key |
-| Add Game Funds | `POST /v1/game_command/add_game_funds` | API Key |
-| Unlock Achievement | `POST /v1/game_command/unlock_achievement` | API Key |
-| List Shops | `GET /v1/shop` | API Key |
-| Get Shop | `GET /v1/shop/{shop_id}` | API Key |
-| Shop Transaction | `POST /v1/shop/transaction` | API Key |
-| Get Shop Item | `GET /v1/shop_item/{shop_item_id}` | API Key |
-| Shop Items by Shop | `GET /v1/shop_item/shop/{shop_id}` | API Key |
-| Player Inventory | `GET /v1/player_inventory/player/{player_id}` | API Key |
-| Player Ban | `GET /v1/player-ban` | API Key |
-| List Assets | `GET /v1/asset` | API Key |
-| Get Asset | `GET /v1/asset/{asset_id}` | API Key |
-| Start Session | `POST /v1/analytics/sessions` | Bearer |
-| End Session | `PATCH /v1/analytics/sessions/{session_id}` | Bearer |
-| Track Event | `POST /v1/analytics/events/single` | Bearer |
-| Track Events Batch | `POST /v1/analytics/events` | Bearer |
-| Record Transaction | `POST /v1/analytics/transactions` | Bearer |
+- **Asset by name** — `client.Asset.GetByNameAsync` lists all assets and filters client-side (O(N)). Will switch to a dedicated server-side lookup once the backend adds it.
+- **Structured registration error codes** — registration failures are returned as plain text without an error-code field. The SDK uses string-matching (`IsAlreadyRegisteredError`) to swallow "already registered" cases and return `null` from `RegisterWith*`, which is brittle and conflates name collisions with credential collisions. Once the backend returns structured codes (e.g. `NAME_TAKEN`, `EMAIL_REGISTERED`, `DEVICE_REGISTERED`), the SDK can surface them as typed exceptions and the `RegisterWith*` methods can take `name` again with reliable error UX. A dedicated name-availability check would also let callers validate as the user types.
+- **Retry-safe session registration** — session registration creates a brand-new session row on every call, and only the server knows the issued id. If the app quits (or the session rotates) while a registration request is still on the wire, the client never learns that id; on the next launch it has to register the session again just to close it, leaving the server with two rows for one play session — and the first row stays open forever. The SDK logs a warning when it detects this. Fix: accept the client's own session id (`client_session_id`) and, when the same id is sent twice, return the existing row instead of creating another. A retried registration then maps back to the original session.
 
 ## Platform notes
 

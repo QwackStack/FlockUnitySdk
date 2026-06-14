@@ -24,16 +24,15 @@ namespace Flock.Editor
             EnsureStyles();
 
             EditorGUILayout.Space(6);
-            GUILayout.Label("Flock SDK Guide", _title);
-            GUILayout.Label("Quick reference for initializing the SDK and using analytics.", _subtitle);
+            GUILayout.Label("Flock SDK — Getting Started", _title);
+            GUILayout.Label("What Flock is, how to set it up, and where to find the full docs.", _subtitle);
             EditorGUILayout.Space(8);
 
-            DrawSection("SDK Initialization", FlockSdkGuide.Initialization);
-            DrawSection("Init Parameters", FlockSdkGuide.InitParameters);
-            DrawSection("Analytics", FlockSdkGuide.AnalyticsOverview);
-            DrawSection("Analytics Parameters", FlockSdkGuide.AnalyticsParameters);
-            DrawSection("Code Usage", FlockSdkGuide.CodeUsage);
-            DrawSection("Exception Capturing", FlockSdkGuide.ExceptionCapturing);
+            DrawSection("What is Flock?", FlockSdkGuide.Overview);
+            DrawSection("Configuration", FlockSdkGuide.Configuration);
+            DrawSection("Setup steps", FlockSdkGuide.Setup);
+            DrawSection("Quick Start", FlockSdkGuide.Quickstart);
+            DrawLinks();
         }
 
         private void DrawSection(string title, string body)
@@ -43,6 +42,30 @@ namespace Flock.Editor
             GUILayout.Label(body, _body);
             EditorGUILayout.EndVertical();
             EditorGUILayout.Space(4);
+        }
+
+        private void DrawLinks()
+        {
+            EditorGUILayout.BeginVertical(_card);
+            GUILayout.Label("Documentation & links", _section);
+            DrawLinkButton("Open Full Documentation", FlockSdkGuide.DocsUrl);
+            DrawLinkButton("Open Flock Dashboard", FlockSdkGuide.DashboardUrl);
+            DrawLinkButton("Contact Support", FlockSdkGuide.SupportUrl);
+            EditorGUILayout.EndVertical();
+            EditorGUILayout.Space(4);
+        }
+
+        // Renders a link as a button. If the URL is still a placeholder (not a
+        // real http link), the button is disabled and labelled so it is obvious
+        // in the editor that it still needs filling in.
+        private static void DrawLinkButton(string label, string url)
+        {
+            bool isSet = !string.IsNullOrEmpty(url) && url.StartsWith("http");
+            using (new EditorGUI.DisabledScope(!isSet))
+            {
+                if (GUILayout.Button(isSet ? label : label + "  (link not set)"))
+                    Application.OpenURL(url);
+            }
         }
 
         private void EnsureStyles()
