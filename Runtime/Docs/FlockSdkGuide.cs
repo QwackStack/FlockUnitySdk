@@ -3,149 +3,88 @@ using UnityEngine;
 namespace Flock.Docs
 {
     /// <summary>
-    /// In-Editor cheat sheet for the Flock Unity SDK. Opened from the
-    /// 'Documentation' button in the Qwacks/Flock editor window. Rendered by
-    /// FlockSdkGuideEditor — content lives in the constants below, so updates
-    /// to the .cs file are always reflected without re-creating the asset.
+    /// In-Editor "Getting Started" panel for the Flock Unity SDK. Opened from the
+    /// 'Getting Started' link in the Qwacks/Flock editor window and rendered by
+    /// FlockSdkGuideEditor. Intentionally thin — plain-language onboarding and
+    /// setup only, aimed at everyone on the team (including non-programmers). The
+    /// full developer reference lives in the README / online docs (see DocsUrl);
+    /// do not mirror it here. Content lives in the constants below, so editing this
+    /// .cs file updates the panel without re-creating the asset.
     /// </summary>
     [CreateAssetMenu(fileName = "FlockSdkGuide", menuName = "Flock/SDK Guide", order = 100)]
     public class FlockSdkGuide : ScriptableObject
     {
-        public const string Initialization =
-@"The SDK is a singleton. Call FlockClient.CreateAsync(config) once at startup, then access everything through FlockClient.Instance.
+        // ─────────────────────────────────────────────────────────────────────
+        //  LINKS TO FILL IN  — these are the only placeholders in this file.
+        //  Each is surfaced as a button in this panel and in the editor window;
+        //  any left unset shows as a disabled "(link not set)" button.
+        // ─────────────────────────────────────────────────────────────────────
 
-Two ways to initialize:
+        /// Full developer documentation (docs site / hosted README). FILL IN.
+        public const string DocsUrl = "FILL_IN_DOCS_URL";
 
-A) Drop-in (recommended)
-   In 'Qwacks > Flock', click 'Add Flock Bootstrap to Scene'. The bootstrap GameObject initializes the SDK on Awake.
+        /// Flock dashboard — where API Key, Game ID and Game Version come from. FILL IN.
+        public const string DashboardUrl = "FILL_IN_DASHBOARD_URL";
 
-      var bootstrap = FindObjectOfType<FlockBootstrap>();
-      bootstrap.OnInitialized          += () => Debug.Log(""Ready"");
-      bootstrap.OnInitializationFailed += ex => Debug.LogError(ex);
+        /// Support / contact page. Pre-filled — confirm this is the canonical URL.
+        public const string SupportUrl = "https://www.qwacks.com/flock";
 
-B) Code-based
-      var config = new FlockInitConfig(
-          apiUrl:      ""https://api-flock.qwacks.com"",
-          apiKey:      ""your-api-key"",
-          gameId:      ""your-game-id"",
-          gameVersion: ""your-game-version-name"");
-      await FlockClient.CreateAsync(config);
+        // ─────────────────────────────────────────────────────────────────────
+        //  Onboarding content
+        // ─────────────────────────────────────────────────────────────────────
 
-Accessing FlockClient.Instance before init throws — always initialize first.";
+        public const string Overview =
+@"Flock is a game backend. This SDK connects your Unity game to it for:
 
-        public const string InitParameters =
-@"Required:
-  apiUrl       Flock API endpoint (default: https://api-flock.qwacks.com).
-  apiKey       Your game's API key.
-  gameId       Your game's ID.
-  gameVersion  Your game version name (e.g. 'v1.0.0').
+  • Player accounts & login (email, device, Google, Apple, Steam)
+  • Saved player data and player templates
+  • A shop and player inventory
+  • Remote game configuration you can change without rebuilding the game
+  • Downloadable assets, and analytics
 
-Optional:
-  enableDebugLogs  Verbose console logging (default: false).
-  analyticsConfig  See 'Analytics Parameters' below.
-  retryPolicy      HTTP retry behaviour.
+You set it up once in this window. It's then called from your game's code, while most
+day-to-day content (game config, shop, templates) is managed on the Flock
+dashboard rather than inside Unity.";
 
-Asset cache:
-  EnableAssetCache       Disk cache for asset downloads (default: true). Disable on WebGL.
-  AssetCacheDirectory    Override path; empty uses the default location.
-  AssetCacheMaxSizeMB    Cache size cap (default 100; 0 = unlimited).";
+        public const string Configuration =
+@"Fill these in the Configuration section of this window. All four come from your
+game's page on the Flock dashboard:
 
-        public const string AnalyticsOverview =
-@"Sessions start automatically once the SDK is initialized and the player is logged in. Heartbeats keep the session active, long backgrounding rotates it, and quitting ends it cleanly. If the app crashes, the session is recovered on the next launch.
+  API URL       The Flock server address. Leave the default unless told otherwise
+                (default: https://api-flock.qwacks.com).
+  API Key       Identifies your game. Treat it like a password.
+  Game ID       Your game's unique ID.
+  Game Version  Your game version name (e.g. 'v1.0.0'). Must match a version that
+                exists on the dashboard.
 
-Events tracked before login or while offline are kept on disk and sent later when both auth and network are available.
+These are saved into Assets/Resources/FlockConfig.asset.";
 
-Turning analytics off (Enabled = false) makes every analytics call a no-op, so you don't need to wrap callsites in conditionals.";
+        public const string Setup =
+@"1. Fill in Configuration above.
+2. Click 'Add Flock Bootstrap to Scene'. This drops in a GameObject that starts
+   the SDK automatically when the game runs — put it in your first/boot scene.
+3. Run 'Flock > Sync Schemas' whenever you change player templates or game config
+   on the dashboard, or change Game Version, to regenerate the typed C# accessors.
+4. Done — the SDK is ready to use (see Quick Start below, and the full
+   documentation for everything else).";
 
-        public const string AnalyticsParameters =
-@"Enabled                    Master switch.
-AutoStartSession           Start a session as soon as the SDK is ready.
-AutoEndSessionOnQuit       Close the session on app quit.
-SessionTimeoutSeconds      Background time before the session rotates.
-HeartbeatIntervalSeconds   Heartbeat cadence (0 disables).
-BounceThresholdSeconds     Below this, sessions are flagged as bounces.
-PersistSessionOnDisk       Survive crashes — recovered on next launch.
-TrackFps                   Sample FPS into the session.
-FpsSampleIntervalSeconds   FPS sampling cadence.
+        public const string Quickstart =
+@"The shortest path once Configuration is filled in:
 
-Caching:
-CacheFailedEvents          Keep failed events on disk for retry.
-MaxCachedEvents            Cap on persisted events.
-CacheFlushBatchSize        How many to send per flush.
+  // Initialize once at startup (the Bootstrap component can do this for you).
+  await FlockClient.CreateAsync(new FlockInitConfig(
+      apiUrl:      ""https://api-flock.qwacks.com"",
+      apiKey:      ""your-api-key"",
+      gameId:      ""your-game-id"",
+      gameVersion: ""your-game-version-name""));
 
-These mirror the Analytics fields on the FlockConfig asset.";
+  // Log a player in — auth methods throw on failure.
+  await FlockClient.Instance.Authentication.LoginWithDeviceAsync(""device-uuid"");
 
-        public const string CodeUsage =
-@"All entry points are on FlockClient.Instance.Analytics.
+  // Read anything via FlockClient.Instance.
+  var game = await FlockClient.Instance.Game.GetGameAsync();
 
-// Screen view (aggregated, no immediate request)
-FlockClient.Instance.Analytics.RecordScreenView(""MainMenu"");
-
-// Single event
-await FlockClient.Instance.Analytics.TrackEventAsync(
-    eventName:     ""level_complete"",
-    eventCategory: ""progression"",
-    parameters: new Dictionary<string, object> {
-        { ""level"", 7 },
-        { ""duration_s"", 92 }
-    });
-
-// Free-form debug log
-await FlockClient.Instance.Analytics.LogEventAsync(
-    message: ""Boss spawned"",
-    extraData: new Dictionary<string, object> { { ""arena"", ""crypt"" } });
-
-// State / logical error
-await FlockClient.Instance.Analytics.LogErrorAsync(
-    message: ""Inventory check failed"",
-    errorCode: ""SHOP_INSUFFICIENT_FUNDS"",
-    errorData: new Dictionary<string, object> {
-        { ""coins"", 30 }, { ""price"", 50 }
-    });
-
-// Caught exception
-try { /* ... */ }
-catch (Exception ex) {
-    await FlockClient.Instance.Analytics.LogExceptionAsync(
-        ex,
-        errorData: new Dictionary<string, object> { { ""level"", 7 } });
-}
-
-// Raw exception (no Exception object)
-await FlockClient.Instance.Analytics.LogExceptionAsync(
-    message: ""Save failed"",
-    stackTrace: Environment.StackTrace);
-
-Notes:
-  - Login is required. Calls before login are queued and flushed afterwards.
-  - Parameters must be JSON-serializable (no UnityEngine objects).";
-
-        public const string ExceptionCapturing =
-@"Unhandled exceptions are captured automatically — anything that would show as a Unity exception in the console is also reported.
-
-Use these for caught exceptions or extra context:
-
-  // Caught exception
-  try { /* ... */ }
-  catch (Exception ex) {
-      await FlockClient.Instance.Analytics.LogExceptionAsync(
-          ex,
-          errorData: new Dictionary<string, object> { { ""level"", 7 } });
-  }
-
-  // State error (not an exception)
-  await FlockClient.Instance.Analytics.LogErrorAsync(
-      message: ""Inventory check failed"",
-      errorCode: ""SHOP_INSUFFICIENT_FUNDS"",
-      errorData: new Dictionary<string, object> {
-          { ""coins"", 30 }, { ""price"", 50 }
-      });
-
-  // Free-form debug log
-  await FlockClient.Instance.Analytics.LogEventAsync(
-      message: ""Boss spawned"",
-      extraData: new Dictionary<string, object> { { ""arena"", ""crypt"" } });
-
-Logs are queued, retried on failure, and only dropped when the payload itself is invalid.";
+Everything else — shop, player data, codegen, assets, offline cache, events — is
+in the full documentation.";
     }
 }

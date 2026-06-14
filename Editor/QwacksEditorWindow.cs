@@ -468,7 +468,7 @@ namespace Flock.Editor
         }
 
 
-        // SDK Guide — opened from the Documentation link in the header bar.
+        // SDK Guide — opened from the 'Getting Started' link in the header bar.
         // Loads the asset if it already exists anywhere in the project, otherwise
         // creates one at the default path. The asset is just a ScriptableObject
         // with TextArea fields, so the docs render in the Inspector on selection.
@@ -491,6 +491,19 @@ namespace Flock.Editor
 
             Selection.activeObject = guide;
             EditorGUIUtility.PingObject(guide);
+        }
+
+        // Opens the full online documentation in a browser. Warns in the window
+        // if the DocsUrl placeholder in FlockSdkGuide hasn't been filled in yet.
+        private void OpenDocs()
+        {
+            string url = FlockSdkGuide.DocsUrl;
+            if (string.IsNullOrEmpty(url) || !url.StartsWith("http"))
+            {
+                ShowStatus("Documentation link isn't set yet — fill in FlockSdkGuide.DocsUrl.", MessageType.Warning);
+                return;
+            }
+            Application.OpenURL(url);
         }
 
         private FlockSdkGuide CreateSdkGuideAsset()
@@ -585,11 +598,14 @@ namespace Flock.Editor
         {
             EditorGUILayout.BeginHorizontal(EditorStyles.helpBox);
             GUILayout.FlexibleSpace();
-            if (GUILayout.Button("Documentation", EditorStyles.linkLabel))
+            if (GUILayout.Button("Getting Started", EditorStyles.linkLabel))
                 OpenSdkGuide();
             GUILayout.Label("|", EditorStyles.miniLabel);
+            if (GUILayout.Button("Documentation", EditorStyles.linkLabel))
+                OpenDocs();
+            GUILayout.Label("|", EditorStyles.miniLabel);
             if (GUILayout.Button("Support", EditorStyles.linkLabel))
-                Application.OpenURL("https://www.qwacks.com/flock");
+                Application.OpenURL(FlockSdkGuide.SupportUrl);
             GUILayout.FlexibleSpace();
             EditorGUILayout.EndHorizontal();
         }
