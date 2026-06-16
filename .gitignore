@@ -70,3 +70,6 @@ graphify-out.meta
 
 # JetBrains Rider / IntelliJ
 .idea/
+
+# Maintainer-only docs (specs/plans) — kept local, not shipped. 
+Documentation~/

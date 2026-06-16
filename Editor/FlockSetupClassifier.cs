@@ -1,0 +1,61 @@
+namespace Flock.Editor
+{
+    /// What the play-mode guard should do at Play-enter.
+    public enum FlockSetupVerdict
+    {
+        Ok,
+        Warn,
+        Block
+    }
+
+    /// Snapshot of the project's Flock setup. Pure data (no Unity calls) so the
+    /// policy below is unit-testable without entering play mode.
+    public readonly struct FlockSetupState
+    {
+        public readonly bool ConfigAssetExists;
+        public readonly bool ConfigValid;
+        public readonly bool GuardEnabled;
+        public readonly bool BootstrapPresent;
+        public readonly bool BootstrapConfigValid;
+
+        public FlockSetupState(bool configAssetExists, bool configValid, bool guardEnabled,
+            bool bootstrapPresent, bool bootstrapConfigValid)
+        {
+            ConfigAssetExists = configAssetExists;
+            ConfigValid = configValid;
+            GuardEnabled = guardEnabled;
+            BootstrapPresent = bootstrapPresent;
+            BootstrapConfigValid = bootstrapConfigValid;
+        }
+    }
+
+    /// Maps a setup snapshot to a verdict. Priority order matches the design spec's table.
+    public static class FlockSetupClassifier
+    {
+        public static FlockSetupVerdict Classify(FlockSetupState state)
+        {
+            // 0. Opted out on an existing asset → never interfere.
+            if (state.ConfigAssetExists && !state.GuardEnabled)
+                return FlockSetupVerdict.Ok;
+
+            // 1. Asset-only init: no asset means nothing can initialize.
+            if (!state.ConfigAssetExists)
+                return FlockSetupVerdict.Block;
+
+            // 2. Asset present but incomplete.
+            if (!state.ConfigValid)
+                return FlockSetupVerdict.Block;
+
+            // 3. A bootstrap is wired but its config is missing/invalid → it will fail to init.
+            if (state.BootstrapPresent && !state.BootstrapConfigValid)
+                return FlockSetupVerdict.Block;
+
+            // 4. Valid config but no bootstrap → maybe manual Create(); whisper, don't block.
+            if (!state.BootstrapPresent)
+                return FlockSetupVerdict.Warn;
+
+            // 5. Valid config + wired bootstrap.
+            return FlockSetupVerdict.Ok;
+        }
+    }
+}

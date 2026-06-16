@@ -129,6 +129,7 @@ namespace Flock.Providers
         public async Task<AssetSchema> GetByNameAsync(string name, CancellationToken cancellationToken = default)
         {
             RequireNotEmpty(name, "Asset Name");
+            //cuz of BE not having get by name
             if (!_allAssetsFetched)
                 await GetAllAsync(cancellationToken);
 

@@ -47,10 +47,9 @@ The Flock Unity SDK provides access to Flock's game backend services from Unity 
 
 The SDK is distributed through the Flock website — download the latest release, then add it to your Unity project one of two ways:
 
-**Download: [FLOCK LINK]**
+**Download: [FILL_IN_FLOCK LINK]**
 
 - **Import the `.unitypackage`** — double-click the downloaded file (or use **Assets > Import Package > Custom Package**) and import all items.
-- **Unity Package Manager (git URL)** — in **Window > Package Manager**, click **+ → Add package from git URL**, then paste the git URL shown on the download page.
 
 ## Requirements
 

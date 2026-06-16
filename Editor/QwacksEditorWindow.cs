@@ -2,6 +2,8 @@ using System;
 using System.IO;
 using System.Net;
 using System.Net.Http;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading.Tasks;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -34,7 +36,7 @@ namespace Flock.Editor
         private static readonly Color DestructiveAction = new Color(0.85f, 0.40f, 0.40f);
         private static readonly Color HighlightAction = new Color(0.95f, 0.75f, 0.25f);
 
-        private enum Tab { Configuration, CodeGen }
+        private enum Tab { Configuration, Advanced, CodeGen }
 
         private Tab activeTab = Tab.Configuration;
         private Vector2 scroll;
@@ -91,6 +93,7 @@ namespace Flock.Editor
             switch (activeTab)
             {
                 case Tab.Configuration: DrawConfigurationTab(); break;
+                case Tab.Advanced: DrawAdvancedTab(); break;
 #if !FLOCK_NO_SCHEMA
                 case Tab.CodeGen: DrawCodegenTab(); break;
 #endif
@@ -156,6 +159,7 @@ namespace Flock.Editor
             // and we snap any stale selection back to Configuration.
             if (activeTab == Tab.CodeGen) activeTab = Tab.Configuration;
 #endif
+            DrawTabButton("Advanced Settings", Tab.Advanced);
             GUILayout.FlexibleSpace();
             EditorGUILayout.EndHorizontal();
         }
@@ -172,17 +176,150 @@ namespace Flock.Editor
 
         private void DrawConfigurationTab()
         {
-            if (!EnsureAssetExistsCard()) return;
+            DrawSetupCard();
+
+            // The Setup card's "FlockConfig asset" row handles the create-asset step, so the
+            // detailed cards below only render once an asset exists.
+            if (config == null || configSerialized == null) return;
 
             configSerialized.Update();
-            DrawAssetStatusCard();
             DrawCredentialsCard();
+            DrawAssetStatusCard();
+            configSerialized.ApplyModifiedProperties();
+        }
+
+        // Advanced tab — extra/optional settings most projects can leave at their defaults
+        // (debug logging, analytics tuning, asset cache, HTTP retry, and editor tools).
+        private void DrawAdvancedTab()
+        {
+            if (config == null || configSerialized == null)
+            {
+                EditorGUILayout.HelpBox(
+                    "Create a FlockConfig asset on the Configuration tab first — these settings live on it.",
+                    MessageType.Info);
+                return;
+            }
+
+            configSerialized.Update();
             DrawOptionalCard();
             DrawAnalyticsCard();
             DrawAssetCacheCard();
             DrawRetryPolicyCard();
             DrawConfigToolsCard();
             configSerialized.ApplyModifiedProperties();
+        }
+
+        // Setup checklist — pinned at the top of the Configuration tab. Renders even with no
+        // asset (the Config row creates one). Consolidates the validity / connection / bootstrap
+        // / schema signals into one at-a-glance, one-click-fix panel.
+        private void DrawSetupCard()
+        {
+            EditorGUILayout.BeginVertical(cardStyle);
+            GUILayout.Label("Setup", sectionHeaderStyle);
+
+            bool configExists = config != null;
+            string credentialsError = "";
+            bool credentialsValid = configExists && config.IsValid(out credentialsError);
+            bool connectionVerified = ConnectionVerified(out string connectionDetail);
+            bool bootstrapPresent = UnityEngine.Object.FindAnyObjectByType<FlockBootstrap>() != null;
+
+            bool includeSchemas;
+            bool schemasGenerated = false;
+#if !FLOCK_NO_SCHEMA
+            includeSchemas = true;
+            if (configExists && !string.IsNullOrEmpty(config.generatedCodePath) && Directory.Exists(config.generatedCodePath))
+                schemasGenerated = Directory.GetFiles(config.generatedCodePath, "*.cs", SearchOption.AllDirectories).Length > 0;
+#else
+            includeSchemas = false;
+#endif
+
+            FlockSetupFacts facts = new FlockSetupFacts(
+                configExists, credentialsValid, credentialsError,
+                connectionVerified, connectionDetail, bootstrapPresent,
+                includeSchemas, schemasGenerated);
+
+            foreach (FlockSetupItem item in FlockSetupChecklist.Build(facts))
+                DrawSetupRow(item);
+
+            EditorGUILayout.EndVertical();
+        }
+
+        private void DrawSetupRow(FlockSetupItem item)
+        {
+            EditorGUILayout.BeginHorizontal();
+
+            Color previous = GUI.color;
+            GUI.color = StateColor(item.State);
+            GUILayout.Label(StateTag(item.State), EditorStyles.miniBoldLabel, GUILayout.Width(70));
+            GUI.color = previous;
+
+            EditorGUILayout.BeginVertical();
+            GUILayout.Label(item.Label, EditorStyles.boldLabel);
+            if (!string.IsNullOrEmpty(item.Detail))
+                GUILayout.Label(item.Detail, EditorStyles.wordWrappedMiniLabel);
+            EditorGUILayout.EndVertical();
+
+            GUILayout.FlexibleSpace();
+            DrawSetupRowAction(item.Key, item.State);
+
+            EditorGUILayout.EndHorizontal();
+            EditorGUILayout.Space(2);
+        }
+
+        private void DrawSetupRowAction(string key, FlockSetupItemState state)
+        {
+            switch (key)
+            {
+                case "config":
+                    if (state != FlockSetupItemState.Done)
+                        using (new BackgroundColorScope(PrimaryAction))
+                            if (GUILayout.Button("Create", GUILayout.Width(110), GUILayout.Height(22)))
+                                CreateConfigAsset();
+                    break;
+
+                case "connection":
+                    using (new EditorGUI.DisabledScope(config == null || string.IsNullOrWhiteSpace(config.apiUrl) || string.IsNullOrWhiteSpace(config.apiKey)))
+                        if (GUILayout.Button(state == FlockSetupItemState.Done ? "Re-verify" : "Verify", GUILayout.Width(110), GUILayout.Height(22)))
+                            TestConfiguration();
+                    break;
+
+                case "bootstrap":
+                    if (state != FlockSetupItemState.Done)
+                        using (new EditorGUI.DisabledScope(config == null || !config.IsValid(out _)))
+                        using (new BackgroundColorScope(HighlightAction))
+                            if (GUILayout.Button("Add to Scene", GUILayout.Width(110), GUILayout.Height(22)))
+                                AddBootstrapToScene();
+                    break;
+
+#if !FLOCK_NO_SCHEMA
+                case "schemas":
+                    if (GUILayout.Button("Open Codegen", GUILayout.Width(110), GUILayout.Height(22)))
+                        activeTab = Tab.CodeGen;
+                    break;
+#endif
+            }
+        }
+
+        private static string StateTag(FlockSetupItemState state)
+        {
+            switch (state)
+            {
+                case FlockSetupItemState.Done: return "DONE";
+                case FlockSetupItemState.Required: return "REQUIRED";
+                case FlockSetupItemState.Manual: return "VERIFY";
+                default: return "OPTIONAL";
+            }
+        }
+
+        private static Color StateColor(FlockSetupItemState state)
+        {
+            switch (state)
+            {
+                case FlockSetupItemState.Done: return new Color(0.40f, 0.80f, 0.45f);
+                case FlockSetupItemState.Required: return new Color(0.90f, 0.50f, 0.50f);
+                case FlockSetupItemState.Manual: return new Color(0.95f, 0.75f, 0.25f);
+                default: return new Color(0.70f, 0.70f, 0.70f);
+            }
         }
 
         private void DrawAssetStatusCard()
@@ -192,6 +329,16 @@ namespace Flock.Editor
             EditorGUILayout.LabelField(
                 "Edits here are saved straight into the asset. There's no separate Save step.",
                 EditorStyles.miniLabel);
+            EditorGUILayout.Space(4);
+
+            if (GUILayout.Button(
+                    new GUIContent("Locate Asset", "Selects the FlockConfig asset in the Project view so you can inspect or move it."),
+                    GUILayout.Height(24)))
+            {
+                EditorGUIUtility.PingObject(config);
+                Selection.activeObject = config;
+            }
+
             EditorGUILayout.EndVertical();
         }
 
@@ -285,45 +432,11 @@ namespace Flock.Editor
             EditorGUILayout.BeginVertical(cardStyle);
             GUILayout.Label("Tools", sectionHeaderStyle);
 
-            EditorGUILayout.BeginHorizontal();
-
-            using (new EditorGUI.DisabledScope(string.IsNullOrWhiteSpace(config.apiUrl) || string.IsNullOrWhiteSpace(config.apiKey)))
-            {
-                if (GUILayout.Button(
-                        new GUIContent("Test Connection", "Resolves your Game Version against the backend with your API key — the same call FlockClient.CreateAsync makes. Green here means initialization will succeed."),
-                        GUILayout.Height(28)))
-                    TestConfiguration();
-            }
-
-            if (GUILayout.Button(
-                    new GUIContent("Locate Asset", "Selects the FlockConfig asset in the Project view so you can inspect or move it."),
-                    GUILayout.Height(28)))
-            {
-                EditorGUIUtility.PingObject(config);
-                Selection.activeObject = config;
-            }
-
-            EditorGUILayout.EndHorizontal();
-
-            using (new EditorGUI.DisabledScope(!config.IsValid(out _)))
-            {
-                bool bootstrapPresent = UnityEngine.Object.FindAnyObjectByType<FlockBootstrap>() != null;
-                GUIContent label = bootstrapPresent
-                    ? new GUIContent(
-                        "Bootstrap Already Added",
-                        "A FlockBootstrap component already exists in the active scene. Click to ping it in the Hierarchy.")
-                    : new GUIContent(
-                        "Add Flock Bootstrap to Scene",
-                        "Creates a GameObject in the active scene with a FlockBootstrap component pointed at this asset. " +
-                        "Recommended for projects that don't want to write their own SDK init code — drop this in a Boot scene and forget about it.");
-
-                // Highlight gold while the bootstrap is missing so the next-step action is obvious.
-                using (new BackgroundColorScope(bootstrapPresent ? GUI.backgroundColor : HighlightAction))
-                {
-                    if (GUILayout.Button(label, GUILayout.Height(28)))
-                        AddBootstrapToScene();
-                }
-            }
+            SerializedProperty guardProp = configSerialized.FindProperty("playModeGuardEnabled");
+            guardProp.boolValue = EditorGUILayout.Toggle(
+                new GUIContent("Play-Mode Setup Guard",
+                    "When ON, entering Play with Flock not set up shows a fixable dialog. Editor-only; saved on the asset."),
+                guardProp.boolValue);
 
             EditorGUILayout.EndVertical();
         }
@@ -401,17 +514,7 @@ namespace Flock.Editor
 
         private void BindConfig()
         {
-            config = AssetDatabase.LoadAssetAtPath<FlockConfigAsset>(ConfigAssetPath);
-
-            if (config == null)
-            {
-                // Fall back to the first FlockConfigAsset anywhere in the project so users
-                // who moved the asset don't see "no asset" by mistake.
-                string[] guids = AssetDatabase.FindAssets("t:FlockConfigAsset");
-                if (guids != null && guids.Length > 0)
-                    config = AssetDatabase.LoadAssetAtPath<FlockConfigAsset>(AssetDatabase.GUIDToAssetPath(guids[0]));
-            }
-
+            config = FlockConfigLocator.FindConfigAsset();
             configSerialized = config != null ? new SerializedObject(config) : null;
         }
 
@@ -620,7 +723,45 @@ namespace Flock.Editor
         }
 
 
-        // Connection test
+        // Connection test — the result is cached in SessionState (per editor session), keyed by
+        // a hash of the four credentials so any edit invalidates a prior green result. The Setup
+        // card's Connection row reads this cache; there is never an automatic network ping.
+
+        private const string ConnHashKey = "Flock.Setup.ConnHash";
+        private const string ConnOkKey = "Flock.Setup.ConnOk";
+        private const string ConnMsgKey = "Flock.Setup.ConnMsg";
+
+        private static string CredHash(FlockConfigAsset c)
+        {
+            string raw = (c.apiUrl ?? "") + "|" + (c.apiKey ?? "") + "|" + (c.gameId ?? "") + "|" + (c.gameVersion ?? "");
+            using (MD5 md5 = MD5.Create())
+            {
+                byte[] bytes = md5.ComputeHash(Encoding.UTF8.GetBytes(raw));
+                return BitConverter.ToString(bytes);
+            }
+        }
+
+        private static void StoreConnectionResult(string credHash, bool ok, string message)
+        {
+            SessionState.SetString(ConnHashKey, credHash);
+            SessionState.SetBool(ConnOkKey, ok);
+            SessionState.SetString(ConnMsgKey, message);
+        }
+
+        private bool ConnectionVerified(out string detail)
+        {
+            if (config == null) { detail = "Not verified yet."; return false; }
+
+            string stored = SessionState.GetString(ConnHashKey, "");
+            if (stored.Length == 0 || stored != CredHash(config))
+            {
+                detail = "Not verified for the current credentials.";
+                return false;
+            }
+
+            detail = SessionState.GetString(ConnMsgKey, "");
+            return SessionState.GetBool(ConnOkKey, false);
+        }
 
         private async void TestConfiguration()
         {
@@ -629,14 +770,17 @@ namespace Flock.Editor
             string apiUrl = (config.apiUrl ?? string.Empty).Trim();
             string apiKey = (config.apiKey ?? string.Empty).Trim();
             string gameVersion = (config.gameVersion ?? string.Empty).Trim();
+            string credHash = CredHash(config);
 
             if (!Uri.IsWellFormedUriString(apiUrl, UriKind.Absolute))
             {
+                StoreConnectionResult(credHash, false, "API URL is invalid.");
                 ShowStatus("API URL is invalid.", MessageType.Error);
                 return;
             }
             if (string.IsNullOrEmpty(apiKey))
             {
+                StoreConnectionResult(credHash, false, "API Key is required.");
                 ShowStatus("API Key is required.", MessageType.Error);
                 return;
             }
@@ -658,33 +802,63 @@ namespace Flock.Editor
                 HttpResponseMessage response = await http.GetAsync(url);
                 EditorUtility.ClearProgressBar();
 
+                bool verified;
+                string message;
+                MessageType type;
+
                 if (response.IsSuccessStatusCode)
                 {
                     if (hasGameVersion)
-                        ShowStatus($"Connection OK — Game Version '{gameVersion}' resolved.", MessageType.Info);
+                    {
+                        verified = true;
+                        message = $"Connection OK — Game Version '{gameVersion}' resolved.";
+                        type = MessageType.Info;
+                    }
                     else
-                        ShowStatus("API key accepted. Set Game Version to fully verify init will succeed.", MessageType.Warning);
+                    {
+                        verified = false;
+                        message = "API key accepted. Set Game Version to fully verify init will succeed.";
+                        type = MessageType.Warning;
+                    }
                 }
                 else if (response.StatusCode == HttpStatusCode.Unauthorized || response.StatusCode == HttpStatusCode.Forbidden)
-                    ShowStatus($"API key rejected ({(int)response.StatusCode} {response.StatusCode}).", MessageType.Error);
+                {
+                    verified = false;
+                    message = $"API key rejected ({(int)response.StatusCode} {response.StatusCode}).";
+                    type = MessageType.Error;
+                }
                 else if (response.StatusCode == HttpStatusCode.NotFound && hasGameVersion)
-                    ShowStatus($"Game Version '{gameVersion}' not found on the backend.", MessageType.Error);
+                {
+                    verified = false;
+                    message = $"Game Version '{gameVersion}' not found on the backend.";
+                    type = MessageType.Error;
+                }
                 else
-                    ShowStatus($"API returned {(int)response.StatusCode} {response.StatusCode}.", MessageType.Warning);
+                {
+                    verified = false;
+                    message = $"API returned {(int)response.StatusCode} {response.StatusCode}.";
+                    type = MessageType.Warning;
+                }
+
+                StoreConnectionResult(credHash, verified, message);
+                ShowStatus(message, type);
             }
             catch (HttpRequestException ex)
             {
                 EditorUtility.ClearProgressBar();
+                StoreConnectionResult(credHash, false, "Connection failed.");
                 ShowStatus($"Connection failed: {ex.Message}", MessageType.Error);
             }
             catch (TaskCanceledException)
             {
                 EditorUtility.ClearProgressBar();
+                StoreConnectionResult(credHash, false, "Connection timed out.");
                 ShowStatus("Connection timed out.", MessageType.Error);
             }
             catch (Exception ex)
             {
                 EditorUtility.ClearProgressBar();
+                StoreConnectionResult(credHash, false, "Test failed.");
                 ShowStatus($"Test failed: {ex.Message}", MessageType.Error);
             }
         }

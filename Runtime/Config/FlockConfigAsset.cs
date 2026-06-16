@@ -95,6 +95,14 @@ namespace Flock.Config
         [Tooltip("Adds ±25% randomness to each retry delay to avoid thundering-herd reconnects after a server outage. Leave on unless you have a specific reason.")]
         public bool retryUseJitter = true;
 
+        [Header("Editor")]
+        [Tooltip(
+            "When ON, entering Play with Flock not set up (no/invalid FlockConfig, or a " +
+            "FlockBootstrap whose config is missing/invalid) shows a fixable dialog instead " +
+            "of failing at runtime. Editor-only; no effect in builds. Stored on the asset so " +
+            "the team shares the setting — gitignore the asset if you don't want it shared.")]
+        public bool playModeGuardEnabled = true;
+
         public string ApiKey
         {
             get => apiKey;

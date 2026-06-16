@@ -152,8 +152,10 @@ namespace Flock
         /// </summary>
         public static void Shutdown()
         {
-            //Should we allow this?
             if (_instance == null) return;
+#if !FLOCK_NO_ANALYTICS
+            (_instance._analytics as FlockAnalyticsProvider)?.UninstallGlobalExceptionHook();
+#endif
             _instance.ClearTokens();
             _instance = null;
             FlockEvents.RaiseShutdown();
