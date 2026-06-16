@@ -39,6 +39,7 @@ namespace Flock.Editor
         private const string StagingRoot = "Assets/FlockSDK/";
         private const string StagingRuntimeRsp = StagingRoot + "Runtime/csc.rsp";
         private const string StagingEditorRsp = StagingRoot + "Editor/csc.rsp";
+        private const string StagingSamplesRsp = StagingRoot + "Samples/QuickStart/csc.rsp";
         private const string PackageName = "com.flock.sdk";
 
         // SDK-maintainer-only files. Excluded from every build regardless of provider
@@ -343,6 +344,8 @@ namespace Flock.Editor
                 // defines as runtime.
                 WriteOrDeleteRsp(StagingRuntimeRsp, defines);
                 WriteOrDeleteRsp(StagingEditorRsp, defines);
+                if (_includeSamples)
+                    WriteOrDeleteRsp(StagingSamplesRsp, defines);
                 AssetDatabase.Refresh();
                 ExportFromStaging(excludedRelpaths, excludedFolders);
                 return;
@@ -361,6 +364,8 @@ namespace Flock.Editor
                 WriteOrDeleteRsp(StagingRuntimeRsp, defines);
                 if (_includeEditor)
                     WriteOrDeleteRsp(StagingEditorRsp, defines);
+                if (_includeSamples)
+                    WriteOrDeleteRsp(StagingSamplesRsp, defines);
                 AssetDatabase.Refresh();
                 ExportFromStaging(excludedRelpaths, excludedFolders);
             }
@@ -386,6 +391,7 @@ namespace Flock.Editor
                     if (relative.StartsWith("Runtime/")) return true;
                     if (relative.StartsWith("Editor/") && _includeEditor) return true;
                     if (relative.StartsWith("Samples~/") && _includeSamples) return true;
+                    if (relative.StartsWith("Samples/") && _includeSamples) return true;
                     if (relative.StartsWith("Documentation~/") && _includeDocs) return true;
                     if (relative == "package.json") return true;
                     if (relative == "package.json.meta") return true;
@@ -478,9 +484,16 @@ namespace Flock.Editor
                 if (File.Exists(Path.Combine(sourceRoot, "Editor.meta"))) yield return "Editor.meta";
             }
 
-            // Samples~ / Documentation~ are skipped: Unity ignores ~-suffixed dirs in the
-            // AssetDatabase, so they wouldn't make it into the .unitypackage anyway. Matches
-            // the prior builder's effective behavior.
+            // Optional: Samples tree. A normal (non-tilde) folder so it ships in the
+            // .unitypackage and lands in the consumer's Assets/.
+            if (_includeSamples)
+            {
+                foreach (string p in WalkTree(sourceRoot, "Samples", excludedRelpaths, excludedFolders)) yield return p;
+                if (File.Exists(Path.Combine(sourceRoot, "Samples.meta"))) yield return "Samples.meta";
+            }
+
+            // The ~-suffixed dirs (Samples~ / Documentation~) are still skipped: Unity ignores
+            // them in the AssetDatabase, so they wouldn't make it into the .unitypackage anyway.
         }
 
         private static IEnumerable<string> WalkTree(string sourceRoot, string subdir, HashSet<string> excludedRelpaths, HashSet<string> excludedFolders)

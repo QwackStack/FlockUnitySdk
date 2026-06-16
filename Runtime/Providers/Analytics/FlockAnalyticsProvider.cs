@@ -182,6 +182,20 @@ namespace Flock.Providers
             _exceptionHookInstalled = true;
         }
 
+        // Mirror of InstallGlobalExceptionHook — must run on Shutdown so a re-init
+        // doesn't leave this provider bound to the DontDestroyOnLoad FlockBehaviour
+        // (stale handler → duplicate sends + a leaked FlockClient).
+        internal void UninstallGlobalExceptionHook()
+        {
+            if (!_exceptionHookInstalled)
+                return;
+
+            if (FlockBehaviour.IsAvailable)
+                FlockBehaviour.Instance.OnException -= HandleGlobalException;
+
+            _exceptionHookInstalled = false;
+        }
+
         private async void HandleGlobalException(string message, string stackTrace)
         {
             try
@@ -600,7 +614,7 @@ namespace Flock.Providers
 
         // Drains every cache the provider owns. Each cache flushes to its own endpoint —
         // analytics events to /v1/analytics/events, log events to /v1/log_event — but the
-        // trigger is unified so a single online-event opportunistically empties both.
+        // trigger is unified so a single online-event empties both.
         // async void is intentional fire-and-forget; try/catch is non-negotiable because
         // any escaping exception would land at the SynchronizationContext root unhandled.
         // ConfigureAwait(false) because flush is pure I/O — no Unity APIs touched.

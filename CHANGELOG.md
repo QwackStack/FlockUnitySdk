@@ -5,6 +5,14 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [1.13.0] - 2026-06-16
+
+### Added
+- Editor Play-mode setup guard: entering Play with Flock not set up (missing/invalid `FlockConfig`, or a `FlockBootstrap` with no/invalid config) now shows a fixable dialog instead of failing silently at runtime. Per-project toggle via **Play-Mode Setup Guard** in Qwacks > Editor. Editor-only; no build impact.
+- Quick-Start sample (`Samples/QuickStart/`): a single IMGUI script — with a `FlockBootstrap` in the scene it logs in with the device id, shows the player, fires a test analytics event, and reads player data. Bundled in the package and the `.unitypackage`.
+- Setup checklist: the **Qwacks > Editor** Configuration tab now opens with a one-look **Setup** panel (FlockConfig asset · credentials · connection · scene bootstrap · schemas), each with a one-click fix. Consolidates the previously-scattered status signals; the connection check is cached per session and invalidated when credentials change.
+- Qwacks > Editor: optional/tuning settings (debug logs, analytics, asset cache, HTTP retry, tools) moved to a new **Advanced** tab; the Configuration tab now focuses on the Setup checklist + credentials.
+
 ## [1.12.0] - 2026-06-12
 
 ### Added
