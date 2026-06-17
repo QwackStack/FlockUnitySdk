@@ -92,14 +92,24 @@ namespace Flock.Providers
 #endif
         }
 
-        /// <summary>
-        /// Attempts to resume a previously persisted session from
-        /// <see cref="Flock.Config.FlockInitConfig.TokenStore"/>. If the stored access
-        /// token is still valid it is used as-is; if expired, a refresh is attempted.
-        /// Returns <c>true</c> when the player is signed in afterward, <c>false</c>
-        /// otherwise (no stored tokens, parse failure, or refresh rejected).
-        /// </summary>
+        /// <summary>Resumes a persisted session (refreshing an expired token), toggling <see cref="FlockClient.IsRestoringSession"/> and raising <see cref="FlockEvents.OnSessionRestored"/>. Returns true if signed in afterward.</summary>
         public async Task<bool> TryRestoreSessionAsync(CancellationToken cancellationToken = default)
+        {
+            FlockClient.IsRestoringSession = true;
+            bool restored = false;
+            try
+            {
+                restored = await RestoreSessionCoreAsync(cancellationToken);
+            }
+            finally
+            {
+                FlockClient.IsRestoringSession = false;
+                FlockEvents.RaiseSessionRestored(restored);
+            }
+            return restored;
+        }
+
+        private async Task<bool> RestoreSessionCoreAsync(CancellationToken cancellationToken)
         {
             StoredTokens stored = Client.LoadPersistedTokens();
             if (stored == null || string.IsNullOrEmpty(stored.AccessToken))

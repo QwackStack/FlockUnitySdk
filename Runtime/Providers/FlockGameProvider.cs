@@ -66,7 +66,8 @@ namespace Flock.Providers
             if (_gameVersionsByName.TryGetValue(name, out GameVersionSchema cached))
                 return cached;
 
-            // Shares the bootstrap snapshot used by FlockClient.CreateAsync for the same lookup.
+            // Uses the BootstrapScope snapshot namespace for by-name version lookups (populated lazily
+            // on first call now that init no longer pre-resolves the version).
             GameVersionSchema version = await FetchWithSnapshotAsync(
                 FlockSnapshotStore.BootstrapScope, $"{Client.GetApiUrl()}|{name}", async () =>
                 {

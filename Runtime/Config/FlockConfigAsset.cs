@@ -1,7 +1,6 @@
 using Flock.Analytics;
 using Flock.Http;
 using UnityEngine;
-using UnityEngine.Serialization;
 
 namespace Flock.Config
 {
@@ -19,8 +18,14 @@ namespace Flock.Config
         public string gameId;
 
         [Tooltip("Your Game Version name. The matching version ID is fetched from the backend on SDK init.")]
-        [FormerlySerializedAs("gameVersionId")]
         public string gameVersion;
+
+        [Header("Resolved (do not edit by hand)")]
+        [Tooltip(
+            "Game Version ID, resolved from the dashboard at edit time and baked here. " +
+            "Runtime init uses this directly and never contacts the server. Resolved " +
+            "automatically in Qwacks > Editor when you change your credentials or version.")]
+        public string gameVersionId;
 
         [Header("Codegen")]
         [Tooltip("Project-relative folder where 'Flock > Sync Schemas' writes generated .cs files (and 'Clean Generated' wipes). Must start with 'Assets/'. Created automatically if missing. Treat this folder as Flock-owned — files in it will be deleted on regen/clean.")]
@@ -95,6 +100,14 @@ namespace Flock.Config
         [Tooltip("Adds ±25% randomness to each retry delay to avoid thundering-herd reconnects after a server outage. Leave on unless you have a specific reason.")]
         public bool retryUseJitter = true;
 
+        [Header("Initialization")]
+        [Tooltip(
+            "When ON, the SDK initializes itself automatically at startup (before the first scene " +
+            "loads) from this asset — no FlockBootstrap component or Create() call needed — and " +
+            "restores a persisted session in the background. Leave OFF if you use FlockBootstrap or " +
+            "call FlockClient.Create yourself (e.g. after a splash screen or EULA).")]
+        public bool autoInitializeOnLoad = true;
+
         [Header("Editor")]
         [Tooltip(
             "When ON, entering Play with Flock not set up (no/invalid FlockConfig, or a " +
@@ -102,6 +115,11 @@ namespace Flock.Config
             "of failing at runtime. Editor-only; no effect in builds. Stored on the asset so " +
             "the team shares the setting — gitignore the asset if you don't want it shared.")]
         public bool playModeGuardEnabled = true;
+
+        [Tooltip(
+            "Fail the player build if the Game Version ID above has not been resolved, so a " +
+            "build that cannot initialize the SDK can't ship. Editor-only; no effect at runtime.")]
+        public bool failBuildIfVersionUnresolved = true;
 
         public string ApiKey
         {
@@ -138,6 +156,7 @@ namespace Flock.Config
                 analyticsConfig: analyticsConfig,
                 retryPolicy: retryPolicy)
             {
+                GameVersionId = gameVersionId,
                 EnableAssetCache = enableAssetCache,
                 AssetCacheDirectory = assetCacheDirectory,
                 AssetCacheMaxSizeMB = assetCacheMaxSizeMB,

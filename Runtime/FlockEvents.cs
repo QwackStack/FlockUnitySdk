@@ -6,8 +6,10 @@ namespace Flock
 {
     /// <summary>
     /// Static hub for SDK lifecycle events. Subscribe anytime, even before
-    /// <see cref="FlockClient.CreateAsync"/>; raised on the Unity main thread. All
-    /// subscriptions are cleared on <see cref="FlockClient.Shutdown"/> — subscribe in
+    /// <see cref="FlockClient.Create"/>; raised on the Unity main thread.
+    /// <see cref="OnInitialized"/> and <see cref="OnInitializationFailed"/> are replayed to
+    /// handlers that subscribe after init already happened, so they fire under auto-init too.
+    /// All subscriptions are cleared on <see cref="FlockClient.Shutdown"/> — subscribe in
     /// OnEnable, unsubscribe in OnDisable. A throwing subscriber is logged and never
     /// breaks the SDK or other subscribers.
     /// </summary>
@@ -18,11 +20,30 @@ namespace Flock
 
         //Lifecycle
 
-        /// <summary>SDK initialized — <see cref="FlockClient.Instance"/> is usable.</summary>
-        public static event Action OnInitialized;
+        private static Action _onInitialized;
+        /// <summary>SDK initialized — <see cref="FlockClient.Instance"/> is usable. Replayed immediately to handlers that subscribe after init (so it works under auto-init).</summary>
+        public static event Action OnInitialized
+        {
+            add
+            {
+                _onInitialized += value;
+                if (FlockClient.IsInitialized) InvokeOne(value, nameof(OnInitialized));
+            }
+            remove { _onInitialized -= value; }
+        }
 
-        /// <summary><see cref="FlockClient.CreateAsync"/> failed; the exception is still thrown to the caller.</summary>
-        public static event Action<Exception> OnInitializationFailed;
+        private static Action<Exception> _onInitializationFailed;
+        /// <summary><see cref="FlockClient.Create"/> failed (still thrown to direct callers; the auto-init path logs instead). Replayed to late subscribers from <see cref="FlockClient.InitializationError"/>. The "already initialized" misuse guard does not raise it.</summary>
+        public static event Action<Exception> OnInitializationFailed
+        {
+            add
+            {
+                _onInitializationFailed += value;
+                Exception error = FlockClient.InitializationError;
+                if (error != null) InvokeOne(value, error, nameof(OnInitializationFailed));
+            }
+            remove { _onInitializationFailed -= value; }
+        }
 
         /// <summary><see cref="FlockClient.Shutdown"/> completed. Last event raised; all subscriptions are cleared right after.</summary>
         public static event Action OnShutdown;
@@ -40,6 +61,9 @@ namespace Flock
 
         /// <summary><c>Logout()</c> completed (local-only: nothing revoked server-side).</summary>
         public static event Action OnLoggedOut;
+
+        /// <summary>Session restore finished; payload is whether a session was restored (also fires false when there was none).</summary>
+        public static event Action<bool> OnSessionRestored;
 
         //Session
 
@@ -59,12 +83,12 @@ namespace Flock
 
         internal static void RaiseInitialized()
         {
-            Raise(OnInitialized, nameof(OnInitialized));
+            Raise(_onInitialized, nameof(OnInitialized));
         }
 
         internal static void RaiseInitializationFailed(Exception exception)
         {
-            Raise(OnInitializationFailed, exception, nameof(OnInitializationFailed));
+            Raise(_onInitializationFailed, exception, nameof(OnInitializationFailed));
         }
 
         internal static void RaiseShutdown()
@@ -92,6 +116,11 @@ namespace Flock
             Raise(OnLoggedOut, nameof(OnLoggedOut));
         }
 
+        internal static void RaiseSessionRestored(bool restored)
+        {
+            Raise(OnSessionRestored, restored, nameof(OnSessionRestored));
+        }
+
         internal static void RaiseSessionStarted(string sessionId)
         {
             Raise(OnSessionStarted, sessionId, nameof(OnSessionStarted));
@@ -117,13 +146,14 @@ namespace Flock
         /// <summary>Drops every subscription. Called by Shutdown and on play-session start with domain reload disabled.</summary>
         internal static void ClearAll()
         {
-            OnInitialized = null;
-            OnInitializationFailed = null;
+            _onInitialized = null;
+            _onInitializationFailed = null;
             OnShutdown = null;
             OnAuthenticated = null;
             OnTokenRefreshed = null;
             OnAuthExpired = null;
             OnLoggedOut = null;
+            OnSessionRestored = null;
             OnSessionStarted = null;
             OnSessionEnded = null;
             OnSessionPaused = null;
@@ -139,6 +169,18 @@ namespace Flock
         }
 
         //Raise plumbing
+
+        private static void InvokeOne(Action handler, string eventName)
+        {
+            try { handler(); }
+            catch (Exception ex) { LogSubscriberException(eventName, ex); }
+        }
+
+        private static void InvokeOne<T>(Action<T> handler, T payload, string eventName)
+        {
+            try { handler(payload); }
+            catch (Exception ex) { LogSubscriberException(eventName, ex); }
+        }
 
         private static void Raise(Action handlers, string eventName)
         {

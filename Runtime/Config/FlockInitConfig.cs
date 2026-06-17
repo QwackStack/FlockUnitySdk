@@ -69,7 +69,7 @@ namespace Flock.Config
         /// <param name="apiUrl"> Flock endpoint.</param>
         /// <param name="apiKey"> Flock game secret key.</param>
         /// <param name="gameId"> Flock game ID</param>
-        /// <param name="gameVersion"> Flock version name. The matching version ID is resolved from the backend during <see cref="FlockClient.CreateAsync"/>.</param>
+        /// <param name="gameVersion"> Flock version name. The matching version ID is resolved at edit time (Qwacks > Editor) and baked into FlockConfig; runtime init uses it directly.</param>
         /// <param name="enableDebugLogs"> enable debug logs , follows passed logger</param>
         /// <param name="analyticsConfig"> Flock Analytics settings</param>
         /// <param name="retryPolicy"> Flock Requests settings</param>
@@ -103,13 +103,5 @@ namespace Flock.Config
             return headers;
         }
 
-        internal Dictionary<string, string> GetBootstrapHeaders()
-        {
-            return new Dictionary<string, string>
-            {
-                { "X-Flock-API-Key", _apiKey }
-            };
-        }
-        
     }
 }

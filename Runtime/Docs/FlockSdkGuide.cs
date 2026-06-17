@@ -71,12 +71,9 @@ These are saved into Assets/Resources/FlockConfig.asset.";
         public const string Quickstart =
 @"The shortest path once Configuration is filled in:
 
-  // Initialize once at startup (the Bootstrap component can do this for you).
-  await FlockClient.CreateAsync(new FlockInitConfig(
-      apiUrl:      ""https://api-flock.qwacks.com"",
-      apiKey:      ""your-api-key"",
-      gameId:      ""your-game-id"",
-      gameVersion: ""your-game-version-name""));
+  // Easiest: click 'Add Flock Bootstrap to Scene' above — it initializes the SDK for you.
+  // Or initialize once at startup in code (synchronous, no network):
+  FlockClient.Create(flockConfig.ToInitConfig());
 
   // Log a player in — auth methods throw on failure.
   await FlockClient.Instance.Authentication.LoginWithDeviceAsync(""device-uuid"");
