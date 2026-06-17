@@ -49,6 +49,11 @@ namespace Flock.Editor
         private MessageType statusType = MessageType.None;
         private double statusExpiresAt;
 
+        private bool _resolvingVersion;
+        private string _versionResolveStatus;
+        private bool _versionResolveOk;
+        private string _lastResolvedKey;
+
         private Texture2D qwacksLogo;
         private Texture2D flockLogo;
 
@@ -352,10 +357,68 @@ namespace Flock.Editor
             DrawProperty("gameId");
             DrawProperty("gameVersion");
 
+            // Baked Game Version ID — resolved at edit time, read-only here.
+            using (new EditorGUI.DisabledScope(true))
+                EditorGUILayout.TextField(
+                    new GUIContent("Resolved Version ID",
+                        "Baked from your Game Version at edit time. Runtime init uses this directly — no server call."),
+                    config.gameVersionId);
+
+            using (new EditorGUI.DisabledScope(
+                _resolvingVersion || config == null ||
+                string.IsNullOrWhiteSpace(config.apiUrl) || string.IsNullOrWhiteSpace(config.apiKey) ||
+                string.IsNullOrWhiteSpace(config.gameVersion)))
+            {
+                if (GUILayout.Button(_resolvingVersion ? "Resolving…" : "Resolve Game Version"))
+                    RunVersionResolve();
+            }
+
+            if (!string.IsNullOrEmpty(_versionResolveStatus))
+                EditorGUILayout.HelpBox(_versionResolveStatus, _versionResolveOk ? MessageType.Info : MessageType.Error);
+
+            MaybeAutoResolveVersion();
+
             if (!config.IsValid(out string validationError))
                 EditorGUILayout.HelpBox(validationError, MessageType.Warning);
 
             EditorGUILayout.EndVertical();
+        }
+
+        // Auto-resolve when the credential/version fields change and the user isn't mid-edit.
+        private void MaybeAutoResolveVersion()
+        {
+            if (_resolvingVersion || config == null) return;
+            if (EditorGUIUtility.editingTextField) return; // mid-edit — wait for commit
+            if (string.IsNullOrWhiteSpace(config.apiUrl) || string.IsNullOrWhiteSpace(config.apiKey) ||
+                string.IsNullOrWhiteSpace(config.gameVersion))
+                return;
+
+            string key = $"{config.apiUrl}|{config.apiKey}|{config.gameId}|{config.gameVersion}";
+            if (key == _lastResolvedKey) return;
+
+            _lastResolvedKey = key;
+            RunVersionResolve();
+        }
+
+        private async void RunVersionResolve()
+        {
+            if (_resolvingVersion || config == null) return;
+            _resolvingVersion = true;
+            _versionResolveStatus = "Resolving Game Version…";
+            _versionResolveOk = false;
+            Repaint();
+
+            FlockVersionResolver.ResolveResult result =
+                await FlockVersionResolver.ResolveAndBakeAsync(config);
+
+            _resolvingVersion = false;
+            _versionResolveOk = result.Success;
+            _versionResolveStatus = result.Success
+                ? $"Resolved: {result.GameVersionId}"
+                : result.Error;
+            // Keep the key in sync so a successful resolve doesn't immediately re-fire.
+            _lastResolvedKey = $"{config.apiUrl}|{config.apiKey}|{config.gameId}|{config.gameVersion}";
+            Repaint();
         }
 
         private void DrawOptionalCard()
@@ -437,6 +500,18 @@ namespace Flock.Editor
                 new GUIContent("Play-Mode Setup Guard",
                     "When ON, entering Play with Flock not set up shows a fixable dialog. Editor-only; saved on the asset."),
                 guardProp.boolValue);
+
+            SerializedProperty failBuildProp = configSerialized.FindProperty("failBuildIfVersionUnresolved");
+            failBuildProp.boolValue = EditorGUILayout.Toggle(
+                new GUIContent("Fail build if Game Version unresolved",
+                    "Blocks player builds when the Resolved Version ID is empty or has drifted from the generated schemas, so a build that can't init (or targets the wrong version) can't ship."),
+                failBuildProp.boolValue);
+
+            SerializedProperty autoInitProp = configSerialized.FindProperty("autoInitializeOnLoad");
+            autoInitProp.boolValue = EditorGUILayout.Toggle(
+                new GUIContent("Auto-Initialize On Load",
+                    "Start the SDK automatically at launch from this asset — no FlockBootstrap or Create() call needed — and restore a persisted session in the background."),
+                autoInitProp.boolValue);
 
             EditorGUILayout.EndVertical();
         }
@@ -786,7 +861,8 @@ namespace Flock.Editor
             }
 
             string baseUrl = apiUrl.TrimEnd('/');
-            // Mirror FlockClient.ResolveGameVersionAsync so a green test guarantees init will pass.
+            // Mirror the edit-time version resolve (FlockVersionResolver): a green test means the
+            // Game Version can be resolved & baked, which is what synchronous init needs.
             // When Game Version is missing, we can't run that call — fall back to a bare key check.
             bool hasGameVersion = !string.IsNullOrEmpty(gameVersion);
             string url = hasGameVersion
@@ -910,6 +986,10 @@ namespace Flock.Editor
                 alignment = TextAnchor.MiddleCenter,
                 wordWrap = true
             };
+
+            titleStyle.normal.textColor = Color.white;
+            subtitleStyle.normal.textColor = Color.white;
+            sectionHeaderStyle.normal.textColor = Color.white;
         }
 
         private readonly struct BackgroundColorScope : IDisposable

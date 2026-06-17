@@ -5,6 +5,20 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [1.14.0] - 2026-06-17
+
+### Added
+- **Auto-Initialize On Load** (on by default): with `FlockConfig` set up, the SDK initializes itself at startup from `Assets/Resources/FlockConfig.asset` — no `FlockBootstrap` or `Create()` call — and restores a saved session in the background. Turn it off in Advanced Settings > Tools to drive init yourself (e.g. defer past a splash/EULA via `FlockBootstrap` or a manual `Create()`).
+- **Lifecycle event replay.** `FlockEvents.OnInitialized` and `OnInitializationFailed` now replay to handlers that subscribe after init, so they fire reliably under auto-init (which initializes before scene scripts can subscribe).
+- `FlockClient.InitializationError` exposes the last init failure (null after success), so a failed auto-init — which logs instead of throwing — is observable alongside `IsInitialized`.
+
+### Changed — BREAKING
+- **Synchronous init.** `FlockClient.CreateAsync` is replaced by synchronous `FlockClient.Create(config)`. The Game Version ID is now resolved at **edit time** (Qwacks > Editor) and baked into `FlockConfig`; runtime init makes no server call and works offline, including first launch. `FlockBootstrap.InitializeAsync()` is replaced by synchronous `Initialize()`; persisted-session restore runs in the background and reports via `FlockEvents.OnSessionRestored` (plus the `FlockClient.IsRestoringSession` flag), with no dependency on `FlockBootstrap`.
+- A build guard fails the player build if the Game Version ID is unresolved (empty) **or has drifted from the generated schemas** (toggle in Advanced Settings > Tools).
+
+### Removed
+- Runtime Game Version name→ID resolution (`ResolveGameVersionAsync`) and its bootstrap-scope version snapshot. The codegen drift check now runs editor-side.
+
 ## [1.13.0] - 2026-06-16
 
 ### Added

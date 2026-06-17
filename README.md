@@ -38,10 +38,10 @@ The Flock Unity SDK provides access to Flock's game backend services from Unity 
 - Asset listing and lookup by ID
 - Analytics (session tracking, events, transactions — no-op safe when disabled)
 - Automatic retry with exponential backoff
-- Offline caching — SDK init and static content keep working without network after one online session
+- Offline-safe init (no network at startup) — plus disk-cached static content that keeps serving without network after one online session
 - JWT token management
 - Strongly typed codegen for player templates, game configs, and game commands (`Flock > Sync Schemas`)
-- Drop-in `FlockBootstrap` scene component for hands-off SDK initialization
+- Hands-off startup — the SDK auto-initializes from your config at launch (or use the drop-in `FlockBootstrap` component, or call `Create` yourself)
 
 ## Installation
 
@@ -65,13 +65,29 @@ Open **Qwacks > Editor** in the Unity menu bar. The window is a view of the `Flo
 - **API URL** — Flock API endpoint (default: `https://api-flock.qwacks.com`)
 - **API Key** — Your Flock API key
 - **Game ID** — Your game ID from the Flock dashboard
-- **Game Version** — Your game version name (the matching ID is fetched from the backend on init)
+- **Game Version** — Your game version name (the matching ID is resolved from the backend at edit time and baked into the asset, so init makes no network call)
 
 The asset is saved to `Assets/Resources/FlockConfig.asset` so it loads in builds via `Resources.Load<FlockConfigAsset>("FlockConfig")`. The same window has a Codegen tab that drives `Flock > Sync Schemas` (see [Codegen](#codegen)).
 
+### Automatic Initialization (default)
+
+The SDK starts itself — no component, no init code. With `FlockConfig` set up (above), **Auto-Initialize On Load** is on by default, so the SDK initializes from `Assets/Resources/FlockConfig.asset` before the first scene loads and restores a saved session in the background. Just use `FlockClient.Instance` when you need it.
+
+```csharp
+using Flock;
+
+// Nothing to call at startup. Optionally react to the events (safe to subscribe anytime):
+FlockEvents.OnInitialized     += ()       => Debug.Log("Flock SDK ready");
+FlockEvents.OnSessionRestored += signedIn => Debug.Log(signedIn ? "Session resumed" : "Show login");
+```
+
+To drive init yourself — e.g. to defer past a splash screen or EULA — turn **Auto-Initialize On Load** off (Qwacks > Editor → Advanced Settings → Tools), then use one of the options below.
+
+> **Init is fail-fast.** A bad config makes `Create` throw (the auto-init path catches and logs it instead of crashing startup). Either way the SDK stays uninitialized and `FlockClient.Instance` throws until a successful init — so guard with `FlockClient.IsInitialized`, inspect `FlockClient.InitializationError`, or handle `FlockEvents.OnInitializationFailed`.
+
 ### Drop-in Initialization
 
-If you don't want to write SDK init code, click **Add Flock Bootstrap to Scene** in the editor window (or add a `FlockBootstrap` component to a GameObject yourself). The component holds a reference to your `FlockConfig` asset and calls `FlockClient.CreateAsync(asset.ToInitConfig())` in `Awake`.
+Prefer a scene component (or turned auto-init off)? Click **Add Flock Bootstrap to Scene** in the editor window (or add a `FlockBootstrap` component to a GameObject yourself). The component holds a reference to your `FlockConfig` asset and calls `FlockClient.Create(asset.ToInitConfig())` in `Awake`.
 
 ```csharp
 // Optional: gate init or react to result
@@ -80,41 +96,30 @@ bootstrap.OnInitialized += () => Debug.Log("Flock SDK ready");
 bootstrap.OnInitializationFailed += ex => Debug.LogError(ex);
 
 // Or trigger init manually if you turned off "Initialize On Awake"
-await bootstrap.InitializeAsync();
+bootstrap.Initialize();
 ```
 
 The component never copies values from the asset — it always reads through the reference, so editing the asset (here or in the inspector) is enough to change runtime behavior. Recommended pattern: place the bootstrap in a Boot scene loaded once at startup, leave **Don't Destroy On Load** on.
 
 ### Code-Based Configuration
 
+For full manual control, turn **Auto-Initialize On Load** off and create the client yourself:
+
 > **Important:** the SDK must be initialized **once** at startup before any
-> feature accesses it. After `CreateAsync` completes, call everything via
+> feature accesses it. After `Create` returns, call everything via
 > `FlockClient.Instance` from anywhere in your project. Accessing
 > `FlockClient.Instance` before init throws a `FlockException`.
 
 ```csharp
-var config = new FlockInitConfig(
-    apiUrl: "https://api-flock.qwacks.com",
-    apiKey: "your-api-key",
-    gameId: "your-game-id",
-    gameVersion: "your-game-version-name",
-    enableDebugLogs: true
-);
+var configAsset = Resources.Load<FlockConfigAsset>("FlockConfig");
 
-// CreateAsync resolves the game version name to its ID via the backend,
-// applies that ID to every request, and
-// stores the singleton in FlockClient.Instance.
-await FlockClient.CreateAsync(config);
+// Create is synchronous and makes no network call. The Game Version ID was
+// resolved at edit time (Qwacks > Editor) and baked into FlockConfig, applied
+// to every request; init stores the singleton in FlockClient.Instance.
+FlockClient.Create(configAsset.ToInitConfig());
 
 // Use anywhere — no need to pass the client around.
 var response = await FlockClient.Instance.Authentication.LoginWithEmailAsync(email, password);
-```
-
-Or load from a ScriptableObject:
-
-```csharp
-var configAsset = Resources.Load<FlockConfigAsset>("FlockConfig");
-await FlockClient.CreateAsync(configAsset.ToInitConfig());
 ```
 
 ## Quick Start
@@ -126,12 +131,9 @@ The shortest path from zero to reading data — initialize once at startup, log 
 ```csharp
 using Flock;
 
-// 1. Initialize the SDK exactly once at startup (see Setup for where these values come from).
-await FlockClient.CreateAsync(new FlockInitConfig(
-    apiUrl: "https://api-flock.qwacks.com",
-    apiKey: "your-api-key",
-    gameId: "your-game-id",
-    gameVersion: "your-game-version-name"));
+// 1. With Auto-Initialize On Load on (the default), the SDK is already running by the time
+//    your scene starts — just use FlockClient.Instance. (Opted out? Call
+//    FlockClient.Create(Resources.Load<FlockConfigAsset>("FlockConfig").ToInitConfig()) once first.)
 
 // 2. Log the player in. Auth methods throw on failure.
 await FlockClient.Instance.Authentication.LoginWithDeviceAsync("device-uuid");
@@ -348,7 +350,7 @@ FlockClient.Instance.Analytics.RecordScreenView("MainMenu");
 
 All SDK lifecycle events live on the static `FlockEvents` class (`using Flock;`). Key behaviors:
 
-- **Subscribe anytime** — even before `FlockClient.CreateAsync`. Unlike `FlockClient.Instance`, the hub never throws.
+- **Subscribe anytime** — even before `FlockClient.Create`, and `OnInitialized` / `OnInitializationFailed` are *replayed* to late subscribers, so they fire even if the SDK already auto-initialized before your script ran. Unlike `FlockClient.Instance`, the hub never throws.
 - **Raised on the Unity main thread** — you can touch Unity objects directly inside handlers.
 - **Logged when `EnableDebugLogs` is on** — every raise prints `[Flock SDK] OnSessionStarted fired -> 1 subscriber(s)`, so you can verify wiring straight from the console.
 - **Cleared automatically** on `FlockClient.Shutdown()` and on play-session start (with domain reload disabled), so a leaked handler never outlives one play session. Still, subscribe in `OnEnable` and unsubscribe in `OnDisable`, and prefer method groups over lambdas (lambdas can't be unsubscribed).
@@ -382,8 +384,8 @@ private void HandleSessionEnded(FlockSessionEndedArgs args)
 
 | Event | Signature | Hooks up to |
 |-------|-----------|-------------|
-| `OnInitialized` | `Action` | `FlockClient.CreateAsync` success — raised right after the singleton is set, so `FlockClient.Instance` is usable inside handlers. |
-| `OnInitializationFailed` | `Action<Exception>` | A failed `FlockClient.CreateAsync` attempt (the exception is still thrown to the caller). The "already initialized" misuse guard does not raise it. |
+| `OnInitialized` | `Action` | `FlockClient.Create` success — raised right after the singleton is set, so `FlockClient.Instance` is usable inside handlers. Replayed immediately if you subscribe after init (e.g. under auto-init). |
+| `OnInitializationFailed` | `Action<Exception>` | A failed `FlockClient.Create` attempt (still thrown to direct callers; the auto-init path logs instead). Replayed to late subscribers from `FlockClient.InitializationError`. The "already initialized" misuse guard does not raise it. |
 | `OnShutdown` | `Action` | `FlockClient.Shutdown()` — raised after tokens are cleared and the singleton is gone. Always the last event; every `FlockEvents` subscription is wiped right after. |
 
 **Auth**
@@ -394,6 +396,7 @@ private void HandleSessionEnded(FlockSessionEndedArgs args)
 | `OnTokenRefreshed` | `Action` | A successful token refresh — manual `RefreshTokenAsync` or the SDK's automatic refresh. |
 | `OnAuthExpired` | `Action` | A failed/rejected token refresh: tokens are cleared and the player must log in again. Same moment as `FlockClient.OnSessionExpired` (kept for back-compat). |
 | `OnLoggedOut` | `Action` | `Logout()` completing while a player was signed in. Local-only by design — tokens dropped on this device, nothing revoked server-side. |
+| `OnSessionRestored` | `Action<bool>` | A persisted-session restore finished — `true` = signed in (go to game), `false` = none (show login). Also exposed as the `FlockClient.IsRestoringSession` flag for a startup spinner; fires whether or not you use `FlockBootstrap`. |
 
 **Session** (gameplay/analytics session — distinct from auth)
 
@@ -471,7 +474,7 @@ Method names come from the template name on the backend (PascalCase). Field name
 
 Re-run sync whenever:
 - You change the schema of a template in the dashboard
-- You change **Game Version** on the FlockConfig asset (the SDK warns at init if the generated `SchemasManifest.GameVersionId` doesn't match the configured version)
+- You change **Game Version** on the FlockConfig asset (the editor warns, and the build guard fails, if the generated `SchemasManifest.GameVersionId` doesn't match the baked version ID)
 - You add or remove templates
 
 Type mapping for primitives lives in `Editor/Codegen/TypeMap.cs` (`integer` → `int`, `string` → `string`, `datetime`/`date`/`timestamp` → `System.DateTime`, etc.). Composite types are walked structurally by `SchemaPropertyEmitter`: `object` fields emit a nested partial class, `list`/`array` emit `List<T>`, `dict` emits `Dictionary<string, T>`, all resolved recursively through the same walker.

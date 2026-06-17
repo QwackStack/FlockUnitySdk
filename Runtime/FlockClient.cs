@@ -26,25 +26,26 @@ namespace Flock
 
         private static FlockClient _instance;
 
-        /// <summary>
-        /// Global singleton instance. Set by <see cref="CreateAsync"/> and used as the
-        /// entry point for all SDK calls (e.g. <c>FlockClient.Instance.Authentication</c>).
-        /// Throws <see cref="FlockException"/> if accessed before <see cref="CreateAsync"/>
-        /// has completed — initialize the SDK at startup before any feature uses it.
-        /// </summary>
+        /// <summary>The initialized SDK singleton. Throws <see cref="FlockException"/> if accessed before <see cref="Create"/>.</summary>
         public static FlockClient Instance
         {
             get
             {
                 if (_instance == null)
                     throw new FlockException(
-                        "FlockClient has not been initialized. Call 'await FlockClient.CreateAsync(config)' once at startup before accessing FlockClient.Instance.");
+                        "FlockClient has not been initialized. Call 'FlockClient.Create(config)' once at startup before accessing FlockClient.Instance.");
                 return _instance;
             }
         }
 
-        /// <summary>True once <see cref="CreateAsync"/> has successfully run.</summary>
+        /// <summary>True once <see cref="Create"/> has successfully run.</summary>
         public static bool IsInitialized => _instance != null;
+
+        /// <summary>True while a persisted session is being restored — bind UI to this for a startup spinner.</summary>
+        public static bool IsRestoringSession { get; internal set; }
+
+        /// <summary>The exception from the last failed <see cref="Create"/> attempt; null after a success or before any attempt. Set even on the auto-init path (which logs instead of throwing) — check it alongside <see cref="IsInitialized"/> to detect a failed startup.</summary>
+        public static Exception InitializationError { get; private set; }
 
         private readonly FlockInitConfig _initConfig;
         private readonly IFlockLogger _logger;
@@ -62,6 +63,8 @@ namespace Flock
         private static void ResetStaticState()
         {
             _instance = null;
+            IsRestoringSession = false;
+            InitializationError = null;
         }
 
         /// <summary>Token refresh failed — re-login required. Prefer <see cref="FlockEvents.OnAuthExpired"/>; kept for back-compat.</summary>
@@ -107,17 +110,8 @@ namespace Flock
                 : null;
         }
 
-        /// <summary>
-        /// Creates and initializes a <see cref="FlockClient"/>. Resolves
-        /// <see cref="FlockInitConfig.GameVersion"/> against the backend to populate
-        /// <see cref="FlockInitConfig.GameVersionId"/> (used in the
-        /// <c>X-Game-Version-ID</c> header), then wires up service providers.
-        /// Raises <see cref="FlockEvents.OnInitialized"/> or <see cref="FlockEvents.OnInitializationFailed"/> (still throws).
-        /// </summary>
-        public static async Task<FlockClient> CreateAsync(
-            FlockInitConfig initConfig,
-            IFlockLogger logger = null,
-            CancellationToken cancellationToken = default)
+        /// <summary>Synchronously creates the SDK from a config with a baked Game Version ID — no network. Throws if the ID is missing; raises <see cref="FlockEvents.OnInitialized"/>/<see cref="FlockEvents.OnInitializationFailed"/>.</summary>
+        public static FlockClient Create(FlockInitConfig initConfig, IFlockLogger logger = null)
         {
             // Misuse guard — no OnInitializationFailed: the SDK is already initialized and working.
             if (_instance != null)
@@ -127,16 +121,21 @@ namespace Flock
             try
             {
                 FlockClient client = new FlockClient(initConfig, logger);
-                await client.ResolveGameVersionAsync(cancellationToken);
+
+                if (string.IsNullOrEmpty(client._initConfig.GameVersionId))
+                    throw new FlockValidationException(
+                        "Game Version not resolved. Open Qwacks > Editor while online to resolve your " +
+                        "Game Version, then rebuild. The Game Version ID is baked into FlockConfig at " +
+                        "edit time — runtime init never contacts the server.");
+
                 client._snapshotStore?.PruneOtherVersions(client._initConfig.GameVersionId);
                 client.InitializeServices();
-#if !FLOCK_NO_SCHEMA
-                CodeGenValidator.WarnIfDrifted(client._initConfig.GameVersionId, client._logger);
-#endif
                 _instance = client;
+                InitializationError = null;
             }
             catch (Exception ex)
             {
+                InitializationError = ex;
                 FlockEvents.RaiseInitializationFailed(ex);
                 throw;
             }
@@ -146,12 +145,13 @@ namespace Flock
         }
 
         /// <summary>
-        /// Clears the global <see cref="Instance"/>, allowing <see cref="CreateAsync"/> to be
+        /// Clears the global <see cref="Instance"/>, allowing <see cref="Create"/> to be
         /// called again. Logs out the current player first so the token state is dropped.
         /// Raises <see cref="FlockEvents.OnShutdown"/> last, then clears all <see cref="FlockEvents"/> subscriptions.
         /// </summary>
         public static void Shutdown()
         {
+            InitializationError = null;
             if (_instance == null) return;
 #if !FLOCK_NO_ANALYTICS
             (_instance._analytics as FlockAnalyticsProvider)?.UninstallGlobalExceptionHook();
@@ -161,64 +161,6 @@ namespace Flock
             FlockEvents.RaiseShutdown();
             FlockEvents.ClearAll();
             FlockEvents.Logger = null;
-        }
-
-        private async Task ResolveGameVersionAsync(CancellationToken cancellationToken)
-        {
-            if (string.IsNullOrEmpty(_initConfig.GameVersion))
-                throw new FlockValidationException("GameVersion is required to initialize the Flock SDK");
-
-            string snapshotKey = $"{_initConfig.ApiUrl}|{_initConfig.GameVersion}";
-
-            if (_snapshotStore != null
-                && Application.internetReachability == NetworkReachability.NotReachable
-                && _snapshotStore.TryRead(FlockSnapshotStore.BootstrapScope, snapshotKey, out GameVersionSchema offline))
-            {
-                _initConfig.GameVersionId = offline.Id;
-                _logger.LogInfo($"Offline: using cached game version '{_initConfig.GameVersion}' -> id '{offline.Id}'");
-                return;
-            }
-
-            string url = $"{GetVersionedApiUrl()}/game_version/by-name/{Uri.EscapeDataString(_initConfig.GameVersion)}";
-            try
-            {
-                GenericResponse<GameVersionSchema> response = await _retryHandler.ExecuteAsync(
-                    () => FlockHttpClient.GetAsync<GenericResponse<GameVersionSchema>>(
-                        url, _initConfig.GetBootstrapHeaders(), cancellationToken),
-                    cancellationToken);
-
-                if (response?.Result == null || string.IsNullOrEmpty(response.Result.Id))
-                    throw new FlockException($"Could not resolve GameVersionId for game version '{_initConfig.GameVersion}'");
-
-                _initConfig.GameVersionId = response.Result.Id;
-                _snapshotStore?.Write(FlockSnapshotStore.BootstrapScope, snapshotKey, response.Result);
-                _logger.LogInfo($"Resolved game version '{_initConfig.GameVersion}' -> id '{_initConfig.GameVersionId}'");
-            }
-            catch (FlockNetworkException e)
-            {
-                if (_snapshotStore != null
-                    && !FlockNetworkException.IsPermanentStatus(e.StatusCode)
-                    && _snapshotStore.TryRead(FlockSnapshotStore.BootstrapScope, snapshotKey, out GameVersionSchema cached))
-                {
-                    _initConfig.GameVersionId = cached.Id;
-                    _logger.LogWarning($"Could not reach server; using cached game version '{_initConfig.GameVersion}' -> id '{cached.Id}'");
-                    return;
-                }
-
-                _logger.LogError("Initialization failed", e);
-                throw;
-            }
-            catch (FlockException e)
-            {
-                // Auth/network/validation errors must surface — otherwise InitializeServices runs
-                // with GameVersionId == null and every subsequent API call breaks silently.
-                _logger.LogError("Initialization failed", e);
-                throw;
-            }
-            catch (Exception ex)
-            {
-                throw new FlockException($"Failed to resolve GameVersionId for '{_initConfig.GameVersion}'", ex);
-            }
         }
 
         private void InitializeServices()
