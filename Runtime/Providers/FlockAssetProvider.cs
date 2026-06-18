@@ -167,25 +167,30 @@ namespace Flock.Providers
             bool cacheHit = cacheEnabled && tryGetCachedFileUrl;
             string sourceUrl = cacheHit ? cachedUrl : asset.S3DownloadUrl;
 
-            UnityWebRequest req = BuildRequest<T>(sourceUrl, asset);
-            using (req)
+            // Retry transient download failures like API calls do (backoff + jitter, skips permanent 4xx);
+            // a fresh UnityWebRequest per attempt since one can't be re-sent. Mirrors Addressables RetryCount/Timeout.
+            return await Client.RetryHandler.ExecuteAsync(async () =>
             {
-                await SendAsync(req, $"Download asset '{asset.Name}'", cancellationToken);
-
-                if (!cacheHit && cacheEnabled)
+                UnityWebRequest req = BuildRequest<T>(sourceUrl, asset);
+                using (req)
                 {
-                    try
-                    {
-                        _cache.Write(asset.Id, asset.UpdatedAt, req.downloadHandler?.data);
-                    }
-                    catch (Exception ex)
-                    {
-                        Client.Logger.LogWarning($"Failed to write asset cache for '{asset.Name}': {ex.Message}");
-                    }
-                }
+                    await SendAsync(req, $"Download asset '{asset.Name}'", Client.InitConfig.AssetDownloadTimeout, cancellationToken);
 
-                return Extract<T>(req);
-            }
+                    if (!cacheHit && cacheEnabled)
+                    {
+                        try
+                        {
+                            _cache.Write(asset.Id, asset.UpdatedAt, req.downloadHandler?.data);
+                        }
+                        catch (Exception ex)
+                        {
+                            Client.Logger.LogWarning($"Failed to write asset cache for '{asset.Name}': {ex.Message}");
+                        }
+                    }
+
+                    return Extract<T>(req);
+                }
+            }, cancellationToken, maxRetriesOverride: Client.InitConfig.AssetDownloadRetryCount);
         }
 
         public async Task<List<T>> DownloadAsync<T>(IEnumerable<string> assetIds, CancellationToken cancellationToken = default) where T : class
@@ -329,8 +334,12 @@ namespace Flock.Providers
             throw new FlockValidationException($"Unsupported asset type: {t.Name}");
         }
 
-        private static async Task SendAsync(UnityWebRequest req, string context, CancellationToken cancellationToken)
+        private static async Task SendAsync(UnityWebRequest req, string context, TimeSpan timeout, CancellationToken cancellationToken)
         {
+            // Per-download wall-clock timeout; 0 leaves it off so large assets aren't aborted mid-transfer.
+            if (timeout > TimeSpan.Zero)
+                req.timeout = (int)Math.Ceiling(timeout.TotalSeconds);
+
             UnityWebRequestAsyncOperation op = req.SendWebRequest();
             while (!op.isDone)
             {
@@ -341,9 +350,15 @@ namespace Flock.Providers
                 }
                 await Task.Yield();
             }
+            cancellationToken.ThrowIfCancellationRequested();
 
             if (req.result != UnityWebRequest.Result.Success)
-                throw new FlockNetworkException($"{context} failed: {req.error}");
+            {
+                FlockNetworkException error = new FlockNetworkException($"{context} failed") { Body = req.error };
+                if (req.responseCode > 0)
+                    error.StatusCode = (int)req.responseCode;
+                throw error;
+            }
         }
     }
 }

@@ -489,9 +489,11 @@ A few SDK behaviors are constrained by the current backend surface and will impr
 
 ## Platform notes
 
-- **WebGL**: the asset cache and the offline snapshot cache are backed by
-  `Application.persistentDataPath`, which on WebGL is IndexedDB-backed and does
-  not support synchronous file writes (`File.WriteAllBytes` will fail). Set
-  `FlockInitConfig.EnableAssetCache = false` and
-  `FlockInitConfig.EnableOfflineCache = false` on WebGL builds — everything still
+- **WebGL**: SDK HTTP automatically switches to `UnityWebRequest` on WebGL builds
+  (`System.Net.Http.HttpClient` has no WebGL transport), so auth, read APIs, and
+  analytics work online with no caller changes. The asset cache and the offline
+  snapshot cache, however, are backed by `Application.persistentDataPath`, which on
+  WebGL is IndexedDB-backed and does not support synchronous file writes
+  (`File.WriteAllBytes` will fail). Set `FlockInitConfig.EnableAssetCache = false`
+  and `FlockInitConfig.EnableOfflineCache = false` on WebGL builds — everything else
   works online, just without the disk caches. See the "Offline caching" section.

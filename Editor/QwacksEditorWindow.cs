@@ -474,6 +474,7 @@ namespace Flock.Editor
             {
                 DrawProperty("retryUseJitter");
             }
+            DrawProperty("httpTimeoutSeconds");
             EditorGUILayout.EndVertical();
         }
 
@@ -487,6 +488,8 @@ namespace Flock.Editor
                 DrawProperty("assetCacheDirectory");
                 DrawProperty("assetCacheMaxSizeMB");
             }
+            DrawProperty("assetDownloadTimeoutSeconds");
+            DrawProperty("assetDownloadRetryCount");
             EditorGUILayout.EndVertical();
         }
 

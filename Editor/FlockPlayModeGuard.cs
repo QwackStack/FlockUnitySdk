@@ -51,12 +51,8 @@ namespace Flock.Editor
             // No asset → guard stays active by default (there's no asset to hold the toggle).
             bool guardEnabled = !configExists || config.playModeGuardEnabled;
 
-            FlockBootstrap bootstrap = UnityEngine.Object.FindAnyObjectByType<FlockBootstrap>();
-            bool bootstrapPresent = bootstrap != null;
-            bool bootstrapConfigValid =
-                bootstrapPresent && bootstrap.Config != null && bootstrap.Config.IsValid(out string _);
 
-            return new FlockSetupState(configExists, configValid, guardEnabled, bootstrapPresent, bootstrapConfigValid);
+            return new FlockSetupState(configExists, configValid, guardEnabled);
         }
 
         private static void ShowBlockDialog()
