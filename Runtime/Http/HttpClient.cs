@@ -87,7 +87,7 @@ namespace Flock.Http
             }
             catch (HttpRequestException ex)
             {
-                throw new FlockNetworkException("Network request failed", ex);
+                throw new FlockNetworkException($"Network request failed: {(ex.InnerException ?? ex).Message}", ex);
             }
             catch (TaskCanceledException ex) when (!cancellationToken.IsCancellationRequested)
             {

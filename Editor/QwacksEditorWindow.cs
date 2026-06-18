@@ -899,8 +899,9 @@ namespace Flock.Editor
                 }
                 else if (response.StatusCode == HttpStatusCode.Unauthorized || response.StatusCode == HttpStatusCode.Forbidden)
                 {
+                    string detail = await BodyDetail(response);
                     verified = false;
-                    message = $"API key rejected ({(int)response.StatusCode} {response.StatusCode}).";
+                    message = $"API key rejected ({(int)response.StatusCode} {response.StatusCode}).{detail}";
                     type = MessageType.Error;
                 }
                 else if (response.StatusCode == HttpStatusCode.NotFound && hasGameVersion)
@@ -911,8 +912,9 @@ namespace Flock.Editor
                 }
                 else
                 {
+                    string detail = await BodyDetail(response);
                     verified = false;
-                    message = $"API returned {(int)response.StatusCode} {response.StatusCode}.";
+                    message = $"API returned {(int)response.StatusCode} {response.StatusCode}.{detail}";
                     type = MessageType.Warning;
                 }
 
@@ -935,8 +937,19 @@ namespace Flock.Editor
             {
                 EditorUtility.ClearProgressBar();
                 StoreConnectionResult(credHash, false, "Test failed.");
-                ShowStatus($"Test failed: {ex.Message}", MessageType.Error);
+                ShowStatus($"Test failed: {(ex.InnerException ?? ex).Message}", MessageType.Error);
             }
+        }
+
+        // Reads a failed response's body and formats it as a short, capped suffix so a stray HTML error page can't flood the status line.
+        private static async Task<string> BodyDetail(HttpResponseMessage response)
+        {
+            string body;
+            try { body = (await response.Content.ReadAsStringAsync())?.Trim(); }
+            catch { return string.Empty; }
+            if (string.IsNullOrEmpty(body)) return string.Empty;
+            string trimmed = body.Length > 300 ? body.Substring(0, 300) + "…" : body;
+            return $" Server said: {trimmed}";
         }
 
 
