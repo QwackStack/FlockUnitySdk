@@ -5,6 +5,31 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [1.15.0] - 2026-06-18
+
+### Added
+- **WebGL HTTP support.** SDK HTTP now runs through an `IFlockHttpAdapter` seam selected per platform — `UnityWebRequest` on WebGL builds (where `System.Net.Http.HttpClient` has no transport), `HttpClient` everywhere else. The `FlockHttpClient` facade and all providers are unchanged. A custom transport can be injected via `FlockHttpClient.Configure(IFlockHttpAdapter)` (e.g. to mock HTTP in tests).
+- `FlockInitConfig.HttpTimeout` (default 30s) — per-request timeout for API calls; the underlying client previously defaulted to 100s. Mirrored on the config asset and editor (Advanced > HTTP Retry Policy).
+- `FlockInitConfig.AssetDownloadTimeout` (default off) and `FlockInitConfig.AssetDownloadRetryCount` (default 3) — opt-in per-download timeout and a download-specific retry count, independent of the API `RetryPolicy`. Modeled on Unity Addressables' `Timeout` / `RetryCount`. Mirrored on the config asset and editor (Asset Cache).
+- `FlockSerializationException` — thrown when a 2xx response can't be turned into the expected type (malformed JSON or empty body). Non-retryable.
+- `FlockException.Body` (raw server response body) and `FlockException.StatusCode` (moved to the base type, so auth/validation errors carry it too); `FlockNetworkException.RetryAfter`.
+- Server `Retry-After` (delta-seconds or HTTP-date) is now honored on retry, bounded by `RetryPolicy.MaxDelay`.
+- Asset downloads now retry transient failures through `RetryHandler` (backoff + jitter + permanent-4xx skip), re-issuing a fresh `UnityWebRequest` per attempt.
+
+### Changed
+- Error messages are stabilized and status-coded (e.g. `HTTP request failed (HTTP 500)`); the raw server body moved off the message onto `FlockException.Body` so error trackers bucket by type instead of payload. `FlockException.ToString()` appends `Body`, so console logs still show the server's reason.
+- Malformed/empty 2xx responses now throw the non-retryable `FlockSerializationException` instead of a retried `FlockNetworkException`, and no longer trigger the offline snapshot fallback (which stays gated on `internetReachability` — the network is up in this case).
+- Asset-download failures now carry `StatusCode` + `Body` and a stable message.
+
+### Fixed
+- Request cancellation now propagates as `OperationCanceledException` instead of being logged as a failed retry and surfaced as a `FlockNetworkException` (fixed in `RetryHandler` and `FlockProviderBase`).
+- `IsAlreadyRegisteredError` now matches the server's "already registered" detail on `FlockException.Body` as well as the message, restoring the duplicate-registration skip after the body was moved off the message.
+- `RetryHandler`'s jitter RNG is now thread-safe for concurrent retries (e.g. parallel asset downloads).
+- `HttpRequestMessage` / `HttpResponseMessage` are now disposed per request.
+
+### Documentation
+- README "Platform notes" — WebGL note corrected: SDK HTTP works on WebGL via `UnityWebRequest`; only the asset/offline disk caches need disabling.
+
 ## [1.14.0] - 2026-06-17
 
 ### Added

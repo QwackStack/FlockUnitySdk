@@ -174,6 +174,11 @@ namespace Flock.Analytics
                 _logger?.LogWarning($"Pending events batch dropped (validation): {ex.Message}");
                 return FlushOutcome.Drop;
             }
+            catch (FlockSerializationException ex)
+            {
+                _logger?.LogWarning($"Pending events batch dropped (unreadable response): {ex.Message}");
+                return FlushOutcome.Drop;
+            }
             catch (FlockNetworkException ex) when (FlockNetworkException.IsPermanentStatus(ex.StatusCode))
             {
                 _logger?.LogWarning($"Pending events batch dropped (HTTP {ex.StatusCode}): {ex.Message}");

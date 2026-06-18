@@ -1,3 +1,4 @@
+using System;
 using Flock.Analytics;
 using Flock.Http;
 using UnityEngine;
@@ -86,6 +87,12 @@ namespace Flock.Config
         [Tooltip("Maximum size of the on-disk asset cache, in MB. 0 means unlimited; LRU eviction otherwise.")]
         public int assetCacheMaxSizeMB = 100;
 
+        [Tooltip("Per-download timeout (seconds) for asset downloads. 0 = no timeout (default) so large assets aren't aborted mid-transfer; set a value to bound hung downloads. Like Unity Addressables' Timeout.")]
+        public int assetDownloadTimeoutSeconds = 0;
+
+        [Tooltip("Retry attempts for a failed asset download, independent of the HTTP Retry Policy used by API calls (like Unity Addressables' Retry Count). Default 3; 0 disables. Only transient failures retry — permanent 4xx (e.g. an expired URL) fail fast.")]
+        public int assetDownloadRetryCount = 3;
+
         [Header("Offline Cache")]
         [Tooltip("Snapshot read-API responses to disk and serve them when the network is unavailable. Disable on WebGL — persistentDataPath there does not support synchronous writes.")]
         public bool enableOfflineCache = true;
@@ -99,6 +106,9 @@ namespace Flock.Config
 
         [Tooltip("Adds ±25% randomness to each retry delay to avoid thundering-herd reconnects after a server outage. Leave on unless you have a specific reason.")]
         public bool retryUseJitter = true;
+
+        [Tooltip("Per-request timeout in seconds for SDK HTTP calls. Caps how long one attempt can hang before failing (and being retried). Default 30. Asset downloads use UnityWebRequest and are unaffected.")]
+        public float httpTimeoutSeconds = 30f;
 
         [Header("Initialization")]
         [Tooltip(
@@ -160,8 +170,11 @@ namespace Flock.Config
                 EnableAssetCache = enableAssetCache,
                 AssetCacheDirectory = assetCacheDirectory,
                 AssetCacheMaxSizeMB = assetCacheMaxSizeMB,
+                AssetDownloadTimeout = TimeSpan.FromSeconds(assetDownloadTimeoutSeconds),
+                AssetDownloadRetryCount = assetDownloadRetryCount,
                 EnableOfflineCache = enableOfflineCache,
                 OfflineCacheDirectory = offlineCacheDirectory,
+                HttpTimeout = TimeSpan.FromSeconds(httpTimeoutSeconds),
             };
         }
 

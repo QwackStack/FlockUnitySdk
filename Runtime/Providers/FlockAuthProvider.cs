@@ -64,16 +64,17 @@ namespace Flock.Providers
         }
 
         // Temp string-match until the API returns a structured "already registered" code.
+        // Searches Message and Body — the server's detail now lives on FlockException.Body
+        // (kept off Message so error trackers bucket by type, not payload).
         private static bool IsAlreadyRegisteredError(Exception ex)
         {
-            string msg = ex?.Message;
-            if (string.IsNullOrEmpty(msg)) return false;
-            return msg.IndexOf("already", StringComparison.OrdinalIgnoreCase) >= 0
-                && (msg.IndexOf("registered", StringComparison.OrdinalIgnoreCase) >= 0
-                    || msg.IndexOf("exists", StringComparison.OrdinalIgnoreCase) >= 0
-                    || msg.IndexOf("in use", StringComparison.OrdinalIgnoreCase) >= 0
-                    || msg.IndexOf("taken", StringComparison.OrdinalIgnoreCase) >= 0);
-               
+            string haystack = $"{ex?.Message} {(ex as FlockException)?.Body}";
+            if (string.IsNullOrWhiteSpace(haystack)) return false;
+            return haystack.IndexOf("already", StringComparison.OrdinalIgnoreCase) >= 0
+                && (haystack.IndexOf("registered", StringComparison.OrdinalIgnoreCase) >= 0
+                    || haystack.IndexOf("exists", StringComparison.OrdinalIgnoreCase) >= 0
+                    || haystack.IndexOf("in use", StringComparison.OrdinalIgnoreCase) >= 0
+                    || haystack.IndexOf("taken", StringComparison.OrdinalIgnoreCase) >= 0);
          }
         private async Task TryInitializeAnalyticsAsync(CancellationToken cancellationToken)
         {

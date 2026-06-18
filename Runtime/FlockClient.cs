@@ -105,6 +105,7 @@ namespace Flock
             _logger.LogInfo("Initializing Flock SDK");
             _logger.LogInfo($"Token persistence provider: {initConfig.TokenStore?.GetType().Name ?? "<disabled>"}");
             _retryHandler = new RetryHandler(initConfig.RetryPolicy, _logger);
+            FlockHttpClient.Configure(initConfig.HttpTimeout);
             _snapshotStore = initConfig.EnableOfflineCache
                 ? new FlockSnapshotStore(initConfig.OfflineCacheDirectory, _logger)
                 : null;

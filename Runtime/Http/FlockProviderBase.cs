@@ -38,6 +38,10 @@ namespace Flock.Http
                 {
                     return await Client.RetryHandler.ExecuteAsync(operation, cancellationToken);
                 }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
                 catch (FlockException)
                 {
                     throw;
@@ -47,6 +51,10 @@ namespace Flock.Http
                     Client.Logger.LogError($"{context} failed", ex);
                     throw new FlockNetworkException($"{context} failed", ex);
                 }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (FlockException)
             {

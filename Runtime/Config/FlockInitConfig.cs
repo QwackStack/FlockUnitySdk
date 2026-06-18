@@ -34,6 +34,12 @@ namespace Flock.Config
         /// </summary>
         public int AssetCacheMaxSizeMB { get; set; } = 100;
 
+        /// <summary>Per-download timeout for asset (S3) downloads, default off (TimeSpan.Zero) so large assets aren't aborted mid-transfer. Mirrors Addressables' Timeout; separate from HttpTimeout, which only covers API/JSON calls.</summary>
+        public TimeSpan AssetDownloadTimeout { get; set; } = TimeSpan.Zero;
+
+        /// <summary>Retry attempts for a failed asset download, independent of the API RetryPolicy (mirrors Addressables' RetryCount). Default 3; set 0 to disable. Backoff/jitter come from RetryPolicy; only transient failures retry (permanent 4xx do not).</summary>
+        public int AssetDownloadRetryCount { get; set; } = 3;
+
         /// <summary>
         /// When true, read-API responses are snapshotted to disk and served as a fallback
         /// when the network is unavailable. Disable on WebGL — persistentDataPath there
@@ -48,6 +54,10 @@ namespace Flock.Config
         public string OfflineCacheDirectory { get; set; }
 
         public RetryPolicy RetryPolicy { get; set; }
+
+        /// <summary>Per-request timeout for SDK HTTP calls (default 30s; the client otherwise waits 100s). Asset downloads use UnityWebRequest and are unaffected.</summary>
+        public TimeSpan HttpTimeout { get; set; } = TimeSpan.FromSeconds(30);
+
         /// <summary>
         /// Flock analytics Settings
         /// </summary>
