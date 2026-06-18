@@ -923,7 +923,7 @@ namespace Flock.Editor
             {
                 EditorUtility.ClearProgressBar();
                 StoreConnectionResult(credHash, false, "Connection failed.");
-                ShowStatus($"Connection failed: {ex.Message}", MessageType.Error);
+                ShowStatus($"Connection failed: {(ex.InnerException ?? ex).Message}", MessageType.Error);
             }
             catch (TaskCanceledException)
             {
