@@ -254,6 +254,29 @@ namespace Flock.Providers
                 "Steam registration", FlockAuthMethod.Steam, cancellationToken);
         }
 
+        // Facebook/Discord have no dedicated route — post to the generic /player/login with the provider id (login only; no server-side register route).
+        public async Task<PlayerLoginResponse> LoginWithFacebookAsync(string facebookId,
+            CancellationToken cancellationToken = default)
+        {
+            return await ExecuteAuthAsync(
+                () => FlockHttpClient.PostAsync<PlayerLoginResponse>(
+                    $"{Client.GetVersionedApiUrl()}/player/login",
+                    new PlayerLoginRequest { LoginType = "facebook", FacebookId = facebookId },
+                    Client.GetBaseHeaders(), cancellationToken),
+                "Facebook login", FlockAuthMethod.Facebook, cancellationToken);
+        }
+
+        public async Task<PlayerLoginResponse> LoginWithDiscordAsync(string discordId,
+            CancellationToken cancellationToken = default)
+        {
+            return await ExecuteAuthAsync(
+                () => FlockHttpClient.PostAsync<PlayerLoginResponse>(
+                    $"{Client.GetVersionedApiUrl()}/player/login",
+                    new PlayerLoginRequest { LoginType = "discord", DiscordId = discordId },
+                    Client.GetBaseHeaders(), cancellationToken),
+                "Discord login", FlockAuthMethod.Discord, cancellationToken);
+        }
+
         /// <summary>
         /// Logs the current player out by clearing local authentication state.
         /// Safe to call when no player is signed in.

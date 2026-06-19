@@ -10,6 +10,8 @@ namespace Flock
         Google,
         Apple,
         Steam,
+        Facebook,
+        Discord,
         /// <summary>Restored from the token store at startup.</summary>
         SessionRestore
     }

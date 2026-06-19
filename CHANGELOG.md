@@ -5,6 +5,19 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [1.16.0] - 2026-06-19
+
+### Added
+- `client.Authentication.LoginWithFacebookAsync(facebookId)` and `LoginWithDiscordAsync(discordId)` — Facebook and Discord sign-in via the generic `POST /v1/player/login` route (the backend validates the provider id). Login only; see Known issues.
+- `FlockAuthMethod.Facebook` and `FlockAuthMethod.Discord` — new auth-method enum values, surfaced on `FlockAuthInfo` through `FlockEvents.OnAuthenticated`.
+
+### Documentation
+- README — Facebook/Discord added to the auth provider list, the usage examples (login-only), and the `OnAuthenticated` event description.
+- In-editor SDK Guide — provider list updated to include Facebook/Discord.
+
+### Known issues / Backend backlog
+- **Facebook/Discord are login-only.** There is no `register/facebook|discord` route, and the generic `/v1/player/register` accepts only email/password/name — so unlike Google/Apple/Steam these two have no registration method. Pending backend confirmation of whether first-time login auto-creates the player; if it does not, a register route is needed.
+
 ## [1.15.0] - 2026-06-18
 
 ### Added
