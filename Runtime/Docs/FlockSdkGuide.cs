@@ -36,7 +36,7 @@ namespace Flock.Docs
         public const string Overview =
 @"Flock is a game backend. This SDK connects your Unity game to it for:
 
-  • Player accounts & login (email, device, Google, Apple, Steam)
+  • Player accounts & login (email, device, Google, Apple, Steam, Facebook, Discord)
   • Saved player data and player templates
   • A shop and player inventory
   • Remote game configuration you can change without rebuilding the game

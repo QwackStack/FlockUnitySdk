@@ -22,7 +22,7 @@ Every API request includes these headers:
 
 | Service | Endpoint | Auth |
 |---------|----------|------|
-| Email Login | `POST /v1/player/login` | API Key |
+| Email / Facebook / Discord Login | `POST /v1/player/login` | API Key |
 | Device Login | `POST /v1/player/login/device` | API Key |
 | Google Login | `POST /v1/player/login/google` | API Key |
 | Apple Login | `POST /v1/player/login/apple` | API Key |
@@ -70,3 +70,5 @@ Every API request includes these headers:
 | Track Event | `POST /v1/analytics/events/single` | Bearer |
 | Track Events Batch | `POST /v1/analytics/events` | Bearer |
 | Record Transaction | `POST /v1/analytics/transactions` | Bearer |
+| Log Events Batch | `POST /v1/log_event` | API Key |
+| Log Event | `POST /v1/log_event/single` | API Key |

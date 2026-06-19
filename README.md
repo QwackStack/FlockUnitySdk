@@ -25,7 +25,7 @@ The Flock Unity SDK provides access to Flock's game backend services from Unity 
 
 ## Features
 
-- Player authentication (email, device, Google, Apple, Steam)
+- Player authentication (email, device, Google, Apple, Steam, Facebook, Discord)
 - Token refresh with automatic silent retry, plus a session-expired event
 - Game configuration (fetched from the backend, filterable by tag)
 - Config schema validation (backend validation of config types)
@@ -168,6 +168,12 @@ var response = await FlockClient.Instance.Authentication.RegisterWithAppleAsync(
 // Steam
 var response = await FlockClient.Instance.Authentication.LoginWithSteamAsync(sessionTicket);
 var response = await FlockClient.Instance.Authentication.RegisterWithSteamAsync(sessionTicket, "PlayerName");
+
+// Facebook (login only — no register route server-side)
+var response = await FlockClient.Instance.Authentication.LoginWithFacebookAsync(facebookId);
+
+// Discord (login only — no register route server-side)
+var response = await FlockClient.Instance.Authentication.LoginWithDiscordAsync(discordId);
 
 // Logout — clears local token state
 FlockClient.Instance.Authentication.Logout();
@@ -392,7 +398,7 @@ private void HandleSessionEnded(FlockSessionEndedArgs args)
 
 | Event | Signature | Hooks up to |
 |-------|-----------|-------------|
-| `OnAuthenticated` | `Action<FlockAuthInfo>` | Every successful login/register (email, device, Google, Apple, Steam) and successful `TryRestoreSessionAsync`. Payload: `PlayerId` + `FlockAuthMethod`. |
+| `OnAuthenticated` | `Action<FlockAuthInfo>` | Every successful login/register (email, device, Google, Apple, Steam) or login (Facebook, Discord), and successful `TryRestoreSessionAsync`. Payload: `PlayerId` + `FlockAuthMethod`. |
 | `OnTokenRefreshed` | `Action` | A successful token refresh — manual `RefreshTokenAsync` or the SDK's automatic refresh. |
 | `OnAuthExpired` | `Action` | A failed/rejected token refresh: tokens are cleared and the player must log in again. Same moment as `FlockClient.OnSessionExpired` (kept for back-compat). |
 | `OnLoggedOut` | `Action` | `Logout()` completing while a player was signed in. Local-only by design — tokens dropped on this device, nothing revoked server-side. |
