@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Threading.Tasks;
 using UnityEditor;
 using UnityEngine;
 using Flock.Config;
@@ -43,37 +44,15 @@ namespace Flock.Editor.Codegen
 
             try
             {
-                FlockSchemaSnapshot snapshot = await SchemaFetcher.FetchAsync(config);
-
-                Debug.Log(
-                    "[Flock Codegen] Snapshot fetched\n" +
-                    $"  PlayerTemplates: {snapshot.PlayerTemplates.Count}\n" +
-                    $"  GameConfigs:     {snapshot.GameConfigs.Count}\n");
-
-                if (!Directory.Exists(generatedRoot))
-                    Directory.CreateDirectory(generatedRoot);
-
-                PlayerTemplateEmitter.EmitResult templateResult = PlayerTemplateEmitter.Emit(
-                    snapshot.PlayerTemplates, Path.Combine(generatedRoot, TemplatesSubdir));
-                // PlayerAccessorEmitter must run after PlayerTemplateEmitter wipes the dir.
-                int playerAccessors = PlayerAccessorEmitter.Emit(
-                    snapshot.PlayerTemplates, templateResult.ClassNamesById, Path.Combine(generatedRoot, TemplatesSubdir));
-                int commandAccessors = CommandAccessorEmitter.Emit(
-                    snapshot.PlayerTemplates, templateResult.ClassNamesById, Path.Combine(generatedRoot, CommandsSubdir));
-                GameConfigEmitter.EmitResult configResult = GameConfigEmitter.Emit(
-                    snapshot.GameConfigs, Path.Combine(generatedRoot, ConfigsSubdir));
-                int configAccessors = ConfigAccessorEmitter.Emit(
-                    snapshot.GameConfigs, configResult.ClassNamesById, Path.Combine(generatedRoot, ConfigsSubdir));
-                ManifestEmitter.Emit(snapshot, generatedRoot);
-
-                AssetDatabase.Refresh();
+                CodegenResult result = await RunCodegenAsync(config, generatedRoot);
                 Debug.Log(
                     "[Flock Codegen] Sync complete\n" +
-                    $"  Templates:        {templateResult.Count}\n" +
-                    $"  Player accessors: {playerAccessors}\n" +
-                    $"  Command methods:  {commandAccessors}\n" +
-                    $"  Configs:          {configResult.Count}\n" +
-                    $"  Config accessors: {configAccessors}\n" +
+                    $"  GameVersionId:    {result.Snapshot.GameVersionId}\n" +
+                    $"  Templates:        {result.TemplateCount}\n" +
+                    $"  Player accessors: {result.PlayerAccessorCount}\n" +
+                    $"  Command methods:  {result.CommandMethodCount}\n" +
+                    $"  Configs:          {result.ConfigCount}\n" +
+                    $"  Config accessors: {result.ConfigAccessorCount}\n" +
                     $"  Output:           {generatedRoot}");
             }
             catch (Exception ex)
@@ -81,6 +60,61 @@ namespace Flock.Editor.Codegen
                 Debug.LogError($"[Flock Codegen] Sync failed: {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}");
             }
 #endif
+        }
+
+        // Shared fetch + emit core used by the editor button and the CI entry points.
+        // SchemaFetcher throws on fetch failure, so a failed sync never reaches the emitters.
+        internal static async Task<CodegenResult> RunCodegenAsync(FlockConfigAsset config, string generatedRoot)
+        {
+            FlockSchemaSnapshot snapshot = await SchemaFetcher.FetchAsync(config);
+
+            Debug.Log(
+                "[Flock Codegen] Snapshot fetched\n" +
+                $"  PlayerTemplates: {snapshot.PlayerTemplates.Count}\n" +
+                $"  GameConfigs:     {snapshot.GameConfigs.Count}");
+
+            if (!Directory.Exists(generatedRoot))
+                Directory.CreateDirectory(generatedRoot);
+
+            PlayerTemplateEmitter.EmitResult templateResult = PlayerTemplateEmitter.Emit(
+                snapshot.PlayerTemplates, Path.Combine(generatedRoot, TemplatesSubdir));
+            // PlayerAccessorEmitter must run after PlayerTemplateEmitter wipes the dir.
+            int playerAccessors = PlayerAccessorEmitter.Emit(
+                snapshot.PlayerTemplates, templateResult.ClassNamesById, Path.Combine(generatedRoot, TemplatesSubdir));
+            int commandAccessors = CommandAccessorEmitter.Emit(
+                snapshot.PlayerTemplates, templateResult.ClassNamesById, Path.Combine(generatedRoot, CommandsSubdir));
+            GameConfigEmitter.EmitResult configResult = GameConfigEmitter.Emit(
+                snapshot.GameConfigs, Path.Combine(generatedRoot, ConfigsSubdir));
+            int configAccessors = ConfigAccessorEmitter.Emit(
+                snapshot.GameConfigs, configResult.ClassNamesById, Path.Combine(generatedRoot, ConfigsSubdir));
+            ManifestEmitter.Emit(snapshot, generatedRoot);
+
+            // Skip the import in batch mode: the files are already on disk for CI to commit, and a
+            // script-recompile domain reload here could preempt the editor exit and hang the run.
+            if (!Application.isBatchMode)
+                AssetDatabase.Refresh();
+            return new CodegenResult(snapshot, templateResult.Count, playerAccessors, commandAccessors, configResult.Count, configAccessors);
+        }
+
+        internal readonly struct CodegenResult
+        {
+            public readonly FlockSchemaSnapshot Snapshot;
+            public readonly int TemplateCount;
+            public readonly int PlayerAccessorCount;
+            public readonly int CommandMethodCount;
+            public readonly int ConfigCount;
+            public readonly int ConfigAccessorCount;
+
+            public CodegenResult(FlockSchemaSnapshot snapshot, int templateCount, int playerAccessorCount,
+                int commandMethodCount, int configCount, int configAccessorCount)
+            {
+                Snapshot = snapshot;
+                TemplateCount = templateCount;
+                PlayerAccessorCount = playerAccessorCount;
+                CommandMethodCount = commandMethodCount;
+                ConfigCount = configCount;
+                ConfigAccessorCount = configAccessorCount;
+            }
         }
 
         internal static void CleanGenerated()
@@ -135,7 +169,7 @@ namespace Flock.Editor.Codegen
             Debug.Log($"[Flock Codegen] Clean complete ({removed} item(s) removed).");
         }
 
-        private static bool TryResolveGeneratedPath(string configured, out string resolved, out string error)
+        internal static bool TryResolveGeneratedPath(string configured, out string resolved, out string error)
         {
             resolved = null;
             string raw = string.IsNullOrWhiteSpace(configured) ? DefaultGeneratedPath : configured.Trim();
@@ -159,7 +193,7 @@ namespace Flock.Editor.Codegen
             string[] guids = AssetDatabase.FindAssets("t:FlockConfigAsset");
             if (guids == null || guids.Length == 0)
             {
-                error = "No FlockConfigAsset found. Open Qwacks > Editor and save a configuration first.";
+                error = "No FlockConfigAsset found. Open Qwacks > Flock and save a configuration first.";
                 return false;
             }
 

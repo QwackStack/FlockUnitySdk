@@ -5,6 +5,19 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [1.17.0]
+
+### Added
+- **Headless codegen for CI.** `Flock.Editor.Codegen.FlockCodegenCli.Sync` and `.Verify` run codegen from the command line (`-batchmode -executeMethod …`, without `-quit`). `Verify` writes nothing and exits non-zero when the committed generated code is stale versus the backend — usable as a PR gate. Exit codes: `0` ok / no drift, `1` could not run, `2` drift.
+- **Schema content hash.** The generated `SchemasManifest` now bakes a `ContentHash` of the schema content (each template/config's id, name, tag, and field tree). `Verify` re-fetches and compares it, so field/type/tag edits *within* the same Game Version are detected — drift the Game Version ID check alone misses.
+- EditMode tests (`Flock.Tests.Editor`) for the codegen pure logic: `SchemaHasher`, `CodeGenNamingHelpers`, `TypeMap`, and `FlockBuildGuard.GetBuildBlockReason`.
+
+### Changed
+- **Codegen sync is now fail-closed.** A failed schema fetch (offline, bad key, server error) throws instead of returning an empty snapshot, so the emitters no longer wipe `Templates/` / `Commands/` / `Configs/` and overwrite the manifest with empty stubs on a transient failure. Legitimately empty results still generate normally.
+
+### Fixed
+- In-product references to the editor window now use its real menu path, **Qwacks > Flock** (previously "Qwacks > Editor", which is not a menu), and codegen instructions point to its **Codegen** tab (previously "Flock > Sync Schemas", a menu that never existed) — across the README, runtime error messages, tooltips, the in-editor guide, and the Quick Start sample.
+
 ## [1.16.0] - 2026-06-19
 
 ### Added

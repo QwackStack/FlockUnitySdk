@@ -25,11 +25,11 @@ namespace Flock.Config
         [Tooltip(
             "Game Version ID, resolved from the dashboard at edit time and baked here. " +
             "Runtime init uses this directly and never contacts the server. Resolved " +
-            "automatically in Qwacks > Editor when you change your credentials or version.")]
+            "automatically in Qwacks > Flock when you change your credentials or version.")]
         public string gameVersionId;
 
         [Header("Codegen")]
-        [Tooltip("Project-relative folder where 'Flock > Sync Schemas' writes generated .cs files (and 'Clean Generated' wipes). Must start with 'Assets/'. Created automatically if missing. Treat this folder as Flock-owned — files in it will be deleted on regen/clean.")]
+        [Tooltip("Project-relative folder where the Codegen tab's Sync Schemas writes generated .cs files (and Delete Generated Code wipes). Must start with 'Assets/'. Created automatically if missing. Treat this folder as Flock-owned — files in it will be deleted on regen/clean.")]
         public string generatedCodePath = "Assets/Flock/Generated";
 
         [Header("Optional Settings")]
@@ -195,7 +195,7 @@ namespace Flock.Config
             {
                 Debug.LogWarning(
                     $"[Flock Config] gameVersion changed ('{_lastSeenGameVersion}' → '{gameVersion}'). " +
-                    "Run 'Flock > Sync Schemas' to regenerate.");
+                    "Re-sync from the Codegen tab in Qwacks > Flock.");
                 _lastSeenGameVersion = gameVersion;
             }
         }

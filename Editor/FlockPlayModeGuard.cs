@@ -31,7 +31,7 @@ namespace Flock.Editor
             {
                 Debug.LogWarning(
                     "[Flock] A valid FlockConfig exists but no FlockBootstrap is in the open scene(s). " +
-                    "If you initialize Flock from your own code that's fine — otherwise open Qwacks > Editor " +
+                    "If you initialize Flock from your own code that's fine — otherwise open Qwacks > Flock " +
                     "and click 'Add Flock Bootstrap to Scene'.");
                 return;
             }

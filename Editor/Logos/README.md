@@ -2,7 +2,7 @@
 This is just an inital ReadMe for content set up, might be changed.
 
 Drop logo PNGs in this folder to have them appear in the Qwacks editor window
-(Qwacks > Editor).
+(Qwacks > Flock).
 
 ## Expected filenames
 

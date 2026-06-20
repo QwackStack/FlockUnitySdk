@@ -40,7 +40,7 @@ The Flock Unity SDK provides access to Flock's game backend services from Unity 
 - Automatic retry with exponential backoff
 - Offline-safe init (no network at startup) — plus disk-cached static content that keeps serving without network after one online session
 - JWT token management
-- Strongly typed codegen for player templates, game configs, and game commands (`Flock > Sync Schemas`)
+- Strongly typed codegen for player templates, game configs, and game commands (via the Codegen tab in **Qwacks > Flock**)
 - Hands-off startup — the SDK auto-initializes from your config at launch (or use the drop-in `FlockBootstrap` component, or call `Create` yourself)
 
 ## Installation
@@ -60,14 +60,14 @@ The SDK is distributed through the Flock website — download the latest release
 
 ### Editor Configuration
 
-Open **Qwacks > Editor** in the Unity menu bar. The window is a view of the `FlockConfig` ScriptableObject — edits save straight into the asset (no separate Save step). Required values:
+Open **Qwacks > Flock** in the Unity menu bar. The window is a view of the `FlockConfig` ScriptableObject — edits save straight into the asset (no separate Save step). Required values:
 
 - **API URL** — Flock API endpoint (default: `https://api-flock.qwacks.com`)
 - **API Key** — Your Flock API key
 - **Game ID** — Your game ID from the Flock dashboard
 - **Game Version** — Your game version name (the matching ID is resolved from the backend at edit time and baked into the asset, so init makes no network call)
 
-The asset is saved to `Assets/Resources/FlockConfig.asset` so it loads in builds via `Resources.Load<FlockConfigAsset>("FlockConfig")`. The same window has a Codegen tab that drives `Flock > Sync Schemas` (see [Codegen](#codegen)).
+The asset is saved to `Assets/Resources/FlockConfig.asset` so it loads in builds via `Resources.Load<FlockConfigAsset>("FlockConfig")`. The same window has a Codegen tab that runs Sync Schemas (see [Codegen](#codegen)).
 
 ### Automatic Initialization (default)
 
@@ -81,7 +81,7 @@ FlockEvents.OnInitialized     += ()       => Debug.Log("Flock SDK ready");
 FlockEvents.OnSessionRestored += signedIn => Debug.Log(signedIn ? "Session resumed" : "Show login");
 ```
 
-To drive init yourself — e.g. to defer past a splash screen or EULA — turn **Auto-Initialize On Load** off (Qwacks > Editor → Advanced Settings → Tools), then use one of the options below.
+To drive init yourself — e.g. to defer past a splash screen or EULA — turn **Auto-Initialize On Load** off (Qwacks > Flock → Advanced Settings → Tools), then use one of the options below.
 
 > **Init is fail-fast.** A bad config makes `Create` throw (the auto-init path catches and logs it instead of crashing startup). Either way the SDK stays uninitialized and `FlockClient.Instance` throws until a successful init — so guard with `FlockClient.IsInitialized`, inspect `FlockClient.InitializationError`, or handle `FlockEvents.OnInitializationFailed`.
 
@@ -114,7 +114,7 @@ For full manual control, turn **Auto-Initialize On Load** off and create the cli
 var configAsset = Resources.Load<FlockConfigAsset>("FlockConfig");
 
 // Create is synchronous and makes no network call. The Game Version ID was
-// resolved at edit time (Qwacks > Editor) and baked into FlockConfig, applied
+// resolved at edit time (Qwacks > Flock) and baked into FlockConfig, applied
 // to every request; init stores the singleton in FlockClient.Instance.
 FlockClient.Create(configAsset.ToInitConfig());
 
@@ -239,7 +239,7 @@ var template = await FlockClient.Instance.Player.GetTemplateByIdAsync("template-
 var template = await FlockClient.Instance.Player.GetTemplateByNameAsync("currency");
 var playerData = await FlockClient.Instance.Player.GetTemplatePlayerDataAsync("template-id");
 
-// Reading player data — preferred path: the codegen'd accessors. `Flock > Sync Schemas`
+// Reading player data — preferred path: the codegen'd accessors. The Codegen tab's Sync Schemas
 // emits one Get<TemplateName>Async() extension per template returning a generated typed
 // class; numeric conversion is handled by the deserializer.
 var currency = await FlockClient.Instance.Player.GetCurrencyAsync(); // generated
@@ -440,7 +440,7 @@ or queued.
 
 ## Codegen
 
-Run **Flock > Sync Schemas** (or the Codegen tab in **Qwacks > Editor**) to fetch your game's player templates and game configs from the backend and generate typed C# accessors. Output goes to `Assets/Flock/Generated/` by default; change the path on the FlockConfig asset if you want it elsewhere. Treat the folder as Flock-owned — sync wipes the `Templates/`, `Commands/`, and `Configs/` subdirectories on each run, and **Delete Generated Code** clears the whole tree.
+Run **Sync Schemas** from the Codegen tab in **Qwacks > Flock** to fetch your game's player templates and game configs from the backend and generate typed C# accessors. Output goes to `Assets/Flock/Generated/` by default; change the path on the FlockConfig asset if you want it elsewhere. Treat the folder as Flock-owned — sync wipes the `Templates/`, `Commands/`, and `Configs/` subdirectories on each run, and **Delete Generated Code** clears the whole tree.
 
 What gets generated, given a player template named `PlayerProgress` and a game config named `Gameplay`:
 
@@ -484,6 +484,23 @@ Re-run sync whenever:
 - You add or remove templates
 
 Type mapping for primitives lives in `Editor/Codegen/TypeMap.cs` (`integer` → `int`, `string` → `string`, `datetime`/`date`/`timestamp` → `System.DateTime`, etc.). Composite types are walked structurally by `SchemaPropertyEmitter`: `object` fields emit a nested partial class, `list`/`array` emit `List<T>`, `dict` emits `Dictionary<string, T>`, all resolved recursively through the same walker.
+
+### Continuous integration
+
+Codegen runs headlessly so CI can keep generated code honest without opening the editor by hand. Two public entry points on `Flock.Editor.Codegen.FlockCodegenCli`:
+
+- **`Sync`** — regenerates the typed accessors from the backend schema (same as the editor button), then exits.
+- **`Verify`** — writes nothing; exits non-zero when the committed generated code is stale versus the backend schema. Catches both a changed Game Version *and* field/type/tag edits **within** the same version — the manifest bakes a content hash of the schema, and `Verify` re-fetches and compares it. Use it as a PR gate. (The build guard only checks the Game Version ID, and only offline at build time; same-version content drift is a `Verify`-only, online check.)
+
+```bash
+# Regenerate (commit the result if anything changed)
+Unity -batchmode -projectPath . -executeMethod Flock.Editor.Codegen.FlockCodegenCli.Sync -logFile -
+
+# Fail the build when committed generated code has drifted
+Unity -batchmode -projectPath . -executeMethod Flock.Editor.Codegen.FlockCodegenCli.Verify -logFile -
+```
+
+Exit codes: `0` success / no drift · `1` could not run (bad config or fetch failure) · `2` drift detected (`Verify` only). **Do not pass `-quit`** — each method runs asynchronously and exits the editor itself once the backend round-trip completes; `-quit` would tear the editor down before codegen finishes. Both need valid Flock credentials on the `FlockConfig` asset and network access to the backend.
 
 ## Backend backlog
 
