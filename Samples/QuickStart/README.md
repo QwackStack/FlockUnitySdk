@@ -5,7 +5,7 @@ analytics event, and read your player data.
 
 ## Setup (about a minute)
 
-1. **Configure Flock** — open **Qwacks > Editor** and fill in API URL / API Key / Game ID / Game Version (from your Flock dashboard).
+1. **Configure Flock** — open **Qwacks > Flock** and fill in API URL / API Key / Game ID / Game Version (from your Flock dashboard).
 2. **Add the bootstrap** — in the same window, click **Add Flock Bootstrap to Scene**. This initializes the SDK when you press Play.
 3. **Add the sample** — create an empty GameObject and add the **FlockQuickStartSample** component (the script in this folder).
 4. **Press Play**, then use the on-screen buttons: **Log in (device)**, then **Fire test event** and **Read my player data**.

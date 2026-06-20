@@ -63,7 +63,7 @@ These are saved into Assets/Resources/FlockConfig.asset.";
 @"1. Fill in Configuration above.
 2. Click 'Add Flock Bootstrap to Scene'. This drops in a GameObject that starts
    the SDK automatically when the game runs — put it in your first/boot scene.
-3. Run 'Flock > Sync Schemas' whenever you change player templates or game config
+3. Re-sync from the Codegen tab in Qwacks > Flock whenever you change player templates or game config
    on the dashboard, or change Game Version, to regenerate the typed C# accessors.
 4. Done — the SDK is ready to use (see Quick Start below, and the full
    documentation for everything else).";

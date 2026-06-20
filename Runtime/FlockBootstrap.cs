@@ -14,7 +14,7 @@ namespace Flock
         [Tooltip(
             "FlockConfig asset that holds your API URL, key, game ID, and game version. " +
             "This component never stores those values itself — edit them on the asset " +
-            "(open Qwacks > Editor or select the asset in the Project view).")]
+            "(open Qwacks > Flock or select the asset in the Project view).")]
         private FlockConfigAsset config;
 
         [SerializeField]
@@ -94,7 +94,7 @@ namespace Flock
             {
                 InvalidOperationException ex = new InvalidOperationException(
                     $"FlockBootstrap on '{name}' has no FlockConfig asset assigned. " +
-                    "Drag a FlockConfig into the 'Config' field, or create one via Qwacks > Editor.");
+                    "Drag a FlockConfig into the 'Config' field, or create one via Qwacks > Flock.");
                 Debug.LogError(ex.Message, this);
                 OnInitializationFailed?.Invoke(ex);
                 throw ex;
@@ -104,7 +104,7 @@ namespace Flock
             {
                 InvalidOperationException ex = new InvalidOperationException(
                     $"FlockConfig asset '{config.name}' is incomplete: {validationError}. " +
-                    "Open Qwacks > Editor to fix it.");
+                    "Open Qwacks > Flock to fix it.");
                 Debug.LogError(ex.Message, this);
                 OnInitializationFailed?.Invoke(ex);
                 throw ex;

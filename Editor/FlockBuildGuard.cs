@@ -37,15 +37,15 @@ namespace Flock.Editor
             if (!guardEnabled) return null;
 
             if (string.IsNullOrEmpty(bakedGameVersionId))
-                return "[Flock] Game Version ID is not resolved on FlockConfig. Open Qwacks > Editor while " +
+                return "[Flock] Game Version ID is not resolved on FlockConfig. Open Qwacks > Flock while " +
                        "online to resolve your Game Version before building — or turn off " +
                        "'Fail build if Game Version unresolved' in Advanced Settings > Tools.";
 
             if (generatedGameVersionId != null &&
                 !string.Equals(generatedGameVersionId, bakedGameVersionId, StringComparison.Ordinal))
                 return $"[Flock] Game Version ID drift: FlockConfig is baked for '{bakedGameVersionId}' but the " +
-                       $"generated schemas were synced for '{generatedGameVersionId}'. Re-run 'Flock > Sync Schemas' " +
-                       "(and re-resolve in Qwacks > Editor if the version changed) so they match — or turn off " +
+                       $"generated schemas were synced for '{generatedGameVersionId}'. Re-sync from the Codegen tab in Qwacks > Flock " +
+                       "(and re-resolve in Qwacks > Flock if the version changed) so they match — or turn off " +
                        "'Fail build if Game Version unresolved' in Advanced Settings > Tools.";
 
             return null;

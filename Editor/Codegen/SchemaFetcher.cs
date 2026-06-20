@@ -2,35 +2,32 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Flock.Config;
+using Flock.Exceptions;
 using Flock.Http;
 using Flock.Models;
-using UnityEngine;
 
 namespace Flock.Editor.Codegen
 {
     internal static class SchemaFetcher
     {
+        // Throws on any resolve/fetch failure so a transient outage or bad key aborts the sync
+        // before the emitters wipe and rewrite — never returns a partial or empty snapshot.
         public static async Task<FlockSchemaSnapshot> FetchAsync(FlockConfigAsset config)
         {
             string baseUrl = (config.apiUrl ?? "").TrimEnd('/');
-            var bootstrapHeaders = new Dictionary<string, string>
+            Dictionary<string, string> bootstrapHeaders = new Dictionary<string, string>
             {
                 { "X-Flock-API-Key", config.ApiKey }
             };
 
             string gameVersionId = await ResolveGameVersionIdAsync(baseUrl, config.gameVersion, bootstrapHeaders);
-            if (string.IsNullOrEmpty(gameVersionId))
-            {
-                Debug.LogError($"[Flock Codegen] Could not resolve GameVersionId for game version '{config.gameVersion}'. Aborting sync.");
-                return new FlockSchemaSnapshot { GameVersionId = "", FetchedAt = DateTime.UtcNow };
-            }
 
-            var headers = new Dictionary<string, string>(bootstrapHeaders)
+            Dictionary<string, string> headers = new Dictionary<string, string>(bootstrapHeaders)
             {
                 ["X-Game-Version-ID"] = gameVersionId
             };
 
-            var snapshot = new FlockSchemaSnapshot
+            FlockSchemaSnapshot snapshot = new FlockSchemaSnapshot
             {
                 GameVersionId = gameVersionId,
                 FetchedAt = DateTime.UtcNow,
@@ -45,47 +42,46 @@ namespace Flock.Editor.Codegen
         private static async Task<string> ResolveGameVersionIdAsync(string baseUrl, string gameVersion, Dictionary<string, string> headers)
         {
             if (string.IsNullOrEmpty(gameVersion))
-            {
-                Debug.LogError("[Flock Codegen] Game Version is empty in FlockConfigAsset.");
-                return null;
-            }
+                throw new InvalidOperationException("Game Version is empty in FlockConfigAsset.");
 
             string url = $"{baseUrl}/{FlockClient.ApiVersion}/game_version/by-name/{Uri.EscapeDataString(gameVersion)}";
+            GenericResponse<GameVersionSchema> response;
             try
             {
-                var response = await FlockHttpClient.GetAsync<GenericResponse<GameVersionSchema>>(url, headers);
-                if (response?.Error != null && !string.IsNullOrEmpty(response.Error.Code))
-                {
-                    Debug.LogError($"[Flock Codegen] {url} returned error code '{response.Error.Code}'.");
-                    return null;
-                }
-                return response?.Result?.Id;
+                response = await FlockHttpClient.GetAsync<GenericResponse<GameVersionSchema>>(url, headers);
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[Flock Codegen] GET {url} failed: {ex.GetType().Name}: {ex.Message}");
-                return null;
+                throw new FlockException($"GET {url} failed: {ex.GetType().Name}: {ex.Message}", ex);
             }
+
+            if (response?.Error != null && !string.IsNullOrEmpty(response.Error.Code))
+                throw new FlockException($"{url} returned error code '{response.Error.Code}'.");
+
+            string id = response?.Result?.Id;
+            if (string.IsNullOrEmpty(id))
+                throw new FlockException($"Could not resolve GameVersionId for game version '{gameVersion}' from {url}.");
+            return id;
         }
 
+        // A server error code or a network failure both throw so a failed sync never reaches the
+        // emitters. A legitimately empty Result (no error code) is allowed through as 0 items.
         private static async Task<List<T>> GetList<T>(string url, Dictionary<string, string> headers)
         {
-
+            GenericResponse<List<T>> response;
             try
             {
-                var response = await FlockHttpClient.GetAsync<GenericResponse<List<T>>>(url, headers);
-                if (response?.Error != null && !string.IsNullOrEmpty(response.Error.Code))
-                {
-                    Debug.LogError($"[Flock Codegen] {url} returned error code '{response.Error.Code}'. Continuing with 0 items for this endpoint.");
-                    return new List<T>();
-                }
-                return response?.Result ?? new List<T>();
+                response = await FlockHttpClient.GetAsync<GenericResponse<List<T>>>(url, headers);
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[Flock Codegen] GET {url} failed: {ex.GetType().Name}: {ex.Message}\nContinuing with 0 items for this endpoint.");
-                return new List<T>();
+                throw new FlockException($"GET {url} failed: {ex.GetType().Name}: {ex.Message}", ex);
             }
+
+            if (response?.Error != null && !string.IsNullOrEmpty(response.Error.Code))
+                throw new FlockException($"{url} returned error code '{response.Error.Code}'.");
+
+            return response?.Result ?? new List<T>();
         }
     }
 }
