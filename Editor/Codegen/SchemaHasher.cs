@@ -46,6 +46,33 @@ namespace Flock.Editor.Codegen
                 AppendFields(sb, c.Schema);
             }
 
+            // Shops: id/name plus each item's id/name/currency — exactly the fields the generated shop
+            // accessors and FlockShopItemId/FlockFundId enums depend on, so a backend change reads as drift.
+            IEnumerable<Shop> shops =
+                (snapshot.Shops ?? new List<Shop>())
+                    .Where(s => s != null)
+                    .OrderBy(s => s.Id ?? "", StringComparer.Ordinal)
+                    .ThenBy(s => s.Name ?? "", StringComparer.Ordinal);
+            foreach (Shop shop in shops)
+            {
+                sb.Append('S');
+                AppendString(sb, shop.Id);
+                AppendString(sb, shop.Name);
+                sb.Append('[');
+                IEnumerable<ShopItem> items =
+                    (shop.ShopItems ?? new List<ShopItem>())
+                        .Where(i => i != null)
+                        .OrderBy(i => i.Id ?? "", StringComparer.Ordinal);
+                foreach (ShopItem item in items)
+                {
+                    sb.Append('I');
+                    AppendString(sb, item.Id);
+                    AppendString(sb, item.Name);
+                    AppendString(sb, item.Currency);
+                }
+                sb.Append(']');
+            }
+
             return Sha256Hex(sb.ToString());
         }
 

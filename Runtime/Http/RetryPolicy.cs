@@ -39,7 +39,7 @@ namespace Flock.Http
 
         public async Task<T> ExecuteAsync<T>(
             Func<Task<T>> operation,
-            CancellationToken cancellationToken = default, bool shouldRetryOnException = true,
+            CancellationToken cancellationToken = default, bool retryAmbiguousFailures = true,
             int? maxRetriesOverride = null)
         {
             int maxRetries = maxRetriesOverride ?? _policy.MaxRetries;
@@ -61,13 +61,18 @@ namespace Flock.Http
                     // Cancellation isn't a failure — never retry it, never log it as one.
                     throw;
                 }
-                catch (Exception ex) when (shouldRetryOnException && attempt <= maxRetries)
+                catch (Exception ex) when (attempt <= maxRetries)
                 {
                     if (ex is FlockAuthException || ex is FlockValidationException || ex is FlockSerializationException)
                         throw;
 
                     // Don't retry permanent 4xx (404, 409, etc.) — the server's answer won't change.
                     if (ex is FlockNetworkException net && FlockNetworkException.IsPermanentStatus(net.StatusCode))
+                        throw;
+
+                    // Non-idempotent callers only retry failures the server provably didn't process (408/429);
+                    // ambiguous ones (client timeout, dropped connection, 5xx) might have committed, so surface them.
+                    if (!retryAmbiguousFailures && !IsNotProcessed(ex))
                         throw;
 
                     TimeSpan wait = ResolveDelay(ex, delay);
@@ -86,6 +91,10 @@ namespace Flock.Http
                 }
             }
         }
+
+        // 408/429 mean the server rejected the request before processing it, so a retry can't double-apply.
+        private static bool IsNotProcessed(Exception ex)
+            => ex is FlockNetworkException net && (net.StatusCode == 408 || net.StatusCode == 429);
 
         // Honors a server Retry-After hint when present (bounded by MaxDelay), else jittered backoff.
         private TimeSpan ResolveDelay(Exception ex, TimeSpan baseDelay)

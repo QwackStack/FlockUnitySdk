@@ -133,11 +133,14 @@ namespace Flock.Providers
         }
 
         public async Task<PlayerInventory> PurchaseAsync(
-            string shopItemId, string playerId,
+            string shopItemId, string playerId = null,
             CancellationToken cancellationToken = default)
         {
             RequireNotEmpty(shopItemId, "Shop Item ID");
-            RequireNotEmpty(playerId, "Player ID");
+            // Default to the signed-in player; callers no longer need to pass CurrentPlayerId.
+            if (string.IsNullOrEmpty(playerId))
+                playerId = Client.CurrentPlayerId;
+            RequireNotEmpty(playerId, "Player ID (sign in first)");
 
             ShopItem shopItem = await GetItemAsync(shopItemId, cancellationToken);
             try
@@ -157,6 +160,7 @@ namespace Flock.Providers
                 Client.Logger.LogWarning("Failed to record purchase analytics");
             }
 
+            // Purchase is non-idempotent: an ambiguous failure may mean the charge already cleared, so surface it rather than re-send (double-charge). Only 408/429 (not processed) retry.
             PlayerInventory result = await ExecuteAsync(async () =>
             {
                 ShopTransactionRequest request = new ShopTransactionRequest
@@ -167,7 +171,7 @@ namespace Flock.Providers
 
                 return await FlockHttpClient.PostAsync<PlayerInventory>(
                     $"{Client.GetVersionedApiUrl()}/shop/transaction", request, Client.GetBaseHeaders(), cancellationToken);
-            }, "Purchase shop item", cancellationToken);
+            }, "Purchase shop item", cancellationToken, idempotent: false);
 
             if (Client.Analytics != null && shopItem != null)
             {
@@ -198,6 +202,7 @@ namespace Flock.Providers
         {
             RequireNotEmpty(playerId, "Player ID");
 
+            // Inventory changes on every purchase — intentionally never cached (no in-memory dict / snapshot); always fresh. Same rule as bans.
             return await ExecuteAsync(async () =>
             {
                 return await FlockHttpClient.GetAsync<PaginatedResponse<PlayerInventory>>(

@@ -3,6 +3,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Flock.Models;
 using Flock.Http;
+using Flock.Exceptions;
 
 namespace Flock.Providers
 {
@@ -56,18 +57,34 @@ namespace Flock.Providers
             return ApplyToPlayerCache(result);
         }
 
+#if !FLOCK_NO_PLAYER
+        /// <summary>Adds funds to the current player's currency wallet, resolving the "currency"-tagged player template at runtime. Use the id overload (or the generated FlockFundId method) to pass a known currency template id and skip the lookup.</summary>
         public async Task<PlayerData> AddGameFundsAsync(
-            string playerDataId, string currency, int amount,
+            string currency, int amount,
             CancellationToken cancellationToken = default)
         {
-            RequireNotEmpty(playerDataId, "Player Data ID");
             RequireNotEmpty(currency, "Currency");
+            PlayerTemplateSchema currencyTemplate = await Client.Player.GetTemplateByTagAsync("currency", cancellationToken);
+            return await AddGameFundsAsync(currency, amount, currencyTemplate.Id, cancellationToken);
+        }
 
+        /// <summary>Adds funds to the currency wallet for <paramref name="currencyTemplateId"/> (the "currency"-tagged player template); resolves the player's wallet row by that template, so no player-data id. Codegen passes the baked id here.</summary>
+        public async Task<PlayerData> AddGameFundsAsync(
+            string currency, int amount, string currencyTemplateId,
+            CancellationToken cancellationToken = default)
+        {
+            RequireNotEmpty(currency, "Currency");
+            RequireNotEmpty(currencyTemplateId, "Currency Template ID");
+            PlayerData wallet = await Client.Player.GetMyDataByTemplateAsync(currencyTemplateId, cancellationToken);
+            if (wallet == null || string.IsNullOrEmpty(wallet.Id))
+                throw new FlockValidationException("No currency wallet found for the current player.");
+
+            // Money grant is non-idempotent: an ambiguous failure may mean it already committed, so surface it rather than re-send (double-credit). Only 408/429 (not processed) retry.
             PlayerData result = await ExecuteAsync(async () =>
             {
                 AddGameFundsInput request = new AddGameFundsInput
                 {
-                    PlayerDataId = playerDataId,
+                    PlayerDataId = wallet.Id,
                     Currency = currency,
                     Amount = amount
                 };
@@ -75,23 +92,26 @@ namespace Flock.Providers
                 return await FlockHttpClient.PostAsync<PlayerData>(
                     $"{Client.GetVersionedApiUrl()}/game_command/add_game_funds",
                     request, Client.GetBaseHeaders(), cancellationToken);
-            }, "Add game funds", cancellationToken);
+            }, "Add game funds", cancellationToken, idempotent: false);
 
             return ApplyToPlayerCache(result);
         }
 
+        /// <summary>Unlocks an achievement on the current player's achievements row (the player template tagged "achievement"); the row is resolved for you, so no player-data id.</summary>
         public async Task<PlayerData> UnlockAchievementAsync(
-            string playerDataId, string achievementName,
+            string achievementName,
             CancellationToken cancellationToken = default)
         {
-            RequireNotEmpty(playerDataId, "Player Data ID");
             RequireNotEmpty(achievementName, "Achievement Name");
+            PlayerData row = await Client.Player.GetMyDataByTagAsync("achievement", cancellationToken);
+            if (row == null || string.IsNullOrEmpty(row.Id))
+                throw new FlockValidationException("No achievements data found for the current player.");
 
             PlayerData result = await ExecuteAsync(async () =>
             {
                 UnlockAchievementInput request = new UnlockAchievementInput
                 {
-                    PlayerDataId = playerDataId,
+                    PlayerDataId = row.Id,
                     AchievementName = achievementName
                 };
 
@@ -102,6 +122,7 @@ namespace Flock.Providers
 
             return ApplyToPlayerCache(result);
         }
+#endif
 
         private PlayerData ApplyToPlayerCache(PlayerData data)
         {

@@ -32,8 +32,6 @@ namespace Flock.Editor.Codegen
             sb.AppendLine();
             sb.AppendLine("namespace Flock.Generated.Templates");
             sb.AppendLine("{");
-            sb.AppendLine("    public static class FlockTemplateCommandExtensions");
-            sb.AppendLine("    {");
 
             int methodCount = 0;
 
@@ -51,29 +49,28 @@ namespace Flock.Editor.Codegen
                 methodCount++;
             }
 
-            sb.AppendLine("    }");
             sb.AppendLine("}");
 
-            File.WriteAllText(Path.Combine(outputDir, "FlockTemplateCommandExtensions.g.cs"), sb.ToString());
+            File.WriteAllText(Path.Combine(outputDir, "FlockTemplateCommands.g.cs"), sb.ToString());
             Debug.Log($"[Flock Codegen] Command accessors: emitted {methodCount}.");
             return methodCount;
         }
 
         private static void EmitUpdateMethod(StringBuilder sb, string className)
         {
+            sb.AppendLine($"    public partial class {className}");
+            sb.AppendLine("    {");
             sb.AppendLine("        /// <summary>");
-            sb.AppendLine($"        /// Send updated  of {className} to the server.");
-            sb.AppendLine($"        /// Update fields then call {className}.UpdateAsync().");
+            sb.AppendLine($"        /// Send the updated {className} to the server.");
+            sb.AppendLine("        /// Mutate the populated fields, then call this on the object.");
             sb.AppendLine("        /// </summary>");
-            sb.AppendLine("        public static Task<PlayerData> UpdateAsync(");
-            sb.AppendLine($"            this {className} data,");
-            sb.AppendLine("            CancellationToken cancellationToken = default)");
+            sb.AppendLine("        public Task<PlayerData> UpdateAsync(CancellationToken cancellationToken = default)");
             sb.AppendLine("        {");
-            sb.AppendLine("            if (data == null) throw new ArgumentNullException(nameof(data));");
-            sb.AppendLine($"            if (string.IsNullOrEmpty(data.PlayerDataId)) throw new InvalidOperationException(\"PlayerDataId is not set on {className}; fetch via the matching Get accessor first.\");");
-            sb.AppendLine($"            List<DataField> fields = {className}.Schema.ToDataFieldList(data);");
-            sb.AppendLine("            return FlockClient.Instance.Commands.UpdatePlayerDataAsync(data.PlayerDataId, fields, cancellationToken);");
+            sb.AppendLine($"            if (string.IsNullOrEmpty(PlayerDataId)) throw new InvalidOperationException(\"PlayerDataId is not set on {className}; fetch via the matching Get accessor first.\");");
+            sb.AppendLine($"            List<DataField> fields = {className}.Schema.ToDataFieldList(this);");
+            sb.AppendLine("            return FlockClient.Instance.Commands.UpdatePlayerDataAsync(PlayerDataId, fields, cancellationToken);");
             sb.AppendLine("        }");
+            sb.AppendLine("    }");
             sb.AppendLine();
         }
     }

@@ -13,6 +13,7 @@ namespace Flock.Editor.Codegen
         private const string TemplatesSubdir = "Player";
         private const string ConfigsSubdir = "Configs";
         private const string CommandsSubdir = "Commands";
+        private const string ShopsSubdir = "Shops";
 
         internal static async void SyncSchemas()
         {
@@ -71,7 +72,8 @@ namespace Flock.Editor.Codegen
             Debug.Log(
                 "[Flock Codegen] Snapshot fetched\n" +
                 $"  PlayerTemplates: {snapshot.PlayerTemplates.Count}\n" +
-                $"  GameConfigs:     {snapshot.GameConfigs.Count}");
+                $"  GameConfigs:     {snapshot.GameConfigs.Count}\n" +
+                $"  Shops:           {snapshot.Shops.Count}");
 
             if (!Directory.Exists(generatedRoot))
                 Directory.CreateDirectory(generatedRoot);
@@ -87,6 +89,8 @@ namespace Flock.Editor.Codegen
                 snapshot.GameConfigs, Path.Combine(generatedRoot, ConfigsSubdir));
             int configAccessors = ConfigAccessorEmitter.Emit(
                 snapshot.GameConfigs, configResult.ClassNamesById, Path.Combine(generatedRoot, ConfigsSubdir));
+            ShopEmitter.Emit(
+                snapshot.Shops, snapshot.PlayerTemplates, Path.Combine(generatedRoot, ShopsSubdir));
             ManifestEmitter.Emit(snapshot, generatedRoot);
 
             // Skip the import in batch mode: the files are already on disk for CI to commit, and a

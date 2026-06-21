@@ -35,6 +35,7 @@ namespace Flock.Editor.Codegen
 
             snapshot.PlayerTemplates = await GetList<PlayerTemplateSchema>($"{baseUrl}/{FlockClient.ApiVersion}/player_template", headers);
             snapshot.GameConfigs     = await GetList<GameConfigSchema>($"{baseUrl}/{FlockClient.ApiVersion}/game_config/version", headers);
+            snapshot.Shops           = await GetShopsWithItems(baseUrl, headers);
 
             return snapshot;
         }
@@ -82,6 +83,43 @@ namespace Flock.Editor.Codegen
                 throw new FlockException($"{url} returned error code '{response.Error.Code}'.");
 
             return response?.Result ?? new List<T>();
+        }
+
+        // Shops are paginated and their items aren't guaranteed embedded in the list, so page the
+        // list then backfill items per shop. Any failure throws so a bad sync never reaches the emitters.
+        private static async Task<List<Shop>> GetShopsWithItems(string baseUrl, Dictionary<string, string> headers)
+        {
+            List<Shop> shops = new List<Shop>();
+            int page = 1;
+            const int limit = 100;
+            while (true)
+            {
+                string url = $"{baseUrl}/{FlockClient.ApiVersion}/shop?page={page}&limit={limit}";
+                PaginatedResponse<Shop> response;
+                try
+                {
+                    response = await FlockHttpClient.GetAsync<PaginatedResponse<Shop>>(url, headers);
+                }
+                catch (Exception ex)
+                {
+                    throw new FlockException($"GET {url} failed: {ex.GetType().Name}: {ex.Message}", ex);
+                }
+
+                if (response?.Items == null || response.Items.Length == 0)
+                    break;
+                shops.AddRange(response.Items);
+                if (response.Items.Length < limit)
+                    break;
+                page++;
+            }
+
+            foreach (Shop shop in shops)
+            {
+                if (shop == null || string.IsNullOrEmpty(shop.Id)) continue;
+                if (shop.ShopItems != null && shop.ShopItems.Count > 0) continue;
+                shop.ShopItems = await GetList<ShopItem>($"{baseUrl}/{FlockClient.ApiVersion}/shop_item/shop/{shop.Id}", headers);
+            }
+            return shops;
         }
     }
 }
