@@ -258,18 +258,23 @@ PlayerData updated = await FlockClient.Instance.Commands.UpdatePlayerDataAsync(
 PlayerData updated = await FlockClient.Instance.Commands.UpdatePlayerDataFieldAsync(
     "player-data-id", "score", 9999);
 
-PlayerData updated = await FlockClient.Instance.Commands.AddGameFundsAsync(
-    "player-data-id", "gold", 500);
+// Money mutations (AddGameFunds + shop Purchase) only retry failures the server provably didn't process (408/429); ambiguous failures (timeout/5xx) throw rather than risk a double-credit, so wrap them in try/catch.
+PlayerData updated = await FlockClient.Instance.Commands.AddGameFundsAsync("gold", 500);
+// No player-data id — the SDK resolves your currency wallet (the player template tagged "currency").
+// With codegen you can pass a typed FlockFundId of your currency ids instead of the raw string:
+// PlayerData updated = await FlockClient.Instance.Commands.AddGameFundsAsync(FlockFundId._100, 500);
 
-PlayerData updated = await FlockClient.Instance.Commands.UnlockAchievementAsync(
-    "player-data-id", "first_win");
+// The achievements row is resolved for you too — no player-data id.
+PlayerData updated = await FlockClient.Instance.Commands.UnlockAchievementAsync("first_win");
 
 // Shop
 var shops = await FlockClient.Instance.Shop.GetAllAsync(page: 1, limit: 10);
 var shop = await FlockClient.Instance.Shop.GetByIdAsync("shop-id");
 var item = await FlockClient.Instance.Shop.GetItemAsync("shop-item-id");
 var items = await FlockClient.Instance.Shop.GetItemsByShopAsync("shop-id");
-var inventory = await FlockClient.Instance.Shop.PurchaseAsync("shop-item-id", FlockClient.Instance.CurrentPlayerId);
+// Same retry contract as AddGameFunds (money mutation) — ambiguous failures throw; catch them.
+// playerId is optional — omit it to use the signed-in player (CurrentPlayerId).
+var inventory = await FlockClient.Instance.Shop.PurchaseAsync("shop-item-id");
 var playerItems = await FlockClient.Instance.Shop.GetPlayerInventoryAsync(FlockClient.Instance.CurrentPlayerId);
 
 // Player ban — returns active ban data keyed by feature, or null if not banned
@@ -459,8 +464,8 @@ string id = PlayerProgressTemplate.SourceId;
 string name = PlayerProgressTemplate.SourceName;
 IReadOnlyList<TypedSchema> schema = PlayerProgressTemplate.Schema;
 
-// Commands — extension method on the template itself. Mutate the populated POCO
-// and call .UpdateAsync() on it directly. Same one-liner per template.
+// Commands — UpdateAsync is an instance method on the template. Mutate the populated
+// POCO and call .UpdateAsync() on it directly — no extra using needed.
 progress.Level = 5;
 progress.Xp = 1200;
 PlayerData updated = await progress.UpdateAsync();
@@ -470,11 +475,19 @@ GameplayConfig gameplay = await FlockClient.Instance.Config.GetGameplayAsync();
 float baseMoveSpeed = gameplay.BaseMoveSpeed;
 // SourceId / SourceName / Schema / SourceTag are exposed on the generated class:
 SchemaTag tag = GameplayConfig.SourceTag;
+
+// Shops — Flock.Generated.Shops. Typed shop accessor + enum-keyed Purchase / AddGameFunds.
+Shop starter = await FlockClient.Instance.Shop.GetStarterPackShopAsync();
+// Purchase / AddGameFunds take generated enums of the available ids; the UUID is resolved inside:
+PlayerInventory bought = await FlockClient.Instance.Shop.PurchaseAsync(FlockShopItemId.GemPack);
+PlayerData funded = await FlockClient.Instance.Commands.AddGameFundsAsync(FlockFundId._100, 500);
 ```
 
-`UpdateAsync` is emitted as an extension method on each generated template type, so it lights up in IntelliSense the moment you have `using Flock.Generated.Templates;` (which you need anyway for the typed class). It validates `template.PlayerDataId` (set automatically by the matching `Get*Async`), turns the populated POCO back into a flattened DataField list via `{Template}.Schema.ToDataFieldList(template)`, and routes through `FlockCommandProvider.UpdatePlayerDataAsync`. After a write you typically want fresh reads — call `client.Player.ClearCache()` before the next `Get*Async` if you need to bypass the per-player snapshot cache.
+`UpdateAsync` is an instance method on each generated template type, so it's always available on the object — no extra `using`, and it shows in IntelliSense wherever you hold the instance. It validates `PlayerDataId` (set automatically by the matching `Get*Async`), turns the populated POCO back into a flattened DataField list via `{Template}.Schema.ToDataFieldList(this)`, and routes through `FlockCommandProvider.UpdatePlayerDataAsync`. After a write you typically want fresh reads — call `client.Player.ClearCache()` before the next `Get*Async` if you need to bypass the per-player snapshot cache.
 
 Generated config classes have read-only properties (`{ get; private set; }`) — configs are game-wide and shouldn't be mutated client-side; mutations are admin-only on the backend.
+
+Generated shops live in `Flock.Generated.Shops`: a `Get<Shop>ShopAsync()` accessor per shop (returns the live `Shop`), plus `FlockShopItemId` / `FlockFundId` enums of the available ids and matching `PurchaseAsync(FlockShopItemId)` / `AddGameFundsAsync(FlockFundId)` extension methods. The enum-typed methods are **generated extensions**, so they only appear after a sync. `FlockFundId` lists every shop currency. Members are the currency **id** (e.g. `_100` — a leading `_` is added only when an id starts with a digit, since C# identifiers can't) because currency *names* live only on the dashboard's admin `/currency` endpoint, which the SDK's API key can't reach. `AddGameFundsAsync` sends the currency id and resolves `player_data_id` from the player's **currency wallet** — the row for the player template tagged `currency`. Codegen bakes that template's id and calls `AddGameFundsAsync(currency, amount, currencyTemplateId)`, which resolves the wallet directly. There's also a public `AddGameFundsAsync(currency, amount)` overload that resolves the `currency`-tagged template at runtime instead (same tag mechanism as `UnlockAchievement`) — both are usable. Shop **data** (prices, status) is fetched live — only identity (ids, currencies) is generated, so prices never go stale in code.
 
 Method names come from the template name on the backend (PascalCase). Field names follow each `TypedSchema.field_name`, also PascalCased.
 
@@ -509,6 +522,7 @@ A few SDK behaviors are constrained by the current backend surface and will impr
 - **Asset by name** — `client.Asset.GetByNameAsync` lists all assets and filters client-side (O(N)). Will switch to a dedicated server-side lookup once the backend adds it.
 - **Structured registration error codes** — registration failures are returned as plain text without an error-code field. The SDK uses string-matching (`IsAlreadyRegisteredError`) to swallow "already registered" cases and return `null` from `RegisterWith*`, which is brittle and conflates name collisions with credential collisions. Once the backend returns structured codes (e.g. `NAME_TAKEN`, `EMAIL_REGISTERED`, `DEVICE_REGISTERED`), the SDK can surface them as typed exceptions and the `RegisterWith*` methods can take `name` again with reliable error UX. A dedicated name-availability check would also let callers validate as the user types.
 - **Retry-safe session registration** — session registration creates a brand-new session row on every call, and only the server knows the issued id. If the app quits (or the session rotates) while a registration request is still on the wire, the client never learns that id; on the next launch it has to register the session again just to close it, leaving the server with two rows for one play session — and the first row stays open forever. The SDK logs a warning when it detects this. Fix: accept the client's own session id (`client_session_id`) and, when the same id is sent twice, return the existing row instead of creating another. A retried registration then maps back to the original session.
+- **Idempotency keys for money mutations** — `AddGameFunds` and shop `Purchase` mutate server state (currency, inventory) and carry no idempotency key, so the backend can't tell a genuine repeat from a network retry. To avoid double-crediting/double-charging, the SDK only auto-retries these two calls on failures the server **provably didn't process** (HTTP 408/429); ambiguous failures (client timeout, dropped connection, 5xx — the response may have been lost *after* the server committed) surface to the caller to catch and decide. The robust fix is a client-supplied key (e.g. `idempotency_key`) the backend dedupes on: the SDK sends a stable key per logical operation, the server applies it at most once, and full auto-retry can return. The other three commands — `UpdatePlayerData`, `UpdatePlayerDataField`, `UnlockAchievement` — are idempotent by construction and unaffected.
 
 ## Platform notes
 

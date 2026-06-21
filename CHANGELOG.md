@@ -5,6 +5,21 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [1.18.0]
+
+### Changed
+- **Money mutations no longer auto-retry ambiguous failures.** `client.Commands.AddGameFundsAsync` and `client.Shop.PurchaseAsync` are non-idempotent and carry no idempotency key, so on a lost response a blind retry could double-credit / double-charge. They now retry only failures the server *provably didn't process* — HTTP `408` / `429`, honoring `Retry-After` — and surface ambiguous failures (client timeout, dropped connection, `5xx`) to the caller, so wrap these calls in `try/catch`. Reads and the idempotent commands (`UpdatePlayerData`, `UpdatePlayerDataField`, `UnlockAchievement`) are unchanged.
+- **Generated `UpdateAsync` is now an instance method** on each template type instead of an extension method, so it's available on the object with no extra `using Flock.Generated.Templates;`. The call site is unchanged (`await progress.UpdateAsync()`) and existing code keeps compiling; re-sync to regenerate. (Generated file renamed `FlockTemplateCommands.g.cs`.)
+- `client.Shop.PurchaseAsync` — `playerId` is now optional and defaults to the signed-in player (`CurrentPlayerId`); existing two-arg calls still compile.
+
+### Added
+- **Shop codegen.** `Sync Schemas` now generates `Flock.Generated.Shops`: a typed `Get<Shop>ShopAsync()` accessor per shop, plus `FlockShopItemId` / `FlockFundId` enums of the available ids and generated `PurchaseAsync(FlockShopItemId)` / `AddGameFundsAsync(FlockFundId)` extension methods. `FlockFundId` members are the currency id (e.g. `_100`; currency names live only on an OAuth2 admin endpoint, unreachable with the SDK API key); the generated `AddGameFunds` sends the currency id and resolves `player_data_id` from the player's currency wallet (the row for the player template tagged `currency`) — codegen bakes that template's id so the row resolves directly, skipping a runtime template scan. The enum-typed methods exist only after a sync; the raw string methods remain. Shop changes are covered by the content-hash drift check.
+- **`client.Commands.AddGameFundsAsync` and `UnlockAchievementAsync(achievementName)` no longer take `player_data_id`** — they resolve the current player's row from the player-template **tag** (`currency` / `achievement`). `AddGameFunds` has two public overloads: `(currency, amount)` resolves the `currency`-tagged template at runtime (`client.Player.GetTemplateByTagAsync`), and `(currency, amount, currencyTemplateId)` takes a known template id (codegen passes the baked id). (Breaking: the prior `(playerDataId, …)` signatures are removed.)
+- EditMode tests (`RetryHandlerTests`) for the retry decision: idempotent ops retry transient failures; non-idempotent ops surface ambiguous failures and `5xx` but still retry `408` / `429`; permanent `4xx` is never retried.
+
+### Fixed
+- Generated command accessor XML doc no longer drops a word ("Send updated  of {Type}" → "Send the updated {Type}").
+
 ## [1.17.0]
 
 ### Added

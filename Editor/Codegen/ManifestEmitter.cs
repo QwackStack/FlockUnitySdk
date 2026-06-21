@@ -28,6 +28,7 @@ namespace Flock.Editor.Codegen
             sb.AppendLine($"        public const string GeneratedAtUtc = \"{snapshot.FetchedAt.ToString("o", CultureInfo.InvariantCulture)}\";");
             sb.AppendLine($"        public const int PlayerTemplateCount = {snapshot.PlayerTemplates.Count};");
             sb.AppendLine($"        public const int GameConfigCount = {snapshot.GameConfigs.Count};");
+            sb.AppendLine($"        public const int ShopCount = {snapshot.Shops.Count};");
             sb.AppendLine("    }");
             sb.AppendLine("}");
 

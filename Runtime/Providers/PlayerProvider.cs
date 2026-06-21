@@ -1,9 +1,11 @@
+using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Flock.Models;
 using Flock.Http;
 using Flock.Interfaces;
+using Flock.Exceptions;
 
 namespace Flock.Providers
 {
@@ -170,6 +172,24 @@ namespace Flock.Providers
             return null;
         }
 
+        /// <summary>Finds the single player template carrying the given tag (e.g. "currency", "achievement").</summary>
+        public async Task<PlayerTemplateSchema> GetTemplateByTagAsync(string tag, CancellationToken cancellationToken = default)
+        {
+            RequireNotEmpty(tag, "Template tag");
+            List<PlayerTemplateSchema> templates = await GetTemplatesAsync(cancellationToken);
+            foreach (PlayerTemplateSchema t in templates)
+                if (t != null && !string.IsNullOrEmpty(t.Id) && string.Equals(t.Tag, tag, StringComparison.OrdinalIgnoreCase))
+                    return t;
+            throw new FlockValidationException($"No player template tagged '{tag}' for this game.");
+        }
+
+        /// <summary>Resolves the current player's data row for the single player template carrying the given tag (e.g. "currency", "achievement").</summary>
+        public async Task<PlayerData> GetMyDataByTagAsync(string tag, CancellationToken cancellationToken = default)
+        {
+            PlayerTemplateSchema template = await GetTemplateByTagAsync(tag, cancellationToken);
+            return await GetMyDataByTemplateAsync(template.Id, cancellationToken);
+        }
+
         private Task<Dictionary<string, PlayerData>> GetOrFetchByTemplateAsync(string playerId, CancellationToken cancellationToken)
         {
             if (_playerDataByPlayerCache.TryGetValue(playerId, out Dictionary<string, PlayerData> cached))
@@ -237,6 +257,7 @@ namespace Flock.Providers
         {
             RequireNotEmpty(playerId, "Player ID");
 
+            // Ban status is security state that can change server-side at any time — intentionally never cached; always fresh. Same rule as inventory.
             return await ExecuteAsync(async () =>
             {
                 GenericResponse<PlayerBan> response = await FlockHttpClient.GetAsync<GenericResponse<PlayerBan>>(

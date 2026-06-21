@@ -11,5 +11,6 @@ namespace Flock.Editor.Codegen
         public DateTime FetchedAt { get; set; }
         public List<PlayerTemplateSchema> PlayerTemplates { get; set; } = new List<PlayerTemplateSchema>();
         public List<GameConfigSchema> GameConfigs { get; set; } = new List<GameConfigSchema>();
+        public List<Shop> Shops { get; set; } = new List<Shop>();
     }
 }

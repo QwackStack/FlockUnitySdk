@@ -17,14 +17,16 @@ namespace Flock.Http
             Client = client ?? throw new ArgumentNullException(nameof(client));
         }
 
+        /// <summary>Runs <paramref name="operation"/> via the retry handler. Pass idempotent=false for non-idempotent mutations (e.g. currency grants): ambiguous failures surface instead of being re-sent, and only provably-not-processed failures (408/429) are retried.</summary>
         protected async Task<T> ExecuteAsync<T>(
             Func<Task<T>> operation,
             string context,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            bool idempotent = true)
         {
             try
             {
-                return await Client.RetryHandler.ExecuteAsync(operation, cancellationToken);
+                return await Client.RetryHandler.ExecuteAsync(operation, cancellationToken, retryAmbiguousFailures: idempotent);
             }
             //only try refresh if the auth is even successful
             catch (FlockAuthException) when (Client.IsAuthenticated)
@@ -36,7 +38,7 @@ namespace Flock.Http
 
                 try
                 {
-                    return await Client.RetryHandler.ExecuteAsync(operation, cancellationToken);
+                    return await Client.RetryHandler.ExecuteAsync(operation, cancellationToken, retryAmbiguousFailures: idempotent);
                 }
                 catch (OperationCanceledException)
                 {
