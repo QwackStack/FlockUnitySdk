@@ -10,6 +10,12 @@ namespace Flock.Exceptions
         /// <summary>HTTP status from the server response when the error came from one; null for client-side or transport failures.</summary>
         public int? StatusCode { get; set; }
 
+        /// <summary>Server's machine-readable error code from the coded-error body (e.g. "player.email_already_registered"); null when the body had none.</summary>
+        public string Code { get; set; }
+
+        /// <summary>Typed form of <see cref="Code"/> for readable checks/switches; <see cref="FlockErrorCode.Unknown"/> when there was no code or this SDK version doesn't recognize it.</summary>
+        public FlockErrorCode ErrorCode => FlockErrorCodes.Parse(Code);
+
         public FlockException(string message) : base(message) { }
         public FlockException(string message, Exception innerException) : base(message, innerException) { }
 

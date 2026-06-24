@@ -30,7 +30,7 @@ namespace Flock.Providers
                 Client.SetTokens(response.AccessToken, response.RefreshToken);
                 Client.Logger.LogInfo($"{context} successful for player: {Client.CurrentPlayerId}");
 
-                FlockEvents.RaiseAuthenticated(new FlockAuthInfo(Client.CurrentPlayerId, method));
+                FlockEvents.InvokeAuthenticated(new FlockAuthInfo(Client.CurrentPlayerId, method));
 
                 await TryInitializeAnalyticsAsync(cancellationToken);
 
@@ -63,19 +63,21 @@ namespace Flock.Providers
             }
         }
 
-        // Temp string-match until the API returns a structured "already registered" code.
-        // Searches Message and Body — the server's detail now lives on FlockException.Body
-        // (kept off Message so error trackers bucket by type, not payload).
+        // The register routes' "already registered" codes, one per auth method.
         private static bool IsAlreadyRegisteredError(Exception ex)
         {
-            string haystack = $"{ex?.Message} {(ex as FlockException)?.Body}";
-            if (string.IsNullOrWhiteSpace(haystack)) return false;
-            return haystack.IndexOf("already", StringComparison.OrdinalIgnoreCase) >= 0
-                && (haystack.IndexOf("registered", StringComparison.OrdinalIgnoreCase) >= 0
-                    || haystack.IndexOf("exists", StringComparison.OrdinalIgnoreCase) >= 0
-                    || haystack.IndexOf("in use", StringComparison.OrdinalIgnoreCase) >= 0
-                    || haystack.IndexOf("taken", StringComparison.OrdinalIgnoreCase) >= 0);
-         }
+            switch ((ex as FlockException)?.ErrorCode)
+            {
+                case FlockErrorCode.PlayerEmailAlreadyRegistered:
+                case FlockErrorCode.PlayerDeviceAlreadyRegistered:
+                case FlockErrorCode.PlayerGoogleAccountAlreadyRegistered:
+                case FlockErrorCode.PlayerAppleAccountAlreadyRegistered:
+                case FlockErrorCode.PlayerSteamAccountAlreadyRegistered:
+                    return true;
+                default:
+                    return false;
+            }
+        }
         private async Task TryInitializeAnalyticsAsync(CancellationToken cancellationToken)
         {
 #if !FLOCK_NO_ANALYTICS
@@ -105,7 +107,7 @@ namespace Flock.Providers
             finally
             {
                 FlockClient.IsRestoringSession = false;
-                FlockEvents.RaiseSessionRestored(restored);
+                FlockEvents.InvokeSessionRestored(restored);
             }
             return restored;
         }
@@ -134,7 +136,7 @@ namespace Flock.Providers
             }
 
             Client.Logger.LogInfo($"Restored session for PlayerId: {Client.CurrentPlayerId}");
-            FlockEvents.RaiseAuthenticated(new FlockAuthInfo(Client.CurrentPlayerId, FlockAuthMethod.SessionRestore));
+            FlockEvents.InvokeAuthenticated(new FlockAuthInfo(Client.CurrentPlayerId, FlockAuthMethod.SessionRestore));
             await TryInitializeAnalyticsAsync(cancellationToken);
             return true;
         }
@@ -286,7 +288,7 @@ namespace Flock.Providers
             bool wasAuthenticated = Client.IsAuthenticated;
             Client.ClearTokens();
             if (wasAuthenticated)
-                FlockEvents.RaiseLoggedOut();
+                FlockEvents.InvokeLoggedOut();
         }
     }
 }

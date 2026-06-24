@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -18,6 +19,8 @@ namespace Flock.Providers
         private readonly Dictionary<SchemaTag, List<GameConfigSchema>> _gameConfigsByTagCache = new Dictionary<SchemaTag, List<GameConfigSchema>>();
         private readonly Dictionary<SchemaTag, List<GameConfigSchema>> _gameConfigsByVersionCache = new Dictionary<SchemaTag, List<GameConfigSchema>>();
         private readonly Dictionary<string, GameConfigSchema> _playerFeaturesByPlayer = new Dictionary<string, GameConfigSchema>();
+        private readonly Dictionary<string, GameConfigSchema> _gameConfigsByName = new Dictionary<string, GameConfigSchema>();
+        private readonly Dictionary<string, GameConfigSchema> _gameConfigsById = new Dictionary<string, GameConfigSchema>();
 
         private const string SnapshotCategory = "config";
 
@@ -36,10 +39,12 @@ namespace Flock.Providers
             _gameConfigsByTagCache.Clear();
             _gameConfigsByVersionCache.Clear();
             _playerFeaturesByPlayer.Clear();
+            _gameConfigsByName.Clear();
+            _gameConfigsById.Clear();
             Client.SnapshotStore?.DeleteScope(GetSnapshotScope(SnapshotCategory));
         }
 
-        public Task<List<GamePatchSchema>> GetAllAsync(CancellationToken cancellationToken = default)
+        internal Task<List<GamePatchSchema>> GetAllAsync(CancellationToken cancellationToken = default)
         {
             if (_allPatchesFetched)
                 return Task.FromResult(new List<GamePatchSchema>(_patchesById.Values));
@@ -74,13 +79,13 @@ namespace Flock.Providers
             }
         }
 
-        public async Task<List<T>> GetAllAsync<T>(CancellationToken cancellationToken = default)
+        internal async Task<List<T>> GetAllAsync<T>(CancellationToken cancellationToken = default)
         {
             List<GamePatchSchema> configs = await GetAllAsync(cancellationToken);
             return configs.Select(c => c.GetDataAs<T>()).ToList();
         }
 
-        public async Task<GamePatchSchema> GetByIdAsync(string configId, CancellationToken cancellationToken = default)
+        internal async Task<GamePatchSchema> GetByIdAsync(string configId, CancellationToken cancellationToken = default)
         {
             RequireNotEmpty(configId, "Config ID");
             if (_patchesById.TryGetValue(configId, out GamePatchSchema cached)) return cached;
@@ -98,13 +103,13 @@ namespace Flock.Providers
             return patch;
         }
 
-        public async Task<T> GetByIdAsync<T>(string configId, CancellationToken cancellationToken = default)
+        internal async Task<T> GetByIdAsync<T>(string configId, CancellationToken cancellationToken = default)
         {
             GamePatchSchema config = await GetByIdAsync(configId, cancellationToken);
             return config.GetDataAs<T>();
         }
 
-        public async Task<List<GamePatchSchema>> GetBySchemaAsync(string schemaId, CancellationToken cancellationToken = default)
+        internal async Task<List<GamePatchSchema>> GetBySchemaAsync(string schemaId, CancellationToken cancellationToken = default)
         {
             RequireNotEmpty(schemaId, "Schema ID");
             if (_patchesBySchemaCache.TryGetValue(schemaId, out List<GamePatchSchema> cached)) return cached;
@@ -124,26 +129,42 @@ namespace Flock.Providers
             return patches;
         }
 
-        public async Task<List<T>> GetBySchemaAsync<T>(string schemaId, CancellationToken cancellationToken = default)
+        internal async Task<List<T>> GetBySchemaAsync<T>(string schemaId, CancellationToken cancellationToken = default)
         {
             List<GamePatchSchema> configs = await GetBySchemaAsync(schemaId, cancellationToken);
             return configs.Select(c => c.GetDataAs<T>()).ToList();
         }
 
-        /// <summary>
-        /// Resolves the current patch for a game config and returns its data typed as <typeparamref name="T"/>.
-        /// Returns <c>default</c> and logs a warning if the config has no patches yet.
-        /// </summary>
+        /// <summary>Resolves a config's current values as <typeparamref name="T"/>: the patch's data when a patch exists for this game version, otherwise the config's own data. Codegen entry point — consumers use the generated accessors.</summary>
         public async Task<T> GetByConfigIdAsync<T>(string configId, CancellationToken cancellationToken = default)
         {
             RequireNotEmpty(configId, "Config ID");
             List<GamePatchSchema> patches = await GetBySchemaAsync(configId, cancellationToken);
-            if (patches == null || patches.Count == 0)
-            {
-                Client.Logger.LogWarning($"No patches found for config {configId} — has a patch been created for it on the current game version?");
-                return default;
-            }
-            return patches[0].GetDataAs<T>();
+            if (patches != null && patches.Count > 0)
+                return patches[0].GetDataAs<T>();
+
+            // No patch on this game version — fall back to the config's own base data instead of returning empty defaults.
+            GameConfigSchema config = await GetConfigByIdAsync(configId, cancellationToken);
+            return config != null ? config.GetDataAs<T>() : default;
+        }
+
+        // Single config by id (game_config/{id}); the no-patch fallback for GetByConfigIdAsync<T>.
+        internal async Task<GameConfigSchema> GetConfigByIdAsync(string configId, CancellationToken cancellationToken = default)
+        {
+            RequireNotEmpty(configId, "Config ID");
+            if (_gameConfigsById.TryGetValue(configId, out GameConfigSchema cached)) return cached;
+
+            GameConfigSchema config = await FetchWithSnapshotAsync(
+                GetSnapshotScope(SnapshotCategory), $"game_config_{configId}", async () =>
+                {
+                    GenericResponse<GameConfigSchema> response = await FlockHttpClient.GetAsync<GenericResponse<GameConfigSchema>>(
+                        $"{Client.GetVersionedApiUrl()}/game_config/{configId}", Client.GetBaseHeaders(), cancellationToken);
+                    ValidateResponse(response);
+                    return response.Result;
+                }, $"Fetch config {configId}", cancellationToken);
+
+            _gameConfigsById[configId] = config;
+            return config;
         }
 
         private void IndexPatch(GamePatchSchema patch)
@@ -152,7 +173,7 @@ namespace Flock.Providers
             _patchesById[patch.Id] = patch;
         }
 
-        public async Task<List<GameConfigSchema>> GetGameConfigsAsync(SchemaTag tag, CancellationToken cancellationToken = default)
+        internal async Task<List<GameConfigSchema>> GetGameConfigsAsync(SchemaTag tag, CancellationToken cancellationToken = default)
         {
             if (_gameConfigsByTagCache.TryGetValue(tag, out List<GameConfigSchema> cached)) return cached;
 
@@ -170,13 +191,13 @@ namespace Flock.Providers
             return configs;
         }
 
-        public async Task<List<T>> GetGameConfigsAsync<T>(SchemaTag tag, CancellationToken cancellationToken = default)
+        internal async Task<List<T>> GetGameConfigsAsync<T>(SchemaTag tag, CancellationToken cancellationToken = default)
         {
             List<GameConfigSchema> configs = await GetGameConfigsAsync(tag, cancellationToken);
             return configs.Select(c => c.GetDataAs<T>()).ToList();
         }
 
-        public async Task<List<GameConfigSchema>> GetGameConfigsByVersionAsync(SchemaTag tag, CancellationToken cancellationToken = default)
+        internal async Task<List<GameConfigSchema>> GetGameConfigsByVersionAsync(SchemaTag tag, CancellationToken cancellationToken = default)
         {
             if (_gameConfigsByVersionCache.TryGetValue(tag, out List<GameConfigSchema> cached)) return cached;
 
@@ -194,13 +215,32 @@ namespace Flock.Providers
             return configs;
         }
 
-        public async Task<List<T>> GetGameConfigsByVersionAsync<T>(SchemaTag tag, CancellationToken cancellationToken = default)
+        internal async Task<List<T>> GetGameConfigsByVersionAsync<T>(SchemaTag tag, CancellationToken cancellationToken = default)
         {
             List<GameConfigSchema> configs = await GetGameConfigsByVersionAsync(tag, cancellationToken);
             return configs.Select(c => c.GetDataAs<T>()).ToList();
         }
 
-        public async Task<GameConfigSchema> GetPlayerFeaturesAsync(string playerId, CancellationToken cancellationToken = default)
+        internal async Task<GameConfigSchema> GetGameConfigByNameAsync(string name, CancellationToken cancellationToken = default)
+        {
+            RequireNotEmpty(name, "Game Config Name");
+            if (_gameConfigsByName.TryGetValue(name, out GameConfigSchema cached)) return cached;
+
+            GameConfigSchema config = await FetchWithSnapshotAsync(
+                GetSnapshotScope(SnapshotCategory), $"game_config_name_{name}", async () =>
+                {
+                    string url = $"{Client.GetVersionedApiUrl()}/game_config/by-name/{System.Uri.EscapeDataString(name)}";
+                    GenericResponse<GameConfigSchema> response = await FlockHttpClient.GetAsync<GenericResponse<GameConfigSchema>>(
+                        url, Client.GetBaseHeaders(), cancellationToken);
+                    ValidateResponse(response);
+                    return response.Result;
+                }, $"Fetch game config by name {name}", cancellationToken);
+
+            _gameConfigsByName[name] = config;
+            return config;
+        }
+
+        internal async Task<GameConfigSchema> GetPlayerFeaturesAsync(string playerId, CancellationToken cancellationToken = default)
         {
             RequireNotEmpty(playerId, "Player ID");
             if (_playerFeaturesByPlayer.TryGetValue(playerId, out GameConfigSchema cachedFeatures))
@@ -219,7 +259,7 @@ namespace Flock.Providers
             return features;
         }
 
-        public async Task<T> GetPlayerFeaturesAsync<T>(string playerId, CancellationToken cancellationToken = default)
+        internal async Task<T> GetPlayerFeaturesAsync<T>(string playerId, CancellationToken cancellationToken = default)
         {
             GameConfigSchema config = await GetPlayerFeaturesAsync(playerId, cancellationToken);
             return config.GetDataAs<T>();

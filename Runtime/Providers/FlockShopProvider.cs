@@ -23,6 +23,7 @@ namespace Flock.Providers
 
         private readonly Dictionary<string, PaginatedResponse<Shop>> _shopPages = new Dictionary<string, PaginatedResponse<Shop>>();
         private readonly Dictionary<string, Shop> _shopsById = new Dictionary<string, Shop>();
+        private readonly Dictionary<string, Shop> _shopsByName = new Dictionary<string, Shop>();
         private readonly Dictionary<string, ShopItem> _itemsById = new Dictionary<string, ShopItem>();
         private readonly Dictionary<string, List<ShopItem>> _itemsByShop = new Dictionary<string, List<ShopItem>>();
 
@@ -32,6 +33,7 @@ namespace Flock.Providers
         {
             _shopPages.Clear();
             _shopsById.Clear();
+            _shopsByName.Clear();
             _itemsById.Clear();
             _itemsByShop.Clear();
             Client.SnapshotStore?.DeleteScope(GetSnapshotScope(SnapshotCategory));
@@ -81,6 +83,28 @@ namespace Flock.Providers
 
             if (shop != null)
                 _shopsById[shopId] = shop;
+            return shop;
+        }
+
+        public async Task<Shop> GetByNameAsync(
+            string name, CancellationToken cancellationToken = default)
+        {
+            RequireNotEmpty(name, "Shop Name");
+            if (_shopsByName.TryGetValue(name, out Shop cached))
+                return cached;
+
+            Shop shop = await FetchWithSnapshotAsync(
+                GetSnapshotScope(SnapshotCategory), $"shop_name_{name}",
+                async () => await FlockHttpClient.GetAsync<Shop>(
+                    $"{Client.GetVersionedApiUrl()}/shop/by-name/{System.Uri.EscapeDataString(name)}", Client.GetBaseHeaders(), cancellationToken),
+                "Fetch shop by name", cancellationToken);
+
+            if (shop != null)
+            {
+                _shopsByName[name] = shop;
+                if (!string.IsNullOrEmpty(shop.Id))
+                    _shopsById[shop.Id] = shop;
+            }
             return shop;
         }
 

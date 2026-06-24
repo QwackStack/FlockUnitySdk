@@ -5,6 +5,29 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [1.19.0]
+
+### Added
+- **Coded error contract.** Server 4xx/5xx responses now carry a machine-readable `{ "detail": { "code", "message" } }` envelope, surfaced on `FlockException.Code` (raw string, e.g. `player.email_already_registered`) and `FlockException.ErrorCode` (typed `FlockErrorCode`). The code is parsed once in the HTTP layer and stamped on every thrown `FlockException` (auth / validation / network). The new `FlockErrorCode` enum covers the current `/v1` codes with an `Unknown` fallback for an absent code or one this SDK version predates — `switch` on `ErrorCode` for handled cases, read `Code` for logging / forward-compat. Adds `FlockErrorCodes.Parse` and the `CodedErrorResponse` / `CodedErrorDetail` models.
+- `client.Shop.GetByNameAsync(name)` — fetch a shop by name via `GET /v1/shop/by-name/{name}`; snapshot-cached and name-keyed like the other shop reads.
+- EditMode tests: `FlockErrorPipelineTests` drives every `FlockException` type through a fake `IFlockHttpAdapter` and asserts the parsed `ErrorCode` (plus `FlockErrorCodes.Parse` unit checks); `FlockConfigResolutionTests` asserts patch-wins and no-patch → config-fallback through a URL-routing fake adapter.
+- `ARCHITECTURE.md` — a contributor-facing code map plus "Backend backlog / known constraints", moved out of the README.
+
+### Changed
+- **`RegisterWith*` duplicate-skip is now code-based.** `IsAlreadyRegisteredError` matches the backend's coded `player.*_already_registered` errors via `FlockErrorCode` instead of substring-matching the message / body. (Tradeoff: drops tolerance for older backends that returned uncoded plain-text errors — intended for this release.)
+- **Config values now resolve "patch, else config".** The generated `client.Config.Get<Name>Async()` accessors return the current game version's patch data, falling back to the config's own data when no patch exists (previously returned `default` / null). `ConfigAccessorEmitter` now emits a one-line `=> GetByConfigIdAsync<T>(SourceId, ct)` — re-sync to regenerate.
+- **Breaking: config / schema / template reads are codegen-only.** The raw getters are now `internal`: `client.Config.GetAllAsync` / `GetByIdAsync` / `GetBySchemaAsync` / `GetGameConfigs*` / `GetPlayerFeaturesAsync`, all of `client.Schema.*`, and `client.Player.GetTemplates*` / `GetTemplateByIdAsync` / `GetTemplateByNameAsync` / `GetTemplateByTagAsync` / `GetTemplatePlayerDataAsync` are no longer public. Use the generated `Get<Config>Async()` / `Get<Template>Async()` accessors instead. Player **data** reads (`GetDataByIdAsync`, `GetAllDataAsync`, `GetBanAsync`) stay public.
+- Internal: the `FlockEvents` internal raisers were renamed `Raise*` → `Invoke*` (no public surface change).
+
+### Removed
+- **Breaking**: the `ISchemaProvider` interface (the public `SchemaTag` enum stays). `IConfigProvider` is trimmed to `GetByConfigIdAsync<T>` and `IPlayerService` to the data / ban getters, matching the now-internal raw getters above.
+
+### Documentation
+- README — "Services" rewritten around the codegen accessors (raw getters described as internal); the registration note updated to the coded-error behavior and the duplicate-name caveat; the Offline-caching section condensed (full refresh table now in `ARCHITECTURE.md`); the "Backend backlog" section moved to `ARCHITECTURE.md`.
+
+### Known issues / Backend backlog
+- **Duplicate display name still isn't coded.** A unique-constraint collision on the player `name` currently comes back as an unhandled `500` (raw traceback), so it is *not* swallowed by `IsAlreadyRegisteredError` and surfaces as a thrown `FlockException` with `ErrorCode == Unknown`. A provisional `FlockErrorCode.PlayerNameAlreadyTaken` is reserved for when the backend returns a coded `400` (also an info-disclosure fix). Until then, pass `null` for `name` on `RegisterWith*` and collect the display name on a separate post-registration screen. See [ARCHITECTURE.md](ARCHITECTURE.md).
+
 ## [1.18.0]
 
 ### Changed

@@ -7,7 +7,7 @@ using Flock.Interfaces;
 
 namespace Flock.Providers
 {
-    public class FlockSchemaProvider : FlockProviderBase, ISchemaProvider
+    public class FlockSchemaProvider : FlockProviderBase
     {
         // Shares the "config" snapshot category with FlockConfigProvider — same endpoints, stored once.
         private const string SnapshotCategory = "config";
@@ -28,7 +28,7 @@ namespace Flock.Providers
             Client.SnapshotStore?.DeleteScope(GetSnapshotScope(SnapshotCategory));
         }
 
-        public async Task<List<GameConfigSchema>> GetAllSchemasAsync(SchemaTag tag, CancellationToken cancellationToken = default)
+        internal async Task<List<GameConfigSchema>> GetAllSchemasAsync(SchemaTag tag, CancellationToken cancellationToken = default)
         {
             if (_schemasByTag.TryGetValue(tag, out List<GameConfigSchema> cached))
                 return new List<GameConfigSchema>(cached);
@@ -46,7 +46,7 @@ namespace Flock.Providers
             return new List<GameConfigSchema>(schemas);
         }
 
-        public async Task<List<GameConfigSchema>> GetSchemasByVersionAsync(SchemaTag tag, CancellationToken cancellationToken = default)
+        internal async Task<List<GameConfigSchema>> GetSchemasByVersionAsync(SchemaTag tag, CancellationToken cancellationToken = default)
         {
             if (_schemasByVersionTag.TryGetValue(tag, out List<GameConfigSchema> cached))
                 return new List<GameConfigSchema>(cached);
@@ -64,7 +64,7 @@ namespace Flock.Providers
             return new List<GameConfigSchema>(schemas);
         }
 
-        public async Task<GameConfigSchema> GetSchemaByIdAsync(string schemaId, CancellationToken cancellationToken = default)
+        internal async Task<GameConfigSchema> GetSchemaByIdAsync(string schemaId, CancellationToken cancellationToken = default)
         {
             RequireNotEmpty(schemaId, "Schema ID");
             if (_schemasById.TryGetValue(schemaId, out GameConfigSchema cached))
@@ -83,7 +83,7 @@ namespace Flock.Providers
             return schema;
         }
 
-        public async Task<List<GamePatchSchema>> GetSchemaConfigsAsync(string schemaId, CancellationToken cancellationToken = default)
+        internal async Task<List<GamePatchSchema>> GetSchemaConfigsAsync(string schemaId, CancellationToken cancellationToken = default)
         {
             RequireNotEmpty(schemaId, "Schema ID");
             if (_patchesBySchema.TryGetValue(schemaId, out List<GamePatchSchema> cached))

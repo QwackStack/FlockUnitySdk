@@ -137,18 +137,18 @@ namespace Flock
             catch (Exception ex)
             {
                 InitializationError = ex;
-                FlockEvents.RaiseInitializationFailed(ex);
+                FlockEvents.InvokeInitializationFailed(ex);
                 throw;
             }
 
-            FlockEvents.RaiseInitialized();
+            FlockEvents.InvokeInitialized();
             return _instance;
         }
 
         /// <summary>
         /// Clears the global <see cref="Instance"/>, allowing <see cref="Create"/> to be
         /// called again. Logs out the current player first so the token state is dropped.
-        /// Raises <see cref="FlockEvents.OnShutdown"/> last, then clears all <see cref="FlockEvents"/> subscriptions.
+        /// Invokes <see cref="FlockEvents.OnShutdown"/> last, then clears all <see cref="FlockEvents"/> subscriptions.
         /// </summary>
         public static void Shutdown()
         {
@@ -159,7 +159,7 @@ namespace Flock
 #endif
             _instance.ClearTokens();
             _instance = null;
-            FlockEvents.RaiseShutdown();
+            FlockEvents.InvokeShutdown();
             FlockEvents.ClearAll();
             FlockEvents.Logger = null;
         }
@@ -294,13 +294,13 @@ namespace Flock
                 {
                     ClearTokens();
                     OnSessionExpired?.Invoke();
-                    FlockEvents.RaiseAuthExpired();
+                    FlockEvents.InvokeAuthExpired();
                     return false;
                 }
 
                 SetTokens(response.AccessToken, response.RefreshToken);
                 _logger.LogInfo("Token refresh successful");
-                FlockEvents.RaiseTokenRefreshed();
+                FlockEvents.InvokeTokenRefreshed();
                 return true;
             }
             catch (FlockAuthException e)
@@ -309,7 +309,7 @@ namespace Flock
                 _logger.LogException(e);
                 ClearTokens();
                 OnSessionExpired?.Invoke();
-                FlockEvents.RaiseAuthExpired();
+                FlockEvents.InvokeAuthExpired();
                 return false;
             }
             catch (Exception ex)

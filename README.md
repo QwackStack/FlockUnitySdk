@@ -9,6 +9,7 @@ The Flock Unity SDK provides access to Flock's game backend services from Unity 
 - [Requirements](#requirements)
 - [Setup](#setup)
   - [Editor Configuration](#editor-configuration)
+  - [Automatic Initialization](#automatic-initialization-default)
   - [Drop-in Initialization](#drop-in-initialization)
   - [Code-Based Configuration](#code-based-configuration)
 - [Quick Start](#quick-start)
@@ -20,18 +21,15 @@ The Flock Unity SDK provides access to Flock's game backend services from Unity 
   - [Events](#events)
 - [Offline caching](#offline-caching)
 - [Codegen](#codegen)
-- [Backend backlog](#backend-backlog)
 - [Platform notes](#platform-notes)
 
 ## Features
 
 - Player authentication (email, device, Google, Apple, Steam, Facebook, Discord)
 - Token refresh with automatic silent retry, plus a session-expired event
-- Game configuration (fetched from the backend, filterable by tag)
-- Config schema validation (backend validation of config types)
-- Per-player feature config lookup
+- Game configuration — typed accessors generated from your schemas (via codegen)
 - Game and game version metadata (lookup by ID or name)
-- Player data and player templates (read with pagination, template lookup by ID or name)
+- Player data — read with pagination; typed player-data and template accessors via codegen
 - Shop (browse shops, items, purchase, inventory)
 - Game commands (server-side operations: update player data, add funds)
 - Player ban lookup
@@ -179,7 +177,7 @@ var response = await FlockClient.Instance.Authentication.LoginWithDiscordAsync(d
 FlockClient.Instance.Authentication.Logout();
 ```
 
-> **Note on `name` during registration.** The backend enforces a **unique** display name across registered players. The SDK has a temporary string-match (`IsAlreadyRegisteredError`) that swallows "already registered" errors and returns `null` from `RegisterWith*` instead of throwing — whether it catches name collisions specifically depends on the exact backend error wording, which isn't structured today (see [Backend backlog](#backend-backlog)).
+> **Note on `name` during registration.** The backend enforces a **unique** display name across registered players. `IsAlreadyRegisteredError` swallows the backend's coded already-registered errors (`FlockErrorCode.Player*AlreadyRegistered` — email/device/OAuth) and returns `null` from `RegisterWith*` instead of throwing. A duplicate **name**, however, isn't coded yet — the backend currently surfaces it as an unhandled `500`, so it is *not* swallowed (see **Backend backlog / known constraints** in [ARCHITECTURE.md](ARCHITECTURE.md)).
 >
 > Until the backend ships a structured "name taken" error code (or a name-availability check), the recommended path is to **pass `null` (or omit `name`)** and let the backend assign a default. If you need a display name, collect it on a separate post-registration screen where retrying on collision is natural UX.
 
@@ -198,30 +196,15 @@ bool refreshed = await FlockClient.Instance.RefreshTokenAsync();
 ### Services
 
 ```csharp
-// Game configuration — raw (returns GamePatchSchema with a flattened DataField list)
-var configs = await FlockClient.Instance.Config.GetAllAsync();
-var config = await FlockClient.Instance.Config.GetByIdAsync("config-id");
-var bySchema = await FlockClient.Instance.Config.GetBySchemaAsync("schema-id");
+// Game configuration — accessed through codegen. The Codegen tab (Qwacks > Flock) emits one
+// Get<ConfigName>Async() per config returning a generated typed class. Each resolves the current
+// game version's patch values, falling back to the config's own data when no patch exists.
+var currency = await FlockClient.Instance.Config.GetCurrencyAsync();   // generated
+var gameplay = await FlockClient.Instance.Config.GetGameplayAsync();   // generated
+// Raw getters (GetAllAsync / GetByIdAsync / GetBySchemaAsync / GetGameConfigsAsync / GetPlayerFeaturesAsync)
+// are internal — the server returns a codegen-shaped payload, so generated accessors are the supported path.
 
-// Game configuration — typed (deserializes Data into your class)
-var configs = await FlockClient.Instance.Config.GetAllAsync<GameplayConfig>();
-var config = await FlockClient.Instance.Config.GetByIdAsync<GameplayConfig>("config-id");
-var bySchema = await FlockClient.Instance.Config.GetBySchemaAsync<GameplayConfig>("schema-id");
-
-// Game configs by tag (currency, gameplay)
-var currencyConfigs = await FlockClient.Instance.Config.GetGameConfigsAsync(SchemaTag.currency);
-var gameplayConfigs = await FlockClient.Instance.Config.GetGameConfigsByVersionAsync(SchemaTag.gameplay);
-var typed = await FlockClient.Instance.Config.GetGameConfigsAsync<CurrencyConfig>(SchemaTag.currency);
-
-// Per-player feature config (game version the player last logged into)
-var features = await FlockClient.Instance.Config.GetPlayerFeaturesAsync(FlockClient.Instance.CurrentPlayerId);
-var typedFeatures = await FlockClient.Instance.Config.GetPlayerFeaturesAsync<FeatureFlags>(FlockClient.Instance.CurrentPlayerId);
-
-// Config schema validation (backend concern, most games skip this)
-var schemas = await FlockClient.Instance.Schema.GetAllSchemasAsync(SchemaTag.gameplay);
-var versionSchemas = await FlockClient.Instance.Schema.GetSchemasByVersionAsync(SchemaTag.currency);
-var schema = await FlockClient.Instance.Schema.GetSchemaByIdAsync("schema-id");
-var configs = await FlockClient.Instance.Schema.GetSchemaConfigsAsync("schema-id");
+// Config schemas are an internal/codegen concern — the Schema getters are not part of the public API.
 
 // Game info
 var game = await FlockClient.Instance.Game.GetGameAsync();
@@ -232,12 +215,6 @@ var versionByName = await FlockClient.Instance.Game.GetGameVersionByNameAsync("v
 var data = await FlockClient.Instance.Player.GetDataByIdAsync("player-data-id");
 var all = await FlockClient.Instance.Player.GetAllDataAsync(page: 1, limit: 10);
 var byPlayer = await FlockClient.Instance.Player.GetAllDataAsync(playerId: "player-id");
-
-// Player templates
-var templates = await FlockClient.Instance.Player.GetTemplatesAsync();
-var template = await FlockClient.Instance.Player.GetTemplateByIdAsync("template-id");
-var template = await FlockClient.Instance.Player.GetTemplateByNameAsync("currency");
-var playerData = await FlockClient.Instance.Player.GetTemplatePlayerDataAsync("template-id");
 
 // Reading player data — preferred path: the codegen'd accessors. The Codegen tab's Sync Schemas
 // emits one Get<TemplateName>Async() extension per template returning a generated typed
@@ -420,28 +397,7 @@ private void HandleSessionEnded(FlockSessionEndedArgs args)
 
 ## Offline caching
 
-The SDK keeps a disk snapshot of everything it reads from the server
-(`persistentDataPath/Flock/snapshots/`). When the device is offline or the
-server can't be reached, the last-known data is served instead of throwing —
-this works after at least one online session. Online behavior is unchanged:
-the server is always fetched first, and there are no TTLs to tune.
-
-When data refreshes:
-
-| Data | Refreshes |
-|---|---|
-| Configs, schemas, shop catalog, game info, asset metadata, player templates, player features | Once per game launch (first access). Newly published content shows up on the next launch. |
-| Player data | At launch, and automatically after every game command — the command's response updates the cache for you. |
-| Ban status, inventory, purchases | Never cached — always live. |
-
-Settings (`FlockInitConfig` / the FlockConfig asset, under "Offline Cache"):
-
-- `EnableOfflineCache` (default `true`) — master switch. Set `false` on WebGL (see Platform notes).
-- `OfflineCacheDirectory` — optional custom location for the snapshots.
-
-Each service has a `ClearCache()` that drops both its in-memory cache and its
-disk snapshots. Purchases always require a connection — they are never cached
-or queued.
+Reads are snapshotted to disk and served when the server is unreachable, after at least one online session — the server is always tried first, with no TTLs. Toggle with `EnableOfflineCache` (default `true`; set `false` on WebGL — see [Platform notes](#platform-notes)). Each service exposes `ClearCache()`; bans, inventory, and purchases are never cached. See [ARCHITECTURE.md](ARCHITECTURE.md) for what refreshes when.
 
 ## Codegen
 
@@ -496,33 +452,7 @@ Re-run sync whenever:
 - You change **Game Version** on the FlockConfig asset (the editor warns, and the build guard fails, if the generated `SchemasManifest.GameVersionId` doesn't match the baked version ID)
 - You add or remove templates
 
-Type mapping for primitives lives in `Editor/Codegen/TypeMap.cs` (`integer` → `int`, `string` → `string`, `datetime`/`date`/`timestamp` → `System.DateTime`, etc.). Composite types are walked structurally by `SchemaPropertyEmitter`: `object` fields emit a nested partial class, `list`/`array` emit `List<T>`, `dict` emits `Dictionary<string, T>`, all resolved recursively through the same walker.
-
-### Continuous integration
-
-Codegen runs headlessly so CI can keep generated code honest without opening the editor by hand. Two public entry points on `Flock.Editor.Codegen.FlockCodegenCli`:
-
-- **`Sync`** — regenerates the typed accessors from the backend schema (same as the editor button), then exits.
-- **`Verify`** — writes nothing; exits non-zero when the committed generated code is stale versus the backend schema. Catches both a changed Game Version *and* field/type/tag edits **within** the same version — the manifest bakes a content hash of the schema, and `Verify` re-fetches and compares it. Use it as a PR gate. (The build guard only checks the Game Version ID, and only offline at build time; same-version content drift is a `Verify`-only, online check.)
-
-```bash
-# Regenerate (commit the result if anything changed)
-Unity -batchmode -projectPath . -executeMethod Flock.Editor.Codegen.FlockCodegenCli.Sync -logFile -
-
-# Fail the build when committed generated code has drifted
-Unity -batchmode -projectPath . -executeMethod Flock.Editor.Codegen.FlockCodegenCli.Verify -logFile -
-```
-
-Exit codes: `0` success / no drift · `1` could not run (bad config or fetch failure) · `2` drift detected (`Verify` only). **Do not pass `-quit`** — each method runs asynchronously and exits the editor itself once the backend round-trip completes; `-quit` would tear the editor down before codegen finishes. Both need valid Flock credentials on the `FlockConfig` asset and network access to the backend.
-
-## Backend backlog
-
-A few SDK behaviors are constrained by the current backend surface and will improve as the backend grows. None of these block normal usage; they all surface as warnings in the console with workarounds in place.
-
-- **Asset by name** — `client.Asset.GetByNameAsync` lists all assets and filters client-side (O(N)). Will switch to a dedicated server-side lookup once the backend adds it.
-- **Structured registration error codes** — registration failures are returned as plain text without an error-code field. The SDK uses string-matching (`IsAlreadyRegisteredError`) to swallow "already registered" cases and return `null` from `RegisterWith*`, which is brittle and conflates name collisions with credential collisions. Once the backend returns structured codes (e.g. `NAME_TAKEN`, `EMAIL_REGISTERED`, `DEVICE_REGISTERED`), the SDK can surface them as typed exceptions and the `RegisterWith*` methods can take `name` again with reliable error UX. A dedicated name-availability check would also let callers validate as the user types.
-- **Retry-safe session registration** — session registration creates a brand-new session row on every call, and only the server knows the issued id. If the app quits (or the session rotates) while a registration request is still on the wire, the client never learns that id; on the next launch it has to register the session again just to close it, leaving the server with two rows for one play session — and the first row stays open forever. The SDK logs a warning when it detects this. Fix: accept the client's own session id (`client_session_id`) and, when the same id is sent twice, return the existing row instead of creating another. A retried registration then maps back to the original session.
-- **Idempotency keys for money mutations** — `AddGameFunds` and shop `Purchase` mutate server state (currency, inventory) and carry no idempotency key, so the backend can't tell a genuine repeat from a network retry. To avoid double-crediting/double-charging, the SDK only auto-retries these two calls on failures the server **provably didn't process** (HTTP 408/429); ambiguous failures (client timeout, dropped connection, 5xx — the response may have been lost *after* the server committed) surface to the caller to catch and decide. The robust fix is a client-supplied key (e.g. `idempotency_key`) the backend dedupes on: the SDK sends a stable key per logical operation, the server applies it at most once, and full auto-retry can return. The other three commands — `UpdatePlayerData`, `UpdatePlayerDataField`, `UnlockAchievement` — are idempotent by construction and unaffected.
+Type mapping and headless CI (`FlockCodegenCli` Sync/Verify, drift detection) are documented in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Platform notes
 
