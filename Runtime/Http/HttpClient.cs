@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Threading;
 using System.Threading.Tasks;
 using Flock.Exceptions;
+using Flock.Models;
 using Newtonsoft.Json;
 
 namespace Flock.Http
@@ -85,16 +86,18 @@ namespace Flock.Http
             if (code < 200 || code >= 300)
             {
                 string errorContent = response.Body;
+                string errorCode = ParseErrorCode(errorContent);
 
                 if (code == 401 || code == 403)
-                    throw new FlockAuthException($"Authentication failed (HTTP {code})") { Body = errorContent, StatusCode = code };
+                    throw new FlockAuthException($"Authentication failed (HTTP {code})") { Body = errorContent, StatusCode = code, Code = errorCode };
 
                 if (code == 400 || code == 422)
-                    throw new FlockValidationException($"Validation failed (HTTP {code})") { Body = errorContent, StatusCode = code };
+                    throw new FlockValidationException($"Validation failed (HTTP {code})") { Body = errorContent, StatusCode = code, Code = errorCode };
 
                 throw new FlockNetworkException($"HTTP request failed (HTTP {code})", code)
                 {
                     Body = errorContent,
+                    Code = errorCode,
                     RetryAfter = ParseRetryAfter(response.RetryAfterHeader)
                 };
             }
@@ -109,6 +112,21 @@ namespace Flock.Http
             catch (JsonException ex)
             {
                 throw new FlockSerializationException("Malformed response body", ex) { Body = response.Body };
+            }
+        }
+
+        // Pulls the server's machine-readable error code out of the coded-error body, if present.
+        private static string ParseErrorCode(string body)
+        {
+            if (string.IsNullOrEmpty(body))
+                return null;
+            try
+            {
+                return JsonConvert.DeserializeObject<CodedErrorResponse>(body)?.Detail?.Code;
+            }
+            catch (JsonException)
+            {
+                return null;
             }
         }
 

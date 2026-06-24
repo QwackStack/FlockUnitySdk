@@ -39,6 +39,7 @@ Every API request includes these headers:
 | Config Schemas | `GET /v1/game_config` | API Key |
 | Schemas by Version | `GET /v1/game_config/version` | API Key |
 | Schema by ID | `GET /v1/game_config/{id}` | API Key |
+| Schema by Name | `GET /v1/game_config/by-name/{name}` | API Key |
 | Schema Configs | `GET /v1/game_config/{id}/patches` | API Key |
 | Player Feature Config | `GET /v1/game_config/player/{player_id}/features` | API Key |
 | Game Info | `GET /v1/game` | API Key |
@@ -58,6 +59,7 @@ Every API request includes these headers:
 | Unlock Achievement | `POST /v1/game_command/unlock_achievement` | API Key |
 | List Shops | `GET /v1/shop` | API Key |
 | Get Shop | `GET /v1/shop/{shop_id}` | API Key |
+| Get Shop by Name | `GET /v1/shop/by-name/{name}` | API Key |
 | Shop Transaction | `POST /v1/shop/transaction` | API Key |
 | Get Shop Item | `GET /v1/shop_item/{shop_item_id}` | API Key |
 | Shop Items by Shop | `GET /v1/shop_item/shop/{shop_id}` | API Key |

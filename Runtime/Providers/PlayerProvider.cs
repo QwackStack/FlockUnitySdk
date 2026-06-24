@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Threading;
 using System.Threading.Tasks;
 using Flock.Models;
@@ -74,7 +75,7 @@ namespace Flock.Providers
             }, "Fetch player data list", cancellationToken);
         }
 
-        public Task<List<PlayerTemplateSchema>> GetTemplatesAsync(CancellationToken cancellationToken = default)
+        internal Task<List<PlayerTemplateSchema>> GetTemplatesAsync(CancellationToken cancellationToken = default)
         {
             if (_allTemplatesFetched)
                 return Task.FromResult(new List<PlayerTemplateSchema>(_templatesById.Values));
@@ -110,7 +111,7 @@ namespace Flock.Providers
             }
         }
 
-        public async Task<PlayerTemplateSchema> GetTemplateByIdAsync(string playerTemplateId, CancellationToken cancellationToken = default)
+        internal async Task<PlayerTemplateSchema> GetTemplateByIdAsync(string playerTemplateId, CancellationToken cancellationToken = default)
         {
             RequireNotEmpty(playerTemplateId, "Player Template ID");
             if (_templatesById.TryGetValue(playerTemplateId, out PlayerTemplateSchema cached))
@@ -127,7 +128,7 @@ namespace Flock.Providers
             }, $"Fetch player template {playerTemplateId}", cancellationToken);
         }
 
-        public async Task<PlayerTemplateSchema> GetTemplateByNameAsync(string name, CancellationToken cancellationToken = default)
+        internal async Task<PlayerTemplateSchema> GetTemplateByNameAsync(string name, CancellationToken cancellationToken = default)
         {
             RequireNotEmpty(name, "Player Template Name");
             if (_templateIdByName.TryGetValue(name, out string id) && _templatesById.TryGetValue(id, out PlayerTemplateSchema cached))
@@ -173,7 +174,7 @@ namespace Flock.Providers
         }
 
         /// <summary>Finds the single player template carrying the given tag (e.g. "currency", "achievement").</summary>
-        public async Task<PlayerTemplateSchema> GetTemplateByTagAsync(string tag, CancellationToken cancellationToken = default)
+        internal async Task<PlayerTemplateSchema> GetTemplateByTagAsync(string tag, CancellationToken cancellationToken = default)
         {
             RequireNotEmpty(tag, "Template tag");
             List<PlayerTemplateSchema> templates = await GetTemplatesAsync(cancellationToken);
@@ -240,7 +241,7 @@ namespace Flock.Providers
             return byTemplate;
         }
 
-        public async Task<List<PlayerData>> GetTemplatePlayerDataAsync(string playerTemplateId, CancellationToken cancellationToken = default)
+        internal async Task<List<PlayerData>> GetTemplatePlayerDataAsync(string playerTemplateId, CancellationToken cancellationToken = default)
         {
             RequireNotEmpty(playerTemplateId, "Player Template ID");
             return await ExecuteAsync(async () =>

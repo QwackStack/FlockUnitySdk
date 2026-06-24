@@ -5,7 +5,8 @@
         "Flock.Runtime",
         "Flock.Editor",
         "UnityEngine.TestRunner",
-        "UnityEditor.TestRunner"
+        "UnityEditor.TestRunner",
+        "Unity.Newtonsoft.Json"
     ],
     "includePlatforms": [
         "Editor"

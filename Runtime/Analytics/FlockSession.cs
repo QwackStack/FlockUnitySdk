@@ -184,7 +184,7 @@ namespace Flock.Analytics
 
             _logger.LogInfo($"Session started: {SessionId} (#{SessionNumber})");
 
-            FlockEvents.RaiseSessionStarted(SessionId);
+            FlockEvents.InvokeSessionStarted(SessionId);
 
             return SessionId;
         }
@@ -227,7 +227,7 @@ namespace Flock.Analytics
 
             _logger.LogInfo($"Session ended: {SessionId} | Duration: {snapshot.DurationSeconds:F1}s | Screens: {snapshot.ScreensViewed} | Pauses: {snapshot.PauseCount} | AvgFPS: {snapshot.AverageFps:F0}{(snapshot.IsBounce ? " [BOUNCE]" : "")}");
 
-            FlockEvents.RaiseSessionEnded(new FlockSessionEndedArgs(snapshot, reason));
+            FlockEvents.InvokeSessionEnded(new FlockSessionEndedArgs(snapshot, reason));
 
             return snapshot;
         }
@@ -378,7 +378,7 @@ namespace Flock.Analytics
                 _pausedAtRealtime = Time.realtimeSinceStartup;
                 SaveState();
                 OnSessionPaused?.Invoke();
-                FlockEvents.RaiseSessionPaused();
+                FlockEvents.InvokeSessionPaused();
                 _logger.LogDebug($"Session backgrounded: {SessionId}");
             }
             else
@@ -401,7 +401,7 @@ namespace Flock.Analytics
                     FinalizePause();
                     _isPaused = false;
                     _logger.LogDebug($"Session resumed: {SessionId}");
-                    FlockEvents.RaiseSessionResumed();
+                    FlockEvents.InvokeSessionResumed();
                 }
             }
         }

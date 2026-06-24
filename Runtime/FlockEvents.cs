@@ -79,66 +79,66 @@ namespace Flock
         /// <summary>The paused session resumed (app foregrounded).</summary>
         public static event Action OnSessionResumed;
 
-        //Internal raises
+        //Internal invokes
 
-        internal static void RaiseInitialized()
+        internal static void InvokeInitialized()
         {
-            Raise(_onInitialized, nameof(OnInitialized));
+            Invoke(_onInitialized, nameof(OnInitialized));
         }
 
-        internal static void RaiseInitializationFailed(Exception exception)
+        internal static void InvokeInitializationFailed(Exception exception)
         {
-            Raise(_onInitializationFailed, exception, nameof(OnInitializationFailed));
+            Invoke(_onInitializationFailed, exception, nameof(OnInitializationFailed));
         }
 
-        internal static void RaiseShutdown()
+        internal static void InvokeShutdown()
         {
-            Raise(OnShutdown, nameof(OnShutdown));
+            Invoke(OnShutdown, nameof(OnShutdown));
         }
 
-        internal static void RaiseAuthenticated(FlockAuthInfo info)
+        internal static void InvokeAuthenticated(FlockAuthInfo info)
         {
-            Raise(OnAuthenticated, info, nameof(OnAuthenticated));
+            Invoke(OnAuthenticated, info, nameof(OnAuthenticated));
         }
 
-        internal static void RaiseTokenRefreshed()
+        internal static void InvokeTokenRefreshed()
         {
-            Raise(OnTokenRefreshed, nameof(OnTokenRefreshed));
+            Invoke(OnTokenRefreshed, nameof(OnTokenRefreshed));
         }
 
-        internal static void RaiseAuthExpired()
+        internal static void InvokeAuthExpired()
         {
-            Raise(OnAuthExpired, nameof(OnAuthExpired));
+            Invoke(OnAuthExpired, nameof(OnAuthExpired));
         }
 
-        internal static void RaiseLoggedOut()
+        internal static void InvokeLoggedOut()
         {
-            Raise(OnLoggedOut, nameof(OnLoggedOut));
+            Invoke(OnLoggedOut, nameof(OnLoggedOut));
         }
 
-        internal static void RaiseSessionRestored(bool restored)
+        internal static void InvokeSessionRestored(bool restored)
         {
-            Raise(OnSessionRestored, restored, nameof(OnSessionRestored));
+            Invoke(OnSessionRestored, restored, nameof(OnSessionRestored));
         }
 
-        internal static void RaiseSessionStarted(string sessionId)
+        internal static void InvokeSessionStarted(string sessionId)
         {
-            Raise(OnSessionStarted, sessionId, nameof(OnSessionStarted));
+            Invoke(OnSessionStarted, sessionId, nameof(OnSessionStarted));
         }
 
-        internal static void RaiseSessionEnded(FlockSessionEndedArgs args)
+        internal static void InvokeSessionEnded(FlockSessionEndedArgs args)
         {
-            Raise(OnSessionEnded, args, nameof(OnSessionEnded));
+            Invoke(OnSessionEnded, args, nameof(OnSessionEnded));
         }
 
-        internal static void RaiseSessionPaused()
+        internal static void InvokeSessionPaused()
         {
-            Raise(OnSessionPaused, nameof(OnSessionPaused));
+            Invoke(OnSessionPaused, nameof(OnSessionPaused));
         }
 
-        internal static void RaiseSessionResumed()
+        internal static void InvokeSessionResumed()
         {
-            Raise(OnSessionResumed, nameof(OnSessionResumed));
+            Invoke(OnSessionResumed, nameof(OnSessionResumed));
         }
 
         //Cleanup
@@ -168,7 +168,7 @@ namespace Flock
             Logger = null;
         }
 
-        //Raise plumbing
+        //Invoke plumbing
 
         private static void InvokeOne(Action handler, string eventName)
         {
@@ -182,7 +182,7 @@ namespace Flock
             catch (Exception ex) { LogSubscriberException(eventName, ex); }
         }
 
-        private static void Raise(Action handlers, string eventName)
+        private static void Invoke(Action handlers, string eventName)
         {
             if (handlers == null)
             {
@@ -205,11 +205,12 @@ namespace Flock
             }
         }
 
-        private static void Raise<T>(Action<T> handlers, T payload, string eventName)
+        private static void Invoke<T>(Action<T> handlers, T payload, string eventName)
         {
             if (handlers == null)
             {
-                Logger?.LogDebug($"{eventName} fired -> 0 subscribers");
+                //For now it is a lot of spam to see non-listened to invokes
+                // Logger?.LogDebug($"{eventName} fired -> 0 subscribers");
                 return;
             }
 
