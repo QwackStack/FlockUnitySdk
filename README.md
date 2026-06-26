@@ -269,7 +269,7 @@ var ban = await FlockClient.Instance.Player.GetBanAsync(FlockClient.Instance.Cur
 // Assets — list / lookup
 var assets = await FlockClient.Instance.Asset.GetAllAsync();
 var asset = await FlockClient.Instance.Asset.GetByIdAsync("asset-id");
-var asset = await FlockClient.Instance.Asset.GetByNameAsync("iconTest"); // O(N) client-side filter
+var asset = await FlockClient.Instance.Asset.GetByNameAsync("iconTest"); // O(N) client-side filter; throws FlockException if not found
 // asset.S3DownloadUrl is the direct download URL
 
 // Assets — generic typed download. Supported T: Texture2D, Sprite, AudioClip, string, byte[]
@@ -277,8 +277,11 @@ var asset = await FlockClient.Instance.Asset.GetByNameAsync("iconTest"); // O(N)
 Sprite sprite = await FlockClient.Instance.Asset.DownloadAsync<Sprite>("asset-id");
 // By already-fetched schema (skips the lookup):
 Sprite sprite = await FlockClient.Instance.Asset.DownloadAsync<Sprite>(asset);
+// With download progress (0 → 1):
+var progress = new Progress<float>(p => Debug.Log($"Downloading {p:P0}"));
+Sprite sprite = await FlockClient.Instance.Asset.DownloadAsync<Sprite>(asset, progress);
 
-// Batch downloads — caller picks which assets, all downloaded in parallel as the chosen type
+// Batch downloads — throttled to FlockInitConfig.AssetMaxConcurrentDownloads (default 4)
 List<Sprite> sprites = await FlockClient.Instance.Asset.DownloadAsync<Sprite>(new[] { "id1", "id2", "id3" });
 List<Sprite> sprites = await FlockClient.Instance.Asset.DownloadAsync<Sprite>(assets);
 
@@ -295,9 +298,15 @@ FlockClient.Instance.Asset.ClearCache();
 // Warm the disk cache at boot without decoding into a Unity type.
 // Cache-hit short-circuits, so re-calling for an unchanged asset is cheap.
 await FlockClient.Instance.Asset.PreloadAsync(asset);
+// Predicate-based bulk preload — e.g. warm all assets under 1 MB at startup:
+await FlockClient.Instance.Asset.PreloadAsync(
+    a => a.SizeBytes.HasValue && a.SizeBytes.Value < 1_000_000, progress);
 
 // Ask "is this asset already on disk for this UpdatedAt?" without downloading.
 bool ready = FlockClient.Instance.Asset.IsCached(asset);
+
+// Filter a list to only the entries not yet on disk:
+List<AssetSchema> missing = FlockClient.Instance.Asset.GetUncached(assets);
 ```
 
 ### Analytics

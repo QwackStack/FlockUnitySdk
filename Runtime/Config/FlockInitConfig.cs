@@ -41,6 +41,12 @@ namespace Flock.Config
         public int AssetDownloadRetryCount { get; set; } = 3;
 
         /// <summary>
+        /// Maximum number of asset downloads that run in parallel during batch calls.
+        /// Default <c>4</c>; set to <c>0</c> or negative to use no limit (matches old behaviour).
+        /// </summary>
+        public int AssetMaxConcurrentDownloads { get; set; } = 4;
+
+        /// <summary>
         /// When true, read-API responses are snapshotted to disk and served as a fallback
         /// when the network is unavailable. Disable on WebGL — persistentDataPath there
         /// does not support synchronous writes.
@@ -105,7 +111,7 @@ namespace Flock.Config
 
         public Dictionary<string, string> GetBaseHeaders()
         {
-            var headers = new Dictionary<string, string>
+            Dictionary<string, string> headers = new Dictionary<string, string>
             {
                 { "X-Flock-API-Key", _apiKey }
             };

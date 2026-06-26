@@ -193,12 +193,16 @@ namespace Flock
 #endif
             _authentication = new FlockAuthProvider(this);
 
-            _session = new FlockSession(_initConfig.AnalyticsConfig, _logger);
 #if !FLOCK_NO_ANALYTICS
             if (_initConfig.AnalyticsConfig.Enabled)
+            {
+                _session = new FlockSession(_initConfig.AnalyticsConfig, _logger);
                 _analytics = new FlockAnalyticsProvider(this);
+            }
             else
+            {
                 _analytics = new NullAnalyticsProvider(this);
+            }
 #endif
         }
 
