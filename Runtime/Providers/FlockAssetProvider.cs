@@ -22,12 +22,15 @@ namespace Flock.Providers
         private bool _allAssetsFetched;
         private bool _diskIndexLoaded;
         private Task<List<AssetSchema>> _allAssetsFetchTask;
+        private SemaphoreSlim _downloadSemaphore;
 
         public FlockAssetProvider(FlockClient client) : base(client)
         {
             _cache = new FlockAssetCache(
                 client.InitConfig.AssetCacheDirectory,
                 client.InitConfig.AssetCacheMaxSizeMB);
+            int cap = client.InitConfig.AssetMaxConcurrentDownloads;
+            _downloadSemaphore = cap > 0 ? new SemaphoreSlim(cap, cap) : null;
         }
 
         public string CacheDirectory => _cache.Directory;
@@ -129,7 +132,7 @@ namespace Flock.Providers
         public async Task<AssetSchema> GetByNameAsync(string name, CancellationToken cancellationToken = default)
         {
             RequireNotEmpty(name, "Asset Name");
-            //cuz of BE not having get by name
+            // No BE by-name endpoint; fetch all and filter client-side.
             if (!_allAssetsFetched)
                 await GetAllAsync(cancellationToken);
 
@@ -138,16 +141,27 @@ namespace Flock.Providers
                 if (asset.Name == name)
                     return asset;
             }
-            return null;
+            throw new FlockException($"Asset with name '{name}' not found.");
         }
 
         public async Task<T> DownloadAsync<T>(string assetId, CancellationToken cancellationToken = default) where T : class
         {
             AssetSchema asset = await GetByIdAsync(assetId, cancellationToken);
-            return await DownloadAsync<T>(asset, cancellationToken);
+            return await DownloadAsync<T>(asset, null, cancellationToken);
         }
 
-        public async Task<T> DownloadAsync<T>(AssetSchema asset, CancellationToken cancellationToken = default) where T : class
+        public async Task<T> DownloadAsync<T>(string assetId, IProgress<float> progress, CancellationToken cancellationToken = default) where T : class
+        {
+            AssetSchema asset = await GetByIdAsync(assetId, cancellationToken);
+            return await DownloadAsync<T>(asset, progress, cancellationToken);
+        }
+
+        public Task<T> DownloadAsync<T>(AssetSchema asset, CancellationToken cancellationToken = default) where T : class
+        {
+            return DownloadAsync<T>(asset, null, cancellationToken);
+        }
+
+        public async Task<T> DownloadAsync<T>(AssetSchema asset, IProgress<float> progress, CancellationToken cancellationToken = default) where T : class
         {
             if (asset == null)
                 throw new FlockValidationException("Asset cannot be null");
@@ -167,14 +181,12 @@ namespace Flock.Providers
             bool cacheHit = cacheEnabled && tryGetCachedFileUrl;
             string sourceUrl = cacheHit ? cachedUrl : asset.S3DownloadUrl;
 
-            // Retry transient download failures like API calls do (backoff + jitter, skips permanent 4xx);
-            // a fresh UnityWebRequest per attempt since one can't be re-sent. Mirrors Addressables RetryCount/Timeout.
             return await Client.RetryHandler.ExecuteAsync(async () =>
             {
                 UnityWebRequest req = BuildRequest<T>(sourceUrl, asset);
                 using (req)
                 {
-                    await SendAsync(req, $"Download asset '{asset.Name}'", Client.InitConfig.AssetDownloadTimeout, cancellationToken);
+                    await SendAsync(req, $"Download asset '{asset.Name}'", Client.InitConfig.AssetDownloadTimeout, cancellationToken, progress);
 
                     if (!cacheHit && cacheEnabled)
                     {
@@ -198,9 +210,10 @@ namespace Flock.Providers
             if (assetIds == null)
                 return new List<T>();
 
-            Task<T>[] tasks = assetIds.Select(id => DownloadAsync<T>(id, cancellationToken)).ToArray();
-            T[] results = await Task.WhenAll(tasks);
-            return results.ToList();
+            List<AssetSchema> schemas = new List<AssetSchema>();
+            foreach (string id in assetIds)
+                schemas.Add(await GetByIdAsync(id, cancellationToken));
+            return await DownloadAsync<T>(schemas, cancellationToken);
         }
 
         public async Task<List<T>> DownloadAsync<T>(IEnumerable<AssetSchema> assets, CancellationToken cancellationToken = default) where T : class
@@ -208,9 +221,44 @@ namespace Flock.Providers
             if (assets == null)
                 return new List<T>();
 
-            Task<T>[] tasks = assets.Select(a => DownloadAsync<T>(a, cancellationToken)).ToArray();
+            Task<T>[] tasks = assets.Select(a => ThrottledDownloadAsync<T>(a, cancellationToken)).ToArray();
             T[] results = await Task.WhenAll(tasks);
             return results.ToList();
+        }
+
+        private async Task<T> ThrottledDownloadAsync<T>(AssetSchema asset, CancellationToken cancellationToken) where T : class
+        {
+            if (_downloadSemaphore == null)
+                return await DownloadAsync<T>(asset, null, cancellationToken);
+
+            await _downloadSemaphore.WaitAsync(cancellationToken);
+            try
+            {
+                return await DownloadAsync<T>(asset, null, cancellationToken);
+            }
+            finally
+            {
+                _downloadSemaphore.Release();
+            }
+        }
+
+        private async Task ThrottledDownloadToCacheAsync(AssetSchema asset, CancellationToken cancellationToken)
+        {
+            if (_downloadSemaphore == null)
+            {
+                await DownloadToCacheAsync(asset, null, cancellationToken);
+                return;
+            }
+
+            await _downloadSemaphore.WaitAsync(cancellationToken);
+            try
+            {
+                await DownloadToCacheAsync(asset, null, cancellationToken);
+            }
+            finally
+            {
+                _downloadSemaphore.Release();
+            }
         }
 
         public void ClearCache()
@@ -276,17 +324,105 @@ namespace Flock.Providers
             return asset != null && IsCached(asset.Id, asset.UpdatedAt);
         }
 
-        // Downloads bytes into the disk cache without decoding into a typed Unity
-        // object. Cache hits short-circuit, so calling twice for an unchanged asset
-        // is cheap.
-        public Task PreloadAsync(string assetId, CancellationToken cancellationToken = default)
+        public List<AssetSchema> GetUncached(IEnumerable<AssetSchema> assets)
         {
-            return DownloadAsync<byte[]>(assetId, cancellationToken);
+            List<AssetSchema> result = new List<AssetSchema>();
+            if (assets == null)
+                return result;
+            foreach (AssetSchema asset in assets)
+            {
+                if (asset != null && !IsCached(asset))
+                    result.Add(asset);
+            }
+            return result;
+        }
+
+        public async Task PreloadAsync(Func<AssetSchema, bool> predicate, IProgress<float> progress = null, CancellationToken cancellationToken = default)
+        {
+            if (predicate == null)
+                throw new FlockValidationException("Predicate cannot be null");
+
+            List<AssetSchema> all = await GetAllAsync(cancellationToken);
+            List<AssetSchema> targets = new List<AssetSchema>();
+            foreach (AssetSchema asset in all)
+            {
+                if (predicate(asset))
+                    targets.Add(asset);
+            }
+
+            if (targets.Count == 0)
+            {
+                progress?.Report(1f);
+                return;
+            }
+
+            int completed = 0;
+            Task[] tasks = targets.Select(async asset =>
+            {
+                await ThrottledDownloadToCacheAsync(asset, cancellationToken);
+                System.Threading.Interlocked.Increment(ref completed);
+                progress?.Report((float)completed / targets.Count);
+            }).ToArray();
+
+            await Task.WhenAll(tasks);
+        }
+
+        public async Task PreloadAsync(string assetId, CancellationToken cancellationToken = default)
+        {
+            AssetSchema asset = await GetByIdAsync(assetId, cancellationToken);
+            await DownloadToCacheAsync(asset, null, cancellationToken);
         }
 
         public Task PreloadAsync(AssetSchema asset, CancellationToken cancellationToken = default)
         {
-            return DownloadAsync<byte[]>(asset, cancellationToken);
+            return DownloadToCacheAsync(asset, null, cancellationToken);
+        }
+
+        // Writes the asset to the disk cache without decoding bytes into a managed object.
+        // Used by PreloadAsync to avoid a full byte[] allocation.
+        private async Task DownloadToCacheAsync(AssetSchema asset, IProgress<float> progress, CancellationToken cancellationToken)
+        {
+            if (asset == null)
+                throw new FlockValidationException("Asset cannot be null");
+            if (string.IsNullOrEmpty(asset.S3DownloadUrl))
+                throw new FlockValidationException($"Asset '{asset.Name ?? asset.Id}' has no download URL");
+
+            bool cacheEnabled = Client.InitConfig.EnableAssetCache;
+            if (cacheEnabled && _cache.MaxSizeBytes > 0
+                && asset.SizeBytes.HasValue && asset.SizeBytes.Value > _cache.MaxSizeBytes)
+            {
+                Client.Logger.LogWarning(
+                    $"Asset '{asset.Name ?? asset.Id}' ({asset.SizeBytes.Value} bytes) exceeds cache cap " +
+                    $"({_cache.MaxSizeBytes} bytes); caching disabled for this asset.");
+                cacheEnabled = false;
+            }
+
+            if (cacheEnabled && _cache.TryGetCachedFileUrl(asset.Id, asset.UpdatedAt, out _))
+            {
+                progress?.Report(1f);
+                return; // already on disk
+            }
+
+            await Client.RetryHandler.ExecuteAsync<bool>(async () =>
+            {
+                UnityWebRequest req = UnityWebRequest.Get(asset.S3DownloadUrl);
+                using (req)
+                {
+                    await SendAsync(req, $"Preload asset '{asset.Name}'", Client.InitConfig.AssetDownloadTimeout, cancellationToken, progress);
+                    if (cacheEnabled)
+                    {
+                        try
+                        {
+                            _cache.Write(asset.Id, asset.UpdatedAt, req.downloadHandler?.data);
+                        }
+                        catch (Exception ex)
+                        {
+                            Client.Logger.LogWarning($"Failed to write preload cache for '{asset.Name}': {ex.Message}");
+                        }
+                    }
+                }
+                return true;
+            }, cancellationToken, maxRetriesOverride: Client.InitConfig.AssetDownloadRetryCount);
         }
 
         
@@ -334,9 +470,8 @@ namespace Flock.Providers
             throw new FlockValidationException($"Unsupported asset type: {t.Name}");
         }
 
-        private static async Task SendAsync(UnityWebRequest req, string context, TimeSpan timeout, CancellationToken cancellationToken)
+        private static async Task SendAsync(UnityWebRequest req, string context, TimeSpan timeout, CancellationToken cancellationToken, IProgress<float> progress = null)
         {
-            // Per-download wall-clock timeout; 0 leaves it off so large assets aren't aborted mid-transfer.
             if (timeout > TimeSpan.Zero)
                 req.timeout = (int)Math.Ceiling(timeout.TotalSeconds);
 
@@ -348,9 +483,11 @@ namespace Flock.Providers
                     req.Abort();
                     cancellationToken.ThrowIfCancellationRequested();
                 }
+                progress?.Report(req.downloadProgress);
                 await Task.Yield();
             }
             cancellationToken.ThrowIfCancellationRequested();
+            progress?.Report(1f);
 
             if (req.result != UnityWebRequest.Result.Success)
             {

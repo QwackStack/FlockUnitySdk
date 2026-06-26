@@ -5,6 +5,23 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [1.21.0]
+
+### Added
+- **Download progress.** `DownloadAsync<T>` and `PreloadAsync` now accept an `IProgress<float>` parameter (0 → 1); batch and predicate overloads aggregate across all assets via `Interlocked.Increment`.
+- **Concurrent download throttle.** `FlockInitConfig.AssetMaxConcurrentDownloads` (default `4`) caps parallel S3 fetches during batch calls via `SemaphoreSlim`. Set `0` or negative to remove the limit.
+- **Predicate-based preload.** `PreloadAsync(Func<AssetSchema, bool> predicate, IProgress<float>, CancellationToken)` warms the disk cache for any matching assets in the catalog without decoding into a Unity type.
+- **`GetUncached(IEnumerable<AssetSchema>)`** — filters a list to only entries not yet on disk; useful for building a targeted prefetch queue.
+- **EditMode tests** (`FlockAssetProviderTests`) — cache hit/miss/eviction and `GetUncached` coverage; `Runtime/AssemblyInfo.cs` adds `InternalsVisibleTo("Flock.Tests.Editor")` so `FlockAssetCache` is reachable from tests without becoming public.
+
+### Changed
+- `GetByNameAsync` now **throws `FlockException`** when the asset is not found instead of returning `null`. Update any `if (asset == null)` guards to `try/catch`.
+- `DownloadToCacheAsync` (the internal preload path) writes directly via `UnityWebRequest.Get` without a `byte[]` intermediate copy — lower peak memory on large assets.
+- `FlockSession` is only constructed when `AnalyticsConfig.Enabled = true`; previously it was always created, which called `DontDestroyOnLoad` at init time and crashed EditMode tests.
+
+### Documentation
+- README asset section updated: `GetByNameAsync` throw-on-miss note, progress overload example, predicate preload example, `GetUncached` example, batch concurrency note.
+
 ## [1.20.0]
 
 ### Added
