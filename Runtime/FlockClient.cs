@@ -157,6 +157,9 @@ namespace Flock
 #if !FLOCK_NO_ANALYTICS
             (_instance._analytics as FlockAnalyticsProvider)?.UninstallGlobalExceptionHook();
 #endif
+#if !FLOCK_NO_COMMANDS
+            _instance._commands?.UnsubscribeFlushTriggers();
+#endif
             _instance.ClearTokens();
             _instance = null;
             FlockEvents.InvokeShutdown();
@@ -180,6 +183,7 @@ namespace Flock
 #endif
 #if !FLOCK_NO_COMMANDS
             _commands = new FlockCommandProvider(this);
+            _commands.SubscribeFlushTriggers();
 #endif
 #if !FLOCK_NO_SHOP
             _shop = new FlockShopProvider(this);

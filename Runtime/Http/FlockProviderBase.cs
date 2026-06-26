@@ -85,7 +85,7 @@ namespace Flock.Http
             if (store == null)
                 return await ExecuteAsync(operation, context, cancellationToken);
 
-            if (Application.internetReachability == NetworkReachability.NotReachable && store.TryRead(scope, key, out T offline))
+            if (!this.IsServerReachable() && store.TryRead(scope, key, out T offline))
                 return offline;
 
             try
@@ -96,8 +96,7 @@ namespace Flock.Http
             }
             catch (FlockNetworkException e)
             {
-                if (!FlockNetworkException.IsPermanentStatus(e.StatusCode)
-                    && store.TryRead(scope, key, out T cached))
+                if (!FlockNetworkException.IsPermanentStatus(e.StatusCode) && store.TryRead(scope, key, out T cached))
                 {
                     Client.Logger.LogWarning($"{context}: serving cached snapshot (network unavailable)");
                     return cached;
@@ -106,6 +105,10 @@ namespace Flock.Http
             }
         }
 
+        protected bool IsServerReachable()
+        {
+            return  Application.internetReachability != NetworkReachability.NotReachable;
+        }
         protected void RequireNotEmpty(string value, string name)
         {
             // for cases that require params not to be null

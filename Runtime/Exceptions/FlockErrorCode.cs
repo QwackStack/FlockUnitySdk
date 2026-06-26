@@ -3,6 +3,7 @@ using System.Text;
 
 namespace Flock.Exceptions
 {
+    //TODO hook up the remaining errors and return them appropriately in the FlockException.Code string
     /// <summary>Typed view of the backend's coded-error contract (the `detail.code` string). Member name = wire code PascalCased, e.g. "player.email_already_registered" -> PlayerEmailAlreadyRegistered. Unknown = no code, or one this SDK version predates (read FlockException.Code for the raw string).</summary>
     public enum FlockErrorCode
     {
