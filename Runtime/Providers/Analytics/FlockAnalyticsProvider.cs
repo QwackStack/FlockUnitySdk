@@ -676,7 +676,6 @@ namespace Flock.Providers
             string currencyId = null,
             CancellationToken cancellationToken = default)
         {
-            Client.Logger.LogDebug("Tracking transactions is Not Supported");
             AnalyticsTransactionRequest request = new AnalyticsTransactionRequest
             {
                 Amount = amount,
@@ -705,8 +704,8 @@ namespace Flock.Providers
         {
             RequireAuth();
 
-            if (request.Amount <= 0)
-                throw new FlockValidationException($"Transaction amount must be greater than zero, got: {request.Amount}");
+            if (request.Amount < 0)
+                throw new FlockValidationException($"Transaction amount must be non-negative, got: {request.Amount}");
 
             if (string.IsNullOrEmpty(request.PlayerId))
                 request.PlayerId = Client.CurrentPlayerId ??FlockConstant.DummyUserID;
