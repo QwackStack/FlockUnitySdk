@@ -49,6 +49,39 @@ namespace Flock.Providers
                 byTemplate[data.PlayerTemplateId] = data;
         }
 
+        // Last-known cached row by player-data id (cache is template-keyed, so this is a linear scan). Used by offline writes to echo current state.
+        internal PlayerData TryGetCachedRow(string playerDataId)
+        {
+            if (string.IsNullOrEmpty(playerDataId))
+                return null;
+            foreach (Dictionary<string, PlayerData> byTemplate in _playerDataByPlayerCache.Values)
+                foreach (PlayerData pd in byTemplate.Values)
+                    if (pd != null && pd.Id == playerDataId)
+                        return pd;
+            return null;
+        }
+
+        // Evicts the cache entry for the player owning this row so the next read re-fetches authoritative state. Whole-player because the per-player cache is all-or-nothing (no single-row refetch path).
+        internal void EvictPlayerCacheByRow(string playerDataId)
+        {
+            if (string.IsNullOrEmpty(playerDataId))
+                return;
+            string ownerPlayerId = null;
+            foreach (KeyValuePair<string, Dictionary<string, PlayerData>> entry in _playerDataByPlayerCache)
+            {
+                foreach (PlayerData pd in entry.Value.Values)
+                    if (pd != null && pd.Id == playerDataId)
+                    {
+                        ownerPlayerId = entry.Key;
+                        break;
+                    }
+                if (ownerPlayerId != null)
+                    break;
+            }
+            if (ownerPlayerId != null)
+                _playerDataByPlayerCache.Remove(ownerPlayerId);
+        }
+
         public async Task<PlayerData> GetDataByIdAsync(string playerDataId, CancellationToken cancellationToken = default)
         {
             RequireNotEmpty(playerDataId, "Player Data ID");
