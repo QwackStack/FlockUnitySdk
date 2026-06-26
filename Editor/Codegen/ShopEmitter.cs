@@ -8,14 +8,21 @@ using UnityEngine;
 
 namespace Flock.Editor.Codegen
 {
-    // Emits typed shop accessors plus enum-keyed Purchase / AddGameFunds extensions. The enums list the
-    // available shop-item ids and shop currency ids; the generated methods map each enum value to its
-    // string id and call the raw provider methods. Because these live in the consumer's generated
-    // assembly they don't exist until a sync runs. Currency NAMES are admin-only (OAuth2 /currency), so
-    // FlockFundId members are id-based. AddGameFunds sends the currency id and resolves the player's wallet
-    // (the row for the "currency"-tagged template) — that template id is baked here from the schema.
+    // Emits typed shop accessors plus enum-keyed Purchase / AddGameFunds / GetMyInventory extensions.
+    // FlockShopItemId maps each item to its string id; FlockFundId maps each currency name to itself
+    // (name-based, not id-based — ShopItem.Currency is the name string). AddGameFunds resolves the
+    // player's wallet by the currency-tagged template id baked at sync time.
     internal static class ShopEmitter
     {
+        private sealed class ShopItemEntry
+        {
+            public string Member;
+            public string Id;
+            public int Price;
+            public string Currency;
+            public string ShopName;
+        }
+
         public static int Emit(IList<Shop> shops, IList<PlayerTemplateSchema> playerTemplates, string outputDir)
         {
             if (Directory.Exists(outputDir))
@@ -34,10 +41,10 @@ namespace Flock.Editor.Codegen
                 shopByName.Add(new KeyValuePair<string, Shop>(
                     CodeGenNamingHelpers.UnDuplicate(CodeGenNamingHelpers.ToPascalCase(shop.Name), shopNames), shop));
 
-            // Item enum member -> item id (distinct items across all shops).
+            // Item enum member -> item (distinct items across all shops).
             HashSet<string> itemMembers = new HashSet<string>();
             HashSet<string> seenItemIds = new HashSet<string>(StringComparer.Ordinal);
-            List<KeyValuePair<string, string>> itemByMember = new List<KeyValuePair<string, string>>();
+            List<ShopItemEntry> itemEntries = new List<ShopItemEntry>();
             foreach (Shop shop in ordered)
             {
                 if (shop.ShopItems == null) continue;
@@ -46,25 +53,30 @@ namespace Flock.Editor.Codegen
                     .OrderBy(i => i.Id, StringComparer.Ordinal))
                 {
                     if (!seenItemIds.Add(item.Id)) continue;
-                    itemByMember.Add(new KeyValuePair<string, string>(
-                        CodeGenNamingHelpers.UnDuplicate(CodeGenNamingHelpers.ToPascalCase(item.Name), itemMembers), item.Id));
+                    itemEntries.Add(new ShopItemEntry
+                    {
+                        Member = CodeGenNamingHelpers.UnDuplicate(CodeGenNamingHelpers.ToPascalCase(item.Name), itemMembers),
+                        Id = item.Id,
+                        Price = item.Price,
+                        Currency = item.Currency ?? "",
+                        ShopName = shop.Name ?? ""
+                    });
                 }
             }
 
-            // Fund enum member -> currency id (distinct shop currencies). Member is id-based since the
-            // currency name is admin-only and not reachable with the SDK's API key.
+            // Fund enum member -> currency name (distinct shop currency names).
             HashSet<string> fundMembers = new HashSet<string>();
-            SortedSet<string> currencyIds = new SortedSet<string>(StringComparer.Ordinal);
+            SortedSet<string> currencyNames = new SortedSet<string>(StringComparer.Ordinal);
             foreach (Shop shop in ordered)
                 if (shop.ShopItems != null)
                     foreach (ShopItem item in shop.ShopItems)
                         if (item != null && !string.IsNullOrEmpty(item.Currency))
-                            currencyIds.Add(item.Currency);
+                            currencyNames.Add(item.Currency);
 
             List<KeyValuePair<string, string>> fundByMember = new List<KeyValuePair<string, string>>();
-            foreach (string currencyId in currencyIds)
+            foreach (string currencyName in currencyNames)
                 fundByMember.Add(new KeyValuePair<string, string>(
-                    CodeGenNamingHelpers.UnDuplicate(SanitizeIdentifier(currencyId), fundMembers), currencyId));
+                    CodeGenNamingHelpers.UnDuplicate(SanitizeIdentifier(currencyName), fundMembers), currencyName));
 
             // The wallet is the player template tagged "currency"; bake its id so the generated AddGameFunds
             // resolves the row directly by id (skips the runtime fetch-all-templates tag scan). Empty -> resolve by tag.
@@ -79,13 +91,13 @@ namespace Flock.Editor.Codegen
             if (fundByMember.Count > 0 && string.IsNullOrEmpty(currencyTemplateId))
                 Debug.LogWarning("[Flock Codegen] Shop currencies exist but no player template is tagged \"currency\" — generated AddGameFunds(FlockFundId) will throw at runtime. Tag your wallet/currency template \"currency\".");
 
-            File.WriteAllText(Path.Combine(outputDir, "FlockShopCatalog.g.cs"), BuildSource(shopByName, itemByMember, fundByMember, currencyTemplateId));
-            Debug.Log($"[Flock Codegen] Shops: emitted {shopByName.Count} accessor(s), {itemByMember.Count} item id(s), {fundByMember.Count} fund(s).");
+            File.WriteAllText(Path.Combine(outputDir, "FlockShopCatalog.g.cs"), BuildSource(shopByName, itemEntries, fundByMember, currencyTemplateId));
+            Debug.Log($"[Flock Codegen] Shops: emitted {shopByName.Count} accessor(s), {itemEntries.Count} item id(s), {fundByMember.Count} fund(s).");
             return shopByName.Count;
         }
 
-        // Turns an arbitrary id into a valid C# identifier: non-alphanumeric -> underscore, and a leading
-        // underscore only when the id starts with a digit (identifiers can't start with one).
+        // Turns an arbitrary string into a valid C# identifier: non-alphanumeric -> underscore, leading
+        // underscore inserted when the string starts with a digit.
         private static string SanitizeIdentifier(string s)
         {
             if (string.IsNullOrEmpty(s)) return "_";
@@ -98,7 +110,7 @@ namespace Flock.Editor.Codegen
 
         private static string BuildSource(
             List<KeyValuePair<string, Shop>> shops,
-            List<KeyValuePair<string, string>> items,
+            List<ShopItemEntry> items,
             List<KeyValuePair<string, string>> funds,
             string currencyTemplateId)
         {
@@ -119,8 +131,12 @@ namespace Flock.Editor.Codegen
             {
                 sb.AppendLine("    public enum FlockShopItemId");
                 sb.AppendLine("    {");
-                foreach (KeyValuePair<string, string> it in items)
-                    sb.AppendLine($"        {it.Key},");
+                foreach (ShopItemEntry entry in items)
+                {
+                    string priceLabel = entry.Price > 0 ? $"{entry.Price} {entry.Currency}" : "free";
+                    sb.AppendLine($"        /// <summary>{priceLabel} — {entry.ShopName}</summary>");
+                    sb.AppendLine($"        {entry.Member},");
+                }
                 sb.AppendLine("    }");
                 sb.AppendLine();
             }
@@ -154,20 +170,23 @@ namespace Flock.Editor.Codegen
                 sb.AppendLine("        {");
                 sb.AppendLine("            switch (item)");
                 sb.AppendLine("            {");
-                foreach (KeyValuePair<string, string> it in items)
-                    sb.AppendLine($"                case FlockShopItemId.{it.Key}: return \"{CodeGenNamingHelpers.EscapeStringLiteral(it.Value)}\";");
+                foreach (ShopItemEntry entry in items)
+                    sb.AppendLine($"                case FlockShopItemId.{entry.Member}: return \"{CodeGenNamingHelpers.EscapeStringLiteral(entry.Id)}\";");
                 sb.AppendLine("                default: throw new ArgumentOutOfRangeException(nameof(item));");
                 sb.AppendLine("            }");
                 sb.AppendLine("        }");
                 sb.AppendLine();
             }
 
+            sb.AppendLine("        public static Task<PaginatedResponse<PlayerInventory>> GetMyInventoryAsync(this FlockShopProvider provider, int page = 1, int limit = 100, CancellationToken cancellationToken = default)");
+            sb.AppendLine("            => provider.GetPlayerInventoryAsync(page: page, limit: limit, cancellationToken: cancellationToken);");
+            sb.AppendLine();
+
             if (funds.Count > 0)
             {
                 sb.AppendLine("#if !FLOCK_NO_PLAYER");
                 if (!string.IsNullOrEmpty(currencyTemplateId))
                 {
-                    // Fast path: the currency template id is known, so resolve the wallet directly by id.
                     sb.AppendLine($"        private const string CurrencyTemplateId = \"{CodeGenNamingHelpers.EscapeStringLiteral(currencyTemplateId)}\";");
                     sb.AppendLine();
                     sb.AppendLine("        public static Task<PlayerData> AddGameFundsAsync(this FlockCommandProvider commands, FlockFundId fund, int amount, CancellationToken cancellationToken = default)");
@@ -175,7 +194,6 @@ namespace Flock.Editor.Codegen
                 }
                 else
                 {
-                    // No "currency"-tagged template found at sync; fall back to the runtime tag-resolving overload.
                     sb.AppendLine("        public static Task<PlayerData> AddGameFundsAsync(this FlockCommandProvider commands, FlockFundId fund, int amount, CancellationToken cancellationToken = default)");
                     sb.AppendLine("            => commands.AddGameFundsAsync(FundCurrency(fund), amount, cancellationToken);");
                 }

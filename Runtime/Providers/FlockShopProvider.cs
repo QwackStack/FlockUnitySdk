@@ -8,9 +8,9 @@ namespace Flock.Providers
 {
     public enum PurchaseStatus
     {
-        //Status will change once validation/flow changes
         Started,
-        Purchased
+        Purchased,
+        Failed
     }
     public enum TransactionType
     {
@@ -185,17 +185,41 @@ namespace Flock.Providers
             }
 
             // Purchase is non-idempotent: an ambiguous failure may mean the charge already cleared, so surface it rather than re-send (double-charge). Only 408/429 (not processed) retry.
-            PlayerInventory result = await ExecuteAsync(async () =>
+            PlayerInventory result;
+            try
             {
-                ShopTransactionRequest request = new ShopTransactionRequest
+                result = await ExecuteAsync(async () =>
                 {
-                    ShopItemId = shopItemId,
-                    PlayerId = playerId
-                };
+                    ShopTransactionRequest request = new ShopTransactionRequest
+                    {
+                        ShopItemId = shopItemId,
+                        PlayerId = playerId
+                    };
 
-                return await FlockHttpClient.PostAsync<PlayerInventory>(
-                    $"{Client.GetVersionedApiUrl()}/shop/transaction", request, Client.GetBaseHeaders(), cancellationToken);
-            }, "Purchase shop item", cancellationToken, idempotent: false);
+                    return await FlockHttpClient.PostAsync<PlayerInventory>(
+                        $"{Client.GetVersionedApiUrl()}/shop/transaction", request, Client.GetBaseHeaders(), cancellationToken);
+                }, "Purchase shop item", cancellationToken, idempotent: false);
+            }
+            catch
+            {
+                try
+                {
+                    await Client.Analytics.RecordTransactionAsync(
+                        new AnalyticsTransactionRequest
+                        {
+                            Amount = shopItem.Price,
+                            CurrencyCode = shopItem.Currency,
+                            ShopItemId = shopItemId,
+                            TransactionType = nameof(TransactionType.Purchase),
+                            Status = nameof(PurchaseStatus.Failed)
+                        }, cancellationToken);
+                }
+                catch
+                {
+                    Client.Logger.LogWarning("Failed to record failed-purchase analytics");
+                }
+                throw;
+            }
 
             if (Client.Analytics != null && shopItem != null)
             {
@@ -221,10 +245,12 @@ namespace Flock.Providers
         }
 
         public async Task<PaginatedResponse<PlayerInventory>> GetPlayerInventoryAsync(
-            string playerId, int page = 1, int limit = 100,
+            string playerId = null, int page = 1, int limit = 100,
             CancellationToken cancellationToken = default)
         {
-            RequireNotEmpty(playerId, "Player ID");
+            if (string.IsNullOrEmpty(playerId))
+                playerId = Client.CurrentPlayerId;
+            RequireNotEmpty(playerId, "Player ID (sign in first)");
 
             // Inventory changes on every purchase — intentionally never cached (no in-memory dict / snapshot); always fresh. Same rule as bans.
             return await ExecuteAsync(async () =>

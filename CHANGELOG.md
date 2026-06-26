@@ -5,6 +5,29 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [1.20.0]
+
+### Added
+- **`PurchaseStatus.Failed`.** `PurchaseAsync` now fires a `Failed` analytics transaction event before re-throwing on any purchase error — the `Started → Purchased / Failed` triangle is complete. Catch `FlockException` and inspect `ErrorCode` for the reason (e.g. `FlockErrorCode.ShopInsufficientFunds`, `ShopWalletNotFound`).
+- **`GetMyInventoryAsync()` generated extension.** Codegen always emits a zero-arg `GetMyInventoryAsync(page, limit)` extension on `FlockShopProvider` that uses the signed-in player's id — no need to pass `CurrentPlayerId` manually.
+- **`FlockShopItemId` XML doc comments.** Each generated enum member now carries `/// <summary>price currency — shop</summary>` (e.g. `100 Coins — Starter Pack`), visible on hover in the IDE.
+
+### Changed
+- `GetPlayerInventoryAsync` `playerId` is now optional (`= null`), defaulting to `CurrentPlayerId` — consistent with `PurchaseAsync`.
+- Analytics `Amount` guard relaxed from `> 0` to `>= 0` so free (0-price) items no longer silently break `Started` / `Purchased` transaction recording.
+- Removed stale "Tracking transactions is Not Supported" debug log from `RecordTransactionAsync`.
+- Codegen (`ShopEmitter`): internal variable names corrected from `currencyIds`/`currencyId` to `currencyNames`/`currencyName`; `FlockFundId` members map currency names (not ids — the id endpoint is OAuth2/admin-only).
+
+### Documentation
+- README shop section: `GetPlayerInventoryAsync()` no longer passes `CurrentPlayerId` explicitly; added note that a `Failed` analytics event fires automatically on throw.
+
+### Known issues / Backend backlog
+- **IAP receipt validation absent.** No `/v1/shop/validate-receipt` endpoint — real-money Apple/Google purchases cannot be server-verified. SDK tracks `payment_provider` + `external_transaction_id` fields on analytics for when the endpoint lands.
+- **`currency_id` analytics FK.** `POST /v1/analytics/transactions` rejects a null `currency_id` at the DB level despite the schema marking it optional; the SDK only has the currency name. Fix is backend-side (resolve name → id). Transaction analytics are swallowed via try/catch so purchases succeed.
+- **Item stacks/quantities backend-blocked.** `PlayerInventorySchema` has no `quantity` field; one purchase = one record.
+- **`MarkItemUsedAsync` not implementable.** `used_at` exists on the model but there is no PUT/PATCH inventory endpoint.
+- Bundles, subscriptions, localized pricing, fraud/chargeback hooks, drop tables, and player-to-player trading are absent from the backend spec.
+
 ## [1.19.0]
 
 ### Added

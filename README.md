@@ -250,9 +250,11 @@ var shop = await FlockClient.Instance.Shop.GetByIdAsync("shop-id");
 var item = await FlockClient.Instance.Shop.GetItemAsync("shop-item-id");
 var items = await FlockClient.Instance.Shop.GetItemsByShopAsync("shop-id");
 // Same retry contract as AddGameFunds (money mutation) — ambiguous failures throw; catch them.
+// On throw, a Failed analytics event is recorded automatically. Catch FlockException and check
+// e.Code for specific reasons (e.g. FlockErrorCode.ShopInsufficientFunds, ShopWalletNotFound).
 // playerId is optional — omit it to use the signed-in player (CurrentPlayerId).
 var inventory = await FlockClient.Instance.Shop.PurchaseAsync("shop-item-id");
-var playerItems = await FlockClient.Instance.Shop.GetPlayerInventoryAsync(FlockClient.Instance.CurrentPlayerId);
+var playerItems = await FlockClient.Instance.Shop.GetPlayerInventoryAsync();
 
 // Player ban — returns active ban data keyed by feature, or null if not banned
 var ban = await FlockClient.Instance.Player.GetBanAsync(FlockClient.Instance.CurrentPlayerId);
