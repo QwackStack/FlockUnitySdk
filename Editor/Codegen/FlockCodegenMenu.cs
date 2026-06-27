@@ -96,7 +96,11 @@ namespace Flock.Editor.Codegen
             // Skip the import in batch mode: the files are already on disk for CI to commit, and a
             // script-recompile domain reload here could preempt the editor exit and hang the run.
             if (!Application.isBatchMode)
+            {
                 AssetDatabase.Refresh();
+                // Catalog runs post-refresh so its folder is imported; it's an editor-only browse aid, so CI skips it.
+                CatalogEmitter.Emit(snapshot, config.gameVersion, generatedRoot);
+            }
             return new CodegenResult(snapshot, templateResult.Count, playerAccessors, commandAccessors, configResult.Count, configAccessors);
         }
 

@@ -45,7 +45,7 @@ The Flock Unity SDK provides access to Flock's game backend services from Unity 
 
 The SDK is distributed through the Flock website — download the latest release, then add it to your Unity project one of two ways:
 
-**Download: [FILL_IN_FLOCK LINK]**
+**Download: [github.com/QwackStack/FlockUnitySdk/releases](https://github.com/QwackStack/FlockUnitySdk/releases)**
 
 - **Import the `.unitypackage`** — double-click the downloaded file (or use **Assets > Import Package > Custom Package**) and import all items.
 
@@ -115,6 +115,11 @@ var configAsset = Resources.Load<FlockConfigAsset>("FlockConfig");
 // resolved at edit time (Qwacks > Flock) and baked into FlockConfig, applied
 // to every request; init stores the singleton in FlockClient.Instance.
 FlockClient.Create(configAsset.ToInitConfig());
+
+// Raw Create does NOT resume a saved session — unlike Auto-Initialize On Load and
+// FlockBootstrap, which restore it for you. If you persist sessions, do it yourself
+// (this drives FlockClient.IsRestoringSession and FlockEvents.OnSessionRestored):
+bool signedIn = await FlockClient.Instance.Authentication.TryRestoreSessionAsync();
 
 // Use anywhere — no need to pass the client around.
 var response = await FlockClient.Instance.Authentication.LoginWithEmailAsync(email, password);
@@ -412,7 +417,9 @@ Reads are snapshotted to disk and served when the server is unreachable, after a
 
 ## Codegen
 
-Run **Sync Schemas** from the Codegen tab in **Qwacks > Flock** to fetch your game's player templates and game configs from the backend and generate typed C# accessors. Output goes to `Assets/Flock/Generated/` by default; change the path on the FlockConfig asset if you want it elsewhere. Treat the folder as Flock-owned — sync wipes the `Templates/`, `Commands/`, and `Configs/` subdirectories on each run, and **Delete Generated Code** clears the whole tree.
+Run **Sync Schemas** from the Codegen tab in **Qwacks > Flock** to fetch your game's player templates and game configs from the backend and generate typed C# accessors. Output goes to `Assets/Flock/Generated/` by default; change the path on the FlockConfig asset if you want it elsewhere. Treat the folder as Flock-owned — sync wipes the `Templates/`, `Commands/`, `Configs/`, and `Catalog/` subdirectories on each run, and **Delete Generated Code** clears the whole tree.
+
+**For designers:** each sync also writes `Generated/Catalog/FlockContentCatalog.asset` — a read-only ScriptableObject you can select in the Project view to browse every shop (items, prices, currency), game config (fields and current values), and player template (fields) in the Inspector, no code or dashboard login needed. It's regenerated on every sync, so it always mirrors the backend. (Editor-only; it's never referenced at runtime and is stripped from player builds. CI/headless syncs skip it.)
 
 What gets generated, given a player template named `PlayerProgress` and a game config named `Gameplay`:
 

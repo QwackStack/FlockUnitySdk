@@ -15,12 +15,17 @@ namespace Flock.Editor
         public readonly bool ConfigAssetExists;
         public readonly bool ConfigValid;
         public readonly bool GuardEnabled;
+        public readonly bool AutoInitializeEnabled;
+        public readonly bool BootstrapPresent;
 
-        public FlockSetupState(bool configAssetExists, bool configValid, bool guardEnabled)
+        public FlockSetupState(bool configAssetExists, bool configValid, bool guardEnabled,
+            bool autoInitializeEnabled, bool bootstrapPresent)
         {
             ConfigAssetExists = configAssetExists;
             ConfigValid = configValid;
             GuardEnabled = guardEnabled;
+            AutoInitializeEnabled = autoInitializeEnabled;
+            BootstrapPresent = bootstrapPresent;
         }
     }
 
@@ -41,7 +46,12 @@ namespace Flock.Editor
             if (!state.ConfigValid)
                 return FlockSetupVerdict.Block;
 
-            // 4. Valid config + wired bootstrap.
+            // 3. Valid config, but auto-init is off and there's no bootstrap to init it. A manual
+            //    Create() call would still be fine, so this is a soft warning, not a block.
+            if (!state.AutoInitializeEnabled && !state.BootstrapPresent)
+                return FlockSetupVerdict.Warn;
+
+            // 4. Auto-init on, or a bootstrap is present → init will happen.
             return FlockSetupVerdict.Ok;
         }
     }

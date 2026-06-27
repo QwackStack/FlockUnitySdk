@@ -20,11 +20,8 @@ namespace Flock.Docs
         //  any left unset shows as a disabled "(link not set)" button.
         // ─────────────────────────────────────────────────────────────────────
 
-        /// Full developer documentation (docs site / hosted README). FILL IN.
-        public const string DocsUrl = "FILL_IN_DOCS_URL";
-
-        /// Flock dashboard — where API Key, Game ID and Game Version come from. FILL IN.
-        public const string DashboardUrl = "FILL_IN_DASHBOARD_URL";
+        /// Full developer documentation (docs site / hosted README).
+        public const string DocsUrl = "https://qwacks.mintlify.site/sdk/unity";
 
         /// Support / contact page. Pre-filled — confirm this is the canonical URL.
         public const string SupportUrl = "https://www.qwacks.com/flock";
