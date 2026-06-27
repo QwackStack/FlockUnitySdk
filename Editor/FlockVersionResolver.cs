@@ -15,6 +15,10 @@ namespace Flock.Editor
         // Maintainer wire detail (kept out of README / in-editor guide by convention).
         private const string ApiKeyHeader = "X-Flock-API-Key";
 
+        /// <summary>The backend by-name Game Version lookup URL. Single source so the editor's resolve and connection-test agree.</summary>
+        internal static string ByNameUrl(string apiUrl, string gameVersion)
+            => $"{(apiUrl ?? string.Empty).TrimEnd('/')}/{FlockClient.ApiVersion}/game_version/by-name/{Uri.EscapeDataString(gameVersion ?? string.Empty)}";
+
         internal readonly struct ResolveResult
         {
             public readonly bool Success;
@@ -40,7 +44,7 @@ namespace Flock.Editor
             if (string.IsNullOrWhiteSpace(apiKey)) return ResolveResult.Fail("API Key is required.");
             if (string.IsNullOrWhiteSpace(gameVersion)) return ResolveResult.Fail("Game Version is required.");
 
-            string url = $"{apiUrl}/{FlockClient.ApiVersion}/game_version/by-name/{Uri.EscapeDataString(gameVersion)}";
+            string url = ByNameUrl(apiUrl, gameVersion);
             Dictionary<string, string> headers = new Dictionary<string, string> { { ApiKeyHeader, apiKey } };
 
             try

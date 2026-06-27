@@ -30,9 +30,9 @@ namespace Flock.Editor
             if (verdict == FlockSetupVerdict.Warn)
             {
                 Debug.LogWarning(
-                    "[Flock] A valid FlockConfig exists but no FlockBootstrap is in the open scene(s). " +
-                    "If you initialize Flock from your own code that's fine — otherwise open Qwacks > Flock " +
-                    "and click 'Add Flock Bootstrap to Scene'.");
+                    "[Flock] Auto-Initialize On Load is off and no FlockBootstrap is in the open scene(s), so the SDK " +
+                    "won't initialize. If you call FlockClient.Create() from your own startup code that's fine — otherwise " +
+                    "open Qwacks > Flock and click 'Add to Scene', or turn Auto-Initialize On Load back on.");
                 return;
             }
 
@@ -50,9 +50,10 @@ namespace Flock.Editor
             bool configValid = configExists && config.IsValid(out string _);
             // No asset → guard stays active by default (there's no asset to hold the toggle).
             bool guardEnabled = !configExists || config.playModeGuardEnabled;
+            bool autoInitializeEnabled = configExists && config.autoInitializeOnLoad;
+            bool bootstrapPresent = UnityEngine.Object.FindAnyObjectByType<FlockBootstrap>() != null;
 
-
-            return new FlockSetupState(configExists, configValid, guardEnabled);
+            return new FlockSetupState(configExists, configValid, guardEnabled, autoInitializeEnabled, bootstrapPresent);
         }
 
         private static void ShowBlockDialog()

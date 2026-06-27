@@ -49,7 +49,6 @@ namespace Flock.Editor
             EditorGUILayout.BeginVertical(_card);
             GUILayout.Label("Documentation & links", _section);
             DrawLinkButton("Open Full Documentation", FlockSdkGuide.DocsUrl);
-            DrawLinkButton("Open Flock Dashboard", FlockSdkGuide.DashboardUrl);
             DrawLinkButton("Contact Support", FlockSdkGuide.SupportUrl);
             EditorGUILayout.EndVertical();
             EditorGUILayout.Space(4);

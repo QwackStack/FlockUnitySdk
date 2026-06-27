@@ -13,6 +13,7 @@ using Flock.Config;
 using Flock.Docs;
 #if !FLOCK_NO_SCHEMA
 using Flock.Editor.Codegen;
+using Flock.Editor.Catalog;
 #endif
 
 namespace Flock.Editor
@@ -227,6 +228,7 @@ namespace Flock.Editor
             bool credentialsValid = configExists && config.IsValid(out credentialsError);
             bool connectionVerified = ConnectionVerified(out string connectionDetail);
             bool bootstrapPresent = UnityEngine.Object.FindAnyObjectByType<FlockBootstrap>() != null;
+            bool autoInitializeEnabled = configExists && config.autoInitializeOnLoad;
 
             bool includeSchemas;
             bool schemasGenerated = false;
@@ -241,7 +243,7 @@ namespace Flock.Editor
             FlockSetupFacts facts = new FlockSetupFacts(
                 configExists, credentialsValid, credentialsError,
                 connectionVerified, connectionDetail, bootstrapPresent,
-                includeSchemas, schemasGenerated);
+                autoInitializeEnabled, includeSchemas, schemasGenerated);
 
             foreach (FlockSetupItem item in FlockSetupChecklist.Build(facts))
                 DrawSetupRow(item);
@@ -418,6 +420,12 @@ namespace Flock.Editor
                 : result.Error;
             // Keep the key in sync so a successful resolve doesn't immediately re-fire.
             _lastResolvedKey = $"{config.apiUrl}|{config.apiKey}|{config.gameId}|{config.gameVersion}";
+
+            // A successful resolve hit the same by-name endpoint the Connection check uses, so record it
+            // as a verified connection — the Setup row turns green without a separate manual click.
+            if (result.Success)
+                StoreConnectionResult(CredHash(config), true, $"Connection OK — Game Version '{config.gameVersion}' resolved.");
+
             Repaint();
         }
 
@@ -544,9 +552,10 @@ namespace Flock.Editor
                     $"Codegen needs valid credentials before it can run. {validationError}",
                     MessageType.Warning);
 
-            using (new EditorGUI.DisabledScope(!config.IsValid(out _)))
+            EditorGUILayout.BeginHorizontal();
 
-                EditorGUILayout.BeginHorizontal();
+            // Sync needs valid credentials; Delete is local cleanup and stays available regardless.
+            using (new EditorGUI.DisabledScope(!config.IsValid(out _)))
             using (new BackgroundColorScope(PrimaryAction))
             {
                 if (GUILayout.Button(
@@ -563,8 +572,31 @@ namespace Flock.Editor
                     FlockCodegenMenu.CleanGenerated();
             }
 
+            // Appears once a sync has produced the catalog. Designer-facing browse of shops/configs/templates.
+            FlockContentCatalog catalog = LoadCatalogAsset();
+            if (catalog != null)
+                using (new BackgroundColorScope(HighlightAction))
+                {
+                    if (GUILayout.Button(
+                            new GUIContent("Open Catalog", "Select the read-only content catalog so designers can browse shops, configs and templates in the Inspector."),
+                            GUILayout.Height(36)))
+                    {
+                        EditorGUIUtility.PingObject(catalog);
+                        Selection.activeObject = catalog;
+                    }
+                }
+
             EditorGUILayout.EndHorizontal();
             EditorGUILayout.EndVertical();
+        }
+
+        // The generated catalog asset, or null until the first successful sync creates it.
+        private FlockContentCatalog LoadCatalogAsset()
+        {
+            if (config == null) return null;
+            if (!FlockCodegenMenu.TryResolveGeneratedPath(config.generatedCodePath, out string generatedRoot, out _))
+                return null;
+            return AssetDatabase.LoadAssetAtPath<FlockContentCatalog>(CatalogEmitter.AssetPath(generatedRoot));
         }
 
         private void DrawCodegenHelpCard()
@@ -767,7 +799,9 @@ namespace Flock.Editor
         private void DrawStatusMessage()
         {
             if (string.IsNullOrEmpty(statusMessage)) return;
-            if (EditorApplication.timeSinceStartup > statusExpiresAt)
+            // Errors/warnings stay until the next action; only transient Info auto-expires.
+            bool transient = statusType == MessageType.Info || statusType == MessageType.None;
+            if (transient && EditorApplication.timeSinceStartup > statusExpiresAt)
             {
                 statusMessage = "";
                 return;
@@ -793,7 +827,6 @@ namespace Flock.Editor
 
         private void ShowStatus(string message, MessageType type)
         {
-            Debug.Log($"Status Update : {message}");
             statusMessage = message;
             statusType = type;
             statusExpiresAt = EditorApplication.timeSinceStartup + 5;
@@ -869,7 +902,7 @@ namespace Flock.Editor
             // When Game Version is missing, we can't run that call — fall back to a bare key check.
             bool hasGameVersion = !string.IsNullOrEmpty(gameVersion);
             string url = hasGameVersion
-                ? $"{baseUrl}/{FlockClient.ApiVersion}/game_version/by-name/{Uri.EscapeDataString(gameVersion)}"
+                ? FlockVersionResolver.ByNameUrl(apiUrl, gameVersion)
                 : $"{baseUrl}/healthz";
 
             EditorUtility.DisplayProgressBar("Test Connection", "Pinging API...", 0.4f);

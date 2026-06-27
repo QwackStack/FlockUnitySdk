@@ -39,12 +39,13 @@ namespace Flock.Editor
         public readonly bool ConnectionVerified;
         public readonly string ConnectionDetail;
         public readonly bool BootstrapPresent;
+        public readonly bool AutoInitializeEnabled;
         public readonly bool IncludeSchemas;
         public readonly bool SchemasGenerated;
 
         public FlockSetupFacts(bool configAssetExists, bool credentialsValid, string credentialsError,
             bool connectionVerified, string connectionDetail, bool bootstrapPresent,
-            bool includeSchemas, bool schemasGenerated)
+            bool autoInitializeEnabled, bool includeSchemas, bool schemasGenerated)
         {
             ConfigAssetExists = configAssetExists;
             CredentialsValid = credentialsValid;
@@ -52,6 +53,7 @@ namespace Flock.Editor
             ConnectionVerified = connectionVerified;
             ConnectionDetail = connectionDetail;
             BootstrapPresent = bootstrapPresent;
+            AutoInitializeEnabled = autoInitializeEnabled;
             IncludeSchemas = includeSchemas;
             SchemasGenerated = schemasGenerated;
         }
@@ -85,10 +87,15 @@ namespace Flock.Editor
                     ? "Verified."
                     : string.IsNullOrEmpty(facts.ConnectionDetail) ? "Not verified yet." : facts.ConnectionDetail));
 
-            items.Add(new FlockSetupItem(
-                "bootstrap", "Scene bootstrap",
-                facts.BootstrapPresent ? FlockSetupItemState.Done : FlockSetupItemState.Advisory,
-                facts.BootstrapPresent ? "In the open scene." : "Not in the open scene (fine if you init in code)."));
+            // With auto-init on, a scene bootstrap isn't needed. With it off, you need a bootstrap or
+            // your own FlockClient.Create() call — escalate so a forgotten init is visible here.
+            if (facts.BootstrapPresent)
+                items.Add(new FlockSetupItem("bootstrap", "Scene bootstrap", FlockSetupItemState.Done, "In the open scene."));
+            else if (facts.AutoInitializeEnabled)
+                items.Add(new FlockSetupItem("bootstrap", "Scene bootstrap", FlockSetupItemState.Done, "Not needed — Auto-Initialize On Load is on."));
+            else
+                items.Add(new FlockSetupItem("bootstrap", "Scene bootstrap", FlockSetupItemState.Advisory,
+                    "Auto-Initialize is off — add a bootstrap, or call FlockClient.Create() yourself."));
 
             if (facts.IncludeSchemas)
             {
