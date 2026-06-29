@@ -21,7 +21,7 @@ namespace Flock.Docs
         // ─────────────────────────────────────────────────────────────────────
 
         /// Full developer documentation (docs site / hosted README).
-        public const string DocsUrl = "https://qwacks.mintlify.site/sdk/unity";
+        public const string DocsUrl = "https://docs.qwacks.com/introduction";
 
         /// Support / contact page. Pre-filled — confirm this is the canonical URL.
         public const string SupportUrl = "https://www.qwacks.com/flock";
