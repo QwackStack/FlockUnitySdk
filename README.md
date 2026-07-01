@@ -246,8 +246,9 @@ PlayerData updated = await FlockClient.Instance.Commands.AddGameFundsAsync("gold
 // With codegen you can pass a typed FlockFundId of your currency ids instead of the raw string:
 // PlayerData updated = await FlockClient.Instance.Commands.AddGameFundsAsync(FlockFundId._100, 500);
 
-// The achievements row is resolved for you too — no player-data id.
-PlayerData updated = await FlockClient.Instance.Commands.UnlockAchievementAsync("first_win");
+// The achievements row is resolved for you too — no player-data id. Prefer the typed
+// FlockAchievementId overload (generated); a raw-string overload also exists.
+PlayerData updated = await FlockClient.Instance.Commands.UnlockAchievementAsync(FlockAchievementId.FirstWin);
 
 // Shop
 var shops = await FlockClient.Instance.Shop.GetAllAsync(page: 1, limit: 10);
@@ -455,6 +456,11 @@ Shop starter = await FlockClient.Instance.Shop.GetStarterPackShopAsync();
 // Purchase / AddGameFunds take generated enums of the available ids; the UUID is resolved inside:
 PlayerInventory bought = await FlockClient.Instance.Shop.PurchaseAsync(FlockShopItemId.GemPack);
 PlayerData funded = await FlockClient.Instance.Commands.AddGameFundsAsync(FlockFundId._100, 500);
+
+// Achievements — Flock.Generated.Achievements. Enum-keyed unlock; the raw name is resolved inside.
+PlayerData unlocked = await FlockClient.Instance.Commands.UnlockAchievementAsync(FlockAchievementId.FirstWin);
+// Achievement details (from your 'achievement'-tagged game config) — looked up by the same enum:
+var firstWin = await FlockClient.Instance.Config.GetAchievementDetailsAsync(FlockAchievementId.FirstWin);
 ```
 
 `UpdateAsync` is an instance method on each generated template type, so it's always available on the object — no extra `using`, and it shows in IntelliSense wherever you hold the instance. It validates `PlayerDataId` (set automatically by the matching `Get*Async`), turns the populated POCO back into a flattened DataField list via `{Template}.Schema.ToDataFieldList(this)`, and routes through `FlockCommandProvider.UpdatePlayerDataAsync`. After a write you typically want fresh reads — call `client.Player.ClearCache()` before the next `Get*Async` if you need to bypass the per-player snapshot cache.
@@ -462,6 +468,12 @@ PlayerData funded = await FlockClient.Instance.Commands.AddGameFundsAsync(FlockF
 Generated config classes have read-only properties (`{ get; private set; }`) — configs are game-wide and shouldn't be mutated client-side; mutations are admin-only on the backend.
 
 Generated shops live in `Flock.Generated.Shops`: a `Get<Shop>ShopAsync()` accessor per shop (returns the live `Shop`), plus `FlockShopItemId` / `FlockFundId` enums of the available ids and matching `PurchaseAsync(FlockShopItemId)` / `AddGameFundsAsync(FlockFundId)` extension methods. The enum-typed methods are **generated extensions**, so they only appear after a sync. `FlockFundId` lists every shop currency. Members are the currency **id** (e.g. `_100` — a leading `_` is added only when an id starts with a digit, since C# identifiers can't) because currency *names* live only on the dashboard's admin `/currency` endpoint, which the SDK's API key can't reach. `AddGameFundsAsync` sends the currency id and resolves `player_data_id` from the player's **currency wallet** — the row for the player template tagged `currency`. Codegen bakes that template's id and calls `AddGameFundsAsync(currency, amount, currencyTemplateId)`, which resolves the wallet directly. There's also a public `AddGameFundsAsync(currency, amount)` overload that resolves the `currency`-tagged template at runtime instead (same tag mechanism as `UnlockAchievement`) — both are usable. Shop **data** (prices, status) is fetched live — only identity (ids, currencies) is generated, so prices never go stale in code.
+
+Generated achievements live in `Flock.Generated.Achievements`: a `FlockAchievementId` enum whose members are the fields of the player template tagged `achievement` (PascalCased; each carries a `/// <summary>raw_name</summary>` doc), plus a `UnlockAchievementAsync(FlockAchievementId)` extension on `FlockCommandProvider` that maps the enum back to the raw `achievement_name` and resolves the achievements row for you. The enum overload is **additive** — the raw-string `UnlockAchievementAsync(string)` stays public, exactly like the shop `FlockFundId` methods — but prefer the typed one: a name that doesn't match the server is then caught at compile time instead of at runtime.
+
+If you keep achievement details (display name, description, reward, etc.) in a **game config tagged `achievement`** — one config holding a list of entries, each with a `name` field — codegen wires it to the same enum: the entry's `name` is generated as `FlockAchievementId` (via a generated `JsonConverter`) instead of a raw string, and a `GetAchievementDetailsAsync(FlockAchievementId)` extension on `FlockConfigProvider` fetches that config and returns the matching entry. So you award and look up details with one enum. (The canonical `/achievement` resource is dashboard/OAuth2-only and isn't reachable by codegen's API key, which is why details live in a game config.) An entry whose `name` isn't a generated member throws on deserialize — re-sync after adding achievements.
+
+The generated player/shop/achievement command extensions are guarded by `#if !FLOCK_NO_PLAYER`; if you strip the player provider from an SDK build, add `FLOCK_NO_PLAYER` to your project's scripting defines too so the generated code and the runtime agree.
 
 Method names come from the template name on the backend (PascalCase). Field names follow each `TypedSchema.field_name`, also PascalCased.
 

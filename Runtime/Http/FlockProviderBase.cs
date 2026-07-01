@@ -22,11 +22,12 @@ namespace Flock.Http
             Func<Task<T>> operation,
             string context,
             CancellationToken cancellationToken,
-            bool idempotent = true)
+            bool idempotent = true,
+            int? maxRetriesOverride = null)
         {
             try
             {
-                return await Client.RetryHandler.ExecuteAsync(operation, cancellationToken, retryAmbiguousFailures: idempotent);
+                return await Client.RetryHandler.ExecuteAsync(operation, cancellationToken, retryAmbiguousFailures: idempotent, maxRetriesOverride: maxRetriesOverride);
             }
             //only try refresh if the auth is even successful
             catch (FlockAuthException) when (Client.IsAuthenticated)
@@ -38,7 +39,7 @@ namespace Flock.Http
 
                 try
                 {
-                    return await Client.RetryHandler.ExecuteAsync(operation, cancellationToken, retryAmbiguousFailures: idempotent);
+                    return await Client.RetryHandler.ExecuteAsync(operation, cancellationToken, retryAmbiguousFailures: idempotent, maxRetriesOverride: maxRetriesOverride);
                 }
                 catch (OperationCanceledException)
                 {
@@ -69,12 +70,52 @@ namespace Flock.Http
             }
         }
 
+        // Kept protected (not folded into the wrappers below) — FlockCommandProvider's player-scoped
+        // write queue needs a scope nested under a category, not just the category itself.
         protected string GetSnapshotScope(string category)
         {
             return $"{Client.GameVersionId}/{category}";
         }
 
-        protected async Task<T> FetchWithSnapshotAsync<T>(
+        protected void DeleteSnapshotCategory(string category)
+        {
+            string snapshotScope = GetSnapshotScope(category);
+            Client.SnapshotStore?.DeleteScope(snapshotScope);
+        }
+
+        protected bool TryReadSnapshot<T>(string category, string key, out T value) where T : class
+        {
+            FlockSnapshotStore store = Client.SnapshotStore;
+            if (store == null)
+            {
+                value = null;
+                return false;
+            }
+
+            string snapshotScope = GetSnapshotScope(category);
+            return store.TryRead(snapshotScope, key, out value);
+        }
+
+        protected void WriteSnapshot<T>(string category, string key, T value) where T : class
+        {
+            string snapshotScope = GetSnapshotScope(category);
+            Client.SnapshotStore?.Write(snapshotScope, key, value);
+        }
+
+        protected Task<T> FetchWithSnapshotAsync<T>(
+            string category,
+            string key,
+            Func<Task<T>> operation,
+            string context,
+            CancellationToken cancellationToken) where T : class
+        {
+            string snapshotScope = GetSnapshotScope(category);
+            return FetchAtScopeAsync(snapshotScope, key, operation, context, cancellationToken);
+        }
+
+        // Raw-scope escape hatch for the rare caller that can't use a plain category — e.g. FlockGameProvider's
+        // by-name version lookup, which stays on BootstrapScope (not nested under GameVersionId) on purpose.
+        protected async Task<T> FetchAtScopeAsync<T>(
             string scope,
             string key,
             Func<Task<T>> operation,
@@ -85,20 +126,28 @@ namespace Flock.Http
             if (store == null)
                 return await ExecuteAsync(operation, context, cancellationToken);
 
-            if (!this.IsServerReachable() && store.TryRead(scope, key, out T offline))
-                return offline;
+            bool hasCache = store.TryRead(scope, key, out T cached);
+
+            // No connection and a cached copy in hand — skip the network entirely.
+            if (hasCache && !this.IsServerReachable())
+            {
+                Client.Logger.LogWarning($"{context}: serving cached snapshot (no connectivity)");
+                return cached;
+            }
 
             try
             {
-                T result = await ExecuteAsync(operation, context, cancellationToken);
+                // With a cache to fall back on, don't burn the full retry backoff — one attempt, then serve cache.
+                int? retryBudget = hasCache ? 0 : (int?)null;
+                T result = await ExecuteAsync(operation, context, cancellationToken, maxRetriesOverride: retryBudget);
                 store.Write(scope, key, result);
                 return result;
             }
             catch (FlockNetworkException e)
             {
-                if (!FlockNetworkException.IsPermanentStatus(e.StatusCode) && store.TryRead(scope, key, out T cached))
+                if (!FlockNetworkException.IsPermanentStatus(e.StatusCode) && hasCache)
                 {
-                    Client.Logger.LogWarning($"{context}: serving cached snapshot (network unavailable)");
+                    Client.Logger.LogWarning($"{context}: serving cached snapshot (couldn't reach server)");
                     return cached;
                 }
                 throw;

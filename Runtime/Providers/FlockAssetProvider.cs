@@ -275,7 +275,7 @@ namespace Flock.Providers
             _assetsById.Clear();
             _allAssetsFetched = false;
             _diskIndexLoaded = false;
-            Client.SnapshotStore?.DeleteScope(GetSnapshotScope(SnapshotCategory));
+            DeleteSnapshotCategory(SnapshotCategory);
         }
 
         private void IndexAsset(AssetSchema asset)
@@ -292,11 +292,7 @@ namespace Flock.Providers
                 return _assetsById.Count > 0;
 
             _diskIndexLoaded = true;
-            FlockSnapshotStore store = Client.SnapshotStore;
-            if (store == null)
-                return false;
-
-            if (!store.TryRead(GetSnapshotScope(SnapshotCategory), IndexKey, out List<AssetSchema> assets))
+            if (!TryReadSnapshot(SnapshotCategory, IndexKey, out List<AssetSchema> assets))
                 return false;
 
             foreach (AssetSchema asset in assets)
@@ -309,7 +305,7 @@ namespace Flock.Providers
 
         private void PersistIndex()
         {
-            Client.SnapshotStore?.Write(GetSnapshotScope(SnapshotCategory), IndexKey, new List<AssetSchema>(_assetsById.Values));
+            WriteSnapshot(SnapshotCategory, IndexKey, new List<AssetSchema>(_assetsById.Values));
         }
 
         // Reports literal on-disk presence; does not consult EnableAssetCache.

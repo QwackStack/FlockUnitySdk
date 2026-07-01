@@ -25,6 +25,9 @@ namespace Flock.Providers
         public FlockCommandProvider(FlockClient client) : base(client) { }
         private Queue<PendingDataWrite> _pendingWrites = new Queue<PendingDataWrite>();
         private bool _queueLoaded;
+        // The player the in-memory queue belongs to; when the signed-in player changes we reload so one
+        // player's queued writes can never replay under another's auth.
+        private string _queuePlayerId;
 
         private bool _flushTriggersHooked;
         private bool _wasReachable = true;
@@ -33,39 +36,52 @@ namespace Flock.Providers
         // flush the queue of pending writes to the server, if any.
         public async Task FlushPendingWritesAsync(CancellationToken cancellationToken = default)
         {
-            EnsureQueueLoaded();
-            if (_pendingWrites.Count == 0 || !IsServerReachable())
+            // Single-flight guard lives here (not only in the auto-flush trigger) so a manual call and an
+            // auto-flush can't run the queue at once and double-POST a non-idempotent command. A plain bool
+            // is enough — everything here runs on Unity's main thread, so the check-and-set can't interleave.
+            if (_flushInFlight)
                 return;
-
-            while (_pendingWrites.Count > 0)
+            _flushInFlight = true;
+            try
             {
-                PendingDataWrite write = _pendingWrites.Peek();
-                try
-                {
-                    PlayerData result = await ExecuteAsync(
-                        () => FlockHttpClient.PostAsync<PlayerData>(
-                            $"{Client.GetVersionedApiUrl()}/{write.Path}",
-                            JObject.Parse(write.PayloadJson), Client.GetBaseHeaders(), cancellationToken),
-                        write.Context, cancellationToken);
+                EnsureQueueLoaded();
+                if (_pendingWrites.Count == 0 || !IsServerReachable())
+                    return;
 
-                    _pendingWrites.Dequeue();
-                    PersistQueue();
-                    ApplyToPlayerCache(result);
-                }
-                catch (FlockException ex)
+                while (_pendingWrites.Count > 0)
                 {
-                    // transient/auth -> keep queued, retry next flush; permanent 4xx will never succeed -> drop so it cant block the queue.
-                    if (!IsPermanentFailure(ex))
+                    PendingDataWrite write = _pendingWrites.Peek();
+                    try
                     {
-                        Client.Logger.LogWarning($"Pending-write flush halted at '{write.Context}', will retry next flush: {ex.Message}");
-                        break;
+                        PlayerData result = await ExecuteAsync(
+                            () => FlockHttpClient.PostAsync<PlayerData>(
+                                $"{Client.GetVersionedApiUrl()}/{write.Path}",
+                                JObject.Parse(write.PayloadJson), Client.GetBaseHeaders(), cancellationToken),
+                            write.Context, cancellationToken);
+
+                        _pendingWrites.Dequeue();
+                        PersistQueue();
+                        ApplyToPlayerCache(result);
                     }
-                    Client.Logger.LogError($"Dropping rejected queued write '{write.Context}' (HTTP {ex.StatusCode}): {ex.Message}");
-                    _pendingWrites.Dequeue();
-                    PersistQueue();
-                    // the optimistic value we cached for it was never accepted -> evict so the next read refetches authoritative state.
-                    EvictOptimisticRow(write.PayloadJson);
+                    catch (FlockException ex)
+                    {
+                        // transient/auth -> keep queued, retry next flush; permanent 4xx will never succeed -> drop so it cant block the queue.
+                        if (!IsPermanentFailure(ex))
+                        {
+                            Client.Logger.LogWarning($"Pending-write flush halted at '{write.Context}', will retry next flush: {ex.Message}");
+                            break;
+                        }
+                        Client.Logger.LogError($"Dropping rejected queued write '{write.Context}' (HTTP {ex.StatusCode}): {ex.Message}");
+                        _pendingWrites.Dequeue();
+                        PersistQueue();
+                        // the optimistic value we cached for it was never accepted -> evict so the next read refetches authoritative state.
+                        EvictOptimisticRow(write.PayloadJson);
+                    }
                 }
+            }
+            finally
+            {
+                _flushInFlight = false;
             }
         }
 
@@ -121,12 +137,11 @@ namespace Flock.Providers
             TriggerFlush();
         }
 
-        // Fire-and-forget flush with a single-flight guard; only runs while authenticated since replays are player-scoped.
+        // Fire-and-forget flush; the single-flight guard now lives in FlushPendingWritesAsync. Only runs while authenticated since replays are player-scoped.
         private async void TriggerFlush()
         {
-            if (_flushInFlight || !Client.IsAuthenticated)
+            if (!Client.IsAuthenticated)
                 return;
-            _flushInFlight = true;
             try
             {
                 await FlushPendingWritesAsync();
@@ -134,10 +149,6 @@ namespace Flock.Providers
             catch (Exception ex)
             {
                 Client.Logger.LogWarning($"Auto-flush of pending writes failed: {ex.Message}");
-            }
-            finally
-            {
-                _flushInFlight = false;
             }
         }
 
@@ -235,7 +246,7 @@ namespace Flock.Providers
             return ApplyToPlayerCache(result);
         }
 
-        /// <summary>Unlocks an achievement on the current player's achievements row (the player template tagged "achievement"); the row is resolved for you, so no player-data id.</summary>
+        /// <summary>Unlocks an achievement on the current player's achievements row (the player template tagged "achievement"); the row is resolved for you, so no player-data id. Codegen also emits a typed UnlockAchievementAsync(FlockAchievementId) overload — prefer that for compile-time safety.</summary>
         public async Task<PlayerData> UnlockAchievementAsync(
             string achievementName,
             CancellationToken cancellationToken = default)
@@ -325,33 +336,56 @@ namespace Flock.Providers
             return FlockNetworkException.IsPermanentStatus(ex.StatusCode);
         }
 
-        // Evicts the optimistic cache row a rejected write had written, so the next read pulls authoritative state. player_data_id is read from the queued payload.
+        // Evicts the optimistic cache row a rejected write had written, so the next read pulls authoritative state.
+        // Skips eviction when another still-queued write targets the same row — its overlay must survive. Called
+        // after the rejected write is already dequeued, so _pendingWrites holds only the remaining writes.
         private void EvictOptimisticRow(string payloadJson)
         {
 #if !FLOCK_NO_PLAYER
-            string playerDataId = null;
-            try { playerDataId = JObject.Parse(payloadJson).Value<string>("player_data_id"); }
-            catch (JsonException) { }
-            if (!string.IsNullOrEmpty(playerDataId))
-                Client.Player?.EvictPlayerCacheByRow(playerDataId);
+            string playerDataId = ExtractPlayerDataId(payloadJson);
+            if (string.IsNullOrEmpty(playerDataId))
+                return;
+            foreach (PendingDataWrite pending in _pendingWrites)
+                if (ExtractPlayerDataId(pending.PayloadJson) == playerDataId)
+                    return;
+            Client.Player?.EvictPlayerCacheByRow(playerDataId);
 #endif
         }
 
-        //queue that  lives in memory only.
+        // Reads player_data_id off a queued payload; null if absent/unparseable.
+        private static string ExtractPlayerDataId(string payloadJson)
+        {
+            try { return JObject.Parse(payloadJson).Value<string>("player_data_id"); }
+            catch (JsonException) { return null; }
+        }
+
+        // Loads the current player's queue, reloading whenever the signed-in player changes (incl. logout ->
+        // null). The reset drops the previous player's in-memory writes so they can't replay under a new login;
+        // their persisted copy stays under their own player-scoped key and replays when they sign back in.
         private void EnsureQueueLoaded()
         {
-            if (_queueLoaded)
+            string playerId = Client.CurrentPlayerId;
+            if (_queueLoaded && _queuePlayerId == playerId)
                 return;
             _queueLoaded = true;
+            _queuePlayerId = playerId;
 
+            _pendingWrites = new Queue<PendingDataWrite>();
             FlockSnapshotStore store = Client.SnapshotStore;
-            if (store != null && store.TryRead(GetSnapshotScope(SnapshotCategory), PendingWritesKey, out List<PendingDataWrite> saved) && saved != null)
+            if (store != null && store.TryRead(GetQueueScope(), PendingWritesKey, out List<PendingDataWrite> saved) && saved != null)
                 _pendingWrites = new Queue<PendingDataWrite>(saved);
         }
 
         private void PersistQueue()
         {
-            Client.SnapshotStore?.Write(GetSnapshotScope(SnapshotCategory), PendingWritesKey, new List<PendingDataWrite>(_pendingWrites));
+            Client.SnapshotStore?.Write(GetQueueScope(), PendingWritesKey, new List<PendingDataWrite>(_pendingWrites));
+        }
+
+        // Player-scoped so each player's offline writes are isolated on disk. Uses the id the queue was loaded
+        // for (set in EnsureQueueLoaded) so a persist always matches its load.
+        private string GetQueueScope()
+        {
+            return $"{GetSnapshotScope(SnapshotCategory)}/{_queuePlayerId}";
         }
 
         private PlayerData ApplyToPlayerCache(PlayerData data)

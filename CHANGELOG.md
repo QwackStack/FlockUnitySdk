@@ -5,6 +5,34 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [1.22.0]
+
+### Added
+- **Achievement codegen.** Sync now generates `Flock.Generated.Achievements.FlockAchievementId` — an enum of the fields on the player template tagged `achievement` (each member carries a `/// <summary>raw_name</summary>` doc) — plus an **additive** `UnlockAchievementAsync(FlockAchievementId)` extension on `FlockCommandProvider` that resolves the achievements row and maps the enum back to the raw `achievement_name`. The raw-string overload stays public (same additive pattern as the shop `FlockFundId` methods); the typed one is the recommended, typo-proof path. No new endpoint — achievements come from the player-template fetch already in the sync.
+- **Achievement details config.** A game config tagged `achievement` (a list of entries, each with a `name`) wires to the enum: the entry's `name` is generated as `FlockAchievementId` via a generated `FlockAchievementIdConverter`, and a `GetAchievementDetailsAsync(FlockAchievementId)` extension on `FlockConfigProvider` returns the matching entry. (The canonical `/achievement` resource is OAuth2/dashboard-only, so codegen sources details from a game config it can reach with the API key.)
+- **Catalog achievements section.** `FlockContentCatalog` gained an `achievements` list (name + type), surfaced as its own foldout in the inspector, so designers can see the available `FlockAchievementId` members without reading generated C#. The `achievement`-tagged template is no longer also duplicated under Player Templates.
+- **`SchemasManifest.AchievementCount`** const, alongside the existing template/config/shop counts.
+
+### Changed
+- **Cache normalization in `FlockConfigProvider` / `FlockShopProvider`.** Each now keeps one canonical id-keyed dictionary per entity (configs, patches, shops, shop items); by-name/by-tag/by-schema/by-version lookups are id indexes into that store instead of separate copies of the full objects. A side effect: fetching by one key now warms the others for free (e.g. `GetGameConfigsAsync` also satisfies a later `GetConfigByIdAsync` for the same id without a new request), and list-returning methods always hand back a fresh `List<T>` instead of the cached reference.
+- **`FlockProviderBase` snapshot-scope helpers.** `FetchWithSnapshotAsync(category, ...)` now resolves `{GameVersionId}/{category}` internally instead of every call site spelling out `GetSnapshotScope(SnapshotCategory)`; added matching `DeleteSnapshotCategory` / `TryReadSnapshot` / `WriteSnapshot` wrappers for the callers that weren't going through `FetchWithSnapshotAsync`. The one caller needing a raw, pre-composed scope (`FlockGameProvider`'s by-name version lookup, which intentionally stays on `BootstrapScope` instead of nesting under `GameVersionId`) now calls a separate `FetchAtScopeAsync`, so that exception stays explicit instead of relying on parameter-shape coincidence.
+
+### Removed
+- **`FlockSchemaProvider` / `Client.Schema`.** Dead code — unreferenced anywhere in the SDK or codegen, and 3 of its 4 methods duplicated endpoints `FlockConfigProvider` already fetches and caches. `ISchemaProvider`'s `SchemaTag` enum and the `SCHEMA` provider-strip unit (still gating the codegen tree) are unaffected.
+
+### Fixed
+- **Offline write queue is now player-scoped.** The pending-writes queue was keyed only by game version and its in-memory copy survived a player switch, so Player A's queued offline writes could replay under Player B after an account switch. The queue is now keyed by player id and reloads whenever the signed-in player changes — each player's writes stay isolated and replay only when that player signs back in.
+- **`FlushPendingWritesAsync` single-flight guard** moved into the method itself, so a manual call can no longer race the auto-flush and double-POST a non-idempotent queued command.
+- **Analytics auth-id rewrite race.** Stamping the player id onto anonymously-cached events at login could race an in-flight flush and delete freshly-attributed files before they were sent (attribution lost). The flush now marks its batch in flight and the rewrite skips in-flight files.
+- **Token-refresh piggyback** no longer assumes the refresh token rotates: queued waiters detect a completed refresh via a generation counter, so a backend that re-issues the same refresh token won't cause redundant refresh POSTs.
+- **Atomic snapshot writes.** `FlockSnapshotStore.Write` uses `File.Replace` instead of delete-then-move, closing the crash window that could lose the prior snapshot.
+- **Optimistic-row eviction** on a permanently-rejected queued write no longer discards sibling writes' overlays for the same `player_data_id`.
+- Removed a dead, never-read `etag` field from the snapshot envelope.
+
+### Documentation
+- README codegen section: achievement enum generation, the achievement details config + `GetAchievementDetailsAsync`, and a `FLOCK_NO_PLAYER` + codegen note; the quick-start examples now use `FlockAchievementId`.
+- [ARCHITECTURE.md](ARCHITECTURE.md): dropped the `FlockSchemaProvider` entry from the Runtime/Providers list and folder overview (removed above).
+
 ## [1.21.0]
 
 ### Added

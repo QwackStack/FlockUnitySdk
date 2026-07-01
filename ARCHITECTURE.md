@@ -4,7 +4,7 @@ Orientation map of the folders and classes. For **API usage and examples**, see 
 
 ```
 Runtime/      runtime SDK            (asmdef Flock.Runtime)
-├─ Providers/   feature APIs (auth, player, config, game, shop, command, asset, schema)
+├─ Providers/   feature APIs (auth, player, config, game, shop, command, asset)
 │  └─ Analytics/  analytics sender (+ no-op stub)
 ├─ Http/        transport, retry, provider base
 ├─ Auth/        JWT decode + per-platform secure token storage
@@ -34,7 +34,6 @@ PackageBuilder/Tests/Editor/   EditMode tests (asmdef Flock.Tests.Editor)
 - **FlockShopProvider** — shops, items, purchase, inventory (incl. by-name); `PurchaseStatus`/`TransactionType` enums.
 - **FlockCommandProvider** — retry-safe game commands (funds, achievements, player-data writes).
 - **FlockAssetProvider** / **FlockAssetCache** — asset fetch + local file cache.
-- **FlockSchemaProvider** — config schemas/patches for codegen consumers.
 - **FlockSnapshotStore** — on-disk snapshot cache backing offline reads.
 - **Analytics/FlockAnalyticsProvider** — sends sessions/events/transactions. · **NullAnalyticsProvider** — no-op when `FLOCK_NO_ANALYTICS`.
 

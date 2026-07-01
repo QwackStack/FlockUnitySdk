@@ -18,6 +18,31 @@ namespace Flock.Editor.Codegen
             "Equals", "GetHashCode", "GetType", "ToString", "Finalize", "MemberwiseClone"
         };
 
+        // Forces a specific C# type (and an optional extra attribute line) for any field whose name matches,
+        // at any depth. Used to type the achievement config's "name" entry as FlockAchievementId.
+        internal sealed class FieldTypeOverride
+        {
+            public string FieldName;
+            public string CsType;
+            public string Attribute;
+
+            public bool Matches(TypedSchema field)
+                => field != null && string.Equals(field.FieldName, FieldName, StringComparison.OrdinalIgnoreCase);
+        }
+
+        // What a top-level field emitted as: PascalCase property name + resolved C# type. Lets a caller find,
+        // e.g., the list field and its element type without re-deriving the (UnDuplicate'd) generated names.
+        internal readonly struct EmittedProperty
+        {
+            public readonly string PropertyName;
+            public readonly string CsType;
+            public EmittedProperty(string propertyName, string csType)
+            {
+                PropertyName = propertyName;
+                CsType = csType;
+            }
+        }
+
         public static int EmitProperties(
             IList<TypedSchema> fields,
             string parentClassName,
@@ -26,7 +51,9 @@ namespace Flock.Editor.Codegen
             List<string> nestedClasses,
             HashSet<string> usedClassNames,
             IEnumerable<string> reservedPropertyNames,
-            string contextLogName)
+            string contextLogName,
+            FieldTypeOverride typeOverride = null,
+            IDictionary<string, EmittedProperty> topLevelOut = null)
         {
             HashSet<string> usedPropertyNames = new HashSet<string>(SystemObjectMembers);
             if (reservedPropertyNames != null)
@@ -45,8 +72,19 @@ namespace Flock.Editor.Codegen
                 string jsonName = CodeGenNamingHelpers.EscapeStringLiteral(field.FieldName);
                 string keyForComment = CodeGenNamingHelpers.SanitizeForLineComment(field.FieldName);
 
-                string csType = ResolveType(field, parentClassName, propName, propertyAccessor,
-                                            nestedClasses, usedClassNames, contextLogName);
+                string csType;
+                string extraAttribute = null;
+                if (typeOverride != null && typeOverride.Matches(field))
+                {
+                    csType = typeOverride.CsType;
+                    extraAttribute = typeOverride.Attribute;
+                }
+                else
+                {
+                    csType = ResolveType(field, parentClassName, propName, propertyAccessor,
+                                         nestedClasses, usedClassNames, contextLogName, typeOverride);
+                }
+
                 if (csType == null)
                 {
                     body.AppendLine($"        // Skipped '{keyForComment}': unable to resolve type '{CodeGenNamingHelpers.SanitizeForLineComment(field.Type)}'.");
@@ -54,10 +92,15 @@ namespace Flock.Editor.Codegen
                     continue;
                 }
 
+                if (!string.IsNullOrEmpty(extraAttribute))
+                    body.AppendLine($"        {extraAttribute}");
                 body.AppendLine($"        [JsonProperty(\"{jsonName}\")]");
                 body.AppendLine($"        public {csType} {propName} {propertyAccessor}");
                 body.AppendLine();
                 emitted++;
+
+                if (topLevelOut != null)
+                    topLevelOut[field.FieldName] = new EmittedProperty(propName, csType);
             }
 
             return emitted;
@@ -70,7 +113,8 @@ namespace Flock.Editor.Codegen
             string propertyAccessor,
             List<string> nestedClasses,
             HashSet<string> usedClassNames,
-            string contextLogName)
+            string contextLogName,
+            FieldTypeOverride typeOverride)
         {
             string typeLower = (field.Type ?? "").Trim().ToLowerInvariant();
 
@@ -83,7 +127,7 @@ namespace Flock.Editor.Codegen
                     return "JObject";
                 }
                 string nestedClassName = CodeGenNamingHelpers.UnDuplicate(parentClassName + propName, usedClassNames);
-                nestedClasses.Add(BuildNestedClass(nestedClassName, children, propertyAccessor, nestedClasses, usedClassNames));
+                nestedClasses.Add(BuildNestedClass(nestedClassName, children, propertyAccessor, nestedClasses, usedClassNames, typeOverride));
                 return nestedClassName;
             }
 
@@ -96,7 +140,7 @@ namespace Flock.Editor.Codegen
                     return "List<object>";
                 }
                 string elementType = ResolveType(element, parentClassName, propName + "Item", propertyAccessor,
-                                                  nestedClasses, usedClassNames, contextLogName);
+                                                  nestedClasses, usedClassNames, contextLogName, typeOverride);
                 if (elementType == null) return null;
                 return $"List<{elementType}>";
             }
@@ -110,7 +154,7 @@ namespace Flock.Editor.Codegen
                     return "Dictionary<string, object>";
                 }
                 string valueType = ResolveType(valueSchema, parentClassName, propName + "Value", propertyAccessor,
-                                                nestedClasses, usedClassNames, contextLogName);
+                                                nestedClasses, usedClassNames, contextLogName, typeOverride);
                 if (valueType == null) return null;
                 return $"Dictionary<string, {valueType}>";
             }
@@ -128,10 +172,11 @@ namespace Flock.Editor.Codegen
             IList<TypedSchema> fields,
             string propertyAccessor,
             List<string> nestedClasses,
-            HashSet<string> usedClassNames)
+            HashSet<string> usedClassNames,
+            FieldTypeOverride typeOverride)
         {
             StringBuilder inner = new StringBuilder();
-            EmitProperties(fields, className, propertyAccessor, inner, nestedClasses, usedClassNames, new[] { className }, className);
+            EmitProperties(fields, className, propertyAccessor, inner, nestedClasses, usedClassNames, new[] { className }, className, typeOverride);
 
             StringBuilder sb = new StringBuilder();
             sb.AppendLine($"    public partial class {className}");

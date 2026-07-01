@@ -14,6 +14,7 @@ namespace Flock.Editor.Codegen
         private const string ConfigsSubdir = "Configs";
         private const string CommandsSubdir = "Commands";
         private const string ShopsSubdir = "Shops";
+        private const string AchievementsSubdir = "Achievements";
 
         internal static async void SyncSchemas()
         {
@@ -54,6 +55,7 @@ namespace Flock.Editor.Codegen
                     $"  Command methods:  {result.CommandMethodCount}\n" +
                     $"  Configs:          {result.ConfigCount}\n" +
                     $"  Config accessors: {result.ConfigAccessorCount}\n" +
+                    $"  Achievements:     {result.AchievementCount}\n" +
                     $"  Output:           {generatedRoot}");
             }
             catch (Exception ex)
@@ -85,13 +87,17 @@ namespace Flock.Editor.Codegen
                 snapshot.PlayerTemplates, templateResult.ClassNamesById, Path.Combine(generatedRoot, TemplatesSubdir));
             int commandAccessors = CommandAccessorEmitter.Emit(
                 snapshot.PlayerTemplates, templateResult.ClassNamesById, Path.Combine(generatedRoot, CommandsSubdir));
+            // Achievements first: the FlockAchievementId enum it generates is referenced by the
+            // achievement-tagged game config's typed name field, so it must exist before configs emit.
+            int achievements = AchievementEmitter.Emit(
+                snapshot.PlayerTemplates, Path.Combine(generatedRoot, AchievementsSubdir));
             GameConfigEmitter.EmitResult configResult = GameConfigEmitter.Emit(
-                snapshot.GameConfigs, Path.Combine(generatedRoot, ConfigsSubdir));
+                snapshot.GameConfigs, Path.Combine(generatedRoot, ConfigsSubdir), achievements > 0);
             int configAccessors = ConfigAccessorEmitter.Emit(
                 snapshot.GameConfigs, configResult.ClassNamesById, Path.Combine(generatedRoot, ConfigsSubdir));
             ShopEmitter.Emit(
                 snapshot.Shops, snapshot.PlayerTemplates, Path.Combine(generatedRoot, ShopsSubdir));
-            ManifestEmitter.Emit(snapshot, generatedRoot);
+            ManifestEmitter.Emit(snapshot, generatedRoot, achievements);
 
             // Skip the import in batch mode: the files are already on disk for CI to commit, and a
             // script-recompile domain reload here could preempt the editor exit and hang the run.
@@ -101,7 +107,7 @@ namespace Flock.Editor.Codegen
                 // Catalog runs post-refresh so its folder is imported; it's an editor-only browse aid, so CI skips it.
                 CatalogEmitter.Emit(snapshot, config.gameVersion, generatedRoot);
             }
-            return new CodegenResult(snapshot, templateResult.Count, playerAccessors, commandAccessors, configResult.Count, configAccessors);
+            return new CodegenResult(snapshot, templateResult.Count, playerAccessors, commandAccessors, configResult.Count, configAccessors, achievements);
         }
 
         internal readonly struct CodegenResult
@@ -112,9 +118,10 @@ namespace Flock.Editor.Codegen
             public readonly int CommandMethodCount;
             public readonly int ConfigCount;
             public readonly int ConfigAccessorCount;
+            public readonly int AchievementCount;
 
             public CodegenResult(FlockSchemaSnapshot snapshot, int templateCount, int playerAccessorCount,
-                int commandMethodCount, int configCount, int configAccessorCount)
+                int commandMethodCount, int configCount, int configAccessorCount, int achievementCount)
             {
                 Snapshot = snapshot;
                 TemplateCount = templateCount;
@@ -122,6 +129,7 @@ namespace Flock.Editor.Codegen
                 CommandMethodCount = commandMethodCount;
                 ConfigCount = configCount;
                 ConfigAccessorCount = configAccessorCount;
+                AchievementCount = achievementCount;
             }
         }
 

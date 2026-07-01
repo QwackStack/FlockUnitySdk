@@ -19,9 +19,6 @@ namespace Flock.Interfaces
 #if !FLOCK_NO_CONFIG
         FlockConfigProvider Config { get; }
 #endif
-#if !FLOCK_NO_SCHEMA
-        FlockSchemaProvider Schema { get; }
-#endif
 #if !FLOCK_NO_GAME
         FlockGameProvider Game { get; }
 #endif

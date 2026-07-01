@@ -16,6 +16,7 @@ namespace Flock.Editor.Catalog
         public List<CatalogShop> shops = new List<CatalogShop>();
         public List<CatalogSchema> configs = new List<CatalogSchema>();
         public List<CatalogSchema> templates = new List<CatalogSchema>();
+        public List<CatalogAchievement> achievements = new List<CatalogAchievement>();
     }
 
     [Serializable]
@@ -50,5 +51,14 @@ namespace Flock.Editor.Catalog
         public string name;
         public string type;
         public string value;
+    }
+
+    // One achievement = one field on the "achievement"-tagged player template. The name is the
+    // achievement_name the backend expects and the value backing each FlockAchievementId member.
+    [Serializable]
+    public class CatalogAchievement
+    {
+        public string name;
+        public string type;
     }
 }

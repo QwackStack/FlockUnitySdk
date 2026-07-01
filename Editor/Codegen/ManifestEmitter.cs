@@ -8,7 +8,7 @@ namespace Flock.Editor.Codegen
     /// <summary>Emits the generated <c>SchemasManifest</c> — GameVersionId plus a content hash that the build guard and CI Verify compare against to detect drift.</summary>
     internal static class ManifestEmitter
     {
-        public static void Emit(FlockSchemaSnapshot snapshot, string outputDir)
+        public static void Emit(FlockSchemaSnapshot snapshot, string outputDir, int achievementCount)
         {
             if (!Directory.Exists(outputDir))
                 Directory.CreateDirectory(outputDir);
@@ -29,6 +29,7 @@ namespace Flock.Editor.Codegen
             sb.AppendLine($"        public const int PlayerTemplateCount = {snapshot.PlayerTemplates.Count};");
             sb.AppendLine($"        public const int GameConfigCount = {snapshot.GameConfigs.Count};");
             sb.AppendLine($"        public const int ShopCount = {snapshot.Shops.Count};");
+            sb.AppendLine($"        public const int AchievementCount = {achievementCount};");
             sb.AppendLine("    }");
             sb.AppendLine("}");
 
