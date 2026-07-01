@@ -36,7 +36,7 @@ namespace Flock.Providers
             _allTemplatesFetchTask = null;
             _playerDataByPlayerCache.Clear();
             _playerDataFetchTasks.Clear();
-            Client.SnapshotStore?.DeleteScope(GetSnapshotScope(SnapshotCategory));
+            DeleteSnapshotCategory(SnapshotCategory);
         }
 
         // Class B write-through: game commands hand their server-returned row here.
@@ -124,7 +124,7 @@ namespace Flock.Providers
             try
             {
                 List<PlayerTemplateSchema> templates = await FetchWithSnapshotAsync(
-                    GetSnapshotScope(SnapshotCategory), "all", async () =>
+                    SnapshotCategory, "all", async () =>
                     {
                         string url = $"{Client.GetVersionedApiUrl()}/player_template";
                         GenericResponse<List<PlayerTemplateSchema>> response = await FlockHttpClient.GetAsync<GenericResponse<List<PlayerTemplateSchema>>>(

@@ -21,11 +21,16 @@ namespace Flock.Providers
     {
         private const string SnapshotCategory = "shop";
 
+        // Full paginated response cache — page metadata (total/page/limit) isn't part of the Shop entity, so it isn't folded into _shopsById.
         private readonly Dictionary<string, PaginatedResponse<Shop>> _shopPages = new Dictionary<string, PaginatedResponse<Shop>>();
+
+        // Canonical stores — every shop/item lives here exactly once, keyed by id.
         private readonly Dictionary<string, Shop> _shopsById = new Dictionary<string, Shop>();
-        private readonly Dictionary<string, Shop> _shopsByName = new Dictionary<string, Shop>();
         private readonly Dictionary<string, ShopItem> _itemsById = new Dictionary<string, ShopItem>();
-        private readonly Dictionary<string, List<ShopItem>> _itemsByShop = new Dictionary<string, List<ShopItem>>();
+
+        // Indexes into the canonical stores above — id (or id-list) per query, not duplicate objects.
+        private readonly Dictionary<string, string> _shopIdByName = new Dictionary<string, string>();
+        private readonly Dictionary<string, List<string>> _itemIdsByShop = new Dictionary<string, List<string>>();
 
         public FlockShopProvider(FlockClient client) : base(client) { }
 
@@ -33,10 +38,10 @@ namespace Flock.Providers
         {
             _shopPages.Clear();
             _shopsById.Clear();
-            _shopsByName.Clear();
+            _shopIdByName.Clear();
             _itemsById.Clear();
-            _itemsByShop.Clear();
-            Client.SnapshotStore?.DeleteScope(GetSnapshotScope(SnapshotCategory));
+            _itemIdsByShop.Clear();
+            DeleteSnapshotCategory(SnapshotCategory);
         }
 
         public async Task<PaginatedResponse<Shop>> GetAllAsync(
@@ -47,7 +52,7 @@ namespace Flock.Providers
                 return cached;
 
             PaginatedResponse<Shop> shops = await FetchWithSnapshotAsync(
-                GetSnapshotScope(SnapshotCategory), pageKey, async () =>
+                SnapshotCategory, pageKey, async () =>
                 {
                     return await FlockHttpClient.GetAsync<PaginatedResponse<Shop>>(
                         $"{Client.GetVersionedApiUrl()}/shop?page={page}&limit={limit}", Client.GetBaseHeaders(), cancellationToken);
@@ -59,10 +64,7 @@ namespace Flock.Providers
                 if (shops.Items != null)
                 {
                     foreach (Shop shop in shops.Items)
-                    {
-                        if (shop != null && !string.IsNullOrEmpty(shop.Id))
-                            _shopsById[shop.Id] = shop;
-                    }
+                        IndexShop(shop);
                 }
             }
             return shops;
@@ -76,11 +78,12 @@ namespace Flock.Providers
                 return cached;
 
             Shop shop = await FetchWithSnapshotAsync(
-                GetSnapshotScope(SnapshotCategory), $"shop_{shopId}",
+                SnapshotCategory, $"shop_{shopId}",
                 async () => await FlockHttpClient.GetAsync<Shop>(
                     $"{Client.GetVersionedApiUrl()}/shop/{shopId}", Client.GetBaseHeaders(), cancellationToken),
                 "Fetch shop", cancellationToken);
 
+            // Keyed by the requested id (not shop.Id) so a hit is guaranteed on the next call with this same shopId.
             if (shop != null)
                 _shopsById[shopId] = shop;
             return shop;
@@ -90,22 +93,25 @@ namespace Flock.Providers
             string name, CancellationToken cancellationToken = default)
         {
             RequireNotEmpty(name, "Shop Name");
-            if (_shopsByName.TryGetValue(name, out Shop cached))
+            if (_shopIdByName.TryGetValue(name, out string cachedId) && _shopsById.TryGetValue(cachedId, out Shop cached))
                 return cached;
 
             Shop shop = await FetchWithSnapshotAsync(
-                GetSnapshotScope(SnapshotCategory), $"shop_name_{name}",
+                SnapshotCategory, $"shop_name_{name}",
                 async () => await FlockHttpClient.GetAsync<Shop>(
                     $"{Client.GetVersionedApiUrl()}/shop/by-name/{System.Uri.EscapeDataString(name)}", Client.GetBaseHeaders(), cancellationToken),
                 "Fetch shop by name", cancellationToken);
 
-            if (shop != null)
-            {
-                _shopsByName[name] = shop;
-                if (!string.IsNullOrEmpty(shop.Id))
-                    _shopsById[shop.Id] = shop;
-            }
+            IndexShop(shop);
+            if (shop != null && !string.IsNullOrEmpty(shop.Id))
+                _shopIdByName[name] = shop.Id;
             return shop;
+        }
+
+        private void IndexShop(Shop shop)
+        {
+            if (shop == null || string.IsNullOrEmpty(shop.Id)) return;
+            _shopsById[shop.Id] = shop;
         }
 
         public async Task<ShopItem> GetItemAsync(
@@ -116,7 +122,7 @@ namespace Flock.Providers
                 return cached;
 
             ShopItem item = await FetchWithSnapshotAsync(
-                GetSnapshotScope(SnapshotCategory), $"item_{shopItemId}", async () =>
+                SnapshotCategory, $"item_{shopItemId}", async () =>
                 {
                     return await FlockHttpClient.GetAsync<ShopItem>(
                         $"{Client.GetVersionedApiUrl()}/shop_item/{shopItemId}", Client.GetBaseHeaders(), cancellationToken);
@@ -133,11 +139,11 @@ namespace Flock.Providers
             RequireNotEmpty(shopId, "Shop ID");
 
             string cacheKey = $"items_shop_{shopId}_{(string.IsNullOrEmpty(patchId) ? "current" : patchId)}";
-            if (_itemsByShop.TryGetValue(cacheKey, out List<ShopItem> cached))
-                return new List<ShopItem>(cached);
+            if (_itemIdsByShop.TryGetValue(cacheKey, out List<string> cachedIds))
+                return ResolveItems(cachedIds);
 
             List<ShopItem> items = await FetchWithSnapshotAsync(
-                GetSnapshotScope(SnapshotCategory), cacheKey, async () =>
+                SnapshotCategory, cacheKey, async () =>
                 {
                     string url = $"{Client.GetVersionedApiUrl()}/shop_item/shop/{shopId}{(!string.IsNullOrEmpty(patchId) ? $"?patch_id={patchId}" : "")}";
 
@@ -147,13 +153,26 @@ namespace Flock.Providers
                     return response.Result;
                 }, "Fetch shop items", cancellationToken);
 
-            _itemsByShop[cacheKey] = items;
+            List<string> ids = new List<string>(items.Count);
             foreach (ShopItem item in items)
             {
                 if (item != null && !string.IsNullOrEmpty(item.Id))
+                {
                     _itemsById[item.Id] = item;
+                    ids.Add(item.Id);
+                }
             }
-            return new List<ShopItem>(items);
+            _itemIdsByShop[cacheKey] = ids;
+            return ResolveItems(ids);
+        }
+
+        private List<ShopItem> ResolveItems(List<string> ids)
+        {
+            List<ShopItem> result = new List<ShopItem>(ids.Count);
+            foreach (string id in ids)
+                if (_itemsById.TryGetValue(id, out ShopItem item))
+                    result.Add(item);
+            return result;
         }
 
         public async Task<PlayerInventory> PurchaseAsync(

@@ -53,6 +53,9 @@ namespace Flock
         private readonly FlockSnapshotStore _snapshotStore;
         //To avoid refresh deadlocks
         private readonly SemaphoreSlim _refreshSemaphore = new SemaphoreSlim(1, 1);
+        // Bumped on every successful refresh so queued waiters can detect "someone already refreshed" without
+        // relying on the refresh token rotating (the backend may return the same one).
+        private int _refreshGeneration;
         private string _accessToken;
         private string _refreshToken;
         private JwtTokenClaims _tokenClaims;
@@ -73,9 +76,6 @@ namespace Flock
         private FlockAuthProvider _authentication;
 #if !FLOCK_NO_CONFIG
         private FlockConfigProvider _config;
-#endif
-#if !FLOCK_NO_SCHEMA
-        private FlockSchemaProvider _schema;
 #endif
 #if !FLOCK_NO_GAME
         private FlockGameProvider _game;
@@ -175,9 +175,6 @@ namespace Flock
 #if !FLOCK_NO_CONFIG
             _config = new FlockConfigProvider(this);
 #endif
-#if !FLOCK_NO_SCHEMA
-            _schema = new FlockSchemaProvider(this);
-#endif
 #if !FLOCK_NO_GAME
             _game = new FlockGameProvider(this);
 #endif
@@ -214,9 +211,6 @@ namespace Flock
         public FlockAuthProvider Authentication => _authentication;
 #if !FLOCK_NO_CONFIG
         public FlockConfigProvider Config => _config;
-#endif
-#if !FLOCK_NO_SCHEMA
-        public FlockSchemaProvider Schema => _schema;
 #endif
 #if !FLOCK_NO_GAME
         public FlockGameProvider Game => _game;
@@ -280,6 +274,7 @@ namespace Flock
 
             string refreshSnapshot = _refreshToken;
             string playerIdSnapshot = CurrentPlayerId;
+            int generationSnapshot = _refreshGeneration;
 
             await _refreshSemaphore.WaitAsync(cancellationToken);
             try
@@ -287,7 +282,9 @@ namespace Flock
                 if (string.IsNullOrEmpty(_refreshToken))
                     return false;
 
-                if (_refreshToken != refreshSnapshot && !string.IsNullOrEmpty(_accessToken))
+                // Someone refreshed while we waited — piggyback on their result instead of POSTing again.
+                // Generation-based so it works even when the backend re-issues the same refresh token.
+                if (_refreshGeneration != generationSnapshot && !string.IsNullOrEmpty(_accessToken))
                     return true;
 
                 PlayerRefreshTokenRequest refreshRequest = new PlayerRefreshTokenRequest { PlayerId = playerIdSnapshot, RefreshToken = refreshSnapshot };
@@ -307,6 +304,7 @@ namespace Flock
                 }
 
                 SetTokens(response.AccessToken, response.RefreshToken);
+                _refreshGeneration++;
                 _logger.LogInfo("Token refresh successful");
                 FlockEvents.InvokeTokenRefreshed();
                 return true;

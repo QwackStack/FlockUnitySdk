@@ -47,10 +47,9 @@ namespace Flock.Editor
             {
                 Id = "SCHEMA",
                 DisplayName = "Schema",
-                Description = "Read-only access to game config schemas.",
+                Description = "SchemaTag enum and codegen support for game config schemas.",
                 Files = new[]
                 {
-                    "Runtime/Providers/FlockSchemaProvider.cs",
                     "Runtime/Interfaces/ISchemaProvider.cs",
                 },
                 // Codegen consumes SchemaTag from ISchemaProvider, so the editor codegen

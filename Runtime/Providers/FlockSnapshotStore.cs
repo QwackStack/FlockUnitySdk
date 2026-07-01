@@ -23,7 +23,6 @@ namespace Flock.Providers
             [JsonProperty("v")] public int Version { get; set; }
             [JsonProperty("sdk")] public string Sdk { get; set; }
             [JsonProperty("stored_at_utc")] public string StoredAtUtc { get; set; }
-            [JsonProperty("etag")] public string ETag { get; set; }
             [JsonProperty("data")] public T Data { get; set; }
         }
 
@@ -83,9 +82,12 @@ namespace Flock.Providers
                 };
 
                 File.WriteAllText(tmpPath, JsonConvert.SerializeObject(envelope));
+                // Atomic swap: File.Replace overwrites in one step so a crash can't leave the prior snapshot
+                // deleted-but-not-yet-replaced (the delete-then-move window). Move covers the first write.
                 if (File.Exists(path))
-                    File.Delete(path);
-                File.Move(tmpPath, path);
+                    File.Replace(tmpPath, path, null);
+                else
+                    File.Move(tmpPath, path);
             }
             catch (Exception ex)
             {

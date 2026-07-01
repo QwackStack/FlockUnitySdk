@@ -12,6 +12,7 @@ namespace Flock.Editor.Catalog
         private bool _shopsOpen = true;
         private bool _configsOpen = true;
         private bool _templatesOpen = true;
+        private bool _achievementsOpen = true;
 
         private GUIStyle _title;
         private GUIStyle _section;
@@ -39,6 +40,21 @@ namespace Flock.Editor.Catalog
 
             _templatesOpen = DrawSectionHeader($"Player Templates ({catalog.templates.Count})", _templatesOpen);
             if (_templatesOpen) DrawSchemas(catalog.templates);
+
+            _achievementsOpen = DrawSectionHeader($"Achievements ({catalog.achievements.Count})", _achievementsOpen);
+            if (_achievementsOpen) DrawAchievements(catalog.achievements);
+        }
+
+        private void DrawAchievements(List<CatalogAchievement> achievements)
+        {
+            if (achievements.Count == 0) { EmptyNote("No achievements."); return; }
+            EditorGUILayout.BeginVertical(_card);
+            foreach (CatalogAchievement achievement in achievements)
+            {
+                string label = string.IsNullOrEmpty(achievement.type) ? achievement.name : $"{achievement.name}  ({achievement.type})";
+                EditorGUILayout.LabelField(label);
+            }
+            EditorGUILayout.EndVertical();
         }
 
         private void DrawShops(List<CatalogShop> shops)

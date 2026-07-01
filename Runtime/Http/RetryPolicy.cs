@@ -76,7 +76,8 @@ namespace Flock.Http
                         throw;
 
                     TimeSpan wait = ResolveDelay(ex, delay);
-                    _logger?.LogWarning($"Attempt {attempt} failed: {ex.Message}. Retrying in {wait.TotalSeconds:F1}s...");
+                    string note = ex is FlockNetworkException ? " Can't reach the server (connectivity) — retries keep failing until it's back." : string.Empty;
+                    _logger?.LogWarning($"Attempt {attempt} failed: {ex.Message}.{note} Retrying in {wait.TotalSeconds:F1}s...");
                     await Task.Delay(wait, cancellationToken);
 
                     delay = TimeSpan.FromSeconds(Math.Min(
@@ -86,7 +87,8 @@ namespace Flock.Http
                 }
                 catch (Exception ex)
                 {
-                    _logger?.LogError($"Operation failed after {attempt} attempt(s)", ex);
+                    string note = ex is FlockNetworkException ? " (couldn't reach the server)" : string.Empty;
+                    _logger?.LogError($"Operation failed after {attempt} attempt(s){note}", ex);
                     throw;
                 }
             }

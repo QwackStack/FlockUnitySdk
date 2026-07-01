@@ -37,6 +37,12 @@ namespace Flock.Analytics
         private int _flushing;
         private int _pendingCount;
 
+        // Paths the active flush has read but not yet dropped. Rewrite skips these so a login-time auth-id
+        // rewrite can't modify a file that's already in flight (which DropBatch would then delete, losing the
+        // rewrite). The lock makes ReadBatch's read+mark atomic against Rewrite — closing the read-then-mark gap.
+        private readonly object _inFlightLock = new object();
+        private HashSet<string> _inFlightPaths;
+
         public FlockEventCache(string directory, string subfolder, int maxEvents, int batchSize, IFlockLogger logger)
         {
             string root = string.IsNullOrEmpty(directory) ? Application.persistentDataPath : directory;
@@ -95,24 +101,32 @@ namespace Flock.Analytics
             int rewritten = 0;
             foreach (string path in EnumerateFiles())
             {
-                try
+                // Lock per file: skip-check + read + replace must be atomic against ReadBatch's read+mark so a
+                // file can't be rewritten after the flush read it (which DropBatch would then delete).
+                lock (_inFlightLock)
                 {
-                    T evt = JsonConvert.DeserializeObject<T>(File.ReadAllText(path));
-                    if (evt == null || !shouldRewrite(evt))
-                        continue;
+                    try
+                    {
+                        if (_inFlightPaths != null && _inFlightPaths.Contains(path))
+                            continue;
 
-                    setAuthID(evt);
+                        T evt = JsonConvert.DeserializeObject<T>(File.ReadAllText(path));
+                        if (evt == null || !shouldRewrite(evt))
+                            continue;
 
-                    // Atomic swap: write tmp, replace original. File.Replace is atomic on the local FS
-                    // and avoids the empty-file window that File.WriteAllText would leave behind.
-                    string tmpPath = path + TmpExtension;
-                    File.WriteAllText(tmpPath, JsonConvert.SerializeObject(evt));
-                    File.Replace(tmpPath, path, null);
-                    rewritten++;
-                }
-                catch (Exception ex)
-                {
-                    _logger?.LogWarning($"Cache rewrite failed for {Path.GetFileName(path)}: {ex.Message}");
+                        setAuthID(evt);
+
+                        // Atomic swap: write tmp, replace original. File.Replace is atomic on the local FS
+                        // and avoids the empty-file window that File.WriteAllText would leave behind.
+                        string tmpPath = path + TmpExtension;
+                        File.WriteAllText(tmpPath, JsonConvert.SerializeObject(evt));
+                        File.Replace(tmpPath, path, null);
+                        rewritten++;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger?.LogWarning($"Cache rewrite failed for {Path.GetFileName(path)}: {ex.Message}");
+                    }
                 }
             }
 
@@ -148,6 +162,8 @@ namespace Flock.Analytics
             }
             finally
             {
+                lock (_inFlightLock)
+                    _inFlightPaths = null;
                 Interlocked.Exchange(ref _flushing, 0);
             }
         }
@@ -202,30 +218,38 @@ namespace Flock.Analytics
 
         private List<CachedEvent> ReadBatch()
         {
-            List<CachedEvent> batch = new List<CachedEvent>(_batchSize);
-
-            foreach (string path in EnumerateFiles().OrderBy(p => p, StringComparer.Ordinal))
+            // Read the batch and mark it in flight under one lock so a concurrent Rewrite can't slip between
+            // reading a file and marking it (which would let it rewrite a file already captured for this send).
+            lock (_inFlightLock)
             {
-                if (batch.Count >= _batchSize)
-                    break;
+                List<CachedEvent> batch = new List<CachedEvent>(_batchSize);
 
-                try
+                foreach (string path in EnumerateFiles().OrderBy(p => p, StringComparer.Ordinal))
                 {
-                    T evt = JsonConvert.DeserializeObject<T>(File.ReadAllText(path));
-                    if (evt != null)
-                        batch.Add(new CachedEvent { Path = path, Event = evt });
-                    else if (TryDelete(path))
-                        Interlocked.Decrement(ref _pendingCount);
+                    if (batch.Count >= _batchSize)
+                        break;
+
+                    try
+                    {
+                        T evt = JsonConvert.DeserializeObject<T>(File.ReadAllText(path));
+                        if (evt != null)
+                            batch.Add(new CachedEvent { Path = path, Event = evt });
+                        else if (TryDelete(path))
+                            Interlocked.Decrement(ref _pendingCount);
+                    }
+                    catch
+                    {
+                        // Corrupt file (rare since writes are atomic) — drop it and move on.
+                        if (TryDelete(path))
+                            Interlocked.Decrement(ref _pendingCount);
+                    }
                 }
-                catch
-                {
-                    // Corrupt file (rare since writes are atomic) — drop it and move on.
-                    if (TryDelete(path))
-                        Interlocked.Decrement(ref _pendingCount);
-                }
+
+                _inFlightPaths = new HashSet<string>(StringComparer.Ordinal);
+                foreach (CachedEvent item in batch)
+                    _inFlightPaths.Add(item.Path);
+                return batch;
             }
-
-            return batch;
         }
 
         private void DropBatch(List<CachedEvent> batch)

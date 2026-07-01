@@ -21,7 +21,7 @@ namespace Flock.Providers
             _game = null;
             _gameVersion = null;
             _gameVersionsByName.Clear();
-            Client.SnapshotStore?.DeleteScope(GetSnapshotScope(SnapshotCategory));
+            DeleteSnapshotCategory(SnapshotCategory);
         }
 
         public async Task<GameSchema> GetGameAsync(CancellationToken cancellationToken = default)
@@ -30,7 +30,7 @@ namespace Flock.Providers
                 return _game;
 
             _game = await FetchWithSnapshotAsync(
-                GetSnapshotScope(SnapshotCategory), "game", async () =>
+                SnapshotCategory, "game", async () =>
                 {
                     string url = $"{Client.GetVersionedApiUrl()}/game";
                     GenericResponse<GameSchema> response = await FlockHttpClient.GetAsync<GenericResponse<GameSchema>>(
@@ -48,7 +48,7 @@ namespace Flock.Providers
                 return _gameVersion;
 
             _gameVersion = await FetchWithSnapshotAsync(
-                GetSnapshotScope(SnapshotCategory), "game_version", async () =>
+                SnapshotCategory, "game_version", async () =>
                 {
                     string url = $"{Client.GetVersionedApiUrl()}/game_version";
                     GenericResponse<GameVersionSchema> response = await FlockHttpClient.GetAsync<GenericResponse<GameVersionSchema>>(
@@ -68,7 +68,7 @@ namespace Flock.Providers
 
             // Uses the BootstrapScope snapshot namespace for by-name version lookups (populated lazily
             // on first call now that init no longer pre-resolves the version).
-            GameVersionSchema version = await FetchWithSnapshotAsync(
+            GameVersionSchema version = await FetchAtScopeAsync(
                 FlockSnapshotStore.BootstrapScope, $"{Client.GetApiUrl()}|{name}", async () =>
                 {
                     string url = $"{Client.GetVersionedApiUrl()}/game_version/by-name/{System.Uri.EscapeDataString(name)}";

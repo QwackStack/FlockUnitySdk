@@ -12,13 +12,27 @@ namespace Flock.Editor.Codegen
 {
     internal static class GameConfigEmitter
     {
-        public static EmitResult Emit(IList<GameConfigSchema> configs, string outputDir)
+        private const string AchievementTag = "achievement";
+
+        // The list field + element type of the achievement config, captured so GetAchievementDetailsAsync
+        // can return the real generated entry type without re-deriving its name.
+        private struct AchievementDetailInfo
+        {
+            public string ConfigClass;
+            public string ListProperty;
+            public string EntryType;
+        }
+
+        // achievementsGenerated: only type the achievement config's name field as FlockAchievementId (and emit
+        // the lookup) when the enum actually exists; otherwise the config falls back to a plain-string name.
+        public static EmitResult Emit(IList<GameConfigSchema> configs, string outputDir, bool achievementsGenerated)
         {
             ResetDirectory(outputDir);
 
             HashSet<string> used = new HashSet<string>();
             Dictionary<string, string> classNamesById = new Dictionary<string, string>();
             int emitted = 0, skipped = 0;
+            AchievementDetailInfo? achievementInfo = null;
 
             foreach (GameConfigSchema c in configs.OrderBy(x => x?.Id ?? "", StringComparer.Ordinal)
                                                     .ThenBy(x => x?.Name ?? "", StringComparer.Ordinal))
@@ -30,13 +44,19 @@ namespace Flock.Editor.Codegen
                     continue;
                 }
 
+                bool isAchievement = achievementsGenerated && string.Equals(c.Tag, AchievementTag, StringComparison.OrdinalIgnoreCase);
                 string className = CodeGenNamingHelpers.UnDuplicate(CodeGenNamingHelpers.ToPascalCase(c.Name) + "Config", used);
-                string source = BuildClass(className, c, used);
+                string source = BuildClass(className, c, used, isAchievement, out AchievementDetailInfo? info);
                 File.WriteAllText(Path.Combine(outputDir, className + ".g.cs"), source);
                 if (!string.IsNullOrEmpty(c.Id))
                     classNamesById[c.Id] = className;
+                if (info.HasValue)
+                    achievementInfo = info;
                 emitted++;
             }
+
+            if (achievementInfo.HasValue)
+                File.WriteAllText(Path.Combine(outputDir, "FlockAchievementDetails.g.cs"), BuildLookupSource(achievementInfo.Value));
 
             Debug.Log($"[Flock Codegen] GameConfigs: emitted {emitted}, skipped {skipped}.");
             return new EmitResult(emitted, classNamesById);
@@ -53,10 +73,25 @@ namespace Flock.Editor.Codegen
             }
         }
 
-        private static string BuildClass(string className, GameConfigSchema c, HashSet<string> usedClassNames)
+        private static string BuildClass(string className, GameConfigSchema c, HashSet<string> usedClassNames,
+            bool isAchievement, out AchievementDetailInfo? achievementInfo)
         {
+            achievementInfo = null;
             string tagLiteral = ResolveSchemaTagLiteral(c.Tag);
             List<string> reservedProps = new List<string> { className, "SourceId", "SourceName", "SourceTag", "Schema" };
+
+            // For the achievement config, type the entry's "name" field as the generated enum so details
+            // are awarded/looked up by FlockAchievementId, not a raw string.
+            SchemaPropertyEmitter.FieldTypeOverride typeOverride = isAchievement
+                ? new SchemaPropertyEmitter.FieldTypeOverride
+                {
+                    FieldName = "name",
+                    CsType = "FlockAchievementId",
+                    Attribute = "[JsonConverter(typeof(FlockAchievementIdConverter))]"
+                }
+                : null;
+            Dictionary<string, SchemaPropertyEmitter.EmittedProperty> captured =
+                isAchievement ? new Dictionary<string, SchemaPropertyEmitter.EmittedProperty>() : null;
 
             StringBuilder schemaSource = new StringBuilder();
             schemaSource.AppendLine($"        public const string SourceId = \"{CodeGenNamingHelpers.EscapeStringLiteral(c.Id)}\";");
@@ -67,11 +102,14 @@ namespace Flock.Editor.Codegen
             List<string> nestedClasses = new List<string>();
             int emittedProps = SchemaPropertyEmitter.EmitProperties(
                 c.Schema, className, "{ get; private set; }",
-                schemaSource, nestedClasses, usedClassNames, reservedProps, className);
+                schemaSource, nestedClasses, usedClassNames, reservedProps, className, typeOverride, captured);
             if (emittedProps == 0)
             {
                 Debug.LogWarning($"[Flock Codegen] {className}: schema had {c.Schema.Count} field(s) but none were emittable.");
             }
+
+            if (isAchievement)
+                achievementInfo = ResolveAchievementInfo(className, c, captured);
 
             StringBuilder sb = new StringBuilder();
             sb.AppendLine("// <auto-generated>");
@@ -82,6 +120,8 @@ namespace Flock.Editor.Codegen
             sb.AppendLine("using System.Collections.Generic;");
             sb.AppendLine("using Flock.Interfaces;");
             sb.AppendLine("using Flock.Models;");
+            if (isAchievement)
+                sb.AppendLine("using Flock.Generated.Achievements;");
             sb.AppendLine("using Newtonsoft.Json;");
             sb.AppendLine("using Newtonsoft.Json.Linq;");
             sb.AppendLine();
@@ -107,6 +147,75 @@ namespace Flock.Editor.Codegen
                 sb.AppendLine();
                 sb.Append(nested);
             }
+            sb.AppendLine("}");
+            return sb.ToString();
+        }
+
+        // The achievements list is the top-level list field whose element carries a "name" field; pull its
+        // generated property name + element type from what the property emitter actually wrote.
+        private static AchievementDetailInfo? ResolveAchievementInfo(
+            string className, GameConfigSchema c, IDictionary<string, SchemaPropertyEmitter.EmittedProperty> captured)
+        {
+            foreach (TypedSchema field in c.Schema)
+            {
+                if (field == null || string.IsNullOrEmpty(field.FieldName)) continue;
+                string typeLower = (field.Type ?? "").Trim().ToLowerInvariant();
+                if (typeLower != "list" && typeLower != "array") continue;
+
+                TypedSchema element = field.SchemaAsSingle();
+                List<TypedSchema> elementFields = element?.SchemaAsList();
+                bool hasNameEntry = elementFields != null &&
+                    elementFields.Any(f => f != null && string.Equals(f.FieldName, "name", StringComparison.OrdinalIgnoreCase));
+                if (!hasNameEntry) continue;
+
+                if (captured != null && captured.TryGetValue(field.FieldName, out SchemaPropertyEmitter.EmittedProperty prop)
+                    && TryGetListElementType(prop.CsType, out string entryType))
+                {
+                    return new AchievementDetailInfo
+                    {
+                        ConfigClass = className,
+                        ListProperty = prop.PropertyName,
+                        EntryType = entryType
+                    };
+                }
+            }
+
+            Debug.LogWarning($"[Flock Codegen] Achievement config '{c.Name}': no list field with a 'name' entry found; GetAchievementDetailsAsync not generated.");
+            return null;
+        }
+
+        private static bool TryGetListElementType(string csType, out string elementType)
+        {
+            elementType = null;
+            if (string.IsNullOrEmpty(csType) || !csType.StartsWith("List<", StringComparison.Ordinal) || !csType.EndsWith(">", StringComparison.Ordinal))
+                return false;
+            elementType = csType.Substring("List<".Length, csType.Length - "List<".Length - 1);
+            return true;
+        }
+
+        private static string BuildLookupSource(AchievementDetailInfo info)
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine("// <auto-generated>");
+            sb.AppendLine("//   Generated by Flock Codegen. Do not edit by hand.");
+            sb.AppendLine("// </auto-generated>");
+            sb.AppendLine("using System.Linq;");
+            sb.AppendLine("using System.Threading;");
+            sb.AppendLine("using System.Threading.Tasks;");
+            sb.AppendLine("using Flock.Generated.Achievements;");
+            sb.AppendLine("using Flock.Providers;");
+            sb.AppendLine();
+            sb.AppendLine("namespace Flock.Generated.Configs");
+            sb.AppendLine("{");
+            sb.AppendLine("    public static class FlockAchievementDetailsExtensions");
+            sb.AppendLine("    {");
+            sb.AppendLine("        /// <summary>Fetches the achievements config and returns the detail entry for the given achievement (null if absent).</summary>");
+            sb.AppendLine($"        public static async Task<{info.EntryType}> GetAchievementDetailsAsync(this FlockConfigProvider provider, FlockAchievementId achievement, CancellationToken cancellationToken = default)");
+            sb.AppendLine("        {");
+            sb.AppendLine($"            {info.ConfigClass} config = await provider.GetByConfigIdAsync<{info.ConfigClass}>({info.ConfigClass}.SourceId, cancellationToken);");
+            sb.AppendLine($"            return config?.{info.ListProperty}?.FirstOrDefault(entry => entry.Name == achievement);");
+            sb.AppendLine("        }");
+            sb.AppendLine("    }");
             sb.AppendLine("}");
             return sb.ToString();
         }
