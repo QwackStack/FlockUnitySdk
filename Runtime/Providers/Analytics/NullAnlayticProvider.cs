@@ -94,5 +94,17 @@ namespace Flock.Providers
             this.Client.Logger.LogDebug("Analytics is disabled , trying to record transaction");
             return Task.CompletedTask;
         }
+
+        public bool HasConsent => false;
+
+        public void SetConsent(bool granted)
+        {
+            this.Client.Logger.LogDebug("Analytics is disabled, SetConsent is a no-op");
+        }
+
+        public void EraseLocalAnalyticsData()
+        {
+            this.Client.Logger.LogDebug("Analytics is disabled, EraseLocalAnalyticsData is a no-op");
+        }
     }
 }

@@ -28,6 +28,8 @@ namespace Flock.Providers
         private string _currentPlayerId;
         private bool _heartbeatInFlight;
         private bool _registrationInFlight;
+        private readonly FlockConsentStore _consentStore = new FlockConsentStore();
+        private bool _hasConsent;
 
         public FlockAnalyticsProvider(FlockClient client) : base(client)
         {
@@ -35,6 +37,11 @@ namespace Flock.Providers
             _eventCache = TryCreateCache<AnalyticsEventRequest>(client, "analytics_events", _config.CacheFailedEvents);
             _logEventCache = TryCreateCache<LogEventRequest>(client, "log_events", _config.CacheFailedEvents);
             _sessionEndCache = TryCreateCache<FlockSessionSnapshot>(client, "session_ends", _config.PersistSessionOnDisk);
+
+            // A previously-recorded decision always wins; otherwise fall back to the
+            // config's default policy (opt-out unless RequireExplicitConsent is on).
+            bool? storedConsent = _consentStore.Load();
+            _hasConsent = storedConsent ?? !_config.RequireExplicitConsent;
         }
 
         private IEventCache<T> TryCreateCache<T>(FlockClient client, string subfolder, bool enabled) where T : class
@@ -64,6 +71,71 @@ namespace Flock.Providers
         public string CurrentSessionId => _session?.ServerSessionId;
         private bool HasActiveSession => _session?.IsActive ?? false;
         public FlockSessionSnapshot CurrentSnapshot => _session?.IsActive == true ? _session.TakeSnapshot() : null;
+
+        public bool HasConsent => _hasConsent;
+
+        public void SetConsent(bool granted)
+        {
+            if (granted == _hasConsent)
+                return;
+
+            _hasConsent = granted;
+            _consentStore.Save(granted);
+            FlockEvents.InvokeConsentChanged(granted);
+
+            if (granted)
+            {
+                Client.Logger.LogInfo("Analytics consent granted");
+
+                if (Client.IsAuthenticated && _config.AutoStartSession && (_session == null || !_session.IsActive))
+                    ResumeSessionOnConsentGranted();
+
+                return;
+            }
+
+            Client.Logger.LogInfo("Analytics consent revoked");
+
+            if (_session != null && _session.IsActive)
+                _session.Discard();
+
+            _initialized = false;
+        }
+
+        // Fire-and-forget resume: SetConsent is a synchronous API surface (matching every
+        // competitor's consent toggle), and StartSessionAsync already swallows registration
+        // failures internally, so nothing here can throw uncaught.
+        private async void ResumeSessionOnConsentGranted()
+        {
+            try
+            {
+                await StartSessionAsync();
+            }
+            catch (Exception ex)
+            {
+                Client.Logger.LogWarning($"Resuming session after consent grant failed: {ex.Message}");
+            }
+        }
+
+        // Local-only: purges the on-disk queue of events not yet delivered to Flock's
+        // backend, including crash/log events (gated by consent same as behavioral events —
+        // both carry player-identifiable data). Does not touch anything already ingested by
+        // the server — there's no backend endpoint that could do that from the client SDK today.
+        public void EraseLocalAnalyticsData()
+        {
+            _eventCache?.Clear();
+            _sessionEndCache?.Clear();
+            _logEventCache?.Clear();
+            Client.Logger.LogInfo("Local analytics data erased (queued events + session-end spool + log events)");
+        }
+
+        private bool ConsentGiven()
+        {
+            if (_hasConsent)
+                return true;
+
+            Client.Logger.LogWarning("Analytics consent not granted; call SetConsent(true) to enable tracking");
+            return false;
+        }
 
         public async Task InitializeAsync(CancellationToken cancellationToken = default)
         {
@@ -137,8 +209,7 @@ namespace Flock.Providers
 
             // Deliver unconfirmed ends from previous runs before a new session registers.
             // When offline, the spool drains on later flush triggers instead.
-            if (_sessionEndCache != null && _sessionEndCache.PendingCount > 0
-                && Application.internetReachability != NetworkReachability.NotReachable)
+            if (_sessionEndCache != null && _sessionEndCache.PendingCount > 0 && Application.internetReachability != NetworkReachability.NotReachable)
             {
                 Client.Logger.LogInfo($"Delivering {_sessionEndCache.PendingCount} pending session end(s)");
                 await FlushSessionEndsAsync(cancellationToken);
@@ -211,6 +282,9 @@ namespace Flock.Providers
         public async Task<string> StartSessionAsync(CancellationToken cancellationToken = default)
         {
             RequireAuth();
+
+            if (!ConsentGiven())
+                return null;
 
             if (_session == null)
             {
@@ -319,6 +393,9 @@ namespace Flock.Providers
 
         public void RecordScreenView(string screenName)
         {
+            if (!ConsentGiven())
+                return;
+
             if (_session == null || !_session.IsActive)
                 return;
 
@@ -343,6 +420,9 @@ namespace Flock.Providers
         {
             RequireAuth();
             RequireNotEmpty(eventName, "Event name");
+
+            if (!ConsentGiven())
+                return Task.CompletedTask;
 
             AnalyticsEventRequest request = new AnalyticsEventRequest
             {
@@ -468,6 +548,9 @@ namespace Flock.Providers
 
         private Task EnqueueAndSendLogAsync(LogEventRequest request, CancellationToken cancellationToken)
         {
+            if (!ConsentGiven())
+                return Task.CompletedTask;
+
             EnsureSerializable(request, "log_event");
             _logEventCache?.Enqueue(request);
             Client.Logger.LogDebug("Log event queued");

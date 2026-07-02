@@ -27,7 +27,10 @@ namespace Flock
                     GameObject go = new GameObject("FlockBehaviour");
                     go.hideFlags = HideFlags.HideInHierarchy | HideFlags.HideInInspector;
                     _instance = go.AddComponent<FlockBehaviour>();
-                    DontDestroyOnLoad(go);
+                    // DontDestroyOnLoad throws outside Play Mode (e.g. EditMode tests) — it's
+                    // meaningless there anyway since there's no scene-load to survive.
+                    if (Application.isPlaying)
+                        DontDestroyOnLoad(go);
                 }
 
                 return _instance;
@@ -72,7 +75,8 @@ namespace Flock
             }
 
             _instance = this;
-            DontDestroyOnLoad(gameObject);
+            if (Application.isPlaying)
+                DontDestroyOnLoad(gameObject);
         }
 
         private void Update()

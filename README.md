@@ -351,6 +351,23 @@ await FlockClient.Instance.Analytics.RecordTransactionAsync(new AnalyticsTransac
 FlockClient.Instance.Analytics.RecordScreenView("MainMenu");
 ```
 
+#### Consent
+
+By default, analytics behaves as it always has — collection runs once a player is authenticated. Turn on **Analytics Require Explicit Consent** (Qwacks > Flock, or `FlockAnalyticsConfig.RequireExplicitConsent`) for a real opt-in gate: no session, no event tracking, no device/FPS/screen-view capture until the game calls `SetConsent(true)`.
+
+```csharp
+FlockClient.Instance.Analytics.SetConsent(true);            // grant — starts/resumes the session
+FlockClient.Instance.Analytics.SetConsent(false);           // revoke — pauses; does not delete queued data
+FlockClient.Instance.Analytics.EraseLocalAnalyticsData();   // explicit purge of unsent local data
+
+FlockEvents.OnConsentChanged += granted => Debug.Log($"Consent: {granted}");
+```
+
+- The decision persists across launches — no need to call `SetConsent` again unless it changes.
+- `LogExceptionAsync`, `LogErrorAsync`, and `LogEventAsync` are gated the same as `TrackEventAsync`/sessions — they carry player-identifiable data too.
+- `RecordTransactionAsync` is the one exception — **not** gated by consent, since purchase records typically need to be retained for financial/tax reasons independent of tracking consent.
+- `EraseLocalAnalyticsData()` is local-only: it clears events, session-end records, and log/crash events queued on-device but not yet sent. It does not delete analytics already delivered to Flock's backend — there's no backend endpoint for that today.
+
 #### Events
 
 All SDK lifecycle events live on the static `FlockEvents` class (`using Flock;`). Key behaviors:

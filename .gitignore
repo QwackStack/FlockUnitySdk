@@ -71,5 +71,10 @@ graphify-out.meta
 # JetBrains Rider / IntelliJ
 .idea/
 
-# Maintainer-only docs (specs/plans) — kept local, not shipped. 
+# Maintainer-only docs (specs/plans) — kept local, not shipped.
 Documentation~/
+
+# Superpowers brainstorming/planning working docs — local scratch, not shipped
+docs/superpowers/
+docs/superpowers.meta
+docs.meta

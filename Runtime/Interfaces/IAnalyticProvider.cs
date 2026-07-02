@@ -124,5 +124,33 @@ namespace Flock.Interfaces
             string externalTransactionId = null,
             string currencyId = null,
             CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Whether the player has granted analytics consent. Always <c>true</c> unless
+        /// <see cref="Flock.Analytics.FlockAnalyticsConfig.RequireExplicitConsent"/> is on and
+        /// no decision has been recorded yet, or <see cref="SetConsent"/> has revoked it.
+        /// </summary>
+        bool HasConsent { get; }
+
+        /// <summary>
+        /// Grants or revokes analytics consent. Revoking pauses the active session (no final
+        /// session-end record is sent) and stops future session/event/log tracking — it does
+        /// not delete anything already queued; see <see cref="EraseLocalAnalyticsData"/> for
+        /// that. Persisted across launches. Idempotent. Does not affect
+        /// <c>RecordTransactionAsync</c>, which runs under a different legal basis than
+        /// consent (contract/financial-retention, not consent) — <c>LogExceptionAsync</c>,
+        /// <c>LogErrorAsync</c>, and <c>LogEventAsync</c> ARE gated, same as session/event
+        /// tracking, since they carry player-identifiable data too.
+        /// </summary>
+        void SetConsent(bool granted);
+
+        /// <summary>
+        /// Deletes analytics events, session-end records, and log/crash events queued
+        /// on-device but not yet sent to Flock's backend. Callable independent of
+        /// <see cref="HasConsent"/>. Local-only — this does not delete analytics already
+        /// ingested by the server for this player; there is currently no backend endpoint
+        /// that could do that from the client SDK.
+        /// </summary>
+        void EraseLocalAnalyticsData();
     }
 }

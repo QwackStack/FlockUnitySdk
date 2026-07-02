@@ -2,9 +2,13 @@ namespace Flock.Analytics
 {
     public class FlockAnalyticsConfig
     {
-        //Should be turned to false based on consent 
         //TODO add summary for all
         public bool Enabled { get; set; } = true;
+
+        // When true, no session/event tracking happens until SetConsent(true) is called at
+        // least once. When false (default), analytics behaves as it always has for backward
+        // compatibility; SetConsent(false) can still revoke it at runtime.
+        public bool RequireExplicitConsent { get; set; } = false;
         public bool AutoStartSession { get; set; } = true;
         public bool AutoEndSessionOnQuit { get; set; } = true;
         public float SessionTimeoutSeconds { get; set; } = 30f;

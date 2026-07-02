@@ -5,6 +5,19 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [1.23.0]
+
+### Added
+- **Analytics consent gate.** `FlockClient.Instance.Analytics` gains `HasConsent`, `SetConsent(bool)`, and `EraseLocalAnalyticsData()`. The switch gates session lifecycle (device/FPS/screen-view capture), behavioral event tracking, and log/crash events (`LogExceptionAsync`, `LogErrorAsync`, `LogEventAsync`) — all carry player-identifiable data. `RecordTransactionAsync` is the one exception, unaffected by consent, since purchase records typically need financial/tax retention independent of tracking consent. `FlockAnalyticsConfig.RequireExplicitConsent` (default `false`) switches between today's opt-out behavior (collection runs once authenticated, unchanged for existing integrations) and a real opt-in gate where no session/event/log tracking starts until the game calls `SetConsent(true)`. The decision persists across launches. New `FlockEvents.OnConsentChanged` event. `EraseLocalAnalyticsData()` is local-only — it clears events, session-end records, and log/crash events queued on-device but not yet sent; there's no backend endpoint yet to delete analytics already ingested by the server. Editor: new checkbox in Qwacks > Flock's Analytics section.
+- `FlockSession.Discard()` — internal session-stop path used by consent revoke; stops the session without spooling a final session-end record (distinct from `End()`/`Reset()`, which do).
+- **EditMode tests**: `FlockConsentStoreTests`, `FlockEventCacheClearTests` (first coverage for the existing, previously-unused `IEventCache<T>.Clear()`), `FlockSessionDiscardTests`, `FlockAnalyticsConsentTests`.
+
+### Fixed
+- `FlockBehaviour.Instance` called `DontDestroyOnLoad` unconditionally, which throws outside Play Mode — guarded with `Application.isPlaying`. Unmasked by the first EditMode tests to construct a live session; no behavior change in Play Mode.
+
+### Documentation
+- README: new "Consent" subsection under Analytics.
+
 ## [1.22.0]
 
 ### Added

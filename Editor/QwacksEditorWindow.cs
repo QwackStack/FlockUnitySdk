@@ -449,6 +449,8 @@ namespace Flock.Editor
                 analyticsExpanded = EditorGUILayout.Foldout(analyticsExpanded, "Analytics Settings", toggleOnLabelClick: true);
                 if (analyticsExpanded)
                 {
+                    DrawProperty("analyticsRequireExplicitConsent");
+                    GUILayout.Space(4);
                     DrawProperty("analyticsAutoStartSession");
                     DrawProperty("analyticsAutoEndOnQuit");
                     DrawProperty("analyticsSessionTimeout");
