@@ -79,6 +79,11 @@ namespace Flock
         /// <summary>The paused session resumed (app foregrounded).</summary>
         public static event Action OnSessionResumed;
 
+        //Consent
+
+        /// <summary>Analytics consent was granted or revoked via <c>Analytics.SetConsent</c>. Payload: the new state.</summary>
+        public static event Action<bool> OnConsentChanged;
+
         //Internal invokes
 
         internal static void InvokeInitialized()
@@ -141,6 +146,11 @@ namespace Flock
             Invoke(OnSessionResumed, nameof(OnSessionResumed));
         }
 
+        internal static void InvokeConsentChanged(bool granted)
+        {
+            Invoke(OnConsentChanged, granted, nameof(OnConsentChanged));
+        }
+
         //Cleanup
 
         /// <summary>Drops every subscription. Called by Shutdown and on play-session start with domain reload disabled.</summary>
@@ -158,6 +168,7 @@ namespace Flock
             OnSessionEnded = null;
             OnSessionPaused = null;
             OnSessionResumed = null;
+            OnConsentChanged = null;
         }
 
         // Mirrors FlockClient.ResetStaticState for disabled domain reload.

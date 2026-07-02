@@ -232,6 +232,29 @@ namespace Flock.Analytics
             return snapshot;
         }
 
+        // Consent-revoke path: stops the session locally without spooling/sending a final
+        // record — unlike End(), this does not invoke OnSessionEnded.
+        internal void Discard()
+        {
+            if (!_active)
+                return;
+
+            _sessionCts?.Cancel();
+            _sessionCts?.Dispose();
+            _sessionCts = null;
+
+            FinalizePause();
+
+            _active = false;
+            EndTimeUtc = DateTime.UtcNow;
+            EndRealtimeSinceStartup = Time.realtimeSinceStartup;
+
+            Unsubscribe();
+            ClearPersistedState();
+
+            _logger.LogInfo($"Session discarded (consent revoked): {SessionId}");
+        }
+
         internal void Reset(FlockSessionEndReason reason)
         {
             if (_active)

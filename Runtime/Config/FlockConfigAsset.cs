@@ -64,6 +64,9 @@ namespace Flock.Config
         [Tooltip("FPS sample interval in seconds")]
         public float analyticsFpsSampleInterval = 1f;
 
+        [Tooltip("Require the game to explicitly call Analytics.SetConsent(true) before any analytics collection starts (no session, no events, no device/FPS/screen-view capture). When OFF (default), analytics behaves as it does today - collecting once authenticated - until the game calls SetConsent(false). Turn ON for a real GDPR-style opt-in flow.")]
+        public bool analyticsRequireExplicitConsent = false;
+
         [Header("Analytics — Caching")]
         [Tooltip("Cache failed analytics events (including log_event) on disk and retry on the next session.")]
         public bool analyticsCacheFailedEvents = true;
@@ -150,6 +153,7 @@ namespace Flock.Config
                 PersistSessionOnDisk = analyticsPersistSession,
                 TrackFps = analyticsTrackFps,
                 FpsSampleIntervalSeconds = analyticsFpsSampleInterval,
+                RequireExplicitConsent = analyticsRequireExplicitConsent,
                 CacheFailedEvents = analyticsCacheFailedEvents,
                 MaxCachedEvents = analyticsMaxCachedEvents,
                 CacheFlushBatchSize = analyticsCacheFlushBatchSize,
