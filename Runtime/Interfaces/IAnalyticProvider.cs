@@ -53,61 +53,65 @@ namespace Flock.Interfaces
         
         // Not exposed to user until log_event/analytic clean up
         // /// <summary>
-        // /// Tracks a single analytics event. Persisted to cache, sent, removed on
-        // /// success. Events tracked before authentication are tagged with a
-        // /// placeholder player id and rewritten after login.
+        // /// Tracks a single analytics event. Enqueued to the on-disk cache; delivery
+        // /// happens on the flush triggers. Events tracked before authentication are
+        // /// tagged with a placeholder player id and rewritten after login.
         // /// </summary>
-        // Task TrackEventAsync(
+        // void TrackEvent(
         //     string eventName,
         //     string eventCategory = null,
-        //     Dictionary<string, object> parameters = null,
-        //     CancellationToken cancellationToken = default);
+        //     Dictionary<string, object> parameters = null);
 
         /// <summary>
         /// Captures an <see cref="Exception"/> as a <c>LogEventType.Exception</c>
-        /// log_event. Pulls message, stack trace, and traceback lines from the
-        /// exception itself; remaining fields default to client state.
+        /// log_event. Enqueue-only (synchronous, never blocks on network): delivery
+        /// happens later on the flush triggers (interval/pause/session end/login).
         /// </summary>
-        Task LogExceptionAsync(
+        void LogException(
             Exception exception,
             Dictionary<string, object> errorData = null,
-            Dictionary<string, object> extraData = null,
-            CancellationToken cancellationToken = default);
+            Dictionary<string, object> extraData = null);
 
         /// <summary>
         /// Captures a raw exception payload (message + stacktrace string) as a
         /// <c>LogEventType.Exception</c> log_event. Used by the global Unity
         /// exception handler where a typed <see cref="Exception"/> isn't available.
+        /// Enqueue-only; delivered on the flush triggers.
         /// </summary>
-        Task LogExceptionAsync(
+        void LogException(
             string message,
             string stackTrace,
             Dictionary<string, object> errorData = null,
-            Dictionary<string, object> extraData = null,
-            CancellationToken cancellationToken = default);
+            Dictionary<string, object> extraData = null);
 
         /// <summary>
         /// Captures a <c>LogEventType.LogicError</c> log_event. Same shape as
-        /// <see cref="LogEventAsync"/> — caller supplies whichever fields are
-        /// relevant; the rest are filled from client state or left empty.
+        /// <see cref="LogEvent"/> — caller supplies whichever fields are relevant.
+        /// Enqueue-only; delivered on the flush triggers.
         /// </summary>
-        Task LogErrorAsync(
+        void LogError(
             string message,
             string logicalExpression = null,
             string errorCode = null,
             string errorMessage = null,
             Dictionary<string, object> errorData = null,
-            Dictionary<string, object> extraData = null,
-            CancellationToken cancellationToken = default);
+            Dictionary<string, object> extraData = null);
 
         /// <summary>
         /// Captures a <c>LogEventType.Debug</c> log_event with a message plus any
-        /// of the optional diagnostic fields. The rest are filled from client state.
+        /// of the optional diagnostic fields. Enqueue-only; delivered on the flush triggers.
         /// </summary>
-        Task LogEventAsync(
+        void LogEvent(
             string message,
-            Dictionary<string, object> extraData = null,
-            CancellationToken cancellationToken = default);
+            Dictionary<string, object> extraData = null);
+
+        /// <summary>
+        /// Awaitable drain of everything queued (session ends, events, logs) — for the
+        /// rare "make sure it landed before X" moment. Automatic flushing (interval /
+        /// pause / session end / login) makes calling this optional. Transient failures
+        /// keep records queued for a later flush; never throws.
+        /// </summary>
+        Task FlushAsync(CancellationToken cancellationToken = default);
 
         /// <summary>
         /// Convenience overload that builds an <see cref="AnalyticsTransactionRequest"/>
@@ -138,8 +142,8 @@ namespace Flock.Interfaces
         /// not delete anything already queued; see <see cref="EraseLocalAnalyticsData"/> for
         /// that. Persisted across launches. Idempotent. Does not affect
         /// <c>RecordTransactionAsync</c>, which runs under a different legal basis than
-        /// consent (contract/financial-retention, not consent) — <c>LogExceptionAsync</c>,
-        /// <c>LogErrorAsync</c>, and <c>LogEventAsync</c> ARE gated, same as session/event
+        /// consent (contract/financial-retention, not consent) — <c>LogException</c>,
+        /// <c>LogError</c>, and <c>LogEvent</c> ARE gated, same as session/event
         /// tracking, since they carry player-identifiable data too.
         /// </summary>
         void SetConsent(bool granted);

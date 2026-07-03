@@ -58,32 +58,34 @@ namespace Flock.Providers
         //     return Task.CompletedTask;
         // }
 
-        public Task LogExceptionAsync(Exception exception, Dictionary<string, object> errorData = null,
-            Dictionary<string, object> extraData = null, CancellationToken cancellationToken = default)
+        public void LogException(Exception exception, Dictionary<string, object> errorData = null,
+            Dictionary<string, object> extraData = null)
         {
             this.Client.Logger.LogDebug("Analytics is disabled ,trying to log exception");
-            return Task.CompletedTask;
         }
 
-        public Task LogExceptionAsync(string message, string stackTrace, Dictionary<string, object> errorData = null,
-            Dictionary<string, object> extraData = null, CancellationToken cancellationToken = default)
+        public void LogException(string message, string stackTrace, Dictionary<string, object> errorData = null,
+            Dictionary<string, object> extraData = null)
         {
             this.Client.Logger.LogDebug("Analytics is disabled ,trying to log exception");
-            return Task.CompletedTask;
         }
 
-        public Task LogErrorAsync(string message, string logicalExpression = null, string errorCode = null,
+        public void LogError(string message, string logicalExpression = null, string errorCode = null,
             string errorMessage = null, Dictionary<string, object> errorData = null,
-            Dictionary<string, object> extraData = null, CancellationToken cancellationToken = default)
+            Dictionary<string, object> extraData = null)
         {
             this.Client.Logger.LogDebug("Analytics is disabled ,trying to log error");
-            return Task.CompletedTask;
         }
 
-        public Task LogEventAsync(string message, 
-            Dictionary<string, object> extraData = null, CancellationToken cancellationToken = default)
+        public void LogEvent(string message,
+            Dictionary<string, object> extraData = null)
         {
             this.Client.Logger.LogDebug("Analytics is disabled ,trying to log event");
+        }
+
+        public Task FlushAsync(CancellationToken cancellationToken = default)
+        {
+            this.Client.Logger.LogDebug("Analytics is disabled, FlushAsync is a no-op");
             return Task.CompletedTask;
         }
 

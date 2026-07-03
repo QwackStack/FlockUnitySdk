@@ -23,6 +23,7 @@ namespace Flock.Providers
         // retried until the server confirms them.
         private readonly IEventCache<FlockSessionSnapshot> _sessionEndCache;
         private FlockSession _session;
+        private readonly FlockTerminationTracker _terminationTracker;
         private bool _initialized;
         private bool _exceptionHookInstalled;
         private string _currentPlayerId;
@@ -42,6 +43,15 @@ namespace Flock.Providers
             // config's default policy (opt-out unless RequireExplicitConsent is on).
             bool? storedConsent = _consentStore.Load();
             _hasConsent = storedConsent ?? !_config.RequireExplicitConsent;
+
+            // Enabled is resolved once here so the tracker itself stays platform-agnostic and testable:
+            // needs disk persistence, and Editor/WebGL are excluded (Stop isn't a death; WebGL has no reliable lifecycle).
+            bool terminationTrackingEnabled = _config.PersistSessionOnDisk
+                && !Application.isEditor
+                && Application.platform != RuntimePlatform.WebGLPlayer;
+            _terminationTracker = new FlockTerminationTracker(client.Logger, terminationTrackingEnabled);
+            if (_config.PersistSessionOnDisk && Application.platform == RuntimePlatform.WebGLPlayer)
+                client.Logger.LogWarning("Termination tracking is disabled on WebGL (no reliable quit/pause lifecycle)");
         }
 
         private IEventCache<T> TryCreateCache<T>(FlockClient client, string subfolder, bool enabled) where T : class
@@ -97,6 +107,9 @@ namespace Flock.Providers
 
             if (_session != null && _session.IsActive)
                 _session.Discard();
+
+            // Discard deliberately skips OnSessionEnded, so the tombstone needs its own stop.
+            _terminationTracker.StopTracking();
 
             _initialized = false;
         }
@@ -186,6 +199,8 @@ namespace Flock.Providers
             _session.OnSessionEnded += HandleSessionEnded;
             _session.OnQuitFlush -= HandleQuitFlush;
             _session.OnQuitFlush += HandleQuitFlush;
+            _session.OnHeartbeat -= _terminationTracker.HandleHeartbeat;
+            _session.OnHeartbeat += _terminationTracker.HandleHeartbeat;
 
             FlockSessionSnapshot orphaned = _session.RecoverOrphanedSession();
             if (orphaned != null)
@@ -206,6 +221,8 @@ namespace Flock.Providers
                     await TrySendSessionEndAsync(orphaned, cancellationToken);
                 }
             }
+
+            EmitPendingTermination();
 
             // Deliver unconfirmed ends from previous runs before a new session registers.
             // When offline, the spool drains on later flush triggers instead.
@@ -267,11 +284,11 @@ namespace Flock.Providers
             _exceptionHookInstalled = false;
         }
 
-        private async void HandleGlobalException(string message, string stackTrace)
+        private void HandleGlobalException(string message, string stackTrace)
         {
             try
             {
-                await LogExceptionAsync(message, stackTrace).ConfigureAwait(false);
+                LogException(message, stackTrace);
             }
             catch (Exception ex)
             {
@@ -301,6 +318,7 @@ namespace Flock.Providers
             }
 
             string localId = _session.Start(Client.CurrentPlayerId ?? FlockConstant.DummyUserID);
+            _terminationTracker.BeginTracking(localId);
 
             string serverId = await TryRegisterSessionAsync(cancellationToken);
             return serverId ?? localId;
@@ -412,17 +430,17 @@ namespace Flock.Providers
         /// on interval / pause / session end thereafter. A console warning is logged on
         /// pre-auth calls but this method never throws for auth reasons.
         /// </summary>
-        private Task TrackEventAsync(
+        /// <returns>The cache enqueue handle, or null when consent is off, the cache is unavailable, or the write failed.</returns>
+        private string TrackEvent(
             string eventName,
             string eventCategory = null,
-            Dictionary<string, object> parameters = null,
-            CancellationToken cancellationToken = default)
+            Dictionary<string, object> parameters = null)
         {
             RequireAuth();
             RequireNotEmpty(eventName, "Event name");
 
             if (!ConsentGiven())
-                return Task.CompletedTask;
+                return null;
 
             AnalyticsEventRequest request = new AnalyticsEventRequest
             {
@@ -435,29 +453,27 @@ namespace Flock.Providers
             };
 
             EnsureSerializable(request, eventName);
-            _eventCache?.Enqueue(request);
+            string handle = _eventCache?.Enqueue(request);
             Client.Logger.LogDebug($"Event queued: {eventName}");
 
-            return Task.CompletedTask;
+            return handle;
         }
-        public Task LogExceptionAsync(
+        public void LogException(
             Exception exception,
             Dictionary<string, object> errorData = null,
-            Dictionary<string, object> extraData = null,
-            CancellationToken cancellationToken = default)
+            Dictionary<string, object> extraData = null)
         {
             if (exception == null)
-                return Task.CompletedTask;
+                return;
 
-            return LogExceptionAsync(exception.Message, exception.StackTrace, errorData, extraData, cancellationToken);
+            LogException(exception.Message, exception.StackTrace, errorData, extraData);
         }
 
-        public Task LogExceptionAsync(
+        public void LogException(
             string message,
             string stackTrace,
             Dictionary<string, object> errorData = null,
-            Dictionary<string, object> extraData = null,
-            CancellationToken cancellationToken = default)
+            Dictionary<string, object> extraData = null)
         {
             LogEventRequest request = BuildLogEvent(
                 LogEventType.Exception,
@@ -468,17 +484,16 @@ namespace Flock.Providers
                 errorData: errorData,
                 extraData: extraData);
 
-            return EnqueueAndSendLogAsync(request, cancellationToken);
+            EnqueueLog(request);
         }
 
-        public Task LogErrorAsync(
+        public void LogError(
             string message,
             string logicalExpression = null,
             string errorCode = null,
             string errorMessage = null,
             Dictionary<string, object> errorData = null,
-            Dictionary<string, object> extraData = null,
-            CancellationToken cancellationToken = default)
+            Dictionary<string, object> extraData = null)
         {
             LogEventRequest request = BuildLogEvent(
                 LogEventType.LogicError,
@@ -489,11 +504,11 @@ namespace Flock.Providers
                 errorData: errorData,
                 extraData: extraData);
 
-            return EnqueueAndSendLogAsync(request, cancellationToken);
+            EnqueueLog(request);
         }
 
-        public Task LogEventAsync(string message, 
-            Dictionary<string, object> extraData = null, CancellationToken cancellationToken = default)
+        public void LogEvent(string message,
+            Dictionary<string, object> extraData = null)
         {
             LogEventRequest request = BuildLogEvent(
                 LogEventType.Debug,
@@ -504,7 +519,7 @@ namespace Flock.Providers
                 errorData: null,
                 extraData: extraData);
 
-            return EnqueueAndSendLogAsync(request, cancellationToken);
+            EnqueueLog(request);
         }
 
         private LogEventRequest BuildLogEvent(
@@ -546,15 +561,15 @@ namespace Flock.Providers
             return new List<string>(lines);
         }
 
-        private Task EnqueueAndSendLogAsync(LogEventRequest request, CancellationToken cancellationToken)
+        // Enqueue only — delivery happens on the flush triggers (interval/pause/end/login).
+        private void EnqueueLog(LogEventRequest request)
         {
             if (!ConsentGiven())
-                return Task.CompletedTask;
+                return;
 
             EnsureSerializable(request, "log_event");
             _logEventCache?.Enqueue(request);
             Client.Logger.LogDebug("Log event queued");
-            return Task.CompletedTask;
         }
 
         // Kept as an escape hatch for ad-hoc, critical sends that must bypass the buffer.
@@ -717,6 +732,17 @@ namespace Flock.Providers
             }
         }
 
+        /// <summary>
+        /// Awaitable drain of everything queued (session ends, events, logs) to the server
+        /// now, instead of waiting for the next flush trigger. The one real await in the
+        /// tracking surface — resolves when the send attempts finish. Transient failures
+        /// keep records queued for a later flush; never throws.
+        /// </summary>
+        public Task FlushAsync(CancellationToken cancellationToken = default)
+        {
+            return FlushAllAsync(cancellationToken);
+        }
+
         private async Task FlushAllAsync(CancellationToken token)
         {
             // Session ends first: rare, small, and the most important record — the quit
@@ -777,7 +803,7 @@ namespace Flock.Providers
 
         /// <summary>
         /// Records a monetary transaction. <b>Requires an authenticated session</b> — unlike
-        /// <see cref="TrackEventAsync"/> this is sent immediately and is not queued, so pre-auth
+        /// <see cref="TrackEvent"/> this is sent immediately and is not queued, so pre-auth
         /// calls will fail with a 401 from the server. Call after a successful
         /// <see cref="FlockAuthProvider"/> login.
         /// </summary>
@@ -841,7 +867,7 @@ namespace Flock.Providers
 
                 FlockSessionSnapshot snapshot = _session.TakeSnapshot();
 
-                await TrackEventAsync(
+                TrackEvent(
                     "sdk_heartbeat",
                     "system",
                     new Dictionary<string, object>
@@ -850,8 +876,7 @@ namespace Flock.Providers
                         { "screens_viewed", snapshot.ScreensViewed },
                         { "average_fps", snapshot.AverageFps },
                         { "pause_count", snapshot.PauseCount }
-                    },
-                    token);
+                    });
             }
             catch (OperationCanceledException)
             {
@@ -871,11 +896,54 @@ namespace Flock.Providers
         // is cleared. A logout end delivers on the next login's drain.
         private void HandleSessionEnded(FlockSessionSnapshot snapshot)
         {
+            // Every clean end path lands here — the tombstone must go before any early return.
+            _terminationTracker.StopTracking();
+
             if (_sessionEndCache == null)
                 return;
 
             _sessionEndCache.Enqueue(snapshot);
             Client.Logger.LogDebug($"Session end spooled: {snapshot.SessionId}");
+        }
+
+        // Next-launch => an existing marker means the previous run died without
+        // Unity's quit path. Classified lifecycle-only and sent as a
+        // normal analytics event so consent/spool/retry are there.
+        private void EmitPendingTermination()
+        {
+            FlockTerminationMarker marker = _terminationTracker.ReadSurvivingMarker();
+            if (marker == null)
+                return;
+
+            // No cache means the event could never be delivered; no consent means the data
+            // must be discarded. Either way, drop the marker instead of retrying.
+            if (_eventCache == null || !_hasConsent)
+            {
+                _terminationTracker.ClearMarker();
+                return;
+            }
+
+            Dictionary<string, object> properties = new Dictionary<string, object>
+            {
+                { "previous_session_id", marker.SessionId },
+                { "classification", FlockTerminationTracker.Classify(marker) },
+                { "last_alive_at", marker.LastAliveUtc.ToString("o") },
+                { "unhandled_exception_count", marker.ExceptionCount },
+                { "app_version", Application.version },
+                { "sdk_version", FlockSdkVersion.Current }
+            };
+
+            string handle = TrackEvent(FlockTerminationTracker.EventName, "session", properties);
+            if (handle != null)
+            {
+                // Clear only after the durable enqueue — a failed write retries next launch.
+                _terminationTracker.ClearMarker();
+                Client.Logger.LogInfo($"Previous run terminated dirty ({properties["classification"]}); app_termination queued for session {marker.SessionId}");
+            }
+            else
+            {
+                Client.Logger.LogWarning("app_termination enqueue failed; marker kept for retry next launch");
+            }
         }
 
         // Quit path: the end is already spooled by HandleSessionEnded. Best-effort delivery

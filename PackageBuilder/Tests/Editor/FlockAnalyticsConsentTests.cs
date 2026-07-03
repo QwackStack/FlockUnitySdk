@@ -183,20 +183,19 @@ namespace Flock.Tests.Editor
             client.Analytics.EraseLocalAnalyticsData();
         }
 
-        // LogExceptionAsync/LogErrorAsync/LogEventAsync are gated the same as TrackEventAsync
-        // (soft no-op via RequireConsent, not a throw). Unlike TrackEventAsync, these are public
-        // on IAnalyticProvider, so we can call them directly here — but _logEventCache is still
-        // private, so (same limitation as _eventCache) this only proves the call is safe with
-        // no consent, not that nothing was enqueued; that part is verified by code inspection of
-        // EnqueueAndSendLogAsync's RequireConsent() guard.
+        // LogException/LogError/LogEvent are gated the same as TrackEvent (soft no-op, not a
+        // throw). Unlike TrackEvent, these are public on IAnalyticProvider, so we can call them
+        // directly here — but _logEventCache is still private, so (same limitation as
+        // _eventCache) this only proves the call is safe with no consent, not that nothing was
+        // enqueued; that part is verified by code inspection of EnqueueLog's consent guard.
         [Test]
         public void LogMethods_NoConsent_DoNotThrow()
         {
             FlockClient client = CreateClient(requireExplicitConsent: true);
 
-            Assert.DoesNotThrowAsync(() => client.Analytics.LogEventAsync("test event"));
-            Assert.DoesNotThrowAsync(() => client.Analytics.LogExceptionAsync("boom", "at Foo.Bar()"));
-            Assert.DoesNotThrowAsync(() => client.Analytics.LogErrorAsync("bad state"));
+            Assert.DoesNotThrow(() => client.Analytics.LogEvent("test event"));
+            Assert.DoesNotThrow(() => client.Analytics.LogException("boom", "at Foo.Bar()"));
+            Assert.DoesNotThrow(() => client.Analytics.LogError("bad state"));
         }
 
         // The one deliberate exclusion: unaffected by consent regardless of state, since
@@ -215,9 +214,18 @@ namespace Flock.Tests.Editor
             FlockClient client = CreateClient(requireExplicitConsent: true);
             client.Analytics.SetConsent(true);
 
-            Assert.DoesNotThrowAsync(() => client.Analytics.LogEventAsync("test event"));
-            Assert.DoesNotThrowAsync(() => client.Analytics.LogExceptionAsync("boom", "at Foo.Bar()"));
-            Assert.DoesNotThrowAsync(() => client.Analytics.LogErrorAsync("bad state"));
+            Assert.DoesNotThrow(() => client.Analytics.LogEvent("test event"));
+            Assert.DoesNotThrow(() => client.Analytics.LogException("boom", "at Foo.Bar()"));
+            Assert.DoesNotThrow(() => client.Analytics.LogError("bad state"));
+        }
+
+        // Locks the never-throws contract: empty caches resolve immediately, no consent needed.
+        [Test]
+        public void FlushAsync_NoConsent_DoesNotThrow()
+        {
+            FlockClient client = CreateClient(requireExplicitConsent: true);
+
+            Assert.DoesNotThrowAsync(() => client.Analytics.FlushAsync());
         }
 
         [Test]

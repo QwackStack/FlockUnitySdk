@@ -74,3 +74,7 @@ Every API request includes these headers:
 | Record Transaction | `POST /v1/analytics/transactions` | Bearer |
 | Log Events Batch | `POST /v1/log_event` | API Key |
 | Log Event | `POST /v1/log_event/single` | API Key |
+
+Reserved event names on the events endpoints (no dedicated route): `app_termination` (next-launch
+dirty-exit report, category `session`, dedupe on `previous_session_id`), `sdk_heartbeat` (category
+`system`).

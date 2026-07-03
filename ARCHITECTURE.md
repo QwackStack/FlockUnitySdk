@@ -52,6 +52,7 @@ PackageBuilder/Tests/Editor/   EditMode tests (asmdef Flock.Tests.Editor)
 ## Runtime/Analytics
 - **FlockSession** — tracks the current play session (start/end/ids).
 - **FlockSessionSnapshot** — persisted session state for quit/crash recovery.
+- **FlockTerminationTracker** — next-launch dirty-exit detection: tombstone marker in PlayerPrefs, lifecycle-only classifier, emits `app_termination` via the event pipeline. · **FlockTerminationMarker** — the persisted tombstone model.
 - **FlockEventCache** / **IEventCache** — queues events for batch + offline send.
 - **FlockAnalyticsConfig** — batch/flush tunables. · **FlockDeviceInfo** — device/platform metadata.
 

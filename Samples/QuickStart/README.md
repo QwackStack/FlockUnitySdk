@@ -14,7 +14,7 @@ analytics event, and read your player data.
 
 - Device login — `FlockClient.Instance.Authentication.LoginWithDeviceAsync(...)`
 - The authenticated player — `CurrentPlayerId`, `CurrentSessionId`
-- A test analytics event — `Analytics.LogEventAsync(...)`
+- A test analytics event — `Analytics.LogEvent(...)`
 - Reading player data — `Player.GetAllDataAsync()`
 
 ## What it doesn't show
