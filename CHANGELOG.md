@@ -5,6 +5,25 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [1.24.0]
+
+### Added
+- **Unexpected-termination detection.** If the previous run died without a clean quit (crash, hang force-kill, foreground OOM, power loss), the SDK detects it on the next launch and queues one `app_termination` analytics event: `previous_session_id`, `classification` (`background_kill` = died while backgrounded — OS eviction / swipe-close; `abnormal` = died foregrounded without Unity's quit path), `last_alive_at`, `unhandled_exception_count` (context only — an unhandled managed exception does not crash a Unity app, so it never drives classification), `app_version`, `sdk_version`. Implemented as a tombstone marker in PlayerPrefs owned by the new internal `FlockTerminationTracker` — `FlockSession` and its wire payloads are untouched. Alt-F4 / window close is a clean exit (no event); mobile swipe-close reports `background_kill` (the app switcher backgrounds the app first). Requires `PersistSessionOnDisk`; disabled in the Editor and on WebGL; consent-gated like all analytics. The marker clears only after the event's durable enqueue, so a failed write retries next launch.
+- **`Analytics.FlushAsync(ct)`.** Awaitable drain of everything queued (session ends first, then events, then logs) for the rare "make sure it landed before X" moment — the one real await in the tracking surface. Automatic flushing (interval/pause/session end/login) makes calling it optional. Transient failures keep records queued; never throws.
+- **EditMode tests**: `FlockTerminationTrackerTests` (classifier matrix, marker round-trip, malformed-marker tolerance, lifecycle persistence); `FlockAnalyticsConsentTests` gained `FlushAsync_NoConsent_DoesNotThrow` and moved the log-method assertions to the new sync API.
+
+### Changed
+- **BREAKING: enqueue-only log APIs are now synchronous.** `LogExceptionAsync` (both overloads) → `LogException`, `LogErrorAsync` → `LogError`, `LogEventAsync` → `LogEvent` — all `void`, `CancellationToken` parameters removed. These methods only ever wrote to the on-disk queue; the old `await` resolved on enqueue, not on delivery, which read as a false server acknowledgment. This matches the fire-and-forget convention of GameAnalytics / Firebase / Unity Analytics; delivery still happens on the flush triggers, and `FlushAsync` is the explicit await when delivery matters. Migration: drop the `await` and the `Async` suffix at each call site.
+- The internal tracking path follows suit: `TrackEventAsync` → private `TrackEvent` (returns the cache enqueue handle), `EnqueueAndSendLogAsync` → `EnqueueLog`, and the global Unity exception handler is a plain sync handler instead of `async void`.
+
+### Fixed
+- **Version drift.** `package.json` stayed at `1.19.0` while releases `1.20.0`–`1.23.0` shipped (changelog numbering was correct; the manifest bump was skipped four times). Realigned: `package.json` and `FlockSdkVersion.Current` now both say `1.24.0`. The bump-together-in-one-commit rule now genuinely includes the changelog entry as the third leg.
+
+### Documentation
+- README Analytics section rewritten around the real public surface: sync log examples, the new `FlushAsync`, and a new "Unexpected-termination detection" subsection. Removed `TrackEventAsync`/`TrackEventsAsync` examples — those methods were never public (commented out in `IAnalyticProvider` pending the analytics cleanup), so the examples couldn't compile for a consumer.
+- [ARCHITECTURE.md](ARCHITECTURE.md): `FlockTerminationTracker` / `FlockTerminationMarker` entries under Runtime/Analytics.
+- QuickStart sample and its README updated to the sync `LogEvent` (status line now says "queued", which is the truth the old await obscured).
+
 ## [1.23.0]
 
 ### Added

@@ -48,7 +48,7 @@ namespace Flock.Samples
                 GUILayout.Space(6f);
 #if !FLOCK_NO_ANALYTICS
                 if (GUILayout.Button("Fire test event"))
-                    FireTestEventAsync();
+                    FireTestEvent();
 #endif
 #if !FLOCK_NO_PLAYER
                 if (GUILayout.Button("Read my player data"))
@@ -83,22 +83,16 @@ namespace Flock.Samples
         }
 
 #if !FLOCK_NO_ANALYTICS
-        private async void FireTestEventAsync()
+        private void FireTestEvent()
         {
-            _busy = true;
-            _status = "Sending test event...";
             try
             {
-                await FlockClient.Instance.Analytics.LogEventAsync("Hello from the Flock quick-start sample");
-                _status = "Test event sent.";
+                FlockClient.Instance.Analytics.LogEvent("Hello from the Flock quick-start sample");
+                _status = "Test event queued (delivered on the next flush).";
             }
             catch (Exception ex)
             {
                 _status = "Event failed: " + ex.Message;
-            }
-            finally
-            {
-                _busy = false;
             }
         }
 #endif
