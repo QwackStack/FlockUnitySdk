@@ -397,7 +397,7 @@ namespace Flock.Editor
                     if (relative == "package.json") return true;
                     if (relative == "package.json.meta") return true;
                     if (relative == "CHANGELOG.md") return true;
-                    if (relative == "LICENSE") return true;
+                    if (relative == "LICENSE.md") return true;
                     if (relative == "README.md") return true;
 
                     return false;
@@ -466,7 +466,7 @@ namespace Flock.Editor
         private IEnumerable<string> EnumerateSourceFilesRelative(string sourceRoot, HashSet<string> excludedRelpaths, HashSet<string> excludedFolders)
         {
             // Whitelisted top-level files (and their .meta companions).
-            string[] rootFiles = { "package.json", "CHANGELOG.md", "LICENSE", "README.md" };
+            string[] rootFiles = { "package.json", "CHANGELOG.md", "LICENSE.md", "README.md" };
             foreach (string f in rootFiles)
             {
                 if (File.Exists(Path.Combine(sourceRoot, f))) yield return f;
