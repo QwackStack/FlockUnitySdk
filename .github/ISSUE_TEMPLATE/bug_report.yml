@@ -1,0 +1,67 @@
+name: Bug report
+description: Report a problem with the Flock Unity SDK
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the bug.
+      placeholder: What did you do, and what went wrong?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Call FlockClient.Create(config)
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: input
+    id: sdk-version
+    attributes:
+      label: SDK version
+      description: Package version shown in the Unity Package Manager.
+      placeholder: "1.24.0"
+    validations:
+      required: true
+  - type: input
+    id: unity-version
+    attributes:
+      label: Unity version
+      placeholder: "2022.3.10f1"
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      multiple: true
+      options:
+        - Editor (Windows)
+        - Editor (macOS)
+        - Android
+        - iOS
+        - Windows Standalone
+        - macOS Standalone
+        - Linux
+        - WebGL
+        - Console
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant console output
+      description: Errors or warnings from the Unity console. Automatically formatted as code.
+      render: shell

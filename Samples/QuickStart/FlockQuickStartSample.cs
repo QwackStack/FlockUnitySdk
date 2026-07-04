@@ -26,7 +26,7 @@ namespace Flock.Samples
             {
                 GUILayout.Label(
                     "Flock is not initialized.\n\n" +
-                    "Add a FlockBootstrap to the scene (Qwacks > Flock -> " +
+                    "Add a FlockBootstrap to the scene (Flock > Settings -> " +
                     "\"Add Flock Bootstrap to Scene\"), fill in your FlockConfig, then press Play.");
                 GUILayout.EndArea();
                 return;

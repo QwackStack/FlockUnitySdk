@@ -21,7 +21,7 @@ namespace Flock.Editor
             if (!string.Equals(generated, bakedGameVersionId))
                 Debug.LogWarning(
                     $"[Flock] Generated schemas were synced for game_version_id='{generated}' but the " +
-                    $"baked Game Version ID is '{bakedGameVersionId}'. Re-sync from the Codegen tab in Qwacks > Flock.");
+                    $"baked Game Version ID is '{bakedGameVersionId}'. Re-sync from the Codegen tab in Flock > Settings.");
         }
 
         /// <summary>The Game Version ID the generated <c>SchemasManifest</c> was synced for, or null if codegen hasn't run.</summary>

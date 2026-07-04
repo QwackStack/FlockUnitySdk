@@ -26,7 +26,7 @@ namespace Flock
             {
                 Debug.LogError(
                     $"[Flock] Auto-Initialize On Load is enabled but FlockConfig is incomplete: {validationError}. " +
-                    "Open Qwacks > Flock to fix it, or turn off Auto-Initialize On Load.");
+                    "Open Flock > Settings to fix it, or turn off Auto-Initialize On Load.");
                 return;
             }
 

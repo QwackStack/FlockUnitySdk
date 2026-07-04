@@ -4,7 +4,7 @@ using UnityEngine;
 namespace Flock.Editor
 {
     /// <summary>
-    /// Pops the Qwacks/Flock editor window the first time the SDK is imported
+    /// Pops the Flock/Settings editor window the first time the SDK is imported
     /// into a project. The "shown" flag is keyed by project path in EditorPrefs,
     /// so each project gets exactly one welcome regardless of how many times the
     /// SDK is reimported. Users who close the window won't see it auto-reopen.

@@ -32,7 +32,7 @@ namespace Flock.Editor
                 Debug.LogWarning(
                     "[Flock] Auto-Initialize On Load is off and no FlockBootstrap is in the open scene(s), so the SDK " +
                     "won't initialize. If you call FlockClient.Create() from your own startup code that's fine — otherwise " +
-                    "open Qwacks > Flock and click 'Add to Scene', or turn Auto-Initialize On Load back on.");
+                    "open Flock > Settings and click 'Add to Scene', or turn Auto-Initialize On Load back on.");
                 return;
             }
 

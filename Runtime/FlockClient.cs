@@ -125,7 +125,7 @@ namespace Flock
 
                 if (string.IsNullOrEmpty(client._initConfig.GameVersionId))
                     throw new FlockValidationException(
-                        "Game Version not resolved. Open Qwacks > Flock while online to resolve your " +
+                        "Game Version not resolved. Open Flock > Settings while online to resolve your " +
                         "Game Version, then rebuild. The Game Version ID is baked into FlockConfig at " +
                         "edit time — runtime init never contacts the server.");
 

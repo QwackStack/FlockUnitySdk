@@ -43,15 +43,16 @@ namespace Flock.Editor
         private const string PackageName = "com.flock.sdk";
 
         // SDK-maintainer-only files. Excluded from every build regardless of provider
-        // selection — consumers shouldn't see the Package Builder UI or the Qwacks/Package
-        // Builder menu item, and the manifest is only useful to the builder itself.
+        // selection — consumers shouldn't see the Package Builder UI or the Qwacks Dev
+        // menu, and the manifest is only useful to the builder itself.
         private static readonly string[] BuilderInternalFiles =
         {
             "Editor/FlockPackageBuilder.cs",
             "Editor/FlockProviderManifest.cs",
         };
 
-        [MenuItem("Qwacks/Package Builder")]
+        // Maintainer tooling lives under Qwacks Dev; the consumer-facing SDK stays under Qwacks.
+        [MenuItem("Qwacks Dev/Package Builder")]
         public static void ShowWindow()
         {
             var window = GetWindow<FlockPackageBuilder>("Flock Package Builder");

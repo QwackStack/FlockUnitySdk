@@ -64,11 +64,11 @@ namespace Flock.Editor
         private GUIStyle cardStyle;
         private GUIStyle logoPlaceholderStyle;
 
-        [MenuItem("Qwacks/Flock")]
+        [MenuItem("Flock/Settings")]
         public static void ShowWindow()
         {
             var window = GetWindow<QwacksEditorWindow>();
-            window.titleContent = new GUIContent("Qwacks", EditorGUIUtility.IconContent("d_SettingsIcon").image);
+            window.titleContent = new GUIContent("Flock", EditorGUIUtility.IconContent("d_SettingsIcon").image);
             window.minSize = new Vector2(520, 640);
             window.Show();
         }

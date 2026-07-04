@@ -25,7 +25,7 @@ namespace Flock.Config
         [Tooltip(
             "Game Version ID, resolved from the dashboard at edit time and baked here. " +
             "Runtime init uses this directly and never contacts the server. Resolved " +
-            "automatically in Qwacks > Flock when you change your credentials or version.")]
+            "automatically in Flock > Settings when you change your credentials or version.")]
         public string gameVersionId;
 
         [Header("Codegen")]
@@ -199,7 +199,7 @@ namespace Flock.Config
             {
                 Debug.LogWarning(
                     $"[Flock Config] gameVersion changed ('{_lastSeenGameVersion}' → '{gameVersion}'). " +
-                    "Re-sync from the Codegen tab in Qwacks > Flock.");
+                    "Re-sync from the Codegen tab in Flock > Settings.");
                 _lastSeenGameVersion = gameVersion;
             }
         }

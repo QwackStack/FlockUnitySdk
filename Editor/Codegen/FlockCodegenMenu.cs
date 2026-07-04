@@ -209,7 +209,7 @@ namespace Flock.Editor.Codegen
             string[] guids = AssetDatabase.FindAssets("t:FlockConfigAsset");
             if (guids == null || guids.Length == 0)
             {
-                error = "No FlockConfigAsset found. Open Qwacks > Flock and save a configuration first.";
+                error = "No FlockConfigAsset found. Open Flock > Settings and save a configuration first.";
                 return false;
             }
 

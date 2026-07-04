@@ -38,7 +38,7 @@ The Flock Unity SDK provides access to Flock's game backend services from Unity 
 - Automatic retry with exponential backoff
 - Offline-safe init (no network at startup) — plus disk-cached static content that keeps serving without network after one online session
 - JWT token management
-- Strongly typed codegen for player templates, game configs, and game commands (via the Codegen tab in **Qwacks > Flock**)
+- Strongly typed codegen for player templates, game configs, and game commands (via the Codegen tab in **Flock > Settings**)
 - Hands-off startup — the SDK auto-initializes from your config at launch (or use the drop-in `FlockBootstrap` component, or call `Create` yourself)
 
 ## Installation
@@ -58,7 +58,7 @@ The SDK is distributed through the Flock website — download the latest release
 
 ### Editor Configuration
 
-Open **Qwacks > Flock** in the Unity menu bar. The window is a view of the `FlockConfig` ScriptableObject — edits save straight into the asset (no separate Save step). Required values:
+Open **Flock > Settings** in the Unity menu bar. The window is a view of the `FlockConfig` ScriptableObject — edits save straight into the asset (no separate Save step). Required values:
 
 - **API URL** — Flock API endpoint (default: `https://api-flock.qwacks.com`)
 - **API Key** — Your Flock API key
@@ -79,7 +79,7 @@ FlockEvents.OnInitialized     += ()       => Debug.Log("Flock SDK ready");
 FlockEvents.OnSessionRestored += signedIn => Debug.Log(signedIn ? "Session resumed" : "Show login");
 ```
 
-To drive init yourself — e.g. to defer past a splash screen or EULA — turn **Auto-Initialize On Load** off (Qwacks > Flock → Advanced Settings → Tools), then use one of the options below.
+To drive init yourself — e.g. to defer past a splash screen or EULA — turn **Auto-Initialize On Load** off (Flock > Settings → Advanced Settings → Tools), then use one of the options below.
 
 > **Init is fail-fast.** A bad config makes `Create` throw (the auto-init path catches and logs it instead of crashing startup). Either way the SDK stays uninitialized and `FlockClient.Instance` throws until a successful init — so guard with `FlockClient.IsInitialized`, inspect `FlockClient.InitializationError`, or handle `FlockEvents.OnInitializationFailed`.
 
@@ -112,7 +112,7 @@ For full manual control, turn **Auto-Initialize On Load** off and create the cli
 var configAsset = Resources.Load<FlockConfigAsset>("FlockConfig");
 
 // Create is synchronous and makes no network call. The Game Version ID was
-// resolved at edit time (Qwacks > Flock) and baked into FlockConfig, applied
+// resolved at edit time (Flock > Settings) and baked into FlockConfig, applied
 // to every request; init stores the singleton in FlockClient.Instance.
 FlockClient.Create(configAsset.ToInitConfig());
 
@@ -201,7 +201,7 @@ bool refreshed = await FlockClient.Instance.RefreshTokenAsync();
 ### Services
 
 ```csharp
-// Game configuration — accessed through codegen. The Codegen tab (Qwacks > Flock) emits one
+// Game configuration — accessed through codegen. The Codegen tab (Flock > Settings) emits one
 // Get<ConfigName>Async() per config returning a generated typed class. Each resolves the current
 // game version's patch values, falling back to the config's own data when no patch exists.
 var currency = await FlockClient.Instance.Config.GetCurrencyAsync();   // generated
@@ -348,7 +348,7 @@ FlockClient.Instance.Analytics.RecordScreenView("MainMenu");
 
 #### Consent
 
-By default, analytics behaves as it always has — collection runs once a player is authenticated. Turn on **Analytics Require Explicit Consent** (Qwacks > Flock, or `FlockAnalyticsConfig.RequireExplicitConsent`) for a real opt-in gate: no session, no event tracking, no device/FPS/screen-view capture until the game calls `SetConsent(true)`.
+By default, analytics behaves as it always has — collection runs once a player is authenticated. Turn on **Analytics Require Explicit Consent** (Flock > Settings, or `FlockAnalyticsConfig.RequireExplicitConsent`) for a real opt-in gate: no session, no event tracking, no device/FPS/screen-view capture until the game calls `SetConsent(true)`.
 
 ```csharp
 FlockClient.Instance.Analytics.SetConsent(true);            // grant — starts/resumes the session
@@ -447,7 +447,7 @@ Reads are snapshotted to disk and served when the server is unreachable, after a
 
 ## Codegen
 
-Run **Sync Schemas** from the Codegen tab in **Qwacks > Flock** to fetch your game's player templates and game configs from the backend and generate typed C# accessors. Output goes to `Assets/Flock/Generated/` by default; change the path on the FlockConfig asset if you want it elsewhere. Treat the folder as Flock-owned — sync wipes the `Templates/`, `Commands/`, `Configs/`, and `Catalog/` subdirectories on each run, and **Delete Generated Code** clears the whole tree.
+Run **Sync Schemas** from the Codegen tab in **Flock > Settings** to fetch your game's player templates and game configs from the backend and generate typed C# accessors. Output goes to `Assets/Flock/Generated/` by default; change the path on the FlockConfig asset if you want it elsewhere. Treat the folder as Flock-owned — sync wipes the `Templates/`, `Commands/`, `Configs/`, and `Catalog/` subdirectories on each run, and **Delete Generated Code** clears the whole tree.
 
 **For designers:** each sync also writes `Generated/Catalog/FlockContentCatalog.asset` — a read-only ScriptableObject you can select in the Project view to browse every shop (items, prices, currency), game config (fields and current values), and player template (fields) in the Inspector, no code or dashboard login needed. It's regenerated on every sync, so it always mirrors the backend. (Editor-only; it's never referenced at runtime and is stripped from player builds. CI/headless syncs skip it.)
 

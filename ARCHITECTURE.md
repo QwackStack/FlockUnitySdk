@@ -71,7 +71,7 @@ Plain serializable DTOs mirroring backend wire shapes — auth, analytics, shop,
 - **Constants/FlockConstant** — shared constants. · **Docs/FlockSdkGuide** — in-editor Getting-Started text.
 
 ## Editor/
-- **QwacksEditorWindow** — main editor window (**Qwacks > Flock**); the config asset is the source of truth.
+- **QwacksEditorWindow** — main editor window (**Flock > Settings**); the config asset is the source of truth.
 - **FlockConfigLocator** — single source for "which FlockConfig asset".
 - **FlockVersionResolver** — bakes Game-Version name→id at edit time so runtime init needs no network.
 - **FlockPlayModeGuard** / **FlockBuildGuard** — block Play / build when the SDK is unset or schemas drifted.
