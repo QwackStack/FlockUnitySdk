@@ -27,7 +27,7 @@ PackageBuilder/Tests/Editor/   EditMode tests (asmdef Flock.Tests.Editor)
 - **FlockSdkVersion** — SDK version string. · **FlockUtil** — on-disk token/file paths.
 
 ## Runtime/Providers
-- **FlockAuthProvider** — login / register / token refresh / session restore.
+- **FlockAuthProvider** — login / register / token refresh + revoke / session restore / password reset / email verification / name preflight.
 - **PlayerProvider** — player templates + player data (incl. by-name).
 - **FlockConfigProvider** — game configs & patches (incl. by-name).
 - **FlockGameProvider** — game + game-version lookups (incl. by-name).
@@ -39,6 +39,7 @@ PackageBuilder/Tests/Editor/   EditMode tests (asmdef Flock.Tests.Editor)
 
 ## Runtime/Http
 - **FlockHttpClient** — static GET/POST/… facade; maps status→exception, parses error code.
+- **FlockEndpoints** — every relative API path the SDK calls (consts + parameterized builders); no raw path literals at call sites.
 - **FlockProviderBase** — base class for providers; shared fetch + snapshot + validate helpers.
 - **IFlockHttpAdapter** — per-platform transport seam; `FlockHttpRequest`/`FlockHttpResponse`/`FlockHttpResult` normalize it.
 - **SystemNetHttpAdapter** (non-WebGL) / **UnityWebRequestHttpAdapter** (WebGL) — transport impls.

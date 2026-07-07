@@ -89,7 +89,7 @@ namespace Flock.Providers
             return await ExecuteAsync(async () =>
             {
                 GenericResponse<PlayerData> response = await FlockHttpClient.GetAsync<GenericResponse<PlayerData>>(
-                    $"{Client.GetVersionedApiUrl()}/player_data/{playerDataId}", Client.GetBaseHeaders(), cancellationToken);
+                    $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.PlayerDataById(playerDataId)}", Client.GetBaseHeaders(), cancellationToken);
                 ValidateResponse(response);
                 return response.Result;
             }, $"Fetch player data {playerDataId}", cancellationToken);
@@ -99,7 +99,7 @@ namespace Flock.Providers
         {
             return await ExecuteAsync(async () =>
             {
-                string url = $"{Client.GetVersionedApiUrl()}/player_data?page={page}&limit={limit}";
+                string url = $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.PlayerData}?page={page}&limit={limit}";
                 if (!string.IsNullOrEmpty(playerId))
                     url += $"&player_id={playerId}";
 
@@ -126,7 +126,7 @@ namespace Flock.Providers
                 List<PlayerTemplateSchema> templates = await FetchWithSnapshotAsync(
                     SnapshotCategory, "all", async () =>
                     {
-                        string url = $"{Client.GetVersionedApiUrl()}/player_template";
+                        string url = $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.PlayerTemplate}";
                         GenericResponse<List<PlayerTemplateSchema>> response = await FlockHttpClient.GetAsync<GenericResponse<List<PlayerTemplateSchema>>>(
                             url, Client.GetBaseHeaders(), cancellationToken);
                         ValidateResponse(response);
@@ -152,7 +152,7 @@ namespace Flock.Providers
 
             return await ExecuteAsync(async () =>
             {
-                string url = $"{Client.GetVersionedApiUrl()}/player_template/{playerTemplateId}";
+                string url = $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.PlayerTemplateById(playerTemplateId)}";
                 GenericResponse<PlayerTemplateSchema> response = await FlockHttpClient.GetAsync<GenericResponse<PlayerTemplateSchema>>(
                     url, Client.GetBaseHeaders(), cancellationToken);
                 ValidateResponse(response);
@@ -169,7 +169,7 @@ namespace Flock.Providers
 
             return await ExecuteAsync(async () =>
             {
-                string url = $"{Client.GetVersionedApiUrl()}/player_template/by-name/{System.Uri.EscapeDataString(name)}";
+                string url = $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.PlayerTemplateByName(name)}";
                 GenericResponse<PlayerTemplateSchema> response = await FlockHttpClient.GetAsync<GenericResponse<PlayerTemplateSchema>>(
                     url, Client.GetBaseHeaders(), cancellationToken);
                 ValidateResponse(response);
@@ -279,7 +279,7 @@ namespace Flock.Providers
             RequireNotEmpty(playerTemplateId, "Player Template ID");
             return await ExecuteAsync(async () =>
             {
-                string url = $"{Client.GetVersionedApiUrl()}/player_template/{playerTemplateId}/player-data";
+                string url = $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.PlayerTemplateData(playerTemplateId)}";
                 GenericResponse<List<PlayerData>> response = await FlockHttpClient.GetAsync<GenericResponse<List<PlayerData>>>(
                     url, Client.GetBaseHeaders(), cancellationToken);
                 ValidateResponse(response);
@@ -295,7 +295,7 @@ namespace Flock.Providers
             return await ExecuteAsync(async () =>
             {
                 GenericResponse<PlayerBan> response = await FlockHttpClient.GetAsync<GenericResponse<PlayerBan>>(
-                    $"{Client.GetVersionedApiUrl()}/player-ban?player_id={playerId}", Client.GetBaseHeaders(), cancellationToken);
+                    $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.PlayerBan}?player_id={playerId}", Client.GetBaseHeaders(), cancellationToken);
                 ValidateResponse(response);
                 return response.Result;
             }, "Get player ban", cancellationToken);

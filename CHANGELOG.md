@@ -5,6 +5,18 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [1.25.0]
+
+### Added
+- **Password reset.** `Authentication.ForgotPasswordAsync(email)` emails a reset code (the backend always reports success, so account existence is never revealed); `ResetPasswordAsync(email, code, newPassword)` sets the new password and throws on a bad or expired code.
+- **Email verification.** `Authentication.SendEmailVerificationAsync()` emails a verification code; `VerifyEmailAsync(code)` marks the address verified. Neither enforces a sign-in client-side (the spec marks the bearer token optional on both routes; it's attached automatically when a player is signed in). Note: the backend does not yet expose a readable "is verified" flag, so verification can't be queried back — tracked as a backend gap.
+- **Server-side token revocation.** `Authentication.RevokeTokenAsync()` kills the signed-in player's refresh token on the server (logout hardening / stolen-token response); already-issued access tokens live out their TTL. `Logout()` stays local-only, matching the Firebase/PlayFab/UGS convention — compose `await RevokeTokenAsync(); Logout();` for a full sign-out.
+- **Name preflight.** `Authentication.IsNameAvailableAsync(name)` checks display-name availability before registering (advisory — a race can still lose at register time).
+- **EditMode tests**: `FlockAuthEndpointsTests` (endpoint path constants incl. offline-replay paths and query escaping, request/response wire contracts for the new auth calls); `FlockAuthProviderTests` (behavioral coverage through the real client with a scripted fake transport — the full login → get data → logout → re-login → get data lifecycle, silent 401→refresh→retry, session restore incl. expired-token refresh and relaunch persistence, already-registered swallow, logout event/persistence semantics, email-gated password reset, revoke confirmation/fail-fast, and the Facebook/Discord `login_type` literals).
+
+### Changed
+- **Endpoint paths centralized.** Every relative API path the SDK calls now lives in the internal `FlockEndpoints` class (`Runtime/Http/FlockEndpoints.cs`) instead of ~55 scattered string literals — one place to view or diff the wire surface against backend spec updates. Pure refactor; no wire behavior change. Codegen-generated command paths remain dynamic by design.
+
 ## [1.24.0]
 
 ### Added

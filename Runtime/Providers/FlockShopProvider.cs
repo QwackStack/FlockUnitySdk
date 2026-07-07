@@ -55,7 +55,7 @@ namespace Flock.Providers
                 SnapshotCategory, pageKey, async () =>
                 {
                     return await FlockHttpClient.GetAsync<PaginatedResponse<Shop>>(
-                        $"{Client.GetVersionedApiUrl()}/shop?page={page}&limit={limit}", Client.GetBaseHeaders(), cancellationToken);
+                        $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.Shop}?page={page}&limit={limit}", Client.GetBaseHeaders(), cancellationToken);
                 }, "Fetch shops", cancellationToken);
 
             if (shops != null)
@@ -80,7 +80,7 @@ namespace Flock.Providers
             Shop shop = await FetchWithSnapshotAsync(
                 SnapshotCategory, $"shop_{shopId}",
                 async () => await FlockHttpClient.GetAsync<Shop>(
-                    $"{Client.GetVersionedApiUrl()}/shop/{shopId}", Client.GetBaseHeaders(), cancellationToken),
+                    $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.ShopById(shopId)}", Client.GetBaseHeaders(), cancellationToken),
                 "Fetch shop", cancellationToken);
 
             // Keyed by the requested id (not shop.Id) so a hit is guaranteed on the next call with this same shopId.
@@ -99,7 +99,7 @@ namespace Flock.Providers
             Shop shop = await FetchWithSnapshotAsync(
                 SnapshotCategory, $"shop_name_{name}",
                 async () => await FlockHttpClient.GetAsync<Shop>(
-                    $"{Client.GetVersionedApiUrl()}/shop/by-name/{System.Uri.EscapeDataString(name)}", Client.GetBaseHeaders(), cancellationToken),
+                    $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.ShopByName(name)}", Client.GetBaseHeaders(), cancellationToken),
                 "Fetch shop by name", cancellationToken);
 
             IndexShop(shop);
@@ -125,7 +125,7 @@ namespace Flock.Providers
                 SnapshotCategory, $"item_{shopItemId}", async () =>
                 {
                     return await FlockHttpClient.GetAsync<ShopItem>(
-                        $"{Client.GetVersionedApiUrl()}/shop_item/{shopItemId}", Client.GetBaseHeaders(), cancellationToken);
+                        $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.ShopItemById(shopItemId)}", Client.GetBaseHeaders(), cancellationToken);
                 }, "Fetch shop item", cancellationToken);
 
             if (item != null)
@@ -145,7 +145,7 @@ namespace Flock.Providers
             List<ShopItem> items = await FetchWithSnapshotAsync(
                 SnapshotCategory, cacheKey, async () =>
                 {
-                    string url = $"{Client.GetVersionedApiUrl()}/shop_item/shop/{shopId}{(!string.IsNullOrEmpty(patchId) ? $"?patch_id={patchId}" : "")}";
+                    string url = $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.ShopItemsByShop(shopId)}{(!string.IsNullOrEmpty(patchId) ? $"?patch_id={patchId}" : "")}";
 
                     GenericResponse<List<ShopItem>> response = await FlockHttpClient.GetAsync<GenericResponse<List<ShopItem>>>(
                         url, Client.GetBaseHeaders(), cancellationToken);
@@ -216,7 +216,7 @@ namespace Flock.Providers
                     };
 
                     return await FlockHttpClient.PostAsync<PlayerInventory>(
-                        $"{Client.GetVersionedApiUrl()}/shop/transaction", request, Client.GetBaseHeaders(), cancellationToken);
+                        $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.ShopTransaction}", request, Client.GetBaseHeaders(), cancellationToken);
                 }, "Purchase shop item", cancellationToken, idempotent: false);
             }
             catch
@@ -275,7 +275,7 @@ namespace Flock.Providers
             return await ExecuteAsync(async () =>
             {
                 return await FlockHttpClient.GetAsync<PaginatedResponse<PlayerInventory>>(
-                    $"{Client.GetVersionedApiUrl()}/player_inventory/player/{playerId}?page={page}&limit={limit}",
+                    $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.PlayerInventoryByPlayer(playerId)}?page={page}&limit={limit}",
                     Client.GetBaseHeaders(), cancellationToken);
             }, "Get player inventory", cancellationToken);
         }

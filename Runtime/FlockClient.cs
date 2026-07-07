@@ -288,10 +288,10 @@ namespace Flock
                     return true;
 
                 PlayerRefreshTokenRequest refreshRequest = new PlayerRefreshTokenRequest { PlayerId = playerIdSnapshot, RefreshToken = refreshSnapshot };
-                _logger.LogDebug($"Refresh POST {GetVersionedApiUrl()}/player/token/refresh body={Newtonsoft.Json.JsonConvert.SerializeObject(refreshRequest)}");
+                _logger.LogDebug($"Refresh POST {GetVersionedApiUrl()}/{FlockEndpoints.PlayerTokenRefresh} body={Newtonsoft.Json.JsonConvert.SerializeObject(refreshRequest)}");
 
                 PlayerLoginResponse response = await FlockHttpClient.PostAsync<PlayerLoginResponse>(
-                    $"{GetVersionedApiUrl()}/player/token/refresh",
+                    $"{GetVersionedApiUrl()}/{FlockEndpoints.PlayerTokenRefresh}",
                     refreshRequest,
                     _initConfig.GetBaseHeaders(), cancellationToken);
 

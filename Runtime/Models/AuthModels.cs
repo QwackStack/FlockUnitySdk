@@ -133,4 +133,49 @@ namespace Flock.Models
         [JsonProperty("refresh_token")]
         public string RefreshToken { get; set; }
     }
+
+    public class PlayerPasswordForgotRequest
+    {
+        [JsonProperty("email")]
+        public string Email { get; set; }
+    }
+
+    public class PlayerPasswordResetRequest
+    {
+        [JsonProperty("email")]
+        public string Email { get; set; }
+
+        [JsonProperty("code")]
+        public string Code { get; set; }
+
+        [JsonProperty("new_password")]
+        public string NewPassword { get; set; }
+    }
+
+    public class PlayerEmailVerifyRequest
+    {
+        [JsonProperty("code")]
+        public string Code { get; set; }
+    }
+
+    public class PlayerAuthActionResponse
+    {
+        [JsonProperty("success")]
+        public bool Success { get; set; }
+    }
+
+    public class PlayerTokenRevokeResponse
+    {
+        [JsonProperty("revoked")]
+        public bool Revoked { get; set; }
+    }
+
+    public class PlayerNameAvailableResponse
+    {
+        [JsonProperty("name")]
+        public string Name { get; set; }
+
+        [JsonProperty("available")]
+        public bool Available { get; set; }
+    }
 }
