@@ -38,7 +38,65 @@ FlockClient.Instance.Authentication.Logout();
 
 > **Note on `name` during registration.** The backend enforces a **unique** display name across registered players. `IsAlreadyRegisteredError` swallows the backend's coded already-registered errors (`FlockErrorCode.Player*AlreadyRegistered` — email/device/OAuth) and returns `null` from `RegisterWith*` instead of throwing. A duplicate **name**, however, isn't coded yet — the backend currently surfaces it as an unhandled `500`, so it is *not* swallowed (see **Backend backlog / known constraints** in [ARCHITECTURE.md](../ARCHITECTURE.md)).
 >
-> Until the backend ships a structured "name taken" error code (or a name-availability check), the recommended path is to **pass `null` (or omit `name`)** and let the backend assign a default. If you need a display name, collect it on a separate post-registration screen where retrying on collision is natural UX.
+> Until the backend ships a structured "name taken" error code, the recommended path is to **pass `null` (or omit `name`)** and let the backend assign a default. If you need a display name, collect it on a separate post-registration screen — and preflight it with `IsNameAvailableAsync` (below) so collisions are caught before the register call.
+
+## Name Availability
+
+Checks whether a display name is still free before registering. Advisory only — another
+player can still take the name between the check and the register call.
+
+```csharp
+bool available = await FlockClient.Instance.Authentication.IsNameAvailableAsync("PlayerName");
+```
+
+## Password Reset
+
+Two-step email flow for email/password accounts. `ForgotPasswordAsync` returns the
+backend's success flag (it never reveals whether an email is registered) and works
+logged-out — it's the "I can't log in" entry point. `ResetPasswordAsync` requires the
+player to be **signed in with email** (a restored email session counts; a social/device
+login throws `FlockAuthException`) and throws `FlockValidationException` on a bad or
+expired code.
+
+```csharp
+// Step 1 — player enters their email, backend sends a reset code
+bool sent = await FlockClient.Instance.Authentication.ForgotPasswordAsync("player@example.com");
+
+// Step 2 — player enters the emailed code plus their new password (requires email sign-in)
+await FlockClient.Instance.Authentication.ResetPasswordAsync("player@example.com", code, newPassword);
+```
+
+## Email Verification
+
+Code-based verification. Neither call enforces a sign-in client-side (the player's bearer
+token is attached automatically when present). Sending is never automatic — trigger it from
+your UI when verification matters to your game, and re-call it for expired or lost codes.
+
+```csharp
+await FlockClient.Instance.Authentication.SendEmailVerificationAsync();
+
+// Player enters the emailed code
+await FlockClient.Instance.Authentication.VerifyEmailAsync(code);
+```
+
+> The backend does not yet expose a readable "is verified" flag, so the SDK can't query
+> verification status back. Treat verification as a one-way action for now.
+
+## Token Revocation
+
+`Logout()` is local-only by design (it clears token state on the device, matching the
+Firebase/PlayFab convention). `RevokeTokenAsync()` goes further to allow from the client: 
+it kills the player's refresh token **server-side**, so a stolen
+refresh token stops working. Already-issued access tokens live out their short TTL.
+
+```csharp
+// Full sign-out: revoke server-side, then clear local state
+await FlockClient.Instance.Authentication.RevokeTokenAsync();
+FlockClient.Instance.Authentication.Logout();
+```
+
+Use plain `Logout()` for routine account switching; add `RevokeTokenAsync()` when the
+player signs out on a shared device or you're responding to a compromised session.
 
 ## Token Refresh
 

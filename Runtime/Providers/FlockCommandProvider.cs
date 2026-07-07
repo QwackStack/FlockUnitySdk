@@ -17,11 +17,6 @@ namespace Flock.Providers
         private const string SnapshotCategory = "command";
         private const string PendingWritesKey = "pending_writes";
 
-        // shared by the live call and the offline replay so the two cant drift.
-        private const string PathUpdatePlayerData = "game_command/update_player_data";
-        private const string PathUpdatePlayerDataKey = "game_command/update_player_data_key";
-        private const string PathUnlockAchievement = "game_command/unlock_achievement";
-
         public FlockCommandProvider(FlockClient client) : base(client) { }
         private Queue<PendingDataWrite> _pendingWrites = new Queue<PendingDataWrite>();
         private bool _queueLoaded;
@@ -166,12 +161,12 @@ namespace Flock.Providers
             if (!IsServerReachable())
             {
                 PlayerData playerData = ApplyOffline(playerDataId, data);
-                return EnqueueOffline(PathUpdatePlayerData, request, "Update player data", playerData);
+                return EnqueueOffline(FlockEndpoints.CommandUpdatePlayerData, request, "Update player data", playerData);
             }
 
             PlayerData result = await ExecuteAsync(
                 () => FlockHttpClient.PostAsync<PlayerData>(
-                    $"{Client.GetVersionedApiUrl()}/{PathUpdatePlayerData}",
+                    $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.CommandUpdatePlayerData}",
                     request, Client.GetBaseHeaders(), cancellationToken),
                 "Update player data", cancellationToken);
 
@@ -192,11 +187,11 @@ namespace Flock.Providers
             };
 
             if (!IsServerReachable())
-                return EnqueueOffline(PathUpdatePlayerDataKey, request, "Update player data field", ApplyOffline(playerDataId, new List<DataField> { new DataField { FieldName = key, Value = value } }));
+                return EnqueueOffline(FlockEndpoints.CommandUpdatePlayerDataKey, request, "Update player data field", ApplyOffline(playerDataId, new List<DataField> { new DataField { FieldName = key, Value = value } }));
 
             PlayerData result = await ExecuteAsync(
                 () => FlockHttpClient.PostAsync<PlayerData>(
-                    $"{Client.GetVersionedApiUrl()}/{PathUpdatePlayerDataKey}",
+                    $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.CommandUpdatePlayerDataKey}",
                     request, Client.GetBaseHeaders(), cancellationToken),
                 "Update player data field", cancellationToken);
 
@@ -239,7 +234,7 @@ namespace Flock.Providers
                 };
 
                 return await FlockHttpClient.PostAsync<PlayerData>(
-                    $"{Client.GetVersionedApiUrl()}/game_command/add_game_funds",
+                    $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.CommandAddGameFunds}",
                     request, Client.GetBaseHeaders(), cancellationToken);
             }, "Add game funds", cancellationToken, idempotent: false);
 
@@ -263,11 +258,11 @@ namespace Flock.Providers
             };
 
             if (!IsServerReachable())
-                return EnqueueOffline(PathUnlockAchievement, request, "Unlock achievement", row);
+                return EnqueueOffline(FlockEndpoints.CommandUnlockAchievement, request, "Unlock achievement", row);
 
             PlayerData result = await ExecuteAsync(
                 () => FlockHttpClient.PostAsync<PlayerData>(
-                    $"{Client.GetVersionedApiUrl()}/{PathUnlockAchievement}",
+                    $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.CommandUnlockAchievement}",
                     request, Client.GetBaseHeaders(), cancellationToken),
                 "Unlock achievement", cancellationToken);
 

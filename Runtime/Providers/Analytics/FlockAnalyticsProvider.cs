@@ -386,7 +386,7 @@ namespace Flock.Providers
         {
             SessionStartResponse response = await ExecuteAsync(
                 () => FlockHttpClient.PostAsync<SessionStartResponse>(
-                    $"{Client.GetVersionedApiUrl()}/analytics/sessions",
+                    $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.AnalyticsSessions}",
                     request, Client.GetBaseHeaders(), cancellationToken),
                 "Start session", cancellationToken);
 
@@ -578,7 +578,7 @@ namespace Flock.Providers
         {
             return ExecuteAsync(
                 () => FlockHttpClient.PostAsync<Dictionary<string, object>>(
-                    $"{Client.GetVersionedApiUrl()}/log_event/single",
+                    $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.LogEventSingle}",
                     request, Client.GetBaseHeaders(), cancellationToken),
                 "Log event (single)", cancellationToken);
         }
@@ -593,7 +593,7 @@ namespace Flock.Providers
 
             return ExecuteAsync(
                 () => FlockHttpClient.PostAsync<Dictionary<string, object>>(
-                    $"{Client.GetVersionedApiUrl()}/log_event",
+                    $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.LogEvent}",
                     payload, Client.GetBaseHeaders(), cancellationToken),
                 "Log events (batch)", cancellationToken);
         }
@@ -689,7 +689,7 @@ namespace Flock.Providers
         {
             return ExecuteAsync(
                 () => FlockHttpClient.PostAsync<Dictionary<string, object>>(
-                    $"{Client.GetVersionedApiUrl()}/analytics/events/single",
+                    $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.AnalyticsEventsSingle}",
                     eve, Client.GetBaseHeaders(), cancellationToken),
                 "Track single event", cancellationToken);
         }
@@ -705,7 +705,7 @@ namespace Flock.Providers
 
             return ExecuteAsync(
                 () => FlockHttpClient.PostAsync<Dictionary<string, object>>(
-                    $"{Client.GetVersionedApiUrl()}/analytics/events",
+                    $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.AnalyticsEvents}",
                     payload, Client.GetBaseHeaders(), cancellationToken),
                 "Track events", cancellationToken);
         }
@@ -825,7 +825,7 @@ namespace Flock.Providers
 
             await ExecuteAsync(
                 () => FlockHttpClient.PostAsync<Dictionary<string, object>>(
-                    $"{Client.GetVersionedApiUrl()}/analytics/transactions",
+                    $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.AnalyticsTransactions}",
                     request, Client.GetBaseHeaders(), cancellationToken),
                 "Record transaction", cancellationToken);
 
@@ -1095,7 +1095,7 @@ namespace Flock.Providers
 
             await ExecuteAsync(
                 () => FlockHttpClient.PatchAsync<Dictionary<string, object>>(
-                    $"{Client.GetVersionedApiUrl()}/analytics/sessions/{sessionId}",
+                    $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.AnalyticsSessionById(sessionId)}",
                     request, Client.GetBaseHeaders(), cancellationToken),
                 "End session", cancellationToken).ConfigureAwait(false);
 

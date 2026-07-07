@@ -32,7 +32,7 @@ namespace Flock.Providers
             _game = await FetchWithSnapshotAsync(
                 SnapshotCategory, "game", async () =>
                 {
-                    string url = $"{Client.GetVersionedApiUrl()}/game";
+                    string url = $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.Game}";
                     GenericResponse<GameSchema> response = await FlockHttpClient.GetAsync<GenericResponse<GameSchema>>(
                         url, Client.GetBaseHeaders(), cancellationToken);
                     ValidateResponse(response);
@@ -50,7 +50,7 @@ namespace Flock.Providers
             _gameVersion = await FetchWithSnapshotAsync(
                 SnapshotCategory, "game_version", async () =>
                 {
-                    string url = $"{Client.GetVersionedApiUrl()}/game_version";
+                    string url = $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.GameVersion}";
                     GenericResponse<GameVersionSchema> response = await FlockHttpClient.GetAsync<GenericResponse<GameVersionSchema>>(
                         url, Client.GetBaseHeaders(), cancellationToken);
                     ValidateResponse(response);
@@ -71,7 +71,7 @@ namespace Flock.Providers
             GameVersionSchema version = await FetchAtScopeAsync(
                 FlockSnapshotStore.BootstrapScope, $"{Client.GetApiUrl()}|{name}", async () =>
                 {
-                    string url = $"{Client.GetVersionedApiUrl()}/game_version/by-name/{System.Uri.EscapeDataString(name)}";
+                    string url = $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.GameVersionByName(name)}";
                     GenericResponse<GameVersionSchema> response = await FlockHttpClient.GetAsync<GenericResponse<GameVersionSchema>>(
                         url, Client.GetBaseHeaders(), cancellationToken);
                     ValidateResponse(response);
