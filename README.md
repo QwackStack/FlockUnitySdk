@@ -14,6 +14,7 @@ The Flock Unity SDK provides access to Flock's game backend services from Unity 
   - [Code-Based Configuration](#code-based-configuration)
 - [Quick Start](#quick-start)
 - [Feature guides](#feature-guides)
+- [Error handling](#error-handling)
 - [Offline caching](#offline-caching)
 - [Platform notes](#platform-notes)
 
@@ -154,6 +155,24 @@ Per-feature usage and examples live in their own guides:
 | [Analytics](Docs~/analytics.md) | Sessions, logs/events, transactions, consent, unexpected-termination detection |
 | [SDK Events](Docs~/events.md) | The `FlockEvents` hub — lifecycle, auth, and session events |
 | [Codegen](Docs~/codegen.md) | Sync Schemas, generated templates/configs/shops/achievements, content catalog |
+| [Error handling](Docs~/errors.md) | The `FlockException` hierarchy, `.ErrorCode`, and the full coded-error list |
+
+## Error handling
+
+Every SDK call throws on failure — there are no result/error return types. Server errors surface as a `FlockException` (or a subtype: `FlockAuthException`, `FlockValidationException`, `FlockNetworkException`, `FlockSerializationException`) carrying a typed `ErrorCode` you can branch on:
+
+```csharp
+try
+{
+    await FlockClient.Instance.Shop.PurchaseAsync(shopId, itemId);
+}
+catch (FlockException ex) when (ex.ErrorCode == FlockErrorCode.ShopInsufficientFunds)
+{
+    // The server declined — not enough funds.
+}
+```
+
+See the [Error handling guide](Docs~/errors.md) for the exception types, the status→exception mapping, and the full `FlockErrorCode` list.
 
 ## Offline caching
 
