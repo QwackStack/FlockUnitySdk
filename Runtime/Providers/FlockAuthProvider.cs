@@ -71,20 +71,7 @@ namespace Flock.Providers
         }
 
         // The register routes' "already registered" codes, one per auth method.
-        private static bool IsAlreadyRegisteredError(Exception ex)
-        {
-            switch ((ex as FlockException)?.ErrorCode)
-            {
-                case FlockErrorCode.PlayerEmailAlreadyRegistered:
-                case FlockErrorCode.PlayerDeviceAlreadyRegistered:
-                case FlockErrorCode.PlayerGoogleAccountAlreadyRegistered:
-                case FlockErrorCode.PlayerAppleAccountAlreadyRegistered:
-                case FlockErrorCode.PlayerSteamAccountAlreadyRegistered:
-                    return true;
-                default:
-                    return false;
-            }
-        }
+        private static bool IsAlreadyRegisteredError(Exception ex) => (ex as FlockException)?.IsAlreadyRegistered() ?? false;
         private async Task TryInitializeAnalyticsAsync(CancellationToken cancellationToken)
         {
 #if !FLOCK_NO_ANALYTICS

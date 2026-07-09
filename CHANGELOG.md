@@ -5,6 +5,23 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [1.26.0]
+
+### Added
+- **Complete coded-error coverage.** `FlockErrorCode` now mirrors the backend OpenAPI `detail.code` set (57 codes). Added the five previously-missing player codes: `player.invalid_reset_code`, `player.invalid_verification_code`, `player.no_email_account`, `player.player_not_found`, and the now-shipped name conflict. Every server error carries a typed `FlockException.ErrorCode` — catch and branch on it (e.g. `catch (FlockException ex) when (ex.ErrorCode == FlockErrorCode.ShopInsufficientFunds)`).
+- **`FlockException.IsAlreadyRegistered()` extension.** A readable check for the register/login "this identity already belongs to an account" group (email/device/OAuth). A taken display name is deliberately excluded — it's a different fix.
+- **EditMode tests**: name-conflict pipeline path (`player.name_already_registered` → `FlockValidationException`) and direct coverage for the `IsAlreadyRegistered()` grouping.
+
+### Changed
+- **Name conflict is now a coded error.** The provisional `FlockErrorCode.PlayerNameAlreadyTaken` is replaced by the shipped `FlockErrorCode.PlayerNameAlreadyRegistered` (HTTP 400 → `FlockValidationException`). Registering with a taken `name` throws with this code instead of the earlier unhandled `500`; catch it to prompt for another name. Migration: if you referenced `PlayerNameAlreadyTaken`, switch to `PlayerNameAlreadyRegistered`.
+- `FlockAuthProvider`'s internal already-registered check now delegates to the shared `IsAlreadyRegistered()` extension (one source of truth).
+
+### Documentation
+- New [Error handling](Docs~/errors.md) guide: the `FlockException` hierarchy, `.Code`/`.ErrorCode`, the full `FlockErrorCode` list, and the throw-vs-branch pattern. Linked from the README feature guides.
+- README gains a short "Error handling" section.
+- [Authentication guide](Docs~/authentication.md): the `name` registration note now documents catching `PlayerNameAlreadyRegistered`.
+- [ARCHITECTURE.md](ARCHITECTURE.md): removed the resolved name-collision entry from the backend-backlog list.
+
 ## [1.25.0]
 
 ### Added

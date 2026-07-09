@@ -3,7 +3,7 @@ using System.Text;
 
 namespace Flock.Exceptions
 {
-    //TODO hook up the remaining errors and return them appropriately in the FlockException.Code string
+    // Mirrors the backend OpenAPI detail.code set; keep in sync when the spec adds codes.
     /// <summary>Typed view of the backend's coded-error contract (the `detail.code` string). Member name = wire code PascalCased, e.g. "player.email_already_registered" -> PlayerEmailAlreadyRegistered. Unknown = no code, or one this SDK version predates (read FlockException.Code for the raw string).</summary>
     public enum FlockErrorCode
     {
@@ -61,8 +61,12 @@ namespace Flock.Exceptions
         PlayerInvalidLoginCredentials,              // player.invalid_login_credentials
         PlayerInvalidRefreshToken,                  // player.invalid_refresh_token
         PlayerInvalidRegistrationRequest,           // player.invalid_registration_request
-        PlayerNameAlreadyTaken,                     // player.name_already_taken (PROVISIONAL — backend doesn't emit this yet; today it 500s on the name unique-constraint. Confirm the exact wire string when it ships.)
+        PlayerInvalidResetCode,                     // player.invalid_reset_code
+        PlayerInvalidVerificationCode,              // player.invalid_verification_code
+        PlayerNameAlreadyRegistered,                // player.name_already_registered
+        PlayerNoEmailAccount,                       // player.no_email_account
         PlayerOauthFailed,                          // player.oauth_failed
+        PlayerPlayerNotFound,                       // player.player_not_found
         PlayerSteamAccountAlreadyRegistered,        // player.steam_account_already_registered
 
         // player_ban.*

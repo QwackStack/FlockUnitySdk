@@ -36,9 +36,22 @@ var response = await FlockClient.Instance.Authentication.LoginWithDiscordAsync(d
 FlockClient.Instance.Authentication.Logout();
 ```
 
-> **Note on `name` during registration.** The backend enforces a **unique** display name across registered players. `IsAlreadyRegisteredError` swallows the backend's coded already-registered errors (`FlockErrorCode.Player*AlreadyRegistered` — email/device/OAuth) and returns `null` from `RegisterWith*` instead of throwing. A duplicate **name**, however, isn't coded yet — the backend currently surfaces it as an unhandled `500`, so it is *not* swallowed (see **Backend backlog / known constraints** in [ARCHITECTURE.md](../ARCHITECTURE.md)).
+> **Note on `name` during registration.** The backend enforces a **unique** display name across registered players. The `RegisterWith*` methods swallow the coded *already-registered* identity errors (`FlockErrorCode.Player*AlreadyRegistered` — email/device/OAuth) and return `null` instead of throwing; you can test for that group yourself with `ex.IsAlreadyRegistered()`.
 >
-> Until the backend ships a structured "name taken" error code, the recommended path is to **pass `null` (or omit `name`)** and let the backend assign a default. If you need a display name, collect it on a separate post-registration screen — and preflight it with `IsNameAvailableAsync` (below) so collisions are caught before the register call.
+> A duplicate **name** is different — it is *not* swallowed. The backend rejects it with `FlockErrorCode.PlayerNameAlreadyRegistered` (HTTP 400), surfaced as a `FlockValidationException`. If you pass a `name`, catch it and prompt for another:
+>
+> ```csharp
+> try
+> {
+>     await FlockClient.Instance.Authentication.RegisterWithEmailAsync(email, password, name);
+> }
+> catch (FlockValidationException ex) when (ex.ErrorCode == FlockErrorCode.PlayerNameAlreadyRegistered)
+> {
+>     // Ask the player for a different display name.
+> }
+> ```
+>
+> To avoid the round-trip, preflight with `IsNameAvailableAsync` (below) — advisory only, since another player can still take the name between the check and the register call. Alternatively, omit `name` and let the backend assign a default.
 
 ## Name Availability
 

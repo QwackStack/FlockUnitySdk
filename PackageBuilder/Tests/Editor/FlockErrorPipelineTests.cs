@@ -85,6 +85,13 @@ namespace Flock.Tests
         }
 
         [Test]
+        public void Status400_NameAlreadyRegistered_Throws_Validation_WithCode()
+        {
+            FlockValidationException ex = Assert.Throws<FlockValidationException>(() => Send(Coded(400, "player.name_already_registered")));
+            Assert.AreEqual(FlockErrorCode.PlayerNameAlreadyRegistered, ex.ErrorCode);
+        }
+
+        [Test]
         public void Status422_Coded_Throws_Validation_WithCode()
         {
             FlockValidationException ex = Assert.Throws<FlockValidationException>(() => Send(Coded(422, "shop.insufficient_funds")));
@@ -116,11 +123,34 @@ namespace Flock.Tests
             Assert.AreEqual(FlockErrorCode.PlayerEmailAlreadyRegistered, FlockErrorCodes.Parse("player.email_already_registered"));
             Assert.AreEqual(FlockErrorCode.ShopItemShopNotFound, FlockErrorCodes.Parse("shop_item.shop_not_found"));
             Assert.AreEqual(FlockErrorCode.GameConfigInvalidTag, FlockErrorCodes.Parse("game_config.invalid_tag"));
-            // Provisional member — confirm this wire string once the backend codes the name-conflict case.
-            Assert.AreEqual(FlockErrorCode.PlayerNameAlreadyTaken, FlockErrorCodes.Parse("player.name_already_taken"));
+            Assert.AreEqual(FlockErrorCode.PlayerNameAlreadyRegistered, FlockErrorCodes.Parse("player.name_already_registered"));
+            Assert.AreEqual(FlockErrorCode.PlayerPlayerNotFound, FlockErrorCodes.Parse("player.player_not_found"));
+            Assert.AreEqual(FlockErrorCode.PlayerNoEmailAccount, FlockErrorCodes.Parse("player.no_email_account"));
             Assert.AreEqual(FlockErrorCode.Unknown, FlockErrorCodes.Parse("server.brand_new_code"));
             Assert.AreEqual(FlockErrorCode.Unknown, FlockErrorCodes.Parse(null));
             Assert.AreEqual(FlockErrorCode.Unknown, FlockErrorCodes.Parse(""));
+        }
+
+        // Builds a FlockException carrying a given wire code, same as the pipeline would.
+        private static FlockException Exc(string code) => new FlockException("test") { Code = code };
+
+        [Test]
+        public void IsAlreadyRegistered_TrueForEveryIdentityCode()
+        {
+            Assert.IsTrue(Exc("player.email_already_registered").IsAlreadyRegistered());
+            Assert.IsTrue(Exc("player.device_already_registered").IsAlreadyRegistered());
+            Assert.IsTrue(Exc("player.google_account_already_registered").IsAlreadyRegistered());
+            Assert.IsTrue(Exc("player.apple_account_already_registered").IsAlreadyRegistered());
+            Assert.IsTrue(Exc("player.steam_account_already_registered").IsAlreadyRegistered());
+        }
+
+        [Test]
+        public void IsAlreadyRegistered_FalseForNameTakenAndUnrelated()
+        {
+            // A taken display name is a different remediation, so it must NOT be grouped as "already registered".
+            Assert.IsFalse(Exc("player.name_already_registered").IsAlreadyRegistered());
+            Assert.IsFalse(Exc("shop.insufficient_funds").IsAlreadyRegistered());
+            Assert.IsFalse(Exc(null).IsAlreadyRegistered());
         }
 
         // Live: real backend, intentional error. Manual only — needs FlockConfig.asset + network.
