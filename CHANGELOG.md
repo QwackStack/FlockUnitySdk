@@ -5,6 +5,14 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [1.27.0]
+
+### Fixed
+- **`Commands.UpdatePlayerDataAsync` no longer fails with HTTP 422.** The update payload's `data` was serialized as the internal `DataField` descriptor array rather than the flat `{field: value}` object the backend requires — a regression from the codegen-command rework that retyped the request model to `List<DataField>`. It now flattens to the expected object, so the live call *and* the offline-queued replay send the correct shape. No API change: `UpdatePlayerDataAsync(playerDataId, List<DataField>)` and the generated typed `UpdateAsync()` accessors are unchanged; only the wire payload is corrected.
+
+### Added
+- **Per-feature EditMode/PlayMode test suite.** Catalog-driven coverage across the SDK surface (auth/init guards, player-data reads, game/config, shop, offline assets, snapshot store, retry, 401→refresh, command offline-queue, session snapshot) on a shared `Flock.Tests.Support` harness (`FlockFakeTransport` + `FlockTestClient`), with a PlayMode assembly for the concurrency cases. Includes a wire-shape guard asserting the `update_player_data` payload serializes as an object, locking in the fix above.
+
 ## [1.26.0]
 
 ### Added
