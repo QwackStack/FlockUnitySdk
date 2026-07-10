@@ -50,7 +50,7 @@ namespace Flock.Providers
         {
             try
             {
-                if (Application.internetReachability == NetworkReachability.NotReachable
+                if (!IsServerReachable()
                     && TryLoadDiskIndex())
                     return new List<AssetSchema>(_assetsById.Values);
 

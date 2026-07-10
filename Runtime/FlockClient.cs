@@ -207,7 +207,14 @@ namespace Flock
         internal RetryHandler RetryHandler => _retryHandler;
         internal FlockInitConfig InitConfig => _initConfig;
         internal FlockSnapshotStore SnapshotStore => _snapshotStore;
-        
+
+        // Reachability seam: production reads Application.internetReachability; tests override to force offline.
+        // Non-behavioral — the default is identical to the previous inline check.
+        internal Func<bool> ReachabilityProbe = () =>
+            Application.internetReachability != NetworkReachability.NotReachable;
+
+        internal bool IsReachable() => ReachabilityProbe();
+
         public FlockAuthProvider Authentication => _authentication;
 #if !FLOCK_NO_CONFIG
         public FlockConfigProvider Config => _config;

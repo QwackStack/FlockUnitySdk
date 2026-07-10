@@ -155,7 +155,7 @@ namespace Flock.Providers
             UpdatePlayerDataInput request = new UpdatePlayerDataInput
             {
                 PlayerDataId = playerDataId,
-                Data = data
+                Data = data.ToFlatObject()
             };
 
             if (!IsServerReachable())

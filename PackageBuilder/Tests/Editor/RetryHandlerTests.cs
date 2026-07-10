@@ -110,5 +110,61 @@ namespace Flock.Tests
             Assert.AreEqual(42, result);
             Assert.AreEqual(1, calls);
         }
+
+        // RTRY-03: a 408 is provably not processed, so even a money mutation retries it (like 429).
+        [Test]
+        public void NonIdempotent_Retries_RequestTimeoutStatus()
+        {
+            int calls = 0;
+            RetryHandler handler = NoDelayHandler(maxRetries: 3);
+
+            Assert.Throws<FlockNetworkException>(() => Run(() =>
+                handler.ExecuteAsync<int>(() => { calls++; throw new FlockNetworkException("request timeout", 408); },
+                    CancellationToken.None, retryAmbiguousFailures: false)));
+
+            Assert.AreEqual(4, calls);
+        }
+
+        // RTRY-07: validation/auth/serialization errors are authoritative — never retried, even for an idempotent op.
+        [Test]
+        public void NeverRetries_ValidationError()
+        {
+            int calls = 0;
+            RetryHandler handler = NoDelayHandler(maxRetries: 3);
+
+            Assert.Throws<FlockValidationException>(() => Run(() =>
+                handler.ExecuteAsync<int>(() => { calls++; throw new FlockValidationException("bad request"); },
+                    CancellationToken.None, retryAmbiguousFailures: true)));
+
+            Assert.AreEqual(1, calls);
+        }
+
+        // RTRY-08: cancellation is not a failure — rethrown, never retried.
+        [Test]
+        public void Cancellation_IsRethrown_NotRetried()
+        {
+            int calls = 0;
+            RetryHandler handler = NoDelayHandler(maxRetries: 3);
+
+            Assert.Catch<OperationCanceledException>(() => Run(() =>
+                handler.ExecuteAsync<int>(() => { calls++; throw new OperationCanceledException(); },
+                    CancellationToken.None, retryAmbiguousFailures: true)));
+
+            Assert.AreEqual(1, calls);
+        }
+
+        // RTRY-11: an explicit maxRetriesOverride of 0 forces a single attempt (the snapshot fast-path).
+        [Test]
+        public void MaxRetriesOverrideZero_SingleAttempt()
+        {
+            int calls = 0;
+            RetryHandler handler = NoDelayHandler(maxRetries: 3);
+
+            Assert.Throws<FlockNetworkException>(() => Run(() =>
+                handler.ExecuteAsync<int>(() => { calls++; throw new FlockNetworkException("timeout"); },
+                    CancellationToken.None, retryAmbiguousFailures: true, maxRetriesOverride: 0)));
+
+            Assert.AreEqual(1, calls);
+        }
     }
 }
