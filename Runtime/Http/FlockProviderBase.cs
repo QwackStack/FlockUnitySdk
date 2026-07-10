@@ -156,7 +156,7 @@ namespace Flock.Http
 
         protected bool IsServerReachable()
         {
-            return  Application.internetReachability != NetworkReachability.NotReachable;
+            return Client.IsReachable();
         }
         protected void RequireNotEmpty(string value, string name)
         {

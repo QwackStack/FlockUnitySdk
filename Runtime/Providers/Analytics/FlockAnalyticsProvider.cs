@@ -226,7 +226,7 @@ namespace Flock.Providers
 
             // Deliver unconfirmed ends from previous runs before a new session registers.
             // When offline, the spool drains on later flush triggers instead.
-            if (_sessionEndCache != null && _sessionEndCache.PendingCount > 0 && Application.internetReachability != NetworkReachability.NotReachable)
+            if (_sessionEndCache != null && _sessionEndCache.PendingCount > 0 && IsServerReachable())
             {
                 Client.Logger.LogInfo($"Delivering {_sessionEndCache.PendingCount} pending session end(s)");
                 await FlushSessionEndsAsync(cancellationToken);
@@ -850,7 +850,7 @@ namespace Flock.Providers
             if (_heartbeatInFlight)
                 return;
 
-            if (Application.internetReachability == NetworkReachability.NotReachable)
+            if (!IsServerReachable())
                 return;
 
             FlushCacheInBackground();

@@ -1,5 +1,5 @@
-using System.Collections.Generic;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace Flock.Models
 {
@@ -8,8 +8,9 @@ namespace Flock.Models
         [JsonProperty("player_data_id")]
         public string PlayerDataId { get; set; }
 
+        // Flat {field: value} object (built via the DataField list's ToFlatObject) because the backend 422s on the DataField array.
         [JsonProperty("data")]
-        public List<DataField> Data { get; set; }
+        public JObject Data { get; set; }
     }
 
     internal class UpdatePlayerDataKeyInput
