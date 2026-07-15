@@ -356,7 +356,7 @@ namespace Flock.Editor
 
             DrawProperty("apiUrl");
             DrawProperty("apiKey");
-            DrawProperty("gameId");
+            DrawProperty("gameId", "Game Name");
             DrawProperty("gameVersion");
 
             // Baked Game Version ID — resolved at edit time, read-only here.
@@ -756,6 +756,14 @@ namespace Flock.Editor
             SerializedProperty prop = configSerialized.FindProperty(propertyName);
             if (prop != null)
                 EditorGUILayout.PropertyField(prop, true);
+        }
+
+        // Same, but overrides the display label (e.g. show "Game Name" for the gameId field without renaming it).
+        private void DrawProperty(string propertyName, string label)
+        {
+            SerializedProperty prop = configSerialized.FindProperty(propertyName);
+            if (prop != null)
+                EditorGUILayout.PropertyField(prop, new GUIContent(label, prop.tooltip), true);
         }
         
         // Bootstrap drop-in

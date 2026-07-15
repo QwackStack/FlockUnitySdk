@@ -187,6 +187,73 @@ namespace Flock.Tests.Editor
             }
         }
 
+        // ---- CMD wire-shape guard (offline replay): the queued payload also serializes `data` as an object,
+        // so a reconnect flush replays the dict shape, not the DataField array. ----
+        [Test]
+        public void UpdatePlayerData_OfflineReplay_SerializesDataAsObject_NotArray()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.CommandUpdatePlayerData, FlockFakeTransport.Ok("{\"id\":\"pd-1\"}"));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(false);
+                h.Run(() => h.Client.Commands.UpdatePlayerDataAsync("pd-1", new List<DataField>
+                {
+                    Field("score", "42"),
+                    new DataField
+                    {
+                        FieldName = "profile", Type = "object",
+                        Value = new List<DataField> { Field("name", "neo") }
+                    }
+                }));
+
+                h.SetReachable(true);
+                h.Run(() => h.Client.Commands.FlushPendingWritesAsync());
+
+                FlockHttpRequest replayed = h.Transport.LastTo(FlockEndpoints.CommandUpdatePlayerData);
+                Assert.IsNotNull(replayed, "Queued write should replay on reconnect.");
+                JObject body = JObject.Parse(replayed.JsonBody);
+                Assert.AreEqual(JTokenType.Object, body["data"].Type,
+                    "The offline-queued payload must also send `data` as an object (same model as the live call).");
+                Assert.AreEqual("42", (string)body["data"]["score"], "Scalar flattens in the replayed payload.");
+                Assert.AreEqual("neo", (string)body["data"]["profile"]["name"], "Nested object flattens in the replayed payload.");
+            }
+        }
+
+        // ---- CMD same-field: two offline updates to one field overlay last-write-wins and replay FIFO, each with its own value ----
+        [Test]
+        public void TwoOfflineUpdates_SameField_LastWriteWins_And_ReplayInOrder()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.CommandUpdatePlayerData,
+                FlockFakeTransport.Ok(RowJson("player-a", "tpl-1", "pd-1", new List<DataField> { Field("score", "3") })));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                PrimeCachedRow(h, "player-a", "tpl-1", "pd-1", new List<DataField> { Field("score", "1") });
+                h.SetReachable(false);
+
+                h.Run(() => h.Client.Commands.UpdatePlayerDataAsync("pd-1", new List<DataField> { Field("score", "2") }));
+                h.Run(() => h.Client.Commands.UpdatePlayerDataAsync("pd-1", new List<DataField> { Field("score", "3") }));
+
+                // Optimistic overlay is in-place last-write-wins: exactly one score field, latest value.
+                PlayerData overlaid = h.Client.Player.TryGetCachedRow("pd-1");
+                List<DataField> scores = overlaid.Data.FindAll(f => f.FieldName == "score");
+                Assert.AreEqual(1, scores.Count, "Same-field overlay replaces in place, never appends a duplicate.");
+                Assert.AreEqual("3", scores[0].Value, "Last write wins in the optimistic overlay.");
+
+                // Both replay in FIFO order, each carrying its own queued value (not the merged/last value).
+                h.SetReachable(true);
+                h.Run(() => h.Client.Commands.FlushPendingWritesAsync());
+
+                List<FlockHttpRequest> sent = h.Transport.AllTo(FlockEndpoints.CommandUpdatePlayerData);
+                Assert.AreEqual(2, sent.Count, "Both queued writes replay.");
+                Assert.AreEqual("2", (string)JObject.Parse(sent[0].JsonBody)["data"]["score"], "First queued write replays first, with value 2.");
+                Assert.AreEqual("3", (string)JObject.Parse(sent[1].JsonBody)["data"]["score"], "Second queued write replays second, with value 3.");
+            }
+        }
+
         // ---- CMD-06 + CMD-07: reconnect flush replays FIFO and drains (2nd flush is a no-op) ----
         [Test]
         public void Flush_Reconnect_ReplaysAllQueuedWrites_ThenDrains()

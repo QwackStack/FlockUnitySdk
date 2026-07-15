@@ -12,7 +12,7 @@ namespace Flock
     {
         [SerializeField]
         [Tooltip(
-            "FlockConfig asset that holds your API URL, key, game ID, and game version. " +
+            "FlockConfig asset that holds your API URL, key, game name, and game version. " +
             "This component never stores those values itself — edit them on the asset " +
             "(open Flock > Settings or select the asset in the Project view).")]
         private FlockConfigAsset config;

@@ -5,6 +5,17 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [1.28.0]
+
+### Fixed
+- **WebGL: a stray space in the configured API URL no longer breaks all requests.** `FlockInitConfig` now trims `apiUrl`. A leading space made WebGL's `UnityWebRequest` fail its `http://` absolute-URL check, so calls resolved relative to the page origin and 404'd against the host server. `HttpClient` on Editor/standalone tolerated it, so it only surfaced in WebGL builds. One-line guard at the single config chokepoint — no API change.
+
+### Changed
+- **"Game ID" → "Game Name" in user-facing copy.** Config tooltip and validation message, the editor window, the bootstrap log line, the README, and the in-editor guide now read "Game Name" (the value is the game's dashboard name). Label and documentation only — the `gameId` field and public API are unchanged (non-breaking).
+
+### Added
+- **Command offline-queue tests.** EditMode: `update_player_data` offline replay serializes `data` as an object (not the `DataField` array), and repeated offline writes to the same field are last-write-wins in replay order. PlayMode `FlockCommandConcurrencyTests`: the flush single-flight guard makes a second flush invoked during an in-flight POST a no-op, so the queue is never double-POSTed.
+
 ## [1.27.0]
 
 ### Fixed
