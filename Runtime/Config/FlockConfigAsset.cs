@@ -15,7 +15,7 @@ namespace Flock.Config
         [Tooltip("Your Flock API Key")]
         public string apiKey;
 
-        [Tooltip("Your Game ID")]
+        [Tooltip("Your game's name (from the Flock dashboard).")]
         public string gameId;
 
         [Tooltip("Your Game Version name. The matching version ID is fetched from the backend on SDK init.")]
@@ -221,7 +221,7 @@ namespace Flock.Config
 
             if (string.IsNullOrEmpty(gameId))
             {
-                errorMessage = "Game ID is required";
+                errorMessage = "Game Name is required";
                 return false;
             }
 

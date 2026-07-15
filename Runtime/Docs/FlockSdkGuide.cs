@@ -50,7 +50,7 @@ game's page on the Flock dashboard:
   API URL       The Flock server address. Leave the default unless told otherwise
                 (default: https://api-flock.qwacks.com).
   API Key       Identifies your game. Treat it like a password.
-  Game ID       Your game's unique ID.
+  Game Name     Your game's name (from the Flock dashboard).
   Game Version  Your game version name (e.g. 'v1.0.0'). Must match a version that
                 exists on the dashboard.
 

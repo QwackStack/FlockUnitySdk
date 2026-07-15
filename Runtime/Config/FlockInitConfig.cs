@@ -99,7 +99,8 @@ namespace Flock.Config
             FlockAnalyticsConfig analyticsConfig = null,
             RetryPolicy retryPolicy = null)
         {
-            ApiUrl = apiUrl;
+            // Trim stray whitespace — a leading space breaks WebGL's absolute-URL check and silently makes calls relative.
+            ApiUrl = apiUrl?.Trim();
             _apiKey = apiKey;
             GameId = gameId;
             GameVersion = gameVersion;

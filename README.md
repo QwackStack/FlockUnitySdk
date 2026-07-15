@@ -59,7 +59,7 @@ Open **Flock > Settings** in the Unity menu bar. The window is a view of the `Fl
 
 - **API URL** — Flock API endpoint (default: `https://api-flock.qwacks.com`)
 - **API Key** — Your Flock API key
-- **Game ID** — Your game ID from the Flock dashboard
+- **Game Name** — Your game's name from the Flock dashboard
 - **Game Version** — Your game version name (the matching ID is resolved from the backend at edit time and baked into the asset, so init makes no network call)
 
 The asset is saved to `Assets/Resources/FlockConfig.asset` so it loads in builds via `Resources.Load<FlockConfigAsset>("FlockConfig")`. The same window has a Codegen tab that runs Sync Schemas (see the [Codegen guide](Docs~/codegen.md)).

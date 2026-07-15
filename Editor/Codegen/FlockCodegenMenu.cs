@@ -40,7 +40,7 @@ namespace Flock.Editor.Codegen
             Debug.Log(
                 "[Flock Codegen] Sync starting\n" +
                 $"  ApiUrl:      {config.apiUrl}\n" +
-                $"  GameId:      {config.gameId}\n" +
+                $"  Game Name:   {config.gameId}\n" +
                 $"  GameVersion: {config.gameVersion}\n" +
                 $"  Output:      {generatedRoot}");
 
