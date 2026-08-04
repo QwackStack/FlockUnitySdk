@@ -34,6 +34,9 @@ namespace Flock.Interfaces
 #if !FLOCK_NO_ASSET
         FlockAssetProvider Asset { get; }
 #endif
+#if !FLOCK_NO_LEADERBOARD
+        FlockLeaderboardProvider Leaderboard { get; }
+#endif
 #if !FLOCK_NO_ANALYTICS
         IAnalyticProvider Analytics { get; }
 #endif

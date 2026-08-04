@@ -59,6 +59,11 @@ namespace Flock.Http
         public static string ShopItemsByShop(string shopId) => $"shop_item/shop/{shopId}";
         public static string PlayerInventoryByPlayer(string playerId) => $"player_inventory/player/{playerId}";
 
+        // Leaderboards — read-only. There is no submit path by design: a board projects over a player-data field, so scores move by writing that field.
+        public static string LeaderboardById(string leaderboardId) => $"leaderboard/{leaderboardId}";
+        public static string LeaderboardMe(string leaderboardId) => $"leaderboard/{leaderboardId}/me";
+        public static string LeaderboardAroundMe(string leaderboardId) => $"leaderboard/{leaderboardId}/around-me";
+
         // Assets
         public const string Asset = "asset";
         public static string AssetById(string assetId) => $"asset/{assetId}";

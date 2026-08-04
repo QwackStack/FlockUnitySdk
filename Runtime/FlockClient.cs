@@ -92,6 +92,9 @@ namespace Flock
 #if !FLOCK_NO_ASSET
         private FlockAssetProvider _asset;
 #endif
+#if !FLOCK_NO_LEADERBOARD
+        private FlockLeaderboardProvider _leaderboard;
+#endif
         private FlockSession _session;
 #if !FLOCK_NO_ANALYTICS
         private IAnalyticProvider _analytics;
@@ -188,6 +191,9 @@ namespace Flock
 #if !FLOCK_NO_ASSET
             _asset = new FlockAssetProvider(this);
 #endif
+#if !FLOCK_NO_LEADERBOARD
+            _leaderboard = new FlockLeaderboardProvider(this);
+#endif
             _authentication = new FlockAuthProvider(this);
 
 #if !FLOCK_NO_ANALYTICS
@@ -233,6 +239,9 @@ namespace Flock
 #endif
 #if !FLOCK_NO_ASSET
         public FlockAssetProvider Asset => _asset;
+#endif
+#if !FLOCK_NO_LEADERBOARD
+        public FlockLeaderboardProvider Leaderboard => _leaderboard;
 #endif
 #if !FLOCK_NO_ANALYTICS
         public IAnalyticProvider Analytics => _analytics;

@@ -129,6 +129,18 @@ namespace Flock.Editor
                 },
                 DependsOn = new string[0],
             },
+            new Entry
+            {
+                Id = "LEADERBOARD",
+                DisplayName = "Leaderboard",
+                Description = "Leaderboard standings, player rank, and around-me.",
+                Files = new[]
+                {
+                    "Runtime/Providers/FlockLeaderboardProvider.cs",
+                },
+                // Read-only, and scores arrive via player data rather than this provider — so no code dependency on PLAYER.
+                DependsOn = new string[0],
+            },
         };
 
         public static Entry Find(string id)
