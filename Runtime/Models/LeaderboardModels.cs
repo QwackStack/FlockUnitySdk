@@ -1,9 +1,134 @@
+using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Runtime.Serialization;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Converters;
 
 namespace Flock.Models
 {
-    /// <summary>Which window of a board to read — a window *key*, not the board's window type. `never`/`weekly`/`seasonal` describe how a board buckets and are never sent here.</summary>
+    /// <summary>What a board's scores measure. Duration scores are in seconds — the name says so because the wire value doesn't.</summary>
+    [JsonConverter(typeof(StringEnumConverter))]
+    public enum FlockLeaderboardValueType
+    {
+        [EnumMember(Value = "integer")]
+        Integer,
+
+        [EnumMember(Value = "float")]
+        Float,
+
+        [EnumMember(Value = "duration")]
+        DurationSeconds
+    }
+
+    /// <summary>Which end of the scale wins — high score or best time.</summary>
+    [JsonConverter(typeof(StringEnumConverter))]
+    public enum FlockLeaderboardDirection
+    {
+        [EnumMember(Value = "higher")]
+        Higher,
+
+        [EnumMember(Value = "lower")]
+        Lower
+    }
+
+    /// <summary>How repeated writes to the source field fold into one score.</summary>
+    [JsonConverter(typeof(StringEnumConverter))]
+    public enum FlockLeaderboardAggregation
+    {
+        [EnumMember(Value = "best")]
+        Best,
+
+        [EnumMember(Value = "latest")]
+        Latest,
+
+        [EnumMember(Value = "sum")]
+        Sum
+    }
+
+    /// <summary>How a board buckets over time. Board config — not the window key you read with (<see cref="FlockLeaderboardWindow"/>).</summary>
+    [JsonConverter(typeof(StringEnumConverter))]
+    public enum FlockLeaderboardWindowType
+    {
+        [EnumMember(Value = "never")]
+        Never,
+
+        [EnumMember(Value = "weekly")]
+        Weekly,
+
+        [EnumMember(Value = "seasonal")]
+        Seasonal
+    }
+
+    /// <summary>Whether the board ranks everyone together or per country.</summary>
+    [JsonConverter(typeof(StringEnumConverter))]
+    public enum FlockLeaderboardScope
+    {
+        [EnumMember(Value = "global")]
+        Global,
+
+        [EnumMember(Value = "country")]
+        Country
+    }
+
+    /// <summary>A board's public configuration, looked up by name. The player-data field it projects over is deliberately not exposed.</summary>
+    public class Leaderboard
+    {
+        [JsonProperty("id")]
+        public string Id { get; set; }
+
+        [JsonProperty("name")]
+        public string Name { get; set; }
+
+        [JsonProperty("value_type")]
+        public FlockLeaderboardValueType ValueType { get; set; }
+
+        [JsonProperty("direction")]
+        public FlockLeaderboardDirection Direction { get; set; }
+
+        [JsonProperty("aggregation")]
+        public FlockLeaderboardAggregation Aggregation { get; set; }
+
+        [JsonProperty("window_type")]
+        public FlockLeaderboardWindowType WindowType { get; set; }
+
+        [JsonProperty("scope")]
+        public FlockLeaderboardScope Scope { get; set; }
+
+        /// <summary>True when a bigger number ranks better — sort and label from this instead of re-reading <see cref="Direction"/> everywhere.</summary>
+        [JsonIgnore]
+        public bool IsHigherBetter => Direction == FlockLeaderboardDirection.Higher;
+
+        /// <summary>Formats a score the way this board measures. An unranked player's null score formats as empty.</summary>
+        public string FormatScore(double? score)
+        {
+            if (!score.HasValue || double.IsNaN(score.Value) || double.IsInfinity(score.Value))
+                return string.Empty;
+
+            switch (ValueType)
+            {
+                case FlockLeaderboardValueType.DurationSeconds:
+                    return FormatDuration(score.Value);
+                case FlockLeaderboardValueType.Float:
+                    return score.Value.ToString("0.##", CultureInfo.InvariantCulture);
+                default:
+                    return score.Value.ToString("0", CultureInfo.InvariantCulture);
+            }
+        }
+
+        // Seconds in, clock out: h:mm:ss.fff once past an hour, m:ss.fff below it.
+        private static string FormatDuration(double seconds)
+        {
+            bool negative = seconds < 0d;
+            TimeSpan span = TimeSpan.FromSeconds(Math.Abs(seconds));
+            string text = span.TotalHours >= 1d
+                ? $"{(int)span.TotalHours}:{span.Minutes:00}:{span.Seconds:00}.{span.Milliseconds:000}"
+                : $"{span.Minutes}:{span.Seconds:00}.{span.Milliseconds:000}";
+            return negative ? "-" + text : text;
+        }
+    }
+
+    /// <summary>Which window of a board to read — a window *key*, not the board's <see cref="FlockLeaderboardWindowType"/>. `never`/`weekly`/`seasonal` describe how a board buckets and are never sent here.</summary>
     /// <remarks>Default (<see cref="Current"/>) sends no parameter, which the API reads as the live window: all-time, the current week, or the current season depending on the board.</remarks>
     public readonly struct FlockLeaderboardWindow
     {

@@ -5,6 +5,17 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [1.30.0]
+
+### Added
+- **Leaderboards.** `FlockClient.Instance.Leaderboard` reads standings, the signed-in player's rank, and an around-me slice, all addressed by **board name**: `GetByNameAsync`, `GetStandingsAsync`, `GetMyRankAsync`, `GetAroundMeAsync`, `ResolveIdAsync`. There is no score-submit call by design — a board projects over a player-data field, so writing that field through the command surface is what moves a player. See the [Leaderboards guide](Docs~/leaderboards.md).
+- **Board configuration and formatting helpers.** `GetByNameAsync` returns the board's `ValueType` / `Direction` / `Aggregation` / `WindowType` / `Scope` as typed enums, plus `IsHigherBetter` (high-score vs best-time) and `FormatScore(double?)`, which renders a score the way the board measures it — including `m:ss.fff` for duration boards, whose scores are **seconds** (hence `FlockLeaderboardValueType.DurationSeconds`). A null score, meaning an unranked player, formats as an empty string.
+- **Window selection.** `FlockLeaderboardWindow.Current` (default, the board's live window), `.Season("id")` for a finished season, and `.Period("2026-W31")` for a raw period key. The window is a *key*, not the board's `WindowType`.
+- **EditMode tests**: envelope handling on all four routes, query/window/paging wire shape, name encoding, resolve memoization, the bearer-only guards firing before any request, unknown-name short-circuit, offline relaunch (resolve *and* data served from snapshots), per-player rank scoping, and the formatting helpers.
+
+### Notes
+- Reads are snapshot-cached like the rest of the SDK, with my-rank/around-me scoped per player. The first read of a board costs two calls (name lookup + data) and later reads cost one; `Leaderboard.ClearCache()` drops both layers.
+
 ## [1.28.0]
 
 ### Fixed

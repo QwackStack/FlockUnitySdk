@@ -32,6 +32,7 @@ PackageBuilder/Tests/Editor/   EditMode tests (asmdef Flock.Tests.Editor)
 - **FlockConfigProvider** — game configs & patches (incl. by-name).
 - **FlockGameProvider** — game + game-version lookups (incl. by-name).
 - **FlockShopProvider** — shops, items, purchase, inventory (incl. by-name); `PurchaseStatus`/`TransactionType` enums.
+- **FlockLeaderboardProvider** — read-only standings / my-rank / around-me, addressed by board name (resolve memoized per session); no submit path by design.
 - **FlockCommandProvider** — retry-safe game commands (funds, achievements, player-data writes).
 - **FlockAssetProvider** / **FlockAssetCache** — asset fetch + local file cache.
 - **FlockSnapshotStore** — on-disk snapshot cache backing offline reads.
@@ -63,6 +64,7 @@ Plain serializable DTOs mirroring backend wire shapes — auth, analytics, shop,
 - **PaginatedResponse\<T>** — paged list wrapper.
 - **TypedSchema** / **DataField** (+ extensions & JSON converters) — dynamic typed config/player-data values.
 - **GameConfigSchema** / **GamePatchSchema** / **GameSchema** / **GameVersionSchema** / **PlayerTemplateSchema** — core domain schemas.
+- **Leaderboard** / **Standings** / **StandingEntry** / **PlayerRank** + the `FlockLeaderboard*` enums and the `FlockLeaderboardWindow` key struct — board config (with `IsHigherBetter` / `FormatScore`) and its read shapes.
 
 ## Runtime/ (support)
 - **Config/FlockConfigAsset** — the `FlockConfig.asset` ScriptableObject (api key, version, baked id). · **Config/FlockInitConfig** — runtime init params.
