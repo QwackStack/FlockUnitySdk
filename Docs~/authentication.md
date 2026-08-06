@@ -62,14 +62,80 @@ player can still take the name between the check and the register call.
 bool available = await FlockClient.Instance.Authentication.IsNameAvailableAsync("PlayerName");
 ```
 
+## Account Linking
+
+Attaches extra credentials to the **signed-in** player, so one account can be reached
+several ways — the "I played as a guest, now let me keep my progress" flow. Every call
+here requires a signed-in player and throws `FlockAuthException` if there isn't one.
+
+Each method returns the player's **full updated credential list**, so a link or unlink
+doubles as a refresh — you rarely need `GetLinkedAccountsAsync` right after one.
+
+```csharp
+// What's attached right now
+List<PlayerLinkedAccount> accounts = await FlockClient.Instance.Authentication.GetLinkedAccountsAsync();
+foreach (PlayerLinkedAccount account in accounts)
+    Debug.Log($"{account.ProviderType} — {account.Email} (verified: {account.EmailVerified})");
+
+// Attach an email/password credential to a guest (device) account
+await FlockClient.Instance.Authentication.LinkEmailAsync("player@example.com", "password");
+
+// Attach a device credential
+await FlockClient.Instance.Authentication.LinkDeviceAsync("device-uuid");
+
+// Attach a social credential — same token you'd pass to the matching Login call
+await FlockClient.Instance.Authentication.LinkGoogleAsync(idToken);
+await FlockClient.Instance.Authentication.LinkAppleAsync(identityToken);
+await FlockClient.Instance.Authentication.LinkSteamAsync(sessionTicket);
+await FlockClient.Instance.Authentication.LinkFacebookAsync(facebookToken);
+await FlockClient.Instance.Authentication.LinkDiscordAsync(discordToken);
+
+// Detach one — pass account.ProviderType straight through
+await FlockClient.Instance.Authentication.UnlinkAsync(FlockCredentialProvider.Google);
+```
+
+Two failures are worth handling explicitly:
+
+```csharp
+try
+{
+    await FlockClient.Instance.Authentication.LinkGoogleAsync(idToken);
+}
+catch (FlockException ex) when (ex.ErrorCode == FlockErrorCode.PlayerAccountAlreadyLinked)
+{
+    // That Google account belongs to a different player. The SDK has no merge flow —
+    // offer to sign in as that player instead (and lose this account's progress), or cancel.
+}
+
+try
+{
+    await FlockClient.Instance.Authentication.UnlinkAsync(FlockCredentialProvider.Email);
+}
+catch (FlockException ex) when (ex.ErrorCode == FlockErrorCode.PlayerCannotUnlinkLastCredential)
+{
+    // The server never lets a player remove their only way back in. Gray out the last row.
+}
+```
+
+`FlockEvents.OnAccountLinked` / `OnAccountUnlinked` fire on success with the provider that
+changed — useful for refreshing an account-settings screen from one place.
+
+> Credential state is **never cached**: every call goes to the server, the same rule the SDK
+> applies to bans and inventory. Linking is also never queued offline — a link that may or may
+> not have landed is never re-sent, because the retry would come back as `account_already_linked`.
+
 ## Password Reset
 
 Two-step email flow for email/password accounts. `ForgotPasswordAsync` returns the
 backend's success flag (it never reveals whether an email is registered) and works
-logged-out — it's the "I can't log in" entry point. `ResetPasswordAsync` requires the
-player to be **signed in with email** (a restored email session counts; a social/device
-login throws `FlockAuthException`) and throws `FlockValidationException` on a bad or
-expired code.
+logged-out — it's the "I can't log in" entry point. `ResetPasswordAsync` needs an **email
+credential on the account** — either an email sign-in (a restored email session counts) or an
+email linked during this session via `LinkEmailAsync`/`GetLinkedAccountsAsync`. Anything else
+throws `FlockAuthException`; a bad or expired code throws `FlockValidationException`.
+
+> The linked-email check is session-scoped and not persisted. After a session restore the SDK
+> doesn't know what's linked until you read the accounts list, so a device-restored player with
+> a linked email should call `GetLinkedAccountsAsync()` before offering a reset.
 
 ```csharp
 // Step 1 — player enters their email, backend sends a reset code
@@ -92,8 +158,8 @@ await FlockClient.Instance.Authentication.SendEmailVerificationAsync();
 await FlockClient.Instance.Authentication.VerifyEmailAsync(code);
 ```
 
-> The backend does not yet expose a readable "is verified" flag, so the SDK can't query
-> verification status back. Treat verification as a one-way action for now.
+> There is no dedicated "is verified" route, but `GetLinkedAccountsAsync()` reports
+> `EmailVerified` per credential — read the email entry from that list if you need the flag.
 
 ## Token Revocation
 

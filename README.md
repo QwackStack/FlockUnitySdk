@@ -21,6 +21,7 @@ The Flock Unity SDK provides access to Flock's game backend services from Unity 
 ## Features
 
 - Player authentication (email, device, Google, Apple, Steam, Facebook, Discord)
+- Account linking — attach or detach extra credentials on a signed-in player, so a guest account can be claimed and reached any of those ways
 - Account flows: password reset, email verification, display-name availability check
 - Token refresh with automatic silent retry, plus a session-expired event
 - Server-side token revocation (kill a stolen refresh token — most game backends don't expose this to the client)
@@ -149,7 +150,7 @@ Per-feature usage and examples live in their own guides:
 
 | Guide | Covers |
 |-------|--------|
-| [Authentication](Docs~/authentication.md) | Login/register for every provider, logout, token refresh/revocation, password reset, email verification, session expiry |
+| [Authentication](Docs~/authentication.md) | Login/register for every provider, account linking/unlinking, logout, token refresh/revocation, password reset, email verification, session expiry |
 | [Game & Config](Docs~/game-config.md) | Typed game-config accessors, game/version metadata |
 | [Player Data & Game Commands](Docs~/player-data.md) | Reads, typed template accessors, update commands, funds, achievements, bans |
 | [Shop](Docs~/shop.md) | Shops, items, purchase (money-safety contract), player inventory |

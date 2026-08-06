@@ -90,13 +90,17 @@ catch (FlockException ex) when (ex.IsAlreadyRegistered())
 | `GameVersionGameVersionByNameNotFound` | `game_version.game_version_by_name_not_found` |
 | `GameVersionGameVersionNotFound` | `game_version.game_version_not_found` |
 | `LogEventGameNotFound` | `log_event.game_not_found` |
+| `PlayerAccountAlreadyLinked` | `player.account_already_linked` |
+| `PlayerAccountNotLinked` | `player.account_not_linked` |
 | `PlayerAppleAccountAlreadyRegistered` | `player.apple_account_already_registered` |
+| `PlayerCannotUnlinkLastCredential` | `player.cannot_unlink_last_credential` |
 | `PlayerDeviceAlreadyRegistered` | `player.device_already_registered` |
 | `PlayerEmailAlreadyRegistered` | `player.email_already_registered` |
 | `PlayerGameJwkNotConfigured` | `player.game_jwk_not_configured` |
 | `PlayerGameVersionIdRequired` | `player.game_version_id_required` |
 | `PlayerGoogleAccountAlreadyRegistered` | `player.google_account_already_registered` |
 | `PlayerInvalidDeviceRegistrationRequest` | `player.invalid_device_registration_request` |
+| `PlayerInvalidLinkRequest` | `player.invalid_link_request` |
 | `PlayerInvalidLoginCredentials` | `player.invalid_login_credentials` |
 | `PlayerInvalidRefreshToken` | `player.invalid_refresh_token` |
 | `PlayerInvalidRegistrationRequest` | `player.invalid_registration_request` |

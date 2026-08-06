@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Newtonsoft.Json;
 
 namespace Flock.Models
@@ -177,5 +178,56 @@ namespace Flock.Models
 
         [JsonProperty("available")]
         public bool Available { get; set; }
+    }
+
+    public class PlayerLinkEmailRequest
+    {
+        [JsonProperty("email")]
+        public string Email { get; set; }
+
+        [JsonProperty("password")]
+        public string Password { get; set; }
+    }
+
+    public class PlayerLinkDeviceRequest
+    {
+        [JsonProperty("device_type")]
+        public string DeviceType { get; set; }
+
+        [JsonProperty("device_id")]
+        public string DeviceId { get; set; }
+    }
+
+    // Every OAuth provider links with a bare token — the login routes' per-provider field names don't apply here.
+    public class PlayerLinkOAuthRequest
+    {
+        [JsonProperty("token")]
+        public string Token { get; set; }
+    }
+
+    /// <summary>One credential attached to a player. No secrets — the token/password never comes back.</summary>
+    public class PlayerLinkedAccount
+    {
+        [JsonProperty("provider")]
+        public string Provider { get; set; }
+
+        [JsonProperty("provider_user_id")]
+        public string ProviderUserId { get; set; }
+
+        [JsonProperty("email")]
+        public string Email { get; set; }
+
+        [JsonProperty("email_verified")]
+        public bool EmailVerified { get; set; }
+
+        /// <summary>Typed view of <see cref="Provider"/> — pass straight to UnlinkAsync. Unknown for a provider this SDK version predates.</summary>
+        [JsonIgnore]
+        public FlockCredentialProvider ProviderType => FlockCredentialProviders.Parse(Provider);
+    }
+
+    public class PlayerAccountsResponse
+    {
+        [JsonProperty("accounts")]
+        public List<PlayerLinkedAccount> Accounts { get; set; }
     }
 }

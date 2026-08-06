@@ -27,7 +27,7 @@ PackageBuilder/Tests/Editor/   EditMode tests (asmdef Flock.Tests.Editor)
 - **FlockSdkVersion** — SDK version string. · **FlockUtil** — on-disk token/file paths.
 
 ## Runtime/Providers
-- **FlockAuthProvider** — login / register / token refresh + revoke / session restore / password reset / email verification / name preflight.
+- **FlockAuthProvider** — login / register / token refresh + revoke / session restore / password reset / email verification / name preflight / **account linking** (link email, device and the five OAuth providers; unlink by `FlockCredentialProvider`; list linked accounts). Linking routes return the model at the **root**, never cache, never queue offline, and raise `FlockEvents.OnAccountLinked`/`OnAccountUnlinked`. A linked email opens the `ResetPasswordAsync` gate for the session (`_hasEmailCredential`, re-derived from every accounts payload, cleared on logout, never persisted).
 - **PlayerProvider** — player templates + player data (incl. by-name).
 - **FlockConfigProvider** — game configs & patches (incl. by-name).
 - **FlockGameProvider** — game + game-version lookups (incl. by-name).

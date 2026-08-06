@@ -139,7 +139,10 @@ namespace Flock.Editor
                     "Runtime/Providers/FlockLeaderboardProvider.cs",
                 },
                 // Read-only, and scores arrive via player data rather than this provider — so no code dependency on PLAYER.
-
+                DependsOn = new string[0],
+            },
+            new Entry
+            {
                 Id = "NOTIFICATION",
                 DisplayName = "Notification",
                 Description = "Schedule and cancel player reminders from a dashboard template.",
@@ -147,7 +150,6 @@ namespace Flock.Editor
                 {
                     "Runtime/Providers/FlockNotificationProvider.cs",
                 },
-
                 DependsOn = new string[0],
             },
         };
