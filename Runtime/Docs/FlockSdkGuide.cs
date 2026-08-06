@@ -36,6 +36,7 @@ namespace Flock.Docs
   • Player accounts & login (email, device, Google, Apple, Steam, Facebook, Discord)
   • Saved player data and player templates
   • A shop and player inventory
+  • Leaderboards built from the player data your game already writes
   • Remote game configuration you can change without rebuilding the game
   • Downloadable assets, and analytics
 
@@ -78,7 +79,7 @@ These are saved into Assets/Resources/FlockConfig.asset.";
   // Read anything via FlockClient.Instance.
   var game = await FlockClient.Instance.Game.GetGameAsync();
 
-Everything else — shop, player data, codegen, assets, offline cache, events — is
-in the full documentation.";
+Everything else — shop, player data, leaderboards, codegen, assets, offline cache,
+events — is in the full documentation.";
     }
 }

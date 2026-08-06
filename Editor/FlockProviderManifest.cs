@@ -131,6 +131,15 @@ namespace Flock.Editor
             },
             new Entry
             {
+                Id = "LEADERBOARD",
+                DisplayName = "Leaderboard",
+                Description = "Leaderboard standings, player rank, and around-me.",
+                Files = new[]
+                {
+                    "Runtime/Providers/FlockLeaderboardProvider.cs",
+                },
+                // Read-only, and scores arrive via player data rather than this provider — so no code dependency on PLAYER.
+
                 Id = "NOTIFICATION",
                 DisplayName = "Notification",
                 Description = "Schedule and cancel player reminders from a dashboard template.",
@@ -138,6 +147,7 @@ namespace Flock.Editor
                 {
                     "Runtime/Providers/FlockNotificationProvider.cs",
                 },
+
                 DependsOn = new string[0],
             },
         };

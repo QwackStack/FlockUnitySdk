@@ -32,6 +32,7 @@ PackageBuilder/Tests/Editor/   EditMode tests (asmdef Flock.Tests.Editor)
 - **FlockConfigProvider** — game configs & patches (incl. by-name).
 - **FlockGameProvider** — game + game-version lookups (incl. by-name).
 - **FlockShopProvider** — shops, items, purchase, inventory (incl. by-name); `PurchaseStatus`/`TransactionType` enums.
+- **FlockLeaderboardProvider** — read-only standings / my-rank / around-me, addressed by board name (resolve memoized per session); no submit path by design.
 - **FlockCommandProvider** — retry-safe game commands (funds, achievements, player-data writes).
 - **FlockAssetProvider** / **FlockAssetCache** — asset fetch + local file cache.
 - **FlockNotificationProvider** — player inbox (list / unread count / summary / mark read), server-side scheduling of a dashboard template, and push device-token register/unregister; persists its own pending-schedule list because the API has no route to list them. Raises `FlockEvents.OnUnreadCountChanged`; no background polling. Device-platform auto-detect throws on desktop/console/Editor rather than guessing a value the push backend doesn't accept. `RegisterThisDeviceAsync` fetches the APNs token itself on iOS when `com.unity.mobile.notifications` is installed — an **optional** dependency wired through `versionDefines` in `Flock.Runtime.asmdef`, so the package stays single-dependency; Android tokens come from Firebase and remain the consumer's job.
@@ -64,6 +65,7 @@ Plain serializable DTOs mirroring backend wire shapes — auth, analytics, shop,
 - **PaginatedResponse\<T>** — paged list wrapper.
 - **TypedSchema** / **DataField** (+ extensions & JSON converters) — dynamic typed config/player-data values.
 - **GameConfigSchema** / **GamePatchSchema** / **GameSchema** / **GameVersionSchema** / **PlayerTemplateSchema** — core domain schemas.
+- **Leaderboard** / **Standings** / **StandingEntry** / **PlayerRank** + the `FlockLeaderboard*` enums and the `FlockLeaderboardWindow` key struct — board config (with `IsHigherBetter` / `FormatScore`) and its read shapes.
 
 ## Runtime/ (support)
 - **Config/FlockConfigAsset** — the `FlockConfig.asset` ScriptableObject (api key, version, baked id). · **Config/FlockInitConfig** — runtime init params.
