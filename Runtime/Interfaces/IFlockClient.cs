@@ -36,6 +36,9 @@ namespace Flock.Interfaces
 #endif
 #if !FLOCK_NO_LEADERBOARD
         FlockLeaderboardProvider Leaderboard { get; }
+      #endif
+#if !FLOCK_NO_NOTIFICATION
+        FlockNotificationProvider Notification { get; }
 #endif
 #if !FLOCK_NO_ANALYTICS
         IAnalyticProvider Analytics { get; }

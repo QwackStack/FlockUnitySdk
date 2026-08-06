@@ -95,6 +95,9 @@ namespace Flock
 #if !FLOCK_NO_LEADERBOARD
         private FlockLeaderboardProvider _leaderboard;
 #endif
+#if !FLOCK_NO_NOTIFICATION
+        private FlockNotificationProvider _notification;
+#endif
         private FlockSession _session;
 #if !FLOCK_NO_ANALYTICS
         private IAnalyticProvider _analytics;
@@ -193,6 +196,9 @@ namespace Flock
 #endif
 #if !FLOCK_NO_LEADERBOARD
             _leaderboard = new FlockLeaderboardProvider(this);
+            #endif
+#if !FLOCK_NO_NOTIFICATION
+            _notification = new FlockNotificationProvider(this);
 #endif
             _authentication = new FlockAuthProvider(this);
 
@@ -242,6 +248,9 @@ namespace Flock
 #endif
 #if !FLOCK_NO_LEADERBOARD
         public FlockLeaderboardProvider Leaderboard => _leaderboard;
+        #endif
+#if !FLOCK_NO_NOTIFICATION
+        public FlockNotificationProvider Notification => _notification;
 #endif
 #if !FLOCK_NO_ANALYTICS
         public IAnalyticProvider Analytics => _analytics;

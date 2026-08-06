@@ -31,6 +31,7 @@ The Flock Unity SDK provides access to Flock's game backend services from Unity 
 - Leaderboards — standings, the player's own rank, and an around-me slice, by board name
 - Game commands (server-side operations: update player data, add funds)
 - Player ban lookup
+- Notification inbox (list, unread count, mark read), server-side scheduling of dashboard-authored templates, and push device-token registration
 - Asset listing and lookup by ID
 - Analytics (session tracking, events, transactions — no-op safe when disabled)
 - Automatic retry with exponential backoff
@@ -154,6 +155,7 @@ Per-feature usage and examples live in their own guides:
 | [Shop](Docs~/shop.md) | Shops, items, purchase (money-safety contract), player inventory |
 | [Leaderboards](Docs~/leaderboards.md) | Standings, my-rank, around-me by board name; windows, board config, score formatting |
 | [Assets](Docs~/assets.md) | Listing/lookup, typed downloads, disk cache, preloading |
+| [Notifications](Docs~/notifications.md) | Player inbox, unread badge event, scheduling a template for later, pending-schedule tracking |
 | [Analytics](Docs~/analytics.md) | Sessions, logs/events, transactions, consent, unexpected-termination detection |
 | [SDK Events](Docs~/events.md) | The `FlockEvents` hub — lifecycle, auth, and session events |
 | [Codegen](Docs~/codegen.md) | Sync Schemas, generated templates/configs/shops/achievements, content catalog |

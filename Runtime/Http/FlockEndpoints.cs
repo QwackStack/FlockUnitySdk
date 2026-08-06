@@ -64,6 +64,16 @@ namespace Flock.Http
         public static string LeaderboardById(string leaderboardId) => $"leaderboard/{leaderboardId}";
         public static string LeaderboardMe(string leaderboardId) => $"leaderboard/{leaderboardId}/me";
         public static string LeaderboardAroundMe(string leaderboardId) => $"leaderboard/{leaderboardId}/around-me";
+        // Notifications — the player inbox plus game-scheduled reminders.
+        public const string Notification = "notification";
+        public const string NotificationUnreadCount = "notification/unread_count";
+        public const string NotificationSummary = "notification/summary";
+        public const string NotificationReadAll = "notification/read_all";
+        public static string NotificationReadById(string notificationId) => $"notification/{notificationId}/read";
+        public const string DeviceTokenRegister = "device_token/register";
+        public const string DeviceTokenUnregister = "device_token/unregister";
+        public const string NotificationSchedule = "notification/schedule";
+        public static string NotificationScheduleById(string scheduledId) => $"notification/schedule/{scheduledId}";
 
         // Assets
         public const string Asset = "asset";
