@@ -26,6 +26,13 @@ namespace Flock.Http
         public const string PlayerEmailVerify = "player/email/verify";
         public static string PlayerNameAvailable(string name) => $"player/name-available?name={Uri.EscapeDataString(name)}";
 
+        // Account linking — `provider` is a closed LoginType set (FlockCredentialProviders.ToWire), so no escaping needed.
+        public const string PlayerAccounts = "player/accounts";
+        public const string PlayerLinkEmail = "player/link/email";
+        public const string PlayerLinkDevice = "player/link/device";
+        public static string PlayerLinkOAuth(string provider) => $"player/link/oauth/{provider}";
+        public static string PlayerUnlink(string provider) => $"player/unlink/{provider}";
+
         // Player data / templates / bans
         public const string PlayerData = "player_data";
         public static string PlayerDataById(string playerDataId) => $"player_data/{playerDataId}";

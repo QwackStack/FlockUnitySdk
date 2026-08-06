@@ -1,4 +1,5 @@
 using Flock.Analytics;
+using Flock.Exceptions;
 
 namespace Flock
 {
@@ -14,6 +15,58 @@ namespace Flock
         Discord,
         /// <summary>Restored from the token store at startup.</summary>
         SessionRestore
+    }
+
+    /// <summary>A credential kind that can be linked to a player. Mirrors the backend LoginType set; Unknown = a provider this SDK version predates.</summary>
+    public enum FlockCredentialProvider
+    {
+        Unknown = 0,
+        DeviceId,
+        Email,
+        Google,
+        Apple,
+        Facebook,
+        Steam,
+        Discord
+    }
+
+    /// <summary>Wire mapping for <see cref="FlockCredentialProvider"/> — the backend spells these as LoginType strings.</summary>
+    public static class FlockCredentialProviders
+    {
+        /// <summary>Wire string for a provider. Throws on Unknown, which is never a valid request value.</summary>
+        public static string ToWire(FlockCredentialProvider provider)
+        {
+            switch (provider)
+            {
+                case FlockCredentialProvider.DeviceId: return "device_id";
+                case FlockCredentialProvider.Email: return "email";
+                case FlockCredentialProvider.Google: return "google";
+                case FlockCredentialProvider.Apple: return "apple";
+                case FlockCredentialProvider.Facebook: return "facebook";
+                case FlockCredentialProvider.Steam: return "steam";
+                case FlockCredentialProvider.Discord: return "discord";
+                default: throw new FlockValidationException($"'{provider}' is not a credential provider the SDK can send.");
+            }
+        }
+
+        /// <summary>Parses a wire string; returns Unknown for null/empty or anything this SDK version doesn't know.</summary>
+        public static FlockCredentialProvider Parse(string wire)
+        {
+            if (string.IsNullOrEmpty(wire))
+                return FlockCredentialProvider.Unknown;
+
+            switch (wire.ToLowerInvariant())
+            {
+                case "device_id": return FlockCredentialProvider.DeviceId;
+                case "email": return FlockCredentialProvider.Email;
+                case "google": return FlockCredentialProvider.Google;
+                case "apple": return FlockCredentialProvider.Apple;
+                case "facebook": return FlockCredentialProvider.Facebook;
+                case "steam": return FlockCredentialProvider.Steam;
+                case "discord": return FlockCredentialProvider.Discord;
+                default: return FlockCredentialProvider.Unknown;
+            }
+        }
     }
 
     /// <summary>Payload of <see cref="FlockEvents.OnAuthenticated"/>.</summary>

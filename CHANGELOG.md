@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.31.0]
+
+### Added
+- **Account linking.** `FlockClient.Instance.Authentication` can now attach extra credentials to the signed-in player — the "I played as a guest, now let me keep my progress" flow: `LinkEmailAsync`, `LinkDeviceAsync`, `LinkGoogleAsync`, `LinkAppleAsync`, `LinkSteamAsync`, `LinkFacebookAsync`, `LinkDiscordAsync`, plus `UnlinkAsync(FlockCredentialProvider)` and `GetLinkedAccountsAsync()`. See the [Authentication guide](Docs~/authentication.md).
+- **Every call returns the player's full updated credential list**, so a link or unlink doubles as a refresh. `PlayerLinkedAccount` carries the provider, the provider-side user id, the email, and `EmailVerified` — plus `ProviderType`, a typed view you can hand straight to `UnlinkAsync`.
+- **`FlockEvents.OnAccountLinked` / `OnAccountUnlinked`.** `Action<FlockCredentialProvider>`, raised only on success — one place to refresh an account-settings screen.
+- **Four new `FlockErrorCode` members**: `PlayerAccountAlreadyLinked`, `PlayerAccountNotLinked`, `PlayerCannotUnlinkLastCredential`, `PlayerInvalidLinkRequest`. The two worth handling are the credential already belonging to another player, and the server refusing to remove a player's last remaining way back in.
+- **EditMode tests**: exact request-body shape per route (including the OAuth routes' bare `token`, which is *not* the login routes' `id_token`/`session_ticket`), the `device_id` wire segment, the root — not enveloped — response contract, the bearer-only guards firing before any request, the events, the coded-error mapping, and the password-reset gate opening and re-closing.
+
+### Changed
+- **`ResetPasswordAsync` now accepts a linked email**, not only an email sign-in. It previously required `_currentAuthMethod == Email` and threw for a device or social session even when the account had an email credential the server would have honoured. The check is scoped to the current session and never persisted — it resets on logout and on every new session (login *or* restore), so one player's linked email can't leak into the next player's session on a shared device. After a restore the SDK doesn't know what's linked until you call `GetLinkedAccountsAsync()`. This only widens the gate — nothing that worked before now throws.
+
+### Notes
+- Credential state is **never cached** — same rule as bans and inventory — and linking is **never queued offline**: a link that may have landed is never re-sent, since the retry would come back as `account_already_linked`.
+- There is no account-merge flow. When a credential already belongs to another player the server returns `account_already_linked` and the choice (sign in as that player instead, or cancel) belongs to your game.
+- The unversioned `POST /player/{player_id}/link-oauth/{login_type}` route is superseded by `/v1/player/link/oauth/{provider}` and is deliberately not called.
+
+### Fixed
+- **Package Builder crash on the provider-stripping UI.** The Leaderboard manifest entry had been fused with the Notification entry and left `DependsOn` null, which the dependency walk dereferences unguarded.
+
 ## [1.30.0]
 
 ### Added

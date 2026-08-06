@@ -65,6 +65,12 @@ namespace Flock
         /// <summary>Session restore finished; payload is whether a session was restored (also fires false when there was none).</summary>
         public static event Action<bool> OnSessionRestored;
 
+        /// <summary>A credential was attached to the signed-in player; payload is the provider that was linked.</summary>
+        public static event Action<FlockCredentialProvider> OnAccountLinked;
+
+        /// <summary>A credential was removed from the signed-in player; payload is the provider that was unlinked.</summary>
+        public static event Action<FlockCredentialProvider> OnAccountUnlinked;
+
         //Session
 
         /// <summary>A gameplay/analytics session began; payload is the local session id.</summary>
@@ -131,6 +137,16 @@ namespace Flock
             Invoke(OnSessionRestored, restored, nameof(OnSessionRestored));
         }
 
+        internal static void InvokeAccountLinked(FlockCredentialProvider provider)
+        {
+            Invoke(OnAccountLinked, provider, nameof(OnAccountLinked));
+        }
+
+        internal static void InvokeAccountUnlinked(FlockCredentialProvider provider)
+        {
+            Invoke(OnAccountUnlinked, provider, nameof(OnAccountUnlinked));
+        }
+
         internal static void InvokeSessionStarted(string sessionId)
         {
             Invoke(OnSessionStarted, sessionId, nameof(OnSessionStarted));
@@ -174,6 +190,8 @@ namespace Flock
             OnAuthExpired = null;
             OnLoggedOut = null;
             OnSessionRestored = null;
+            OnAccountLinked = null;
+            OnAccountUnlinked = null;
             OnSessionStarted = null;
             OnSessionEnded = null;
             OnSessionPaused = null;

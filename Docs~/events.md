@@ -51,6 +51,8 @@ private void HandleSessionEnded(FlockSessionEndedArgs args)
 | `OnAuthExpired` | `Action` | A failed/rejected token refresh: tokens are cleared and the player must log in again. Same moment as `FlockClient.OnSessionExpired` (kept for back-compat). |
 | `OnLoggedOut` | `Action` | `Logout()` completing while a player was signed in. Local-only by design — tokens dropped on this device, nothing revoked server-side. |
 | `OnSessionRestored` | `Action<bool>` | A persisted-session restore finished — `true` = signed in (go to game), `false` = none (show login). Also exposed as the `FlockClient.IsRestoringSession` flag for a startup spinner; fires whether or not you use `FlockBootstrap`. |
+| `OnAccountLinked` | `Action<FlockCredentialProvider>` | A credential was attached to the signed-in player via one of the `Link*Async` calls. Payload: the provider that was linked. Only fires on success. |
+| `OnAccountUnlinked` | `Action<FlockCredentialProvider>` | A credential was removed via `UnlinkAsync`. Payload: the provider that was unlinked. Only fires on success. |
 
 **Session** (gameplay/analytics session — distinct from auth)
 

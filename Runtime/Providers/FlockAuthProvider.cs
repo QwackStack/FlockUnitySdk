@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Flock.Auth;
@@ -15,6 +16,9 @@ namespace Flock.Providers
 
         // How the current session was established; null when signed out. Gates email-only flows like ResetPasswordAsync.
         private FlockAuthMethod? _currentAuthMethod;
+
+        // Best-effort: true once a linked-accounts read or an email link proves the account has an email credential. Session-scoped, never persisted — false after a restore until the caller reads accounts.
+        private bool _hasEmailCredential;
 
         public FlockAuthProvider(FlockClient client) : base(client)
         {
@@ -34,6 +38,8 @@ namespace Flock.Providers
 
                 Client.SetTokens(response.AccessToken, response.RefreshToken);
                 _currentAuthMethod = method;
+                // A new session knows nothing about linked credentials yet — never carry the previous player's answer over.
+                _hasEmailCredential = false;
                 PersistAuthMethod(method);
                 Client.Logger.LogInfo($"{context} successful for player: {Client.CurrentPlayerId}");
 
@@ -132,6 +138,7 @@ namespace Flock.Providers
             Client.Logger.LogInfo($"Restored session for PlayerId: {Client.CurrentPlayerId}");
             // Carry the original login method forward so email-gated flows keep working after a restore.
             _currentAuthMethod = LoadPersistedAuthMethod() ?? FlockAuthMethod.SessionRestore;
+            _hasEmailCredential = false;
             FlockEvents.InvokeAuthenticated(new FlockAuthInfo(Client.CurrentPlayerId, FlockAuthMethod.SessionRestore));
             await TryInitializeAnalyticsAsync(cancellationToken);
             return true;
@@ -359,6 +366,127 @@ namespace Flock.Providers
             return response.Available;
         }
 
+        //Account linking
+
+        /// <summary>Lists the signed-in player's linked credentials (no secrets). Always fetched fresh — credential state is never cached.</summary>
+        public async Task<List<PlayerLinkedAccount>> GetLinkedAccountsAsync(CancellationToken cancellationToken = default)
+        {
+            RequireAuthenticated();
+            PlayerAccountsResponse response = await ExecuteAsync(
+                () => FlockHttpClient.GetAsync<PlayerAccountsResponse>(
+                    $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.PlayerAccounts}",
+                    Client.GetBaseHeaders(), cancellationToken),
+                "List linked accounts", cancellationToken);
+            return ReadAccounts(response);
+        }
+
+        /// <summary>Attaches an email/password credential to the signed-in player. Returns the updated credential list; throws with <see cref="FlockErrorCode.PlayerAccountAlreadyLinked"/> when the email belongs to another player.</summary>
+        public async Task<List<PlayerLinkedAccount>> LinkEmailAsync(string email, string password, CancellationToken cancellationToken = default)
+        {
+            RequireAuthenticated();
+            RequireNotEmpty(email, nameof(email));
+            RequireNotEmpty(password, nameof(password));
+            return await LinkAsync(FlockEndpoints.PlayerLinkEmail,
+                new PlayerLinkEmailRequest { Email = email, Password = password },
+                FlockCredentialProvider.Email, "Link email", cancellationToken);
+        }
+
+        /// <summary>Attaches a device credential to the signed-in player — the "keep my guest progress" flow's counterpart.</summary>
+        public async Task<List<PlayerLinkedAccount>> LinkDeviceAsync(string deviceId, CancellationToken cancellationToken = default)
+        {
+            RequireAuthenticated();
+            RequireNotEmpty(deviceId, nameof(deviceId));
+            return await LinkAsync(FlockEndpoints.PlayerLinkDevice,
+                new PlayerLinkDeviceRequest { DeviceType = SystemInfo.deviceType.ToString(), DeviceId = deviceId },
+                FlockCredentialProvider.DeviceId, "Link device", cancellationToken);
+        }
+
+        /// <summary>Attaches a Google credential to the signed-in player.</summary>
+        public async Task<List<PlayerLinkedAccount>> LinkGoogleAsync(string idToken, CancellationToken cancellationToken = default)
+        {
+            return await LinkOAuthAsync(FlockCredentialProvider.Google, idToken, nameof(idToken), "Link Google", cancellationToken);
+        }
+
+        /// <summary>Attaches an Apple credential to the signed-in player.</summary>
+        public async Task<List<PlayerLinkedAccount>> LinkAppleAsync(string identityToken, CancellationToken cancellationToken = default)
+        {
+            return await LinkOAuthAsync(FlockCredentialProvider.Apple, identityToken, nameof(identityToken), "Link Apple", cancellationToken);
+        }
+
+        /// <summary>Attaches a Steam credential to the signed-in player.</summary>
+        public async Task<List<PlayerLinkedAccount>> LinkSteamAsync(string sessionTicket, CancellationToken cancellationToken = default)
+        {
+            return await LinkOAuthAsync(FlockCredentialProvider.Steam, sessionTicket, nameof(sessionTicket), "Link Steam", cancellationToken);
+        }
+
+        /// <summary>Attaches a Facebook credential to the signed-in player.</summary>
+        public async Task<List<PlayerLinkedAccount>> LinkFacebookAsync(string facebookToken, CancellationToken cancellationToken = default)
+        {
+            return await LinkOAuthAsync(FlockCredentialProvider.Facebook, facebookToken, nameof(facebookToken), "Link Facebook", cancellationToken);
+        }
+
+        /// <summary>Attaches a Discord credential to the signed-in player.</summary>
+        public async Task<List<PlayerLinkedAccount>> LinkDiscordAsync(string discordToken, CancellationToken cancellationToken = default)
+        {
+            return await LinkOAuthAsync(FlockCredentialProvider.Discord, discordToken, nameof(discordToken), "Link Discord", cancellationToken);
+        }
+
+        /// <summary>Removes a credential from the signed-in player. The server refuses the last remaining one, throwing with <see cref="FlockErrorCode.PlayerCannotUnlinkLastCredential"/>.</summary>
+        public async Task<List<PlayerLinkedAccount>> UnlinkAsync(FlockCredentialProvider provider, CancellationToken cancellationToken = default)
+        {
+            RequireAuthenticated();
+            string wire = FlockCredentialProviders.ToWire(provider);
+            PlayerAccountsResponse response = await ExecuteAsync(
+                () => FlockHttpClient.PostAsync<PlayerAccountsResponse>(
+                    $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.PlayerUnlink(wire)}",
+                    new object(), Client.GetBaseHeaders(), cancellationToken),
+                $"Unlink {wire}", cancellationToken, idempotent: false);
+
+            List<PlayerLinkedAccount> accounts = ReadAccounts(response);
+            Client.Logger.LogInfo($"Unlinked {wire} from player: {Client.CurrentPlayerId}");
+            FlockEvents.InvokeAccountUnlinked(provider);
+            return accounts;
+        }
+
+        // Every OAuth provider links with a bare token, so one path serves all five.
+        private async Task<List<PlayerLinkedAccount>> LinkOAuthAsync(FlockCredentialProvider provider, string token, string tokenArgName, string context, CancellationToken cancellationToken)
+        {
+            RequireAuthenticated();
+            RequireNotEmpty(token, tokenArgName);
+            return await LinkAsync(FlockEndpoints.PlayerLinkOAuth(FlockCredentialProviders.ToWire(provider)),
+                new PlayerLinkOAuthRequest { Token = token }, provider, context, cancellationToken);
+        }
+
+        // idempotent:false — a link that may have landed is never re-sent, since the retry would come back as account_already_linked.
+        private async Task<List<PlayerLinkedAccount>> LinkAsync(string endpoint, object body, FlockCredentialProvider provider, string context, CancellationToken cancellationToken)
+        {
+            PlayerAccountsResponse response = await ExecuteAsync(
+                () => FlockHttpClient.PostAsync<PlayerAccountsResponse>(
+                    $"{Client.GetVersionedApiUrl()}/{endpoint}", body, Client.GetBaseHeaders(), cancellationToken),
+                context, cancellationToken, idempotent: false);
+
+            List<PlayerLinkedAccount> accounts = ReadAccounts(response);
+            Client.Logger.LogInfo($"{context} succeeded for player: {Client.CurrentPlayerId}");
+            FlockEvents.InvokeAccountLinked(provider);
+            return accounts;
+        }
+
+        // These routes return the model at the root, not in a GenericResponse envelope. Every one hands back the full list, so the email flag re-derives itself on any of them.
+        private List<PlayerLinkedAccount> ReadAccounts(PlayerAccountsResponse response)
+        {
+            if (response?.Accounts == null)
+                throw new FlockNetworkException("Invalid response from server (missing accounts)");
+
+            bool hasEmail = false;
+            foreach (PlayerLinkedAccount account in response.Accounts)
+            {
+                if (account != null && account.ProviderType == FlockCredentialProvider.Email)
+                    hasEmail = true;
+            }
+            _hasEmailCredential = hasEmail;
+            return response.Accounts;
+        }
+
         // Bearer-only endpoints — fail fast instead of a guaranteed server 401.
         private void RequireAuthenticated()
         {
@@ -366,12 +494,12 @@ namespace Flock.Providers
                 throw new FlockAuthException("No player is signed in");
         }
 
-        // Password reset is scoped to the signed-in email account — restored email sessions count, social/device logins don't.
+        // Password reset is scoped to an email account — an email login (restored ones count) or a linked email credential this session.
         private void RequireEmailLogin()
         {
             RequireAuthenticated();
-            if (_currentAuthMethod != FlockAuthMethod.Email)
-                throw new FlockAuthException("Password reset requires being signed in with email");
+            if (_currentAuthMethod != FlockAuthMethod.Email && !_hasEmailCredential)
+                throw new FlockAuthException("Password reset requires an email credential on this account");
         }
 
         // Non-secret, so PlayerPrefs (not the token store) — lets a restored session keep its original method.
@@ -396,6 +524,7 @@ namespace Flock.Providers
         {
             bool wasAuthenticated = Client.IsAuthenticated;
             _currentAuthMethod = null;
+            _hasEmailCredential = false;
             PlayerPrefs.DeleteKey(PrefKeyAuthMethod);
             Client.ClearTokens();
             if (wasAuthenticated)
