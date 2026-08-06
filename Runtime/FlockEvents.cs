@@ -79,6 +79,11 @@ namespace Flock
         /// <summary>The paused session resumed (app foregrounded).</summary>
         public static event Action OnSessionResumed;
 
+        //Notifications
+
+        /// <summary>The player's unread notification count changed. Raised only when the server reports a count — a fetch of unread count or summary, or a mark-all-read — never from a background poll, because the SDK doesn't run one.</summary>
+        public static event Action<int> OnUnreadCountChanged;
+
         //Consent
 
         /// <summary>Analytics consent was granted or revoked via <c>Analytics.SetConsent</c>. Payload: the new state.</summary>
@@ -146,6 +151,11 @@ namespace Flock
             Invoke(OnSessionResumed, nameof(OnSessionResumed));
         }
 
+        internal static void InvokeUnreadCountChanged(int count)
+        {
+            Invoke(OnUnreadCountChanged, count, nameof(OnUnreadCountChanged));
+        }
+
         internal static void InvokeConsentChanged(bool granted)
         {
             Invoke(OnConsentChanged, granted, nameof(OnConsentChanged));
@@ -168,6 +178,7 @@ namespace Flock
             OnSessionEnded = null;
             OnSessionPaused = null;
             OnSessionResumed = null;
+            OnUnreadCountChanged = null;
             OnConsentChanged = null;
         }
 

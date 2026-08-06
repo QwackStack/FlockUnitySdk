@@ -454,7 +454,14 @@ namespace Flock.Providers
 
             EnsureSerializable(request, eventName);
             string handle = _eventCache?.Enqueue(request);
-            Client.Logger.LogDebug($"Event queued: {eventName}");
+
+            // A null handle means the event is gone, not queued — no cache (CacheFailedEvents off) or the
+            // write failed. Saying "queued" there sends anyone debugging a missing event down the wrong path.
+            if (handle == null)
+                Client.Logger.LogWarning(
+                    $"Event '{eventName}' was NOT queued and will never be delivered — the analytics event cache is unavailable (CacheFailedEvents off, or the disk write failed).");
+            else
+                Client.Logger.LogDebug($"Event queued: {eventName}");
 
             return handle;
         }

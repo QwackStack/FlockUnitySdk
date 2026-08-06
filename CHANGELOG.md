@@ -5,6 +5,25 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [1.29.0]
+
+### Added
+- **Notification inbox.** `FlockClient.Instance.Notification` exposes `GetInboxAsync`, `GetUnreadCountAsync`, `GetSummaryAsync`, `MarkReadAsync` and `MarkAllReadAsync`. Reads are snapshot-cached per player, so one player's inbox is never served to the next on a shared device. See the [Notifications guide](Docs~/notifications.md).
+- **`FlockEvents.OnUnreadCountChanged`.** Drives a mailbox badge without any polling: the SDK deliberately runs no background loop (these calls are metered), so the event fires whenever a call returns a server-reported count, and only when the value changes.
+- **Notification scheduling.** `ScheduleAsync` asks the server to deliver a dashboard-authored template to the signed-in player later — by `TimeSpan` delay or an absolute `DateTime` — with `CancelScheduledAsync` to undo it. Channels are a `[Flags]` enum (`FlockNotificationChannels`); leaving it `None` uses the template's own channels.
+- **Pending-schedule tracking.** `GetPendingSchedules()` and `CancelAllScheduledAsync()`. The id returned by `ScheduleAsync` is the only handle on a pending notification and the API has no route to list them, so the SDK persists its own record (player-scoped, dropped once the delivery time passes, preserved across `ClearCache()`).
+- **Typed accessors for a notification's `data` payload.** `TryGetData<T>`, `GetData<T>` and `GetDataAs<T>` on `Notification`. JSON round-trips into `Dictionary<string, object>` as `long` for whole numbers, `double` for decimals and `JObject`/`JArray` for nested values, so a direct `(int)` cast throws on an ordinary payload and nested access leaks `Newtonsoft.Json.Linq` into consumer code. These normalise it and never throw — a missing key, null `data`, or an unconvertible value returns the fallback.
+- **One-call push registration on iOS.** `RegisterThisDeviceAsync()` requests permission, registers with APNs, obtains the token and sends it — no token argument. Enabled by installing `com.unity.mobile.notifications`; the SDK's asmdef carries a `versionDefines` entry so the define appears automatically and consumers without the package are unaffected. It stays an **optional** dependency: the SDK still ships with `com.unity.nuget.newtonsoft-json` as its only hard requirement. Android can't work this way — an FCM token comes from Google's messaging client, which ships as the Firebase SDK and cannot be a package dependency — so there it throws with that explanation and you use the token overload.
+- **Push device-token registration.** `RegisterDeviceTokenAsync` and `UnregisterDeviceTokenAsync`. The platform is detected from the running build, with an explicit `FlockDevicePlatform` overload when the token comes from elsewhere. On a platform the push backend has no value for — PC, Mac, Linux, console, and the Editor — registration **throws instead of guessing**, because a token filed under the wrong platform fails silently at delivery time rather than at the call site. The SDK cannot obtain the token itself (Unity has no first-party FCM/APNs): get it from Firebase or `com.unity.mobile.notifications` and pass it in. Logout does not unregister — `Logout()` is local-only by design, so call `UnregisterDeviceTokenAsync` first on a shared device.
+
+### Fixed
+- **Money-safety retry tests could not fail.** The shared test harness pins `MaxRetries = 0`, so `Purchase_ServerError_NotRetried_Throws` held regardless of the `idempotent:` flag it claimed to verify. Those tests now raise the retry cap through the existing config hook and are paired with a 408 contrast case (provably-unprocessed failures *do* retry), which is what proves the assertion measures idempotency. `AddGameFunds` had no non-retry test at all and now has both halves. No runtime change.
+
+### Known limitations
+- **`ScheduleAsync` requires the notification template's ID, not its name** — a name returns `404 "Notification template not found"`. No `/v1` route exposes template IDs and the dashboard does not display them, so the ID must be obtained out-of-band. Backend gap, tracked separately.
+- **Push delivery exists server-side** (confirmed 2026-08-05), but no push has yet been observed landing on a physical device from this SDK. The registration call is wired; obtaining the token is still the game's job (Firebase on Android, `com.unity.mobile.notifications` on iOS).
+- **Desktop cannot receive push at all**, and no backend change can fix it: push requires an OS-level service (FCM / APNs / Web Push), and Windows standalone, Linux, and console have none reachable from a generic backend. The API's platforms are `android`, `ios`, `web`. On desktop the inbox and email are the only delivery paths.
+
 ## [1.28.0]
 
 ### Fixed

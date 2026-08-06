@@ -136,6 +136,48 @@ namespace Flock.Tests.Editor
             }
         }
 
+        // Retries must be raised above the harness default (FlockTestClient pins MaxRetries = 0) or a
+        // "sent exactly once" assertion holds no matter what the idempotent flag says.
+        private static RetryPolicy RetriesEnabled()
+        {
+            return new RetryPolicy { MaxRetries = 3, InitialDelay = TimeSpan.Zero };
+        }
+
+        // ---- CMD-05b: an ambiguous funds failure (5xx) is NOT re-sent — double-credit safety ----
+        [Test]
+        public void AddGameFunds_ServerError_NotRetried()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            using (FlockTestClient h = FlockTestClient.Create(transport, config => config.RetryPolicy = RetriesEnabled()))
+            {
+                h.LoginAs("player-a");
+                PrimeCachedRow(h, "player-a", "curr-tpl-1", "pd-1", new List<DataField> { Field("gold", "0") });
+                transport.On(FlockEndpoints.CommandAddGameFunds, FlockFakeTransport.Status(500, "{}"));
+
+                Assert.Catch<FlockException>(() => h.Run(() => h.Client.Commands.AddGameFundsAsync("gold", 100, "curr-tpl-1")));
+                Assert.AreEqual(1, transport.CountTo(FlockEndpoints.CommandAddGameFunds),
+                    "A 5xx is ambiguous — the grant may already have committed, so re-sending risks a double credit.");
+            }
+        }
+
+        // ---- CMD-05c: contrast — a 408 is provably NOT processed, so even a money grant retries it ----
+        // This is what proves CMD-05b measures the idempotency flag rather than a retry cap of zero.
+        [Test]
+        public void AddGameFunds_RequestTimeout_IsRetried()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            using (FlockTestClient h = FlockTestClient.Create(transport, config => config.RetryPolicy = RetriesEnabled()))
+            {
+                h.LoginAs("player-a");
+                PrimeCachedRow(h, "player-a", "curr-tpl-1", "pd-1", new List<DataField> { Field("gold", "0") });
+                transport.On(FlockEndpoints.CommandAddGameFunds, FlockFakeTransport.Status(408, "{}"));
+
+                Assert.Catch<FlockException>(() => h.Run(() => h.Client.Commands.AddGameFundsAsync("gold", 100, "curr-tpl-1")));
+                Assert.Greater(transport.CountTo(FlockEndpoints.CommandAddGameFunds), 1,
+                    "408 means the server never processed it, so re-sending can't double-credit — retries are live under this policy.");
+            }
+        }
+
         // ---- CMD-23: empty ids fail validation before any network ----
         [Test]
         public void Update_EmptyIds_ThrowValidation_WithoutNetwork()
