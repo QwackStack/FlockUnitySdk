@@ -1,3 +1,4 @@
+using System;
 using Flock.Exceptions;
 using Flock.Http;
 using Flock.Models;
@@ -55,6 +56,13 @@ namespace Flock.Tests.Editor
             }
         }
 
+        // Retries must be raised above the harness default (FlockTestClient pins MaxRetries = 0) or a
+        // "sent exactly once" assertion holds no matter what the idempotent flag says.
+        private static RetryPolicy RetriesEnabled()
+        {
+            return new RetryPolicy { MaxRetries = 3, InitialDelay = TimeSpan.Zero };
+        }
+
         // ---- SHOP-03: an ambiguous purchase failure (5xx) is NOT retried (money safety) ----
         [Test]
         public void Purchase_ServerError_NotRetried_Throws()
@@ -63,13 +71,33 @@ namespace Flock.Tests.Editor
             transport.On(FlockEndpoints.ShopItemById("item-1"),
                 FlockFakeTransport.Ok("{\"result\":{\"id\":\"item-1\",\"price\":100,\"currency\":\"USD\"}}"));
             transport.On(FlockEndpoints.ShopTransaction, FlockFakeTransport.Status(500, "{}"));
-            using (FlockTestClient h = FlockTestClient.Create(transport))
+            using (FlockTestClient h = FlockTestClient.Create(transport, config => config.RetryPolicy = RetriesEnabled()))
             {
                 h.LoginAs("player-a");
                 h.SetReachable(true);
 
                 Assert.Catch<FlockException>(() => h.Run(() => h.Client.Shop.PurchaseAsync("item-1")));
                 Assert.AreEqual(1, transport.CountTo(FlockEndpoints.ShopTransaction), "Money mutation must not be retried on an ambiguous 5xx.");
+            }
+        }
+
+        // ---- SHOP-03b: contrast — a 408 is provably NOT processed, so even a purchase retries it ----
+        // Without this, SHOP-03 could pass purely because retries were off; this proves the flag is what's measured.
+        [Test]
+        public void Purchase_RequestTimeout_IsRetried()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.ShopItemById("item-1"),
+                FlockFakeTransport.Ok("{\"result\":{\"id\":\"item-1\",\"price\":100,\"currency\":\"USD\"}}"));
+            transport.On(FlockEndpoints.ShopTransaction, FlockFakeTransport.Status(408, "{}"));
+            using (FlockTestClient h = FlockTestClient.Create(transport, config => config.RetryPolicy = RetriesEnabled()))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                Assert.Catch<FlockException>(() => h.Run(() => h.Client.Shop.PurchaseAsync("item-1")));
+                Assert.Greater(transport.CountTo(FlockEndpoints.ShopTransaction), 1,
+                    "408 means the server never processed it, so re-sending can't double-charge — retries are live under this policy.");
             }
         }
 

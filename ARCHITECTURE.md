@@ -34,6 +34,7 @@ PackageBuilder/Tests/Editor/   EditMode tests (asmdef Flock.Tests.Editor)
 - **FlockShopProvider** — shops, items, purchase, inventory (incl. by-name); `PurchaseStatus`/`TransactionType` enums.
 - **FlockCommandProvider** — retry-safe game commands (funds, achievements, player-data writes).
 - **FlockAssetProvider** / **FlockAssetCache** — asset fetch + local file cache.
+- **FlockNotificationProvider** — player inbox (list / unread count / summary / mark read), server-side scheduling of a dashboard template, and push device-token register/unregister; persists its own pending-schedule list because the API has no route to list them. Raises `FlockEvents.OnUnreadCountChanged`; no background polling. Device-platform auto-detect throws on desktop/console/Editor rather than guessing a value the push backend doesn't accept. `RegisterThisDeviceAsync` fetches the APNs token itself on iOS when `com.unity.mobile.notifications` is installed — an **optional** dependency wired through `versionDefines` in `Flock.Runtime.asmdef`, so the package stays single-dependency; Android tokens come from Firebase and remain the consumer's job.
 - **FlockSnapshotStore** — on-disk snapshot cache backing offline reads.
 - **Analytics/FlockAnalyticsProvider** — sends sessions/events/transactions. · **NullAnalyticsProvider** — no-op when `FLOCK_NO_ANALYTICS`.
 

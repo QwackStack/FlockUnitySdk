@@ -129,6 +129,17 @@ namespace Flock.Editor
                 },
                 DependsOn = new string[0],
             },
+            new Entry
+            {
+                Id = "NOTIFICATION",
+                DisplayName = "Notification",
+                Description = "Schedule and cancel player reminders from a dashboard template.",
+                Files = new[]
+                {
+                    "Runtime/Providers/FlockNotificationProvider.cs",
+                },
+                DependsOn = new string[0],
+            },
         };
 
         public static Entry Find(string id)
