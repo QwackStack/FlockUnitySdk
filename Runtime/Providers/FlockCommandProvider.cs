@@ -173,6 +173,8 @@ namespace Flock.Providers
             return ApplyToPlayerCache(result);
         }
 
+        /// <summary>Writes one field of a player-data row.</summary>
+        /// <param name="key">A **top-level** field name, not a path: the server assigns it as a literal dictionary key, so "Level.Stage" is stored under that exact string and then refused by template validation (422). Write the whole nested object instead.</param>
         public async Task<PlayerData> UpdatePlayerDataFieldAsync(
             string playerDataId, string key, object value,
             CancellationToken cancellationToken = default)

@@ -16,22 +16,64 @@ namespace Flock.Tests.Editor
     // scheduled id and there is no route to list what a player has pending.
     public class FlockNotificationProviderTests
     {
-        private const string ScheduledBody =
+        // Always in the future, never a fixed date. TrackPending persists the server-echoed deliver_at and
+        // LoadPendingSchedules drops whatever has already elapsed, so a hardcoded date empties the pending
+        // list the day it passes and every "still pending" assertion silently reads 0. Declared before the
+        // bodies below — static readonly fields initialise in textual order.
+        private static readonly DateTime DeliverAt =
+            new DateTime(DateTime.UtcNow.Year + 1, 8, 5, 12, 0, 0, DateTimeKind.Utc);
+
+        private static readonly string DeliverAtWire = DeliverAt.ToString("yyyy-MM-ddTHH:mm:ss") + "Z";
+
+        private static readonly string ScheduledBody =
             "{\"result\":{\"id\":\"sched-1\",\"game_id\":\"g\",\"studio_id\":\"s\",\"player_id\":\"player-a\"," +
-            "\"template_id\":\"GameplayTest\",\"variables\":{},\"channels\":[\"in_app\"],\"deliver_at\":\"2026-08-05T12:00:00Z\"," +
+            "\"template_id\":\"tmpl-1\",\"variables\":{},\"channels\":[\"in_app\"],\"deliver_at\":\"" + DeliverAtWire + "\"," +
             "\"status\":\"pending\",\"source\":\"sdk\",\"notification_id\":null,\"delivered_at\":null,\"canceled_at\":null," +
             "\"created_at\":\"2026-08-04T00:00:00Z\",\"updated_at\":\"2026-08-04T00:00:00Z\"}}";
 
-        private static readonly DateTime DeliverAt = new DateTime(2026, 8, 5, 12, 0, 0, DateTimeKind.Utc);
+        // The client-facing template projection: id/name/category only, no authoring content.
+        private const string TemplateBody =
+            "{\"result\":{\"id\":\"tmpl-1\",\"name\":\"GameplayTest\",\"category\":\"gameplay\"}}";
 
-        // ---- NOTIF-01: the caller's template identifier reaches template_id untouched ----
-        // A template NAME was tried here first; the live backend answered 404 "Notification template not found",
-        // so the route resolves by id only. The SDK sends whatever it is given, verbatim.
-        [Test]
-        public void Schedule_SendsTemplateIdVerbatim()
+        // Scheduling resolves the name to an id first, so both routes have to answer. One fragment covers the
+        // catalog and by-name alike, and "notification_template" can't collide with "notification/schedule".
+        private static FlockFakeTransport ScheduleTransport()
         {
             FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.NotificationTemplate, FlockFakeTransport.Ok(TemplateBody));
             transport.On(FlockEndpoints.NotificationSchedule, FlockFakeTransport.Ok(ScheduledBody));
+            return transport;
+        }
+
+        // Specific route first: matching is first-Contains-wins, so "notification/schedule" registered ahead of
+        // "notification/schedule/sched-1" swallows every cancel and the by-id response is never reached.
+        private static FlockFakeTransport ScheduleTransport(FlockHttpResponse cancelById)
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.NotificationScheduleById("sched-1"), cancelById);
+            transport.On(FlockEndpoints.NotificationTemplate, FlockFakeTransport.Ok(TemplateBody));
+            transport.On(FlockEndpoints.NotificationSchedule, FlockFakeTransport.Ok(ScheduledBody));
+            return transport;
+        }
+
+        // JObject.Parse coerces an ISO-8601 value into a Date token, and casting that back to string renders it
+        // in the machine's culture ("08/05/2027 12:00:00"), hiding what actually went on the wire.
+        private static JObject ParseBody(string json)
+        {
+            using (JsonTextReader reader = new JsonTextReader(new System.IO.StringReader(json)))
+            {
+                reader.DateParseHandling = DateParseHandling.None;
+                return JObject.Load(reader);
+            }
+        }
+
+        // ---- NOTIF-01: the caller passes a NAME; the resolved id is what reaches template_id ----
+        // The schedule route resolves by id only, so the SDK looks the name up first. Sending the name
+        // verbatim is what the live backend answered 404 "Notification template not found" on.
+        [Test]
+        public void Schedule_ResolvesNameAndSendsResolvedId()
+        {
+            FlockFakeTransport transport = ScheduleTransport();
             using (FlockTestClient h = FlockTestClient.Create(transport))
             {
                 h.LoginAs("player-a");
@@ -42,8 +84,108 @@ namespace Flock.Tests.Editor
                 FlockHttpRequest sent = h.Transport.LastTo(FlockEndpoints.NotificationSchedule);
                 Assert.IsNotNull(sent, "Schedule should have hit the schedule endpoint.");
                 JObject body = JObject.Parse(sent.JsonBody);
-                Assert.AreEqual("GameplayTest", (string)body["template_id"],
-                    "Whatever identifier the caller passes must reach template_id untouched — the SDK does no resolution.");
+                Assert.AreEqual("tmpl-1", (string)body["template_id"],
+                    "template_id must carry the id the name resolved to, never the name itself.");
+            }
+        }
+
+        // ---- NOTIF-01b: the name rides in the query, not a path segment ----
+        // Template names carry spaces, colons and slashes, none of which survive a single path segment.
+        [Test]
+        public void Schedule_SendsTemplateNameAsQueryParam()
+        {
+            FlockFakeTransport transport = ScheduleTransport();
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                h.Run(() => h.Client.Notification.ScheduleAsync("Gameplay Test/A", DeliverAt));
+
+                FlockHttpRequest lookup = h.Transport.LastTo("notification_template/by-name");
+                Assert.IsNotNull(lookup, "Scheduling by name must resolve through the by-name route.");
+                StringAssert.Contains("name=Gameplay%20Test%2FA", lookup.Url,
+                    "The name must be escaped into the query, not appended as a path segment.");
+            }
+        }
+
+        // ---- NOTIF-01c: locale is forwarded when given and omitted when not ----
+        [Test]
+        public void Schedule_ForwardsLocaleOnlyWhenGiven()
+        {
+            FlockFakeTransport transport = ScheduleTransport();
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                h.Run(() => h.Client.Notification.ScheduleAsync("GameplayTest", DeliverAt, null,
+                    FlockNotificationChannels.None, "fr"));
+                StringAssert.Contains("locale=fr", h.Transport.LastTo("notification_template/by-name").Url);
+
+                h.Run(() => h.Client.Notification.ScheduleAsync("OtherTemplate", DeliverAt));
+                StringAssert.DoesNotContain("locale=", h.Transport.LastTo("notification_template/by-name").Url,
+                    "Without a locale the parameter is omitted so the server's English-then-first-on-file fallback applies.");
+            }
+        }
+
+        // ---- NOTIF-01d: the name→id lookup is memoized for the session ----
+        [Test]
+        public void Schedule_Twice_ResolvesNameOnce()
+        {
+            FlockFakeTransport transport = ScheduleTransport();
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                h.Run(() => h.Client.Notification.ScheduleAsync("GameplayTest", DeliverAt));
+                h.Run(() => h.Client.Notification.ScheduleAsync("GameplayTest", DeliverAt));
+
+                Assert.AreEqual(1, h.Transport.CountTo("notification_template/by-name"),
+                    "A repeated name must come from the memo rather than costing another round trip.");
+                Assert.AreEqual(2, h.Transport.CountTo(FlockEndpoints.NotificationSchedule));
+            }
+        }
+
+        // ---- NOTIF-01e: a name this game doesn't have never reaches the schedule route ----
+        [Test]
+        public void Schedule_UnknownName_FailsBeforeScheduling()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.NotificationTemplate, FlockFakeTransport.Status(404,
+                "{\"detail\":{\"code\":\"notification_template.not_found\",\"message\":\"No active notification template with this name\"}}"));
+            transport.On(FlockEndpoints.NotificationSchedule, FlockFakeTransport.Ok(ScheduledBody));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                Assert.Catch<FlockException>(() => h.Run(() => h.Client.Notification.ScheduleAsync("Nope", DeliverAt)));
+                Assert.IsFalse(h.Transport.Sent(FlockEndpoints.NotificationSchedule),
+                    "An unresolvable name must fail before anything is scheduled.");
+            }
+        }
+
+        // ---- NOTIF-01f: the template catalog is game-scoped, not player-scoped ----
+        // Both template routes are API-key only — no bearer — so they must work signed out.
+        [Test]
+        public void GetTemplates_WorksSignedOut()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.NotificationTemplate, FlockFakeTransport.Ok(
+                "{\"result\":[{\"id\":\"tmpl-1\",\"name\":\"GameplayTest\",\"category\":\"gameplay\"}," +
+                "{\"id\":\"tmpl-2\",\"name\":\"Welcome\",\"category\":\"onboarding\"}]}"));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.SetReachable(true);
+
+                List<NotificationTemplate> templates = h.Run(() => h.Client.Notification.GetTemplatesAsync());
+
+                Assert.AreEqual(2, templates.Count);
+                Assert.AreEqual("tmpl-1", templates[0].Id);
+                Assert.AreEqual("GameplayTest", templates[0].Name);
+                Assert.AreEqual("onboarding", templates[1].Category);
             }
         }
 
@@ -51,8 +193,7 @@ namespace Flock.Tests.Editor
         [Test]
         public void Schedule_SendsDeliverAtAsUtcIso8601()
         {
-            FlockFakeTransport transport = new FlockFakeTransport();
-            transport.On(FlockEndpoints.NotificationSchedule, FlockFakeTransport.Ok(ScheduledBody));
+            FlockFakeTransport transport = ScheduleTransport();
             using (FlockTestClient h = FlockTestClient.Create(transport))
             {
                 h.LoginAs("player-a");
@@ -60,9 +201,9 @@ namespace Flock.Tests.Editor
 
                 h.Run(() => h.Client.Notification.ScheduleAsync("GameplayTest", DeliverAt));
 
-                JObject body = JObject.Parse(h.Transport.LastTo(FlockEndpoints.NotificationSchedule).JsonBody);
+                JObject body = ParseBody(h.Transport.LastTo(FlockEndpoints.NotificationSchedule).JsonBody);
                 string deliverAt = (string)body["deliver_at"];
-                StringAssert.StartsWith("2026-08-05T12:00:00", deliverAt);
+                StringAssert.StartsWith(DeliverAt.ToString("yyyy-MM-ddTHH:mm:ss"), deliverAt);
                 StringAssert.EndsWith("Z", deliverAt, "deliver_at must be sent as UTC, not local time.");
             }
         }
@@ -71,8 +212,7 @@ namespace Flock.Tests.Editor
         [Test]
         public void Schedule_ConvertsLocalTimeToUtc()
         {
-            FlockFakeTransport transport = new FlockFakeTransport();
-            transport.On(FlockEndpoints.NotificationSchedule, FlockFakeTransport.Ok(ScheduledBody));
+            FlockFakeTransport transport = ScheduleTransport();
             using (FlockTestClient h = FlockTestClient.Create(transport))
             {
                 h.LoginAs("player-a");
@@ -81,7 +221,7 @@ namespace Flock.Tests.Editor
                 DateTime local = DeliverAt.ToLocalTime();
                 h.Run(() => h.Client.Notification.ScheduleAsync("GameplayTest", local));
 
-                JObject body = JObject.Parse(h.Transport.LastTo(FlockEndpoints.NotificationSchedule).JsonBody);
+                JObject body = ParseBody(h.Transport.LastTo(FlockEndpoints.NotificationSchedule).JsonBody);
                 string deliverAt = (string)body["deliver_at"];
                 Assert.AreEqual(DeliverAt, DateTime.Parse(deliverAt, null, System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal),
                     "A local DateTime must land on the wire as the same instant in UTC.");
@@ -92,8 +232,7 @@ namespace Flock.Tests.Editor
         [Test]
         public void Schedule_MapsChannelsToWireValues_AndSendsVariables()
         {
-            FlockFakeTransport transport = new FlockFakeTransport();
-            transport.On(FlockEndpoints.NotificationSchedule, FlockFakeTransport.Ok(ScheduledBody));
+            FlockFakeTransport transport = ScheduleTransport();
             using (FlockTestClient h = FlockTestClient.Create(transport))
             {
                 h.LoginAs("player-a");
@@ -117,8 +256,7 @@ namespace Flock.Tests.Editor
         [Test]
         public void Schedule_OmitsVariablesAndChannelsWhenNotSupplied()
         {
-            FlockFakeTransport transport = new FlockFakeTransport();
-            transport.On(FlockEndpoints.NotificationSchedule, FlockFakeTransport.Ok(ScheduledBody));
+            FlockFakeTransport transport = ScheduleTransport();
             using (FlockTestClient h = FlockTestClient.Create(transport))
             {
                 h.LoginAs("player-a");
@@ -136,8 +274,7 @@ namespace Flock.Tests.Editor
         [Test]
         public void Schedule_DelayOverload_ResolvesToUtcNowPlusDelay()
         {
-            FlockFakeTransport transport = new FlockFakeTransport();
-            transport.On(FlockEndpoints.NotificationSchedule, FlockFakeTransport.Ok(ScheduledBody));
+            FlockFakeTransport transport = ScheduleTransport();
             using (FlockTestClient h = FlockTestClient.Create(transport))
             {
                 h.LoginAs("player-a");
@@ -160,8 +297,7 @@ namespace Flock.Tests.Editor
         [Test]
         public void Schedule_NoChannels_OmitsFieldSoTemplateDecides()
         {
-            FlockFakeTransport transport = new FlockFakeTransport();
-            transport.On(FlockEndpoints.NotificationSchedule, FlockFakeTransport.Ok(ScheduledBody));
+            FlockFakeTransport transport = ScheduleTransport();
             using (FlockTestClient h = FlockTestClient.Create(transport))
             {
                 h.LoginAs("player-a");
@@ -180,6 +316,7 @@ namespace Flock.Tests.Editor
         public void Schedule_ServerError_NotRetried()
         {
             FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.NotificationTemplate, FlockFakeTransport.Ok(TemplateBody));
             transport.On(FlockEndpoints.NotificationSchedule, FlockFakeTransport.Status(500, "{}"));
             using (FlockTestClient h = FlockTestClient.Create(transport,
                 config => config.RetryPolicy = new RetryPolicy { MaxRetries = 3, InitialDelay = TimeSpan.Zero }))
@@ -236,6 +373,7 @@ namespace Flock.Tests.Editor
         public void Schedule_BareBodyWithoutEnvelope_Throws()
         {
             FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.NotificationTemplate, FlockFakeTransport.Ok(TemplateBody));
             transport.On(FlockEndpoints.NotificationSchedule, FlockFakeTransport.Ok("{\"id\":\"sched-1\",\"status\":\"pending\"}"));
             using (FlockTestClient h = FlockTestClient.Create(transport))
             {
@@ -249,7 +387,7 @@ namespace Flock.Tests.Editor
 
         // ---- NOTIF-10: guards short-circuit before any request ----
         [Test]
-        public void Schedule_EmptyTemplateId_ThrowsValidation_AndSendsNothing()
+        public void Schedule_EmptyTemplateName_ThrowsValidation_AndSendsNothing()
         {
             FlockFakeTransport transport = new FlockFakeTransport();
             using (FlockTestClient h = FlockTestClient.Create(transport))
@@ -489,9 +627,7 @@ namespace Flock.Tests.Editor
         [Test]
         public void PendingSchedules_TrackedOnSchedule_AndDroppedOnCancel()
         {
-            FlockFakeTransport transport = new FlockFakeTransport();
-            transport.On(FlockEndpoints.NotificationSchedule, FlockFakeTransport.Ok(ScheduledBody));
-            transport.On(FlockEndpoints.NotificationScheduleById("sched-1"), FlockFakeTransport.Ok(ScheduledBody));
+            FlockFakeTransport transport = ScheduleTransport(FlockFakeTransport.Ok(ScheduledBody));
             using (FlockTestClient h = FlockTestClient.Create(transport))
             {
                 h.LoginAs("player-a");
@@ -504,7 +640,8 @@ namespace Flock.Tests.Editor
                 List<PendingSchedule> pending = h.Client.Notification.GetPendingSchedules();
                 Assert.AreEqual(1, pending.Count);
                 Assert.AreEqual("sched-1", pending[0].Id);
-                Assert.AreEqual("GameplayTest", pending[0].TemplateId, "The template id is kept so entries are tellable apart.");
+                Assert.AreEqual("GameplayTest", pending[0].TemplateName, "The name the caller scheduled by is kept so entries are tellable apart.");
+                Assert.AreEqual("tmpl-1", pending[0].TemplateId, "The id it resolved to is kept alongside the name.");
 
                 h.Run(() => h.Client.Notification.CancelScheduledAsync("sched-1"));
                 Assert.AreEqual(0, h.Client.Notification.GetPendingSchedules().Count);
@@ -516,6 +653,7 @@ namespace Flock.Tests.Editor
         public void PendingSchedules_NotTrackedWhenScheduleFails()
         {
             FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.NotificationTemplate, FlockFakeTransport.Ok(TemplateBody));
             transport.On(FlockEndpoints.NotificationSchedule, FlockFakeTransport.Status(500, "{}"));
             using (FlockTestClient h = FlockTestClient.Create(transport))
             {
@@ -532,8 +670,9 @@ namespace Flock.Tests.Editor
         [Test]
         public void PendingSchedules_DropEntriesWhoseDeliveryTimeHasPassed()
         {
-            string pastBody = ScheduledBody.Replace("\"deliver_at\":\"2026-08-05T12:00:00Z\"", "\"deliver_at\":\"2020-01-01T00:00:00Z\"");
+            string pastBody = ScheduledBody.Replace(DeliverAtWire, "2020-01-01T00:00:00Z");
             FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.NotificationTemplate, FlockFakeTransport.Ok(TemplateBody));
             transport.On(FlockEndpoints.NotificationSchedule, FlockFakeTransport.Ok(pastBody));
             using (FlockTestClient h = FlockTestClient.Create(transport))
             {
@@ -551,16 +690,14 @@ namespace Flock.Tests.Editor
         [Test]
         public void CancelAll_DropsEntriesTheServerRejectsPermanently()
         {
-            FlockFakeTransport transport = new FlockFakeTransport();
-            transport.On(FlockEndpoints.NotificationSchedule, FlockFakeTransport.Ok(ScheduledBody));
+            // Already delivered or already cancelled server-side. Armed up front rather than mid-test, because
+            // the by-id route has to be registered ahead of the general schedule route to be reachable at all.
+            FlockFakeTransport transport = ScheduleTransport(FlockFakeTransport.Status(404, "{}"));
             using (FlockTestClient h = FlockTestClient.Create(transport))
             {
                 h.LoginAs("player-a");
                 h.SetReachable(true);
                 h.Run(() => h.Client.Notification.ScheduleAsync("GameplayTest", DeliverAt));
-
-                // Already delivered or already cancelled server-side.
-                transport.On(FlockEndpoints.NotificationScheduleById("sched-1"), FlockFakeTransport.Status(404, "{}"));
 
                 int cancelled = h.Run(() => h.Client.Notification.CancelAllScheduledAsync());
 
@@ -574,8 +711,7 @@ namespace Flock.Tests.Editor
         [Test]
         public void PendingSchedules_ArePlayerScoped()
         {
-            FlockFakeTransport transport = new FlockFakeTransport();
-            transport.On(FlockEndpoints.NotificationSchedule, FlockFakeTransport.Ok(ScheduledBody));
+            FlockFakeTransport transport = ScheduleTransport();
             using (FlockTestClient h = FlockTestClient.Create(transport))
             {
                 h.LoginAs("player-a");
@@ -593,8 +729,7 @@ namespace Flock.Tests.Editor
         [Test]
         public void ClearCache_KeepsPendingSchedules()
         {
-            FlockFakeTransport transport = new FlockFakeTransport();
-            transport.On(FlockEndpoints.NotificationSchedule, FlockFakeTransport.Ok(ScheduledBody));
+            FlockFakeTransport transport = ScheduleTransport();
             using (FlockTestClient h = FlockTestClient.Create(transport))
             {
                 h.LoginAs("player-a");
@@ -619,6 +754,225 @@ namespace Flock.Tests.Editor
             "{\"id\":\"n-2\",\"title\":\"Sale\",\"body\":\"50% off\",\"type\":\"news\",\"severity\":\"info\"," +
             "\"data\":{},\"read_at\":\"2026-08-03T00:00:00Z\",\"campaign_id\":\"c-1\"}]," +
             "\"total\":2,\"page\":1,\"limit\":50}";
+
+        // Received-event fixtures. The inbox route is root-shaped, and pages come back newest-first.
+        private const string InboxSeedBody =
+            "{\"items\":[{\"id\":\"n-1\",\"title\":\"Old\",\"created_at\":\"2026-08-01T00:00:00Z\"}]," +
+            "\"total\":1,\"page\":1,\"limit\":50}";
+
+        private const string InboxOneNewBody =
+            "{\"items\":[" +
+            "{\"id\":\"n-2\",\"title\":\"New\",\"created_at\":\"2026-08-02T00:00:00Z\"}," +
+            "{\"id\":\"n-1\",\"title\":\"Old\",\"created_at\":\"2026-08-01T00:00:00Z\"}]," +
+            "\"total\":2,\"page\":1,\"limit\":50}";
+
+        private const string InboxTwoNewBody =
+            "{\"items\":[" +
+            "{\"id\":\"n-3\",\"title\":\"Newest\",\"created_at\":\"2026-08-03T00:00:00Z\"}," +
+            "{\"id\":\"n-2\",\"title\":\"New\",\"created_at\":\"2026-08-02T00:00:00Z\"}," +
+            "{\"id\":\"n-1\",\"title\":\"Old\",\"created_at\":\"2026-08-01T00:00:00Z\"}]," +
+            "\"total\":3,\"page\":1,\"limit\":50}";
+
+        // ---- NOTIF-41: the by-name read is public surface in its own right, not just a step inside schedule ----
+        // Signed out on purpose: the route is API-key scoped, so a bearer guard here would be wrong.
+        [Test]
+        public void GetTemplateByName_ReturnsProjection_AndMemoizes()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.NotificationTemplate, FlockFakeTransport.Ok(TemplateBody));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.SetReachable(true);
+
+                NotificationTemplate first = h.Run(() => h.Client.Notification.GetTemplateByNameAsync("GameplayTest"));
+                NotificationTemplate second = h.Run(() => h.Client.Notification.GetTemplateByNameAsync("GameplayTest"));
+
+                Assert.AreEqual("tmpl-1", first.Id);
+                Assert.AreEqual("GameplayTest", first.Name);
+                Assert.AreEqual("gameplay", first.Category);
+                Assert.AreEqual(first.Id, second.Id);
+                Assert.AreEqual(1, h.Transport.CountTo("notification_template/by-name"),
+                    "The second read must come from the session memo, not another round trip.");
+            }
+        }
+
+        // ---- NOTIF-42: ResolveTemplateIdAsync is the id accessor callers get instead of an id-taking schedule ----
+        [Test]
+        public void ResolveTemplateId_ReturnsTheResolvedId()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.NotificationTemplate, FlockFakeTransport.Ok(TemplateBody));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.SetReachable(true);
+
+                Assert.AreEqual("tmpl-1",
+                    h.Run(() => h.Client.Notification.ResolveTemplateIdAsync("GameplayTest")));
+            }
+        }
+
+        // ---- NOTIF-43: RegisterThisDeviceAsync refuses where no OS push token exists ----
+        // The Editor has no APNs/FCM, so the documented contract is an explanatory throw, not a silent no-op
+        // or a token registered under a guessed platform.
+        [Test]
+        public void RegisterThisDevice_OffDevice_ThrowsAndSendsNothing()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.DeviceTokenRegister, FlockFakeTransport.Ok(DeviceTokenBody));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                Assert.Throws<FlockValidationException>(
+                    () => h.Run(() => h.Client.Notification.RegisterThisDeviceAsync()));
+                Assert.IsFalse(h.Transport.Sent(FlockEndpoints.DeviceTokenRegister),
+                    "Nothing may be registered when the OS supplied no token.");
+            }
+        }
+
+        // ---- NOTIF-36: the first fetch for a player seeds silently ----
+        // A player with an existing inbox must not get one event per historical row on launch.
+        [Test]
+        public void Received_FirstFetchSeedsSilently()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On("notification?page=", FlockFakeTransport.Ok(InboxSeedBody));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                List<string> raised = new List<string>();
+                Action<Notification> handler = n => raised.Add(n.Id);
+                FlockEvents.OnNotificationReceived += handler;
+                try
+                {
+                    h.Run(() => h.Client.Notification.GetInboxAsync());
+                    CollectionAssert.IsEmpty(raised, "An existing inbox must not replay as a burst of events.");
+                }
+                finally { FlockEvents.OnNotificationReceived -= handler; }
+            }
+        }
+
+        // ---- NOTIF-37: anything newer than the watermark raises exactly once ----
+        [Test]
+        public void Received_RaisesOncePerNewNotification()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.OnSequence("notification?page=",
+                FlockFakeTransport.Ok(InboxSeedBody),
+                FlockFakeTransport.Ok(InboxOneNewBody),
+                FlockFakeTransport.Ok(InboxOneNewBody));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                List<string> raised = new List<string>();
+                Action<Notification> handler = n => raised.Add(n.Id);
+                FlockEvents.OnNotificationReceived += handler;
+                try
+                {
+                    h.Run(() => h.Client.Notification.GetInboxAsync());   // seeds
+                    h.Run(() => h.Client.Notification.GetInboxAsync());   // n-2 is new
+                    h.Run(() => h.Client.Notification.GetInboxAsync());   // same page again
+
+                    CollectionAssert.AreEqual(new[] { "n-2" }, raised,
+                        "Only the notification newer than the watermark raises, and only on its first sighting.");
+                }
+                finally { FlockEvents.OnNotificationReceived -= handler; }
+            }
+        }
+
+        // ---- NOTIF-38: several new at once arrive oldest-first ----
+        // The page is newest-first, so raising in page order would hand the game its history backwards.
+        [Test]
+        public void Received_MultipleNew_ArriveOldestFirst()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.OnSequence("notification?page=",
+                FlockFakeTransport.Ok(InboxSeedBody),
+                FlockFakeTransport.Ok(InboxTwoNewBody));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                List<string> raised = new List<string>();
+                Action<Notification> handler = n => raised.Add(n.Id);
+                FlockEvents.OnNotificationReceived += handler;
+                try
+                {
+                    h.Run(() => h.Client.Notification.GetInboxAsync());
+                    h.Run(() => h.Client.Notification.GetInboxAsync());
+
+                    CollectionAssert.AreEqual(new[] { "n-2", "n-3" }, raised);
+                }
+                finally { FlockEvents.OnNotificationReceived -= handler; }
+            }
+        }
+
+        // ---- NOTIF-39: the watermark is state, not cache, so ClearCache must not replay ----
+        [Test]
+        public void Received_WatermarkSurvivesClearCache()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.OnSequence("notification?page=",
+                FlockFakeTransport.Ok(InboxSeedBody),
+                FlockFakeTransport.Ok(InboxOneNewBody),
+                FlockFakeTransport.Ok(InboxOneNewBody));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                List<string> raised = new List<string>();
+                Action<Notification> handler = n => raised.Add(n.Id);
+                FlockEvents.OnNotificationReceived += handler;
+                try
+                {
+                    h.Run(() => h.Client.Notification.GetInboxAsync());
+                    h.Run(() => h.Client.Notification.GetInboxAsync());
+                    h.Client.Notification.ClearCache();
+                    h.Run(() => h.Client.Notification.GetInboxAsync());
+
+                    CollectionAssert.AreEqual(new[] { "n-2" }, raised,
+                        "Dropping cache must not make already-surfaced notifications arrive again.");
+                }
+                finally { FlockEvents.OnNotificationReceived -= handler; }
+            }
+        }
+
+        // ---- NOTIF-40: the summary read surfaces arrivals too, not just the inbox list ----
+        [Test]
+        public void Received_AlsoRaisedFromSummary()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.OnSequence(FlockEndpoints.NotificationSummary,
+                FlockFakeTransport.Ok("{\"result\":{\"unread_count\":1,\"items\":[" +
+                    "{\"id\":\"n-1\",\"title\":\"Old\",\"created_at\":\"2026-08-01T00:00:00Z\"}]}}"),
+                FlockFakeTransport.Ok("{\"result\":{\"unread_count\":2,\"items\":[" +
+                    "{\"id\":\"n-2\",\"title\":\"New\",\"created_at\":\"2026-08-02T00:00:00Z\"}," +
+                    "{\"id\":\"n-1\",\"title\":\"Old\",\"created_at\":\"2026-08-01T00:00:00Z\"}]}}"));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                List<string> raised = new List<string>();
+                Action<Notification> handler = n => raised.Add(n.Id);
+                FlockEvents.OnNotificationReceived += handler;
+                try
+                {
+                    h.Run(() => h.Client.Notification.GetSummaryAsync());
+                    h.Run(() => h.Client.Notification.GetSummaryAsync());
+
+                    CollectionAssert.AreEqual(new[] { "n-2" }, raised);
+                }
+                finally { FlockEvents.OnNotificationReceived -= handler; }
+            }
+        }
 
         // ---- NOTIF-11: root-level pagination parses, and read state derives from read_at ----
         [Test]

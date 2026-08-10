@@ -50,6 +50,9 @@ namespace Flock.Exceptions
         // log_event.*
         LogEventGameNotFound,                       // log_event.game_not_found
 
+        // notification_template.*
+        NotificationTemplateNotFound,               // notification_template.not_found
+
         // player.*
         PlayerAccountAlreadyLinked,                 // player.account_already_linked
         PlayerAccountNotLinked,                     // player.account_not_linked

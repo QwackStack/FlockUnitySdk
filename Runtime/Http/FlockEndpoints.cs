@@ -81,6 +81,16 @@ namespace Flock.Http
         public const string DeviceTokenUnregister = "device_token/unregister";
         public const string NotificationSchedule = "notification/schedule";
         public static string NotificationScheduleById(string scheduledId) => $"notification/schedule/{scheduledId}";
+        public const string NotificationTemplate = "notification_template";
+
+        // Name rides in the query, not the path: template names carry spaces, colons and slashes, none of which survive a single path segment.
+        public static string NotificationTemplateByName(string name, string locale)
+        {
+            string query = $"?name={Uri.EscapeDataString(name)}";
+            if (!string.IsNullOrEmpty(locale))
+                query += $"&locale={Uri.EscapeDataString(locale)}";
+            return $"notification_template/by-name{query}";
+        }
 
         // Assets
         public const string Asset = "asset";

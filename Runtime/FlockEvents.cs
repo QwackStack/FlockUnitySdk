@@ -90,6 +90,10 @@ namespace Flock
         /// <summary>The player's unread notification count changed. Raised only when the server reports a count — a fetch of unread count or summary, or a mark-all-read — never from a background poll, because the SDK doesn't run one.</summary>
         public static event Action<int> OnUnreadCountChanged;
 
+        /// <summary>A notification the SDK hasn't surfaced before came back from an inbox or summary fetch — schedule, trigger and campaign deliveries alike.</summary>
+        /// <remarks>"Received" means first seen by a read, not the instant the server created it: there is no realtime channel and the SDK never polls. The first fetch for a player is silent so an existing inbox doesn't arrive as a burst; after that, each new notification raises once, oldest first. Inspect <c>CampaignId</c> (campaign) or <c>trigger_id</c> in <c>Data</c> (trigger) to tell the source apart.</remarks>
+        public static event Action<Models.Notification> OnNotificationReceived;
+
         //Consent
 
         /// <summary>Analytics consent was granted or revoked via <c>Analytics.SetConsent</c>. Payload: the new state.</summary>
@@ -170,6 +174,11 @@ namespace Flock
         internal static void InvokeUnreadCountChanged(int count)
         {
             Invoke(OnUnreadCountChanged, count, nameof(OnUnreadCountChanged));
+        }
+
+        internal static void InvokeNotificationReceived(Models.Notification notification)
+        {
+            Invoke(OnNotificationReceived, notification, nameof(OnNotificationReceived));
         }
 
         internal static void InvokeConsentChanged(bool granted)

@@ -31,6 +31,21 @@ namespace Flock.Models
         }
     }
 
+    /// <summary>A dashboard-authored template this game can schedule, addressed by name.</summary>
+    /// <remarks>Authoring content (title, body, data) stays server-side — this carries only enough to pick one. The rendered result reaches the player through the inbox.</remarks>
+    public class NotificationTemplate
+    {
+        [JsonProperty("id")]
+        public string Id { get; set; }
+
+        [JsonProperty("name")]
+        public string Name { get; set; }
+
+        /// <summary>Free-form grouping from the dashboard — the API doesn't constrain it to a fixed set.</summary>
+        [JsonProperty("category")]
+        public string Category { get; set; }
+    }
+
     /// <summary>A notification queued for future delivery to one player.</summary>
     public class ScheduledNotification
     {
@@ -276,12 +291,29 @@ namespace Flock.Models
         [JsonProperty("id")]
         public string Id { get; set; }
 
-        /// <summary>The template id passed to ScheduleAsync, kept so callers can tell entries apart without another call.</summary>
+        /// <summary>The template name passed to ScheduleAsync, kept so callers can tell entries apart without another call.</summary>
+        [JsonProperty("template_name")]
+        public string TemplateName { get; set; }
+
+        /// <summary>The id that name resolved to when the schedule was created.</summary>
         [JsonProperty("template_id")]
         public string TemplateId { get; set; }
 
         [JsonProperty("deliver_at")]
         public string DeliverAt { get; set; }
+    }
+
+    // What the SDK has already surfaced through OnNotificationReceived. State, not cache: losing it either
+    // re-announces old notifications or silently swallows new ones, so it survives ClearCache.
+    internal class NotificationWatermark
+    {
+        /// <summary>False until the first fetch for this player, which seeds silently so an existing inbox isn't replayed as a burst.</summary>
+        [JsonProperty("seeded")]
+        public bool Seeded { get; set; }
+
+        /// <summary>Newest created_at surfaced so far; null when the inbox was empty at seed time, which makes everything later new.</summary>
+        [JsonProperty("newest_created_at")]
+        public string NewestCreatedAt { get; set; }
     }
 
     /// <summary>Unread count plus the first page, from the one call that serves both.</summary>

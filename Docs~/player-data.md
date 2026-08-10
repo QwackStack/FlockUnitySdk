@@ -26,6 +26,9 @@ PlayerData updated = await FlockClient.Instance.Commands.UpdatePlayerDataAsync(
 
 PlayerData updated = await FlockClient.Instance.Commands.UpdatePlayerDataFieldAsync(
     "player-data-id", "score", 9999);
+// The key is a TOP-LEVEL field name, not a path: the server assigns it as a literal dictionary key, so
+// "Level.Stage" is stored under that exact string and then refused by template validation (422). To change
+// a nested value, write the whole object — UpdatePlayerDataFieldAsync("id", "Level", theWholeLevelObject).
 
 // Money mutations (AddGameFunds + shop Purchase) only retry failures the server provably didn't process (408/429); ambiguous failures (timeout/5xx) throw rather than risk a double-credit, so wrap them in try/catch.
 PlayerData updated = await FlockClient.Instance.Commands.AddGameFundsAsync("gold", 500);
