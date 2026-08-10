@@ -66,13 +66,30 @@ void UpdateBadge(int count) => badgeLabel.text = count > 0 ? count.ToString() : 
 
 `MarkReadAsync` deliberately does **not** move the badge — the server reports no new total on that route, so the SDK would have to guess. Refresh afterwards if you need an exact count.
 
+### Reacting to arrivals
+
+`FlockEvents.OnNotificationReceived` fires for each notification the SDK hasn't surfaced before, seen during an inbox or summary fetch:
+
+```csharp
+private void OnEnable()  => FlockEvents.OnNotificationReceived += HandleNotification;
+private void OnDisable() => FlockEvents.OnNotificationReceived -= HandleNotification;
+
+private void HandleNotification(Notification n) => ShowToast(n.Title, n.Body);
+```
+
+"Received" means *first seen by a read*, not the moment the server created it — same constraint as the rest of this page. It is not a poller: it rides the fetches you already make, adds no traffic, and raises each notification once, **oldest first** so a batch reads in the order it happened.
+
+The **first fetch for a player is silent**. It seeds a watermark instead, so a player with a full inbox doesn't get one event per historical row on launch. The watermark is player-scoped and survives `ClearCache()` — it's state, not cache, so dropping cache can't replay what the game already handled.
+
+One event covers all three sources, because the payload already separates them: campaign deliveries carry `CampaignId`, trigger deliveries carry `trigger_id` in `Data`, and a reminder you scheduled has neither.
+
 ## Scheduling
 
 Ask the server to deliver a dashboard-authored template to the signed-in player later.
 
 ```csharp
 ScheduledNotification scheduled = await notifications.ScheduleAsync(
-    templateId: "b3f1…",                 // the template's ID, not its name — see Limitations
+    templateName: "energy_full",         // the name as authored on the dashboard
     delay: TimeSpan.FromHours(4),
     variables: new Dictionary<string, object> { { "player", playerName } },
     channels: FlockNotificationChannels.InApp | FlockNotificationChannels.Push);
@@ -81,6 +98,22 @@ await notifications.CancelScheduledAsync(scheduled);
 ```
 
 `variables` fill the `{placeholders}` in the template's title and body. `channels` is a `[Flags]` enum; leave it `None` to use whatever channels the template itself declares. There's also an absolute overload taking a `DateTime` when you know the wall-clock time.
+
+The schedule route itself takes an ID, so the SDK resolves the name first and memoizes it for the session — scheduling the same template repeatedly costs one lookup, not one per call. A name this game doesn't have fails before anything is scheduled.
+
+### Templates
+
+Templates are authored on the dashboard; the SDK reads the catalog to turn a name into an ID.
+
+```csharp
+List<NotificationTemplate> all = await notifications.GetTemplatesAsync();
+NotificationTemplate one = await notifications.GetTemplateByNameAsync("energy_full");
+string id = await notifications.ResolveTemplateIdAsync("energy_full");   // for logging or a deep link
+```
+
+Both reads are game-scoped rather than player-scoped, so they work signed out, and they carry only `Id`, `Name` and `Category` — authoring content stays server-side. Only active templates are listed, so deactivating one on the dashboard is the kill switch.
+
+A template can exist in several locales under one name. Pass `locale:` to pick a specific one; omitted, the server prefers English and falls back to the first locale on file.
 
 ### How a scheduled notification reaches the inbox
 
@@ -166,7 +199,7 @@ Reads are snapshotted to disk and served when the server is unreachable, keyed p
 
 ## Limitations
 
-- **`ScheduleAsync` needs the template's ID, not its name.** Passing a name returns `404 "Notification template not found"`. No `/v1` route exposes template IDs and the dashboard does not display them, so the ID has to be obtained out-of-band today. This is a backend gap, not an SDK bug — do not "fix" it by guessing a lookup.
+- **The catalog can't tell locales apart.** `GetTemplatesAsync` returns one entry per locale, all sharing a name and differing only by ID, because the client projection carries no `locale` field. Use `GetTemplateByNameAsync(name, locale)` when the locale matters.
 - **No route lists a player's pending schedules**, hence the local tracking above and its limits.
 - **Push has not yet been seen end to end from this SDK.** The backend does deliver to FCM/APNs, and registration is wired, but nobody has watched a banner arrive on a real device via Flock. Obtaining the token remains the game's job — see the platform table above.
 - **Desktop can never receive push** — see the platform table above. This is a platform constraint, not a Flock one.

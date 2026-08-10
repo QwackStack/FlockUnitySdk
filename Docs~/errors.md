@@ -90,6 +90,7 @@ catch (FlockException ex) when (ex.IsAlreadyRegistered())
 | `GameVersionGameVersionByNameNotFound` | `game_version.game_version_by_name_not_found` |
 | `GameVersionGameVersionNotFound` | `game_version.game_version_not_found` |
 | `LogEventGameNotFound` | `log_event.game_not_found` |
+| `NotificationTemplateNotFound` | `notification_template.not_found` |
 | `PlayerAccountAlreadyLinked` | `player.account_already_linked` |
 | `PlayerAccountNotLinked` | `player.account_not_linked` |
 | `PlayerAppleAccountAlreadyRegistered` | `player.apple_account_already_registered` |

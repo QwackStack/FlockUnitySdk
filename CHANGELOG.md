@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.32.0]
+
+### Added
+- **Notification template catalog.** `FlockClient.Instance.Notification` can now read the templates a game has authored: `GetTemplatesAsync()` for the active catalog, `GetTemplateByNameAsync(name, locale)` for one, and `ResolveTemplateIdAsync(name, locale)` when you want the raw ID for logging or a deep link. `NotificationTemplate` carries `Id`, `Name` and `Category` — authoring content (title, body, data) stays server-side. See the [Notifications guide](Docs~/notifications.md).
+- **Both template reads are game-scoped, not player-scoped.** They authenticate with the API key alone, so unlike everything else on this provider they work signed out, and they cache per game rather than per player.
+- **`PendingSchedule.TemplateName`**, so a locally tracked reminder can be identified by the name it was scheduled with. `TemplateId` remains, now carrying the ID that name resolved to.
+- **`FlockErrorCode.NotificationTemplateNotFound`** (`notification_template.not_found`), returned when the game has no active template of that name.
+- **`FlockEvents.OnNotificationReceived`** (`Action<Notification>`) — raised for each notification the SDK hasn't surfaced before, seen during `GetInboxAsync` or `GetSummaryAsync`, once each and **oldest first**. Not a poller: it rides the fetches the game already makes and adds no traffic, because there is no realtime channel and the SDK deliberately doesn't poll. The **first fetch for a player is silent**, seeding a watermark so an existing inbox doesn't arrive as a burst on launch. One event covers schedules, triggers and campaigns alike — the payload already separates them (`CampaignId`, or `trigger_id` in `Data`), so three events would triple the surface to express what one `if` answers.
+- **The seen-watermark is player-scoped state, not cache** — it survives `ClearCache()` alongside the pending-schedule list, so dropping cache can't replay notifications the game already handled.
+- **EditMode tests**: the resolved ID — never the name — reaching `template_id`, the name escaped into the query rather than a path segment, `locale` forwarded only when supplied, the session memo collapsing repeated lookups into one round trip, an unknown name failing before anything is scheduled, and the catalog read working signed out. Plus the received-event contract: the silent first fetch, one raise per new notification, no re-raise on refetch, oldest-first ordering, the summary read raising it too, and the watermark surviving `ClearCache()`.
+- **`Docs~/events.md` gained a Notifications section.** It documented neither notification event before — `OnUnreadCountChanged` had shipped in 1.29.0 undocumented there.
+
+### Changed
+- **BREAKING: `ScheduleAsync` now takes the template's *name*, not its ID.** The parameter is still a string in the same position, so existing calls keep compiling and fail at runtime instead — a call that passes an ID now raises `notification_template.not_found`. Swap the ID for the template's dashboard name. This retires the documented limitation that IDs had to be obtained out-of-band: `/v1` had no route exposing them until now, which is why the surface shipped ID-based in 1.29.0.
+- **`ScheduleAsync` gained an optional `locale`** — the `by-name` route's own query parameter, threaded through so a name-only surface can still reach a specific localisation. It sits after `channels` and before the `CancellationToken`; a caller that passed a `CancellationToken` positionally into that slot gets a compile error, not a silent behaviour change.
+- **`ClearCache()` now also drops the template memo.** Pending schedules still survive it.
+
+### Notes
+- Resolution costs one extra round trip the first time a name is used and is memoized for the rest of the session, so scheduling the same template repeatedly does not pay it again. The lookup runs after the empty-name and signed-in guards, so neither spends a request.
+- A template may exist in several locales under one name; the server prefers English and falls back to the first locale on file. The client projection carries no `locale` field, so `GetTemplatesAsync` returns one entry per locale sharing a name and differing only by ID — use `GetTemplateByNameAsync(name, locale)` when that matters.
+
 ## [1.31.0]
 
 ### Added

@@ -16,20 +16,28 @@ namespace Flock.Providers
     {
         private const string SnapshotCategory = "notification";
         private const string PendingSchedulesKey = "pending_schedules";
+        private const string WatermarkKey = "seen_watermark";
 
         // Last count the server reported; null until a count-bearing call succeeds.
         private int? _lastUnreadCount;
 
+        // Name+locale → template memo: scheduling resolves a name to an id first, and that shouldn't cost a round trip each time.
+        private readonly Dictionary<string, NotificationTemplate> _templatesByName = new Dictionary<string, NotificationTemplate>();
+
         public FlockNotificationProvider(FlockClient client) : base(client) { }
 
-        /// <summary>Drops cached inbox reads. Pending schedules survive — they aren't cache, they're the only handle on a reminder that can still be cancelled.</summary>
+        /// <summary>Drops cached inbox reads and the template memo. Pending schedules and the seen-watermark survive — neither is cache: one is the only handle on a cancellable reminder, the other decides what counts as newly received.</summary>
         public void ClearCache()
         {
             List<PendingSchedule> pending = LoadPendingSchedules();
+            NotificationWatermark mark = LoadWatermark();
             _lastUnreadCount = null;
+            _templatesByName.Clear();
             DeleteSnapshotCategory(SnapshotCategory);
             if (pending.Count > 0)
                 SavePendingSchedules(pending);
+            if (mark.Seeded)
+                SaveWatermark(mark);
         }
 
         /// <summary>A page of the signed-in player's inbox, newest first. Set <paramref name="unreadOnly"/> to skip already-read entries.</summary>
@@ -43,12 +51,15 @@ namespace Flock.Providers
 
             string query = $"?page={page}&limit={limit}" + (unreadOnly ? "&unread_only=true" : string.Empty);
 
-            return await FetchWithSnapshotAsync(
+            PaginatedResponse<Notification> inbox = await FetchWithSnapshotAsync(
                 SnapshotCategory,
                 PlayerScopedKey($"inbox_{unreadOnly}_p{page}_l{limit}"),
                 async () => await FlockHttpClient.GetAsync<PaginatedResponse<Notification>>(
                     $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.Notification}{query}", Client.GetBaseHeaders(), cancellationToken),
                 "Fetch notifications", cancellationToken);
+
+            RaiseNewNotifications(inbox != null ? inbox.Items : null);
+            return inbox;
         }
 
         /// <summary>How many notifications the player hasn't read. Raises <see cref="FlockEvents.OnUnreadCountChanged"/> when the value moves.</summary>
@@ -91,6 +102,7 @@ namespace Flock.Providers
                 },
                 "Fetch notification summary", cancellationToken);
 
+            RaiseNewNotifications(summary != null ? summary.Items : null);
             SetUnreadCount(summary.UnreadCount);
             return summary;
         }
@@ -247,29 +259,92 @@ namespace Flock.Providers
             }
         }
 
+        /// <summary>Every active template this game can schedule, name-ascending. Open to signed-out players — the catalog is game-scoped, not per-player.</summary>
+        /// <remarks>A game holding one template in several locales gets one entry per locale, sharing a name and differing only by id. Use <see cref="GetTemplateByNameAsync"/> when the locale matters.</remarks>
+        public async Task<List<NotificationTemplate>> GetTemplatesAsync(CancellationToken cancellationToken = default)
+        {
+            return await FetchWithSnapshotAsync(
+                SnapshotCategory,
+                "templates",
+                async () =>
+                {
+                    GenericResponse<List<NotificationTemplate>> response = await FlockHttpClient.GetAsync<GenericResponse<List<NotificationTemplate>>>(
+                        $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.NotificationTemplate}", Client.GetBaseHeaders(), cancellationToken);
+                    ValidateResponse(response);
+                    return response.Result;
+                },
+                "Fetch notification templates", cancellationToken);
+        }
+
+        /// <summary>One active template by name. Open to signed-out players; memoized for the session after the first call.</summary>
+        /// <param name="locale">Picks a specific localisation. Omitted, the server prefers English and falls back to the first locale on file.</param>
+        public async Task<NotificationTemplate> GetTemplateByNameAsync(
+            string templateName,
+            string locale = null,
+            CancellationToken cancellationToken = default)
+        {
+            RequireNotEmpty(templateName, "Template Name");
+
+            string memoKey = $"{templateName}|{locale}";
+            if (_templatesByName.TryGetValue(memoKey, out NotificationTemplate memoized))
+                return memoized;
+
+            NotificationTemplate template = await FetchWithSnapshotAsync(
+                SnapshotCategory,
+                $"template_name_{templateName}_{locale}",
+                async () =>
+                {
+                    GenericResponse<NotificationTemplate> response = await FlockHttpClient.GetAsync<GenericResponse<NotificationTemplate>>(
+                        $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.NotificationTemplateByName(templateName, locale)}", Client.GetBaseHeaders(), cancellationToken);
+                    ValidateResponse(response);
+                    return response.Result;
+                },
+                "Fetch notification template", cancellationToken);
+
+            if (template != null && !string.IsNullOrEmpty(template.Id))
+                _templatesByName[memoKey] = template;
+            return template;
+        }
+
+        /// <summary>The template's id, for logging or a deep link. Scheduling takes the name — nothing in this provider consumes an id.</summary>
+        public async Task<string> ResolveTemplateIdAsync(
+            string templateName,
+            string locale = null,
+            CancellationToken cancellationToken = default)
+        {
+            NotificationTemplate template = await GetTemplateByNameAsync(templateName, locale, cancellationToken);
+            return template?.Id;
+        }
+
         /// <summary>Schedules the template to arrive after <paramref name="delay"/> — the shape most games want ("energy full in 4 hours").</summary>
         public Task<ScheduledNotification> ScheduleAsync(
-            string templateId,
+            string templateName,
             TimeSpan delay,
             Dictionary<string, object> variables = null,
             FlockNotificationChannels channels = FlockNotificationChannels.None,
+            string locale = null,
             CancellationToken cancellationToken = default)
         {
-            return ScheduleAsync(templateId, DateTime.UtcNow + delay, variables, channels, cancellationToken);
+            return ScheduleAsync(templateName, DateTime.UtcNow + delay, variables, channels, locale, cancellationToken);
         }
 
         /// <summary>Schedules a notification template to reach the signed-in player at <paramref name="deliverAtUtc"/>.</summary>
-        /// <param name="templateId">The template's **id**, not its name — the API resolves this as an id and 404s ("Notification template not found") on a name.</param>
+        /// <param name="templateName">The template's name as authored on the dashboard; it resolves to an id on the way through.</param>
+        /// <param name="locale">Picks a specific localisation. Omitted, the server prefers English and falls back to the first locale on file.</param>
         /// <remarks>Keep the returned Id to cancel; the SDK also tracks it locally, see <see cref="GetPendingSchedules"/>.</remarks>
         public async Task<ScheduledNotification> ScheduleAsync(
-            string templateId,
+            string templateName,
             DateTime deliverAtUtc,
             Dictionary<string, object> variables = null,
             FlockNotificationChannels channels = FlockNotificationChannels.None,
+            string locale = null,
             CancellationToken cancellationToken = default)
         {
-            RequireNotEmpty(templateId, "Template ID");
+            RequireNotEmpty(templateName, "Template Name");
             RequireAuthenticated();
+
+            // Resolved before the write, so a name this game doesn't have never leaves a schedule behind.
+            string templateId = await RequireTemplateIdAsync(templateName, locale, cancellationToken);
 
             ScheduleNotificationInput request = new ScheduleNotificationInput
             {
@@ -290,8 +365,17 @@ namespace Flock.Providers
             // can't cancel, because it only ever learns one scheduled id. Surface the failure instead.
             "Schedule notification", cancellationToken, idempotent: false);
 
-            TrackPending(scheduled, templateId);
+            TrackPending(scheduled, templateName, templateId);
             return scheduled;
+        }
+
+        // A name this game doesn't have is a caller mistake, not an empty result.
+        private async Task<string> RequireTemplateIdAsync(string templateName, string locale, CancellationToken cancellationToken)
+        {
+            string templateId = await ResolveTemplateIdAsync(templateName, locale, cancellationToken);
+            if (string.IsNullOrEmpty(templateId))
+                throw new FlockValidationException($"No notification template named '{templateName}'");
+            return templateId;
         }
 
         /// <summary>Scheduled notifications this install created that haven't reached their delivery time yet.</summary>
@@ -383,7 +467,7 @@ namespace Flock.Providers
             WriteSnapshot(SnapshotCategory, PlayerScopedKey(PendingSchedulesKey), pending);
         }
 
-        private void TrackPending(ScheduledNotification scheduled, string templateId)
+        private void TrackPending(ScheduledNotification scheduled, string templateName, string templateId)
         {
             if (scheduled == null || string.IsNullOrEmpty(scheduled.Id)) return;
 
@@ -391,6 +475,7 @@ namespace Flock.Providers
             pending.Add(new PendingSchedule
             {
                 Id = scheduled.Id,
+                TemplateName = templateName,
                 TemplateId = templateId,
                 DeliverAt = scheduled.DeliverAt
             });
@@ -408,12 +493,71 @@ namespace Flock.Providers
             SavePendingSchedules(pending);
         }
 
+        // seen-watermark bookkeeping
+        // "Received" is fetch-derived: there is no realtime channel and the SDK never polls, so the watermark is
+        // what separates a notification the game has already been told about from a genuinely new one.
+
+        private NotificationWatermark LoadWatermark()
+        {
+            NotificationWatermark stored;
+            if (!TryReadSnapshot(SnapshotCategory, PlayerScopedKey(WatermarkKey), out stored) || stored == null)
+                return new NotificationWatermark();
+            return stored;
+        }
+
+        private void SaveWatermark(NotificationWatermark mark)
+        {
+            WriteSnapshot(SnapshotCategory, PlayerScopedKey(WatermarkKey), mark);
+        }
+
+        // Raises once per notification newer than the watermark, oldest first. The first fetch for a player seeds
+        // silently — replaying a whole existing inbox as a burst of events is worse than not reporting its history.
+        private void RaiseNewNotifications(IList<Notification> items)
+        {
+            NotificationWatermark mark = LoadWatermark();
+            bool firstEver = !mark.Seeded;
+
+            DateTime cutoff = DateTime.MinValue;
+            if (!firstEver && !string.IsNullOrEmpty(mark.NewestCreatedAt))
+                TryParseUtc(mark.NewestCreatedAt, out cutoff);
+
+            DateTime newest = cutoff;
+            List<Notification> fresh = new List<Notification>();
+
+            foreach (Notification entry in items ?? new List<Notification>())
+            {
+                DateTime created;
+                // An unparseable created_at is skipped rather than announced — a duplicate is worse than a miss.
+                if (entry == null || !TryParseUtc(entry.CreatedAt, out created)) continue;
+                if (created > newest) newest = created;
+                if (!firstEver && created > cutoff) fresh.Add(entry);
+            }
+
+            // Persisted before anything is raised, so a handler that throws can't make the same one fire twice.
+            if (firstEver || newest > cutoff)
+            {
+                mark.Seeded = true;
+                if (newest > DateTime.MinValue)
+                    mark.NewestCreatedAt = newest.ToString("o", CultureInfo.InvariantCulture);
+                SaveWatermark(mark);
+            }
+
+            // The page arrives newest-first; walk back so handlers see them in the order they were created.
+            for (int i = fresh.Count - 1; i >= 0; i--)
+                FlockEvents.InvokeNotificationReceived(fresh[i]);
+        }
+
+        private static bool TryParseUtc(string timestamp, out DateTime parsed)
+        {
+            return DateTime.TryParse(timestamp, CultureInfo.InvariantCulture,
+                DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out parsed);
+        }
+
         // Unparseable timestamps are kept rather than silently dropped — losing a cancellable id is the worse failure.
         private static bool HasElapsed(string deliverAt)
         {
             DateTime parsed;
-            if (!DateTime.TryParse(deliverAt, CultureInfo.InvariantCulture,
-                    DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out parsed))
+            if (!TryParseUtc(deliverAt, out parsed))
                 return false;
             return parsed <= DateTime.UtcNow;
         }

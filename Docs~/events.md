@@ -62,3 +62,38 @@ private void HandleSessionEnded(FlockSessionEndedArgs args)
 | `OnSessionEnded` | `Action<FlockSessionEndedArgs>` | Every session end path. `Reason`: `Logout`, `Timeout` (backgrounded past the session timeout), `Quit` (app quit), `Restarted` (a new session replaced an active one), `Manual` (explicit `EndSessionAsync`). `Snapshot`: final metrics (duration, screens, pauses, FPS). Sessions recovered from a previous crashed launch do not raise this. |
 | `OnSessionPaused` | `Action` | The active session pausing (app backgrounded). |
 | `OnSessionResumed` | `Action` | The paused session resuming (app foregrounded). Returning after the session timeout raises `OnSessionEnded(Timeout)` instead — a timed-out session never resumes. |
+
+**Notifications**
+
+Both are derived from reads the game already makes. The SDK has no realtime channel and never polls — a notification exists server-side the moment a schedule, trigger or campaign creates it, and the client learns of it on the next fetch. Push via FCM/APNs wakes the OS, not your C#, so that path raises nothing either; the fetch after resume is what surfaces it.
+
+| Event | Signature | Hooks up to |
+|-------|-----------|-------------|
+| `OnUnreadCountChanged` | `Action<int>` | Any call where the server reports a count — `GetUnreadCountAsync`, `GetSummaryAsync`, `MarkAllReadAsync`. Edge-triggered, so a repeated refresh with an unchanged count is silent. `MarkReadAsync` does *not* raise it: that route returns no new total, so the SDK would have to guess. |
+| `OnNotificationReceived` | `Action<Notification>` | A notification the SDK hasn't surfaced before, seen by `GetInboxAsync` or `GetSummaryAsync`. Raised once each, **oldest first**. The **first fetch for a player is silent** — it seeds the watermark, so an existing inbox doesn't arrive as a burst on launch. |
+
+The watermark is player-scoped state, not cache: it survives `ClearCache()`, so dropping cache can't replay notifications the game already handled.
+
+Tell the three sources apart from the payload rather than from separate events:
+
+```csharp
+private void HandleNotification(Notification n)
+{
+    if (!string.IsNullOrEmpty(n.CampaignId))          // dashboard campaign
+        ShowToast(n.Title, n.Body);
+    else if (n.TryGetData("trigger_id", out string _)) // fired by a trigger
+        ShowToast(n.Title, n.Body);
+    else                                               // a reminder this game scheduled
+        ShowReminder(n.Title);
+}
+```
+
+**Consent**
+
+| Event | Signature | Hooks up to |
+|-------|-----------|-------------|
+| `OnConsentChanged` | `Action<bool>` | `Analytics.SetConsent(granted)` actually changing the stored value. Edge-triggered — re-setting the value it already holds raises nothing. The choice is persisted, and this fires on the change itself. |
+
+Granting resumes analytics: if a player is signed in, `AutoStartSession` is on and no session is running, one starts. That start is fire-and-forget so `SetConsent` can stay synchronous, matching the shape of a consent toggle.
+
+Revoking **discards** the active session rather than ending it — so **`OnSessionEnded` does not fire**. A handler that counts completed sessions, or flushes state on end, will never see a consent revocation. Discarded means that session's data is dropped rather than sent, which is the point.
