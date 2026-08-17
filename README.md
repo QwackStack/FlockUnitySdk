@@ -9,6 +9,7 @@ The Flock Unity SDK provides access to Flock's game backend services from Unity 
 - [Requirements](#requirements)
 - [Setup](#setup)
   - [Editor Configuration](#editor-configuration)
+  - [Push notifications: dashboard setup](#push-notifications-dashboard-setup)
   - [Automatic Initialization](#automatic-initialization-default)
   - [Drop-in Initialization](#drop-in-initialization)
   - [Code-Based Configuration](#code-based-configuration)
@@ -66,6 +67,19 @@ Open **Flock > Settings** in the Unity menu bar. The window is a view of the `Fl
 - **Game Version** — Your game version name (the matching ID is resolved from the backend at edit time and baked into the asset, so init makes no network call)
 
 The asset is saved to `Assets/Resources/FlockConfig.asset` so it loads in builds via `Resources.Load<FlockConfigAsset>("FlockConfig")`. The same window has a Codegen tab that runs Sync Schemas (see the [Codegen guide](Docs~/codegen.md)).
+
+### Push notifications: dashboard setup
+
+The notification **inbox** and **scheduling** need nothing beyond the settings above. **Push delivery** additionally needs provider credentials on the dashboard, under **Settings > Push Notifications**. Credentials are per game, stored encrypted, and write-only — replaceable, never readable back.
+
+| Provider | Delivers to | What to supply |
+| --- | --- | --- |
+| Firebase Cloud Messaging (FCM) | Android and web | The full contents of the Firebase service-account JSON file |
+| Apple Push Notification service (APNs) | iOS | The `.p8` signing key, its **Key ID**, your **Team ID**, the app's **Bundle ID**, and **Use APNs sandbox** for development builds |
+
+Until a provider reads **Configured**, device tokens register successfully and nothing is ever delivered on that platform. That is the usual cause of "push is broken" — the client reports success because registration genuinely succeeded.
+
+Scheduling also needs a **template** to schedule: author one under **Marketing > Templates** with its title, body, locale, channels, and any `{placeholders}` you fill at send time. `ScheduleAsync` takes the template's **name**.
 
 ### Automatic Initialization (default)
 
