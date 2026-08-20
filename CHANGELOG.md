@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.33.0]
+
+### Fixed
+- **Leaderboard reads addressed routes that do not exist — `GetStandingsAsync`, `GetMyRankAsync` and `GetAroundMeAsync` could not succeed against any backend.** Each resolved the board name to an ID and then requested `/v1/leaderboard/{id}`, `/{id}/me` or `/{id}/around-me`; the `/v1` surface has no by-id read routes, so every call 404'd (confirmed against a live backend, which answers 404 on all three and serves the by-name equivalents). All three now call `/v1/leaderboard/by-name/{name}/standings`, `/me` and `/around-me` directly, and the whole read surface is verified end-to-end against a live backend — standings, my-rank, around-me and the unknown-name rejection all returning real data. Query parameters, response envelopes and every public signature are unchanged — including `FlockValidationException` for a name this game doesn't have, which now comes from the read's own 404 instead of a preceding lookup. Reads no longer spend a name→ID round trip at all, so the first read of a session is one call rather than two.
+- **The refresh token was serialized into the log on every refresh.** `Debug.Log` reaches `Player.log`, logcat, and any crash reporter subscribed to `Application.logMessageReceived`, so a long-lived credential was leaving the device in plaintext — and since `Logout()` is local-only by design, it stayed valid. The refresh log line now carries the URL and player ID only.
+- **Errors and warnings were silenced in every default build.** `EnableDebugLogs` defaults to false and selected a logger that no-oped `LogError`, `LogWarning` and `LogException` as well as debug output, so failures like a token store rejected by an invalidated Android Keystore, a failed refresh, or analytics failing to initialize reported nothing at all. Severity is now separate from verbosity: errors, warnings and exceptions always reach the console, and `EnableDebugLogs` adds info and debug on top. `NullFlockLogger` is unchanged and still available for total silence.
+- **The package used editor APIs newer than the Unity version it declares support for.** `Object.FindAnyObjectByType` (2021.3.18+) and `EditorStyles.linkLabel` were referenced while `package.json` declares `2020.3`, so `Flock.Editor` failed to compile for anyone on an older editor — taking **Flock > Settings** down with it. Both now go through `FlockEditorCompat`, which selects the available API.
+
+### Added
+- **EditMode test `Endpoints_MatchTheLiveV1Paths`** asserts the four leaderboard paths as literal strings. Every other route test stubs the fake transport with the same `FlockEndpoints` helper the provider builds its URL from, so the expectation is derived from the code under test and a wrong path is invisible to it — which is how the by-id routing above survived a green suite.
+- **`FlockLoggerTests`** pins the logging contract that had none. `DebugLogsDisabled_StillSelectsAReportingLogger` is the guard that matters: it fails if the default config ever again selects a logger that swallows errors. The rest bracket it — `LogAssert.Expect` proving the quiet logger's error and warning paths are not no-ops, direct `Application.logMessageReceived` capture proving info and debug really are suppressed rather than merely not throwing, and `NullFlockLogger` pinned as a deliberate total-silence opt-out so it is not "fixed" into reporting.
+
 ## [1.32.0]
 
 ### Added

@@ -51,7 +51,7 @@ namespace Flock.Editor
             // No asset → guard stays active by default (there's no asset to hold the toggle).
             bool guardEnabled = !configExists || config.playModeGuardEnabled;
             bool autoInitializeEnabled = configExists && config.autoInitializeOnLoad;
-            bool bootstrapPresent = UnityEngine.Object.FindAnyObjectByType<FlockBootstrap>() != null;
+            bool bootstrapPresent = FlockEditorCompat.FindFirstInScene<FlockBootstrap>() != null;
 
             return new FlockSetupState(configExists, configValid, guardEnabled, autoInitializeEnabled, bootstrapPresent);
         }

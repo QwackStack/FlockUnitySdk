@@ -8,11 +8,11 @@ using NUnit.Framework;
 
 namespace Flock.Tests.Editor
 {
-    // LeaderboardProvider: read-only standings / my-rank / around-me, all addressed by board NAME. Every read
-    // resolves the name to an ID through /leaderboard/by-name first (memoized per session), then hits the ID
-    // route. All four routes are enveloped (GenericResponse) despite standings taking page+limit — it is not a
-    // PaginationResponse. My-rank and around-me are bearer-only and guard before anything, including the resolve;
-    // standings and the name lookup are open to signed-out players.
+    // LeaderboardProvider: read-only standings / my-rank / around-me, all addressed by board NAME and all hitting
+    // /v1/leaderboard/by-name/{name}/... directly — there are no by-id read routes on /v1, so a read spends no
+    // name→id round trip. All four routes are enveloped (GenericResponse) despite standings taking page+limit — it
+    // is not a PaginationResponse. My-rank and around-me are bearer-only and guard before any request; standings
+    // and the board lookup are open to signed-out players.
     public class FlockLeaderboardProviderTests
     {
         private const string BoardName = "weekly_high_scores";
@@ -28,20 +28,20 @@ namespace Flock.Tests.Editor
 
         private static string ByName => FlockEndpoints.LeaderboardByName(BoardName);
 
-        // Every read needs the name lookup answered first.
-        private static FlockFakeTransport TransportWithBoard()
+        // Only GetByNameAsync/ResolveIdAsync call the board-lookup route — reads address the board by name directly.
+        // Registered after the read route where both are stubbed: FlockFakeTransport matches by substring, first match wins,
+        // and "leaderboard/by-name/{name}" is a prefix of every read URL.
+        private static void StubBoardLookup(FlockFakeTransport transport)
         {
-            FlockFakeTransport transport = new FlockFakeTransport();
             transport.On(ByName, FlockFakeTransport.Ok(BoardBody));
-            return transport;
         }
 
         // ---- LB-01 ----
         [Test]
         public void GetStandings_Success_UnwrapsEnvelope()
         {
-            FlockFakeTransport transport = TransportWithBoard();
-            transport.On(FlockEndpoints.LeaderboardById("lb-1"), FlockFakeTransport.Ok(StandingsBody));
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.LeaderboardStandings(BoardName), FlockFakeTransport.Ok(StandingsBody));
             using (FlockTestClient h = FlockTestClient.Create(transport))
             {
                 h.SetReachable(true);
@@ -62,8 +62,8 @@ namespace Flock.Tests.Editor
         [Test]
         public void GetStandings_BareBodyWithoutEnvelope_Throws()
         {
-            FlockFakeTransport transport = TransportWithBoard();
-            transport.On(FlockEndpoints.LeaderboardById("lb-1"),
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.LeaderboardStandings(BoardName),
                 FlockFakeTransport.Ok("{\"window\":\"weekly\",\"total\":2,\"items\":[]}"));
             using (FlockTestClient h = FlockTestClient.Create(transport))
             {
@@ -78,11 +78,11 @@ namespace Flock.Tests.Editor
         [Test]
         public void GetStandings_EmptyName_ThrowsValidation()
         {
-            FlockFakeTransport transport = TransportWithBoard();
+            FlockFakeTransport transport = new FlockFakeTransport();
             using (FlockTestClient h = FlockTestClient.Create(transport))
             {
                 Assert.Throws<FlockValidationException>(() => h.Run(() => h.Client.Leaderboard.GetStandingsAsync("")));
-                Assert.AreEqual(0, transport.Requests.Count, "Validation short-circuits before any request, including the name lookup.");
+                Assert.AreEqual(0, transport.Requests.Count, "Validation short-circuits before any request.");
             }
         }
 
@@ -90,8 +90,8 @@ namespace Flock.Tests.Editor
         [Test]
         public void GetStandings_SendsFiltersAndPaging_InQuery()
         {
-            FlockFakeTransport transport = TransportWithBoard();
-            transport.On(FlockEndpoints.LeaderboardById("lb-1"), FlockFakeTransport.Ok(StandingsBody));
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.LeaderboardStandings(BoardName), FlockFakeTransport.Ok(StandingsBody));
             using (FlockTestClient h = FlockTestClient.Create(transport))
             {
                 h.SetReachable(true);
@@ -99,7 +99,7 @@ namespace Flock.Tests.Editor
                 h.Run(() => h.Client.Leaderboard.GetStandingsAsync(
                     BoardName, FlockLeaderboardWindow.Period("2026-W31"), "SA", 3, 25));
 
-                FlockHttpRequest sent = transport.LastTo(FlockEndpoints.LeaderboardById("lb-1"));
+                FlockHttpRequest sent = transport.LastTo(FlockEndpoints.LeaderboardStandings(BoardName));
                 Assert.IsTrue(sent.Url.Contains("window=2026-W31"), sent.Url);
                 Assert.IsTrue(sent.Url.Contains("country=SA"), sent.Url);
                 Assert.IsTrue(sent.Url.Contains("page=3"), sent.Url);
@@ -111,15 +111,15 @@ namespace Flock.Tests.Editor
         [Test]
         public void GetStandings_NullFilters_AreOmittedFromQuery()
         {
-            FlockFakeTransport transport = TransportWithBoard();
-            transport.On(FlockEndpoints.LeaderboardById("lb-1"), FlockFakeTransport.Ok(StandingsBody));
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.LeaderboardStandings(BoardName), FlockFakeTransport.Ok(StandingsBody));
             using (FlockTestClient h = FlockTestClient.Create(transport))
             {
                 h.SetReachable(true);
 
                 h.Run(() => h.Client.Leaderboard.GetStandingsAsync(BoardName));
 
-                FlockHttpRequest sent = transport.LastTo(FlockEndpoints.LeaderboardById("lb-1"));
+                FlockHttpRequest sent = transport.LastTo(FlockEndpoints.LeaderboardStandings(BoardName));
                 Assert.IsFalse(sent.Url.Contains("window="), "Null window must be omitted, not sent empty.");
                 Assert.IsFalse(sent.Url.Contains("country="), "Null country must be omitted, not sent empty.");
                 Assert.IsTrue(sent.Url.Contains("page=1") && sent.Url.Contains("limit=50"), sent.Url);
@@ -142,30 +142,30 @@ namespace Flock.Tests.Editor
         [Test]
         public void GetStandings_SeasonWindow_SendsEncodedSeasonKey()
         {
-            FlockFakeTransport transport = TransportWithBoard();
-            transport.On(FlockEndpoints.LeaderboardById("lb-1"), FlockFakeTransport.Ok(StandingsBody));
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.LeaderboardStandings(BoardName), FlockFakeTransport.Ok(StandingsBody));
             using (FlockTestClient h = FlockTestClient.Create(transport))
             {
                 h.SetReachable(true);
 
                 h.Run(() => h.Client.Leaderboard.GetStandingsAsync(BoardName, FlockLeaderboardWindow.Season("s-1")));
 
-                string url = transport.LastTo(FlockEndpoints.LeaderboardById("lb-1")).Url;
+                string url = transport.LastTo(FlockEndpoints.LeaderboardStandings(BoardName)).Url;
                 Assert.IsTrue(url.Contains("window=season%3As-1"), url);
             }
         }
 
-        // ---- LB-06: bearer-only route fails fast, before the guaranteed 401 and before the name lookup ----
+        // ---- LB-06: bearer-only route fails fast, before the guaranteed 401 ----
         [Test]
         public void GetMyRank_SignedOut_ThrowsAuth_AndSendsNothing()
         {
-            FlockFakeTransport transport = TransportWithBoard();
+            FlockFakeTransport transport = new FlockFakeTransport();
             using (FlockTestClient h = FlockTestClient.Create(transport))
             {
                 h.SetReachable(true);
 
                 Assert.Throws<FlockAuthException>(() => h.Run(() => h.Client.Leaderboard.GetMyRankAsync(BoardName)));
-                Assert.AreEqual(0, transport.Requests.Count, "The auth guard short-circuits before any request — the name lookup must not be spent either.");
+                Assert.AreEqual(0, transport.Requests.Count, "The auth guard short-circuits before any request.");
             }
         }
 
@@ -173,8 +173,8 @@ namespace Flock.Tests.Editor
         [Test]
         public void GetMyRank_NoEntryYet_ReturnsNullRankAndScore()
         {
-            FlockFakeTransport transport = TransportWithBoard();
-            transport.On(FlockEndpoints.LeaderboardMe("lb-1"),
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.LeaderboardMe(BoardName),
                 FlockFakeTransport.Ok("{\"result\":{\"player_id\":\"player-a\",\"window\":\"weekly\",\"rank\":null,\"score\":null}}"));
             using (FlockTestClient h = FlockTestClient.Create(transport))
             {
@@ -193,8 +193,8 @@ namespace Flock.Tests.Editor
         [Test]
         public void GetAroundMe_SendsNeighbourCountAsN()
         {
-            FlockFakeTransport transport = TransportWithBoard();
-            transport.On(FlockEndpoints.LeaderboardAroundMe("lb-1"), FlockFakeTransport.Ok(StandingsBody));
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.LeaderboardAroundMe(BoardName), FlockFakeTransport.Ok(StandingsBody));
             using (FlockTestClient h = FlockTestClient.Create(transport))
             {
                 h.LoginAs("player-a");
@@ -202,7 +202,7 @@ namespace Flock.Tests.Editor
 
                 h.Run(() => h.Client.Leaderboard.GetAroundMeAsync(BoardName, 9));
 
-                FlockHttpRequest sent = transport.LastTo(FlockEndpoints.LeaderboardAroundMe("lb-1"));
+                FlockHttpRequest sent = transport.LastTo(FlockEndpoints.LeaderboardAroundMe(BoardName));
                 Assert.IsTrue(sent.Url.Contains("n=9"), sent.Url);
             }
         }
@@ -211,20 +211,20 @@ namespace Flock.Tests.Editor
         [Test]
         public void GetStandings_Offline_ServedFromSnapshot()
         {
-            FlockFakeTransport transport = TransportWithBoard();
-            transport.On(FlockEndpoints.LeaderboardById("lb-1"), FlockFakeTransport.Ok(StandingsBody));
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.LeaderboardStandings(BoardName), FlockFakeTransport.Ok(StandingsBody));
             using (FlockTestClient h = FlockTestClient.Create(transport))
             {
                 h.SetReachable(true);
                 h.Run(() => h.Client.Leaderboard.GetStandingsAsync(BoardName));
-                int callsWhileOnline = transport.CountTo(FlockEndpoints.LeaderboardById("lb-1"));
+                int callsWhileOnline = transport.CountTo(FlockEndpoints.LeaderboardStandings(BoardName));
 
                 h.SetReachable(false);
                 Standings cached = h.Run(() => h.Client.Leaderboard.GetStandingsAsync(BoardName));
 
                 Assert.IsNotNull(cached);
                 Assert.AreEqual(2, cached.Total);
-                Assert.AreEqual(callsWhileOnline, transport.CountTo(FlockEndpoints.LeaderboardById("lb-1")),
+                Assert.AreEqual(callsWhileOnline, transport.CountTo(FlockEndpoints.LeaderboardStandings(BoardName)),
                     "With a cached copy and no connectivity the network must be skipped entirely.");
             }
         }
@@ -233,8 +233,8 @@ namespace Flock.Tests.Editor
         [Test]
         public void GetMyRank_CacheIsPlayerScoped_AcrossPlayerSwitch()
         {
-            FlockFakeTransport transport = TransportWithBoard();
-            transport.On(FlockEndpoints.LeaderboardMe("lb-1"),
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.LeaderboardMe(BoardName),
                 FlockFakeTransport.Ok("{\"result\":{\"player_id\":\"player-a\",\"window\":\"weekly\",\"rank\":1,\"score\":999.0}}"));
             using (FlockTestClient h = FlockTestClient.Create(transport))
             {
@@ -278,22 +278,23 @@ namespace Flock.Tests.Editor
             }
         }
 
-        // ---- LB-12: the name→id resolve is memoized — repeated reads must not re-lookup ----
+        // ---- LB-12: reads address the board by name — the lookup route is never spent ----
         [Test]
-        public void Reads_ResolveNameOnce_PerSession()
+        public void Reads_NeverCallTheBoardLookup()
         {
-            FlockFakeTransport transport = TransportWithBoard();
-            transport.On(FlockEndpoints.LeaderboardById("lb-1"), FlockFakeTransport.Ok(StandingsBody));
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.LeaderboardStandings(BoardName), FlockFakeTransport.Ok(StandingsBody));
+            StubBoardLookup(transport);
             using (FlockTestClient h = FlockTestClient.Create(transport))
             {
                 h.SetReachable(true);
 
                 h.Run(() => h.Client.Leaderboard.GetStandingsAsync(BoardName));
                 h.Run(() => h.Client.Leaderboard.GetStandingsAsync(BoardName, page: 2));
-                string id = h.Run(() => h.Client.Leaderboard.ResolveIdAsync(BoardName));
 
-                Assert.AreEqual("lb-1", id);
-                Assert.AreEqual(1, transport.CountTo(ByName), "The name lookup is memoized; only the first read pays for it.");
+                Assert.AreEqual(2, transport.CountTo(FlockEndpoints.LeaderboardStandings(BoardName)), "Both reads go out.");
+                int lookups = transport.Requests.FindAll(r => r.Url.Contains(ByName) && !r.Url.Contains("/standings")).Count;
+                Assert.AreEqual(0, lookups, "A read must not spend a name→id round trip — the /v1 read routes take the name.");
             }
         }
 
@@ -314,29 +315,30 @@ namespace Flock.Tests.Editor
             }
         }
 
-        // ---- LB-14: a name this game doesn't have fails at the lookup, without touching the data route ----
+        // ---- LB-14: a name this game doesn't have 404s on the read route and surfaces as a caller mistake ----
         [Test]
-        public void GetStandings_UnknownName_Throws_AndSkipsDataCall()
+        public void GetStandings_UnknownName_ThrowsValidation()
         {
             FlockFakeTransport transport = new FlockFakeTransport();
-            transport.On(FlockEndpoints.LeaderboardByName("nope"), FlockFakeTransport.Status(404, "{\"detail\":\"not found\"}"));
+            transport.On(FlockEndpoints.LeaderboardStandings("nope"), FlockFakeTransport.Status(404, "{\"detail\":\"not found\"}"));
             using (FlockTestClient h = FlockTestClient.Create(transport))
             {
                 h.SetReachable(true);
 
-                Assert.Catch<FlockException>(() => h.Run(() => h.Client.Leaderboard.GetStandingsAsync("nope")));
-                Assert.AreEqual(1, transport.Requests.Count, "The failed lookup is the only request — no data call on an unresolvable name.");
+                Assert.Throws<FlockValidationException>(() => h.Run(() => h.Client.Leaderboard.GetStandingsAsync("nope")),
+                    "A 404 from the read route means no such board — a caller mistake, not a transport failure.");
+                Assert.AreEqual(1, transport.Requests.Count, "The read is the only request — there is no separate name lookup.");
             }
         }
 
-        // ---- LB-15: on a later offline launch the resolve itself is served from the snapshot ----
+        // ---- LB-15: on a later offline launch the read is served from the snapshot ----
         [Test]
-        public void Standings_OfflineRelaunch_ResolveAndDataBothFromSnapshot()
+        public void Standings_OfflineRelaunch_ServedFromSnapshot()
         {
             string sharedDir = Path.Combine(Path.GetTempPath(), "flock_lb_" + Guid.NewGuid().ToString("N"));
 
-            FlockFakeTransport t1 = TransportWithBoard();
-            t1.On(FlockEndpoints.LeaderboardById("lb-1"), FlockFakeTransport.Ok(StandingsBody));
+            FlockFakeTransport t1 = new FlockFakeTransport();
+            t1.On(FlockEndpoints.LeaderboardStandings(BoardName), FlockFakeTransport.Ok(StandingsBody));
             FlockTestClient h1 = FlockTestClient.Create(t1, config => config.OfflineCacheDirectory = sharedDir);
             h1.SetReachable(true);
             h1.Run(() => h1.Client.Leaderboard.GetStandingsAsync(BoardName));
@@ -352,7 +354,7 @@ namespace Flock.Tests.Editor
                     Standings offline = h2.Run(() => h2.Client.Leaderboard.GetStandingsAsync(BoardName));
 
                     Assert.AreEqual(2, offline.Total, "A previously-seen board still reads offline on a cold in-memory cache.");
-                    Assert.AreEqual(0, t2.Requests.Count, "Neither the resolve nor the data call may hit the network offline.");
+                    Assert.AreEqual(0, t2.Requests.Count, "The read must not hit the network offline.");
                 }
             }
             finally
@@ -362,21 +364,23 @@ namespace Flock.Tests.Editor
             }
         }
 
-        // ---- LB-16: ClearCache drops the memo, so the next read resolves again ----
+        // ---- LB-16: ClearCache drops the board memo, so the next lookup goes out again ----
         [Test]
-        public void ClearCache_ForcesNameLookupAgain()
+        public void ClearCache_ForcesBoardLookupAgain()
         {
-            FlockFakeTransport transport = TransportWithBoard();
-            transport.On(FlockEndpoints.LeaderboardById("lb-1"), FlockFakeTransport.Ok(StandingsBody));
+            FlockFakeTransport transport = new FlockFakeTransport();
+            StubBoardLookup(transport);
             using (FlockTestClient h = FlockTestClient.Create(transport))
             {
                 h.SetReachable(true);
-                h.Run(() => h.Client.Leaderboard.GetStandingsAsync(BoardName));
+                h.Run(() => h.Client.Leaderboard.ResolveIdAsync(BoardName));
+                h.Run(() => h.Client.Leaderboard.ResolveIdAsync(BoardName));
+                Assert.AreEqual(1, transport.CountTo(ByName), "The board lookup is memoized for the session.");
 
                 h.Client.Leaderboard.ClearCache();
-                h.Run(() => h.Client.Leaderboard.GetStandingsAsync(BoardName));
+                h.Run(() => h.Client.Leaderboard.ResolveIdAsync(BoardName));
 
-                Assert.AreEqual(2, transport.CountTo(ByName), "ClearCache drops the name memo along with the snapshots.");
+                Assert.AreEqual(2, transport.CountTo(ByName), "ClearCache drops the memo along with the snapshots.");
             }
         }
 
@@ -405,6 +409,21 @@ namespace Flock.Tests.Editor
 
             Assert.IsTrue(board.IsHigherBetter);
             Assert.AreEqual(string.Empty, board.FormatScore(unranked.Score));
+        }
+
+        // ---- LB-19: literal path lock ----
+        // Every route test above stubs the fake with the same FlockEndpoints helper the provider builds its URL
+        // from, so a wrong path is invisible to them — only a literal assertion catches it. The /v1 surface has no
+        // by-id read routes: /v1/leaderboard/{id}, /{id}/me and /{id}/around-me all 404 (verified live 2026-08-20).
+        [Test]
+        public void Endpoints_MatchTheLiveV1Paths()
+        {
+            Assert.AreEqual("leaderboard/by-name/best_lap", FlockEndpoints.LeaderboardByName("best_lap"));
+            Assert.AreEqual("leaderboard/by-name/best_lap/standings", FlockEndpoints.LeaderboardStandings("best_lap"));
+            Assert.AreEqual("leaderboard/by-name/best_lap/me", FlockEndpoints.LeaderboardMe("best_lap"));
+            Assert.AreEqual("leaderboard/by-name/best_lap/around-me", FlockEndpoints.LeaderboardAroundMe("best_lap"));
+            Assert.AreEqual("leaderboard/by-name/weekly%20high/standings", FlockEndpoints.LeaderboardStandings("weekly high"),
+                "The name is escaped once, in the shared by-name builder.");
         }
     }
 }

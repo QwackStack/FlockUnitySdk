@@ -1,3 +1,4 @@
+using Flock.Logging;
 using System;
 using System.IO;
 using System.Text;
@@ -54,7 +55,9 @@ namespace Flock.Tests.Support
             };
             tweak?.Invoke(config);
 
-            FlockClient client = FlockClient.Create(config);
+            // Silent by choice: the SDK always logs errors now, and Unity's test framework fails a test on any
+            // unexpected Debug.LogError. Error-path tests assert on the thrown exception, not on console output.
+            FlockClient client = FlockClient.Create(config, new NullFlockLogger());
             // The constructor rebuilds the real transport from HttpTimeout — re-apply the fake after Create.
             FlockHttpClient.Configure(transport);
             return new FlockTestClient(client, transport, config.OfflineCacheDirectory);

@@ -1,3 +1,4 @@
+using Flock.Logging;
 using System;
 using System.Threading;
 using System.Threading.Tasks;
@@ -52,7 +53,7 @@ namespace Flock.Tests
             asset.analyticsEnabled = false;
             asset.enableOfflineCache = false;
             asset.autoInitializeOnLoad = false;
-            FlockClient.Create(asset.ToInitConfig());
+            FlockClient.Create(asset.ToInitConfig(), new NullFlockLogger());
         }
 
         [TearDown]
