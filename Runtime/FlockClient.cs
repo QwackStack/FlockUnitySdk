@@ -106,7 +106,8 @@ namespace Flock
         private FlockClient(FlockInitConfig initConfig, IFlockLogger logger)
         {
             _initConfig = initConfig ?? throw new ArgumentNullException(nameof(initConfig));
-            _logger = logger ?? (initConfig.EnableDebugLogs ? new UnityFlockLogger() : new NullFlockLogger());
+            // Errors and warnings always surface — EnableDebugLogs only adds info/debug on top.
+            _logger = logger ?? new UnityFlockLogger(initConfig.EnableDebugLogs);
             FlockEvents.Logger = _logger;
             _logger.LogInfo("Initializing Flock SDK");
             _logger.LogInfo($"Token persistence provider: {initConfig.TokenStore?.GetType().Name ?? "<disabled>"}");
@@ -313,7 +314,8 @@ namespace Flock
                     return true;
 
                 PlayerRefreshTokenRequest refreshRequest = new PlayerRefreshTokenRequest { PlayerId = playerIdSnapshot, RefreshToken = refreshSnapshot };
-                _logger.LogDebug($"Refresh POST {GetVersionedApiUrl()}/{FlockEndpoints.PlayerTokenRefresh} body={Newtonsoft.Json.JsonConvert.SerializeObject(refreshRequest)}");
+                // Never log the body — it carries the refresh token, and Debug.Log reaches player logs and crash reporters.
+                _logger.LogDebug($"Refresh POST {GetVersionedApiUrl()}/{FlockEndpoints.PlayerTokenRefresh} for PlayerId: {playerIdSnapshot}");
 
                 PlayerLoginResponse response = await FlockHttpClient.PostAsync<PlayerLoginResponse>(
                     $"{GetVersionedApiUrl()}/{FlockEndpoints.PlayerTokenRefresh}",

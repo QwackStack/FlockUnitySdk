@@ -227,7 +227,7 @@ namespace Flock.Editor
             string credentialsError = "";
             bool credentialsValid = configExists && config.IsValid(out credentialsError);
             bool connectionVerified = ConnectionVerified(out string connectionDetail);
-            bool bootstrapPresent = UnityEngine.Object.FindAnyObjectByType<FlockBootstrap>() != null;
+            bool bootstrapPresent = FlockEditorCompat.FindFirstInScene<FlockBootstrap>() != null;
             bool autoInitializeEnabled = configExists && config.autoInitializeOnLoad;
 
             bool includeSchemas;
@@ -777,7 +777,7 @@ namespace Flock.Editor
                 return;
             }
 
-            var existing = UnityEngine.Object.FindAnyObjectByType<FlockBootstrap>();
+            FlockBootstrap existing = FlockEditorCompat.FindFirstInScene<FlockBootstrap>();
             if (existing != null)
             {
                 EditorGUIUtility.PingObject(existing.gameObject);
@@ -823,13 +823,13 @@ namespace Flock.Editor
         {
             EditorGUILayout.BeginHorizontal(EditorStyles.helpBox);
             GUILayout.FlexibleSpace();
-            if (GUILayout.Button("Getting Started", EditorStyles.linkLabel))
+            if (GUILayout.Button("Getting Started", FlockEditorCompat.LinkLabel))
                 OpenSdkGuide();
             GUILayout.Label("|", EditorStyles.miniLabel);
-            if (GUILayout.Button("Documentation", EditorStyles.linkLabel))
+            if (GUILayout.Button("Documentation", FlockEditorCompat.LinkLabel))
                 OpenDocs();
             GUILayout.Label("|", EditorStyles.miniLabel);
-            if (GUILayout.Button("Support", EditorStyles.linkLabel))
+            if (GUILayout.Button("Support", FlockEditorCompat.LinkLabel))
                 Application.OpenURL(FlockSdkGuide.SupportUrl);
             GUILayout.FlexibleSpace();
             EditorGUILayout.EndHorizontal();

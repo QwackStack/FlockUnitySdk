@@ -1,3 +1,4 @@
+using Flock.Logging;
 using System;
 using System.Collections;
 using System.Threading;
@@ -167,7 +168,7 @@ namespace Flock.Tests
 
             if (!FlockClient.IsInitialized)
             {
-                FlockClient.Create(asset.ToInitConfig());
+                FlockClient.Create(asset.ToInitConfig(), new NullFlockLogger());
                 _createdClient = true;
             }
 

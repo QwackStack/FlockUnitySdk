@@ -14,12 +14,17 @@ namespace Flock.Logging
 
     public class UnityFlockLogger : IFlockLogger
     {
-        public void LogInfo(string message) => UnityEngine.Debug.Log($"[Flock SDK] {message}");
+        private readonly bool _verbose;
+
+        /// <summary>Errors and warnings always surface; <paramref name="verbose"/> adds info and debug on top.</summary>
+        public UnityFlockLogger(bool verbose = true) => _verbose = verbose;
+
+        public void LogInfo(string message) { if (_verbose) UnityEngine.Debug.Log($"[Flock SDK] {message}"); }
         public void LogWarning(string message) => UnityEngine.Debug.LogWarning($"[Flock SDK] {message}");
         public void LogError(string message) => UnityEngine.Debug.LogError($"[Flock SDK] {message}");
         public void LogError(string message, Exception exception) => UnityEngine.Debug.LogError($"[Flock SDK] {message}\nException: {exception}");
         public void LogException(Exception exception) => UnityEngine.Debug.LogException(exception);
-        public void LogDebug(string message) => UnityEngine.Debug.Log($"[Flock SDK] {message}");
+        public void LogDebug(string message) { if (_verbose) UnityEngine.Debug.Log($"[Flock SDK] {message}"); }
     }
 
     public class NullFlockLogger : IFlockLogger

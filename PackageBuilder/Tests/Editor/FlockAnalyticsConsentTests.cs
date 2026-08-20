@@ -1,3 +1,4 @@
+using Flock.Logging;
 using System;
 using System.Threading;
 using System.Threading.Tasks;
@@ -71,7 +72,7 @@ namespace Flock.Tests.Editor
                 EnableOfflineCache = false
             };
 
-            FlockClient client = FlockClient.Create(initConfig);
+            FlockClient client = FlockClient.Create(initConfig, new NullFlockLogger());
 
             // FlockClient's constructor calls FlockHttpClient.Configure(initConfig.HttpTimeout),
             // which rebuilds a real network adapter and overwrites whatever [SetUp] configured.

@@ -71,7 +71,6 @@ namespace Flock.Providers
             CancellationToken cancellationToken = default)
         {
             RequireNotEmpty(leaderboardName, "Leaderboard Name");
-            string leaderboardId = await RequireIdAsync(leaderboardName, cancellationToken);
 
             string windowKey = window.ToWireValue();
             StringBuilder query = new StringBuilder();
@@ -85,10 +84,14 @@ namespace Flock.Providers
                 $"standings_{leaderboardName}_{windowKey}_{country}_p{page}_l{limit}",
                 async () =>
                 {
-                    GenericResponse<Standings> response = await FlockHttpClient.GetAsync<GenericResponse<Standings>>(
-                        $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.LeaderboardById(leaderboardId)}{query}", Client.GetBaseHeaders(), cancellationToken);
-                    ValidateResponse(response);
-                    return response.Result;
+                    try
+                    {
+                        GenericResponse<Standings> response = await FlockHttpClient.GetAsync<GenericResponse<Standings>>(
+                            $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.LeaderboardStandings(leaderboardName)}{query}", Client.GetBaseHeaders(), cancellationToken);
+                        ValidateResponse(response);
+                        return response.Result;
+                    }
+                    catch (FlockNetworkException ex) { throw AsCallerMistake(ex, leaderboardName); }
                 },
                 "Fetch leaderboard standings", cancellationToken);
         }
@@ -102,7 +105,6 @@ namespace Flock.Providers
         {
             RequireNotEmpty(leaderboardName, "Leaderboard Name");
             RequireAuthenticated();
-            string leaderboardId = await RequireIdAsync(leaderboardName, cancellationToken);
 
             string windowKey = window.ToWireValue();
             StringBuilder query = new StringBuilder();
@@ -114,10 +116,14 @@ namespace Flock.Providers
                 PlayerScopedKey($"me_{leaderboardName}_{windowKey}_{country}"),
                 async () =>
                 {
-                    GenericResponse<PlayerRank> response = await FlockHttpClient.GetAsync<GenericResponse<PlayerRank>>(
-                        $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.LeaderboardMe(leaderboardId)}{query}", Client.GetBaseHeaders(), cancellationToken);
-                    ValidateResponse(response);
-                    return response.Result;
+                    try
+                    {
+                        GenericResponse<PlayerRank> response = await FlockHttpClient.GetAsync<GenericResponse<PlayerRank>>(
+                            $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.LeaderboardMe(leaderboardName)}{query}", Client.GetBaseHeaders(), cancellationToken);
+                        ValidateResponse(response);
+                        return response.Result;
+                    }
+                    catch (FlockNetworkException ex) { throw AsCallerMistake(ex, leaderboardName); }
                 },
                 "Fetch player rank", cancellationToken);
         }
@@ -132,7 +138,6 @@ namespace Flock.Providers
         {
             RequireNotEmpty(leaderboardName, "Leaderboard Name");
             RequireAuthenticated();
-            string leaderboardId = await RequireIdAsync(leaderboardName, cancellationToken);
 
             string windowKey = window.ToWireValue();
             StringBuilder query = new StringBuilder();
@@ -145,24 +150,27 @@ namespace Flock.Providers
                 PlayerScopedKey($"around_{leaderboardName}_{windowKey}_{country}_n{neighbours}"),
                 async () =>
                 {
-                    GenericResponse<Standings> response = await FlockHttpClient.GetAsync<GenericResponse<Standings>>(
-                        $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.LeaderboardAroundMe(leaderboardId)}{query}", Client.GetBaseHeaders(), cancellationToken);
-                    ValidateResponse(response);
-                    return response.Result;
+                    try
+                    {
+                        GenericResponse<Standings> response = await FlockHttpClient.GetAsync<GenericResponse<Standings>>(
+                            $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.LeaderboardAroundMe(leaderboardName)}{query}", Client.GetBaseHeaders(), cancellationToken);
+                        ValidateResponse(response);
+                        return response.Result;
+                    }
+                    catch (FlockNetworkException ex) { throw AsCallerMistake(ex, leaderboardName); }
                 },
                 "Fetch standings around player", cancellationToken);
         }
 
-        // A name this game doesn't have is a caller mistake, not an empty result.
-        private async Task<string> RequireIdAsync(string leaderboardName, CancellationToken cancellationToken)
+        // A name this game doesn't have is a caller mistake, not an empty result — the routes answer 404 for it.
+        private static FlockException AsCallerMistake(FlockNetworkException ex, string leaderboardName)
         {
-            string leaderboardId = await ResolveIdAsync(leaderboardName, cancellationToken);
-            if (string.IsNullOrEmpty(leaderboardId))
-                throw new FlockValidationException($"No leaderboard named '{leaderboardName}'");
-            return leaderboardId;
+            return ex.StatusCode == 404
+                ? new FlockValidationException($"No leaderboard named '{leaderboardName}'")
+                : (FlockException)ex;
         }
 
-        // Bearer-only endpoints — fail fast instead of a guaranteed server 401, and before spending the name lookup.
+        // Bearer-only endpoints — fail fast instead of a guaranteed server 401.
         private void RequireAuthenticated()
         {
             if (!Client.IsAuthenticated)

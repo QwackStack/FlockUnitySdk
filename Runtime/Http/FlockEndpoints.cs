@@ -67,10 +67,11 @@ namespace Flock.Http
         public static string PlayerInventoryByPlayer(string playerId) => $"player_inventory/player/{playerId}";
 
         // Leaderboards — read-only. There is no submit path by design: a board projects over a player-data field, so scores move by writing that field.
+        // Every read is addressed by name — the /v1 surface has no by-id read routes.
         public static string LeaderboardByName(string name) => $"leaderboard/by-name/{Uri.EscapeDataString(name)}";
-        public static string LeaderboardById(string leaderboardId) => $"leaderboard/{leaderboardId}";
-        public static string LeaderboardMe(string leaderboardId) => $"leaderboard/{leaderboardId}/me";
-        public static string LeaderboardAroundMe(string leaderboardId) => $"leaderboard/{leaderboardId}/around-me";
+        public static string LeaderboardStandings(string name) => $"{LeaderboardByName(name)}/standings";
+        public static string LeaderboardMe(string name) => $"{LeaderboardByName(name)}/me";
+        public static string LeaderboardAroundMe(string name) => $"{LeaderboardByName(name)}/around-me";
         // Notifications — the player inbox plus game-scheduled reminders.
         public const string Notification = "notification";
         public const string NotificationUnreadCount = "notification/unread_count";

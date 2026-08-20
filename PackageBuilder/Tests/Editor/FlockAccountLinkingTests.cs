@@ -1,3 +1,4 @@
+using Flock.Logging;
 using System;
 using System.Collections.Generic;
 using System.Text;
@@ -83,7 +84,7 @@ namespace Flock.Tests.Editor
                 EnableOfflineCache = false
             };
 
-            FlockClient client = FlockClient.Create(initConfig);
+            FlockClient client = FlockClient.Create(initConfig, new NullFlockLogger());
             FlockHttpClient.Configure(adapter);
             return client;
         }
