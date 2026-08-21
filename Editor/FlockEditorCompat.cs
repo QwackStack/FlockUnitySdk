@@ -11,7 +11,8 @@ namespace Flock.Editor
         /// <summary>Finds the first active object of type T, using whichever API the running editor has.</summary>
         internal static T FindFirstInScene<T>() where T : Object
         {
-#if UNITY_2021_3_OR_NEWER
+            // 2022.2, not 2021.3: FindAnyObjectByType landed in 2021.3.18f1 and there is no define for a patch.
+#if UNITY_2022_2_OR_NEWER
             return Object.FindAnyObjectByType<T>();
 #else
             return Object.FindObjectOfType<T>();

@@ -725,6 +725,32 @@ namespace Flock.Tests.Editor
             }
         }
 
+        // ---- NOTIF-25b: nor may it discard ANOTHER player's cancellable ids ----
+        // The snapshot scope is shared by every player on the device. Deleting it wholesale and restoring only the
+        // signed-in player's rows orphans everyone else's reminders: they still fire server-side and can no longer
+        // be cancelled. NOTIF-25 passed throughout because it only ever had one player.
+        [Test]
+        public void ClearCache_KeepsOtherPlayersPendingSchedules()
+        {
+            FlockFakeTransport transport = ScheduleTransport();
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.SetReachable(true);
+
+                h.LoginAs("player-a");
+                h.Run(() => h.Client.Notification.ScheduleAsync("GameplayTest", DeliverAt));
+                Assert.AreEqual(1, h.Client.Notification.GetPendingSchedules().Count, "Player A has a reminder pending.");
+
+                // Player B signs in on the same device and the game clears cache from a settings screen.
+                h.LoginAs("player-b");
+                h.Client.Notification.ClearCache();
+
+                h.LoginAs("player-a");
+                Assert.AreEqual(1, h.Client.Notification.GetPendingSchedules().Count,
+                    "Player A's reminder must survive another player clearing cache — it is the only handle on cancelling it.");
+            }
+        }
+
         // ---- NOTIF-25: clearing cached reads must not discard cancellable ids ----
         [Test]
         public void ClearCache_KeepsPendingSchedules()

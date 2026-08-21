@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Text;
+using UnityEngine;
 
 namespace Flock.Editor.Codegen
 {
@@ -8,7 +9,7 @@ namespace Flock.Editor.Codegen
         public static string ToPascalCase(string input)
         {
             if (string.IsNullOrEmpty(input)) return "Unnamed";
-            var sb = new StringBuilder();
+            StringBuilder sb = new StringBuilder();
             bool nextUpper = true;
             foreach (char c in input)
             {
@@ -32,11 +33,15 @@ namespace Flock.Editor.Codegen
         public static string UnDuplicate(string baseName, HashSet<string> used)
         {
             //to avoid duplicate names and compiler errors
-            if (used.Add(baseName)) 
+            if (used.Add(baseName))
                 return baseName;
+
             int i = 2;
             while (!used.Add($"{baseName}_{i}"))
                 i++;
+
+            // Which entry keeps the plain name is iteration-order dependent, so do not resolve this silently.
+            Debug.LogWarning($"[Flock Codegen] Two entries both generate '{baseName}'; emitting '{baseName}_{i}' for the second. Rename one in the dashboard to keep generated names stable.");
             return $"{baseName}_{i}";
         }
 
@@ -44,7 +49,7 @@ namespace Flock.Editor.Codegen
         {
             //clean up for C#
             if (string.IsNullOrEmpty(s)) return s ?? "";
-            var sb = new StringBuilder(s.Length);
+            StringBuilder sb = new StringBuilder(s.Length);
             foreach (char c in s)
             {
                 switch (c)
@@ -74,7 +79,7 @@ namespace Flock.Editor.Codegen
         {
             //clean up for C# comments
             if (string.IsNullOrEmpty(s)) return s ?? "";
-            var sb = new StringBuilder(s.Length);
+            StringBuilder sb = new StringBuilder(s.Length);
             foreach (char c in s)
             {
                 if (c == '\r' || c == '\n') sb.Append(' ');

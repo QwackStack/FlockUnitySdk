@@ -23,11 +23,15 @@ namespace Flock.Tests.Support
         public FlockFakeTransport Transport { get; }
         public string SnapshotDirectory { get; }
 
-        private FlockTestClient(FlockClient client, FlockFakeTransport transport, string snapshotDir)
+        /// <summary>What the SDK logged during the test — assert on it rather than letting errors vanish.</summary>
+        public RecordingFlockLogger Logger { get; }
+
+        private FlockTestClient(FlockClient client, FlockFakeTransport transport, string snapshotDir, RecordingFlockLogger logger)
         {
             Client = client;
             Transport = transport;
             SnapshotDirectory = snapshotDir;
+            Logger = logger;
         }
 
         // `tweak` lets a test override the config (e.g. pin a fixed snapshot dir for a relaunch test).
@@ -55,12 +59,13 @@ namespace Flock.Tests.Support
             };
             tweak?.Invoke(config);
 
-            // Silent by choice: the SDK always logs errors now, and Unity's test framework fails a test on any
-            // unexpected Debug.LogError. Error-path tests assert on the thrown exception, not on console output.
-            FlockClient client = FlockClient.Create(config, new NullFlockLogger());
+            // Recording, not silent: keeps Debug.LogError out of the run (the framework fails a test on an
+            // unexpected one) while still letting a test assert what the SDK reported.
+            RecordingFlockLogger logger = new RecordingFlockLogger();
+            FlockClient client = FlockClient.Create(config, logger);
             // The constructor rebuilds the real transport from HttpTimeout — re-apply the fake after Create.
             FlockHttpClient.Configure(transport);
-            return new FlockTestClient(client, transport, config.OfflineCacheDirectory);
+            return new FlockTestClient(client, transport, config.OfflineCacheDirectory, logger);
         }
 
         // Force the reachability seam. false = the SDK treats the network as down.

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
@@ -61,10 +62,11 @@ namespace Flock.Providers
             }
         }
 
-        public void Write<T>(string scope, string key, T value) where T : class
+        /// <summary>Persists a snapshot. Returns false if it did not reach disk, so callers holding data that only exists here can say so instead of reporting success.</summary>
+        public bool Write<T>(string scope, string key, T value) where T : class
         {
             if (value == null)
-                return;
+                return false;
 
             string path = BuildPath(scope, key);
             string tmpPath = path + ".tmp";
@@ -88,11 +90,14 @@ namespace Flock.Providers
                     File.Replace(tmpPath, path, null);
                 else
                     File.Move(tmpPath, path);
+
+                return true;
             }
             catch (Exception ex)
             {
                 _logger?.LogWarning($"Snapshot write failed for {scope}/{key}: {ex.Message}");
                 TryDelete(tmpPath);
+                return false;
             }
         }
 
@@ -103,6 +108,46 @@ namespace Flock.Providers
                 string path = Path.Combine(_root, SanitizeScope(scope));
                 if (Directory.Exists(path))
                     Directory.Delete(path, true);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning($"Snapshot scope delete failed for {scope}: {ex.Message}");
+            }
+        }
+
+        // Clears a scope except keys starting with one of these prefixes - a scope is shared by every player, so
+        // per-player state cant survive a plain DeleteScope. Filenames are "{sanitized key}_{hash}".
+        public void DeleteScopeExcept(string scope, params string[] keepKeyPrefixes)
+        {
+            try
+            {
+                string path = Path.Combine(_root, SanitizeScope(scope));
+                if (!Directory.Exists(path))
+                    return;
+
+                List<string> keep = new List<string>();
+                foreach (string prefix in keepKeyPrefixes ?? new string[0])
+                {
+                    if (!string.IsNullOrEmpty(prefix))
+                        keep.Add(Sanitize(prefix));
+                }
+
+                foreach (string file in Directory.EnumerateFiles(path))
+                {
+                    string name = Path.GetFileName(file);
+                    bool preserve = false;
+                    foreach (string prefix in keep)
+                    {
+                        if (name.StartsWith(prefix, StringComparison.Ordinal))
+                        {
+                            preserve = true;
+                            break;
+                        }
+                    }
+
+                    if (!preserve)
+                        TryDelete(file);
+                }
             }
             catch (Exception ex)
             {

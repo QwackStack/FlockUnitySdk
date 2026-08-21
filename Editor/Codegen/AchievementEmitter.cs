@@ -41,8 +41,10 @@ namespace Flock.Editor.Codegen
 
             HashSet<string> members = new HashSet<string>();
             List<AchievementEntry> entries = new List<AchievementEntry>();
+            // Sorted: enum member order sets each member's underlying int, so a reordered response renumbers them.
             foreach (TypedSchema field in (template.Schema ?? new List<TypedSchema>())
-                .Where(f => f != null && !string.IsNullOrEmpty(f.FieldName)))
+                .Where(f => f != null && !string.IsNullOrEmpty(f.FieldName))
+                .OrderBy(f => f.FieldName, StringComparer.Ordinal))
             {
                 entries.Add(new AchievementEntry
                 {

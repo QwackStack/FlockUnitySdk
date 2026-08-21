@@ -206,6 +206,7 @@ namespace Flock
             OnSessionPaused = null;
             OnSessionResumed = null;
             OnUnreadCountChanged = null;
+            OnNotificationReceived = null;
             OnConsentChanged = null;
         }
 

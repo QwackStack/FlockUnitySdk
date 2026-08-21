@@ -609,5 +609,108 @@ namespace Flock.Tests.Editor
                 h.Dispose();
             }
         }
+
+        // Drains whatever is still queued against a working route, and reports how many writes that took.
+        private static int ReplayRemaining(FlockTestClient h, FlockFakeTransport transport)
+        {
+            int before = transport.CountTo(FlockEndpoints.CommandUpdatePlayerData);
+            transport.On(FlockEndpoints.CommandUpdatePlayerData, FlockFakeTransport.Ok("{\"id\":\"pd-x\"}"));
+            h.Run(() => h.Client.Commands.FlushPendingWritesAsync());
+            return transport.CountTo(FlockEndpoints.CommandUpdatePlayerData) - before;
+        }
+
+        // ---- CMD-23: an unparseable 2xx must be RETRIED, not dropped ----
+        // A captive portal answering 200 with an HTML login page is the common case, and there the server never
+        // saw the write — dropping it loses the player's change. The client cannot distinguish that from a
+        // malformed success, so the write is kept and the attempt cap (CMD-25) bounds the stall instead.
+        [Test]
+        public void Flush_UnparseableSuccess_IsRetried_NotDropped()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.OnSequence(FlockEndpoints.CommandUpdatePlayerData,
+                FlockFakeTransport.Ok("<html>captive portal</html>"),
+                FlockFakeTransport.Ok("{\"id\":\"pd-x\"}"));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                EnqueueTwoOfflineUpdates(h);
+
+                h.SetReachable(true);
+                h.Run(() => h.Client.Commands.FlushPendingWritesAsync());
+
+                Assert.AreEqual(1, transport.CountTo(FlockEndpoints.CommandUpdatePlayerData),
+                    "The flush halts on the unparseable response rather than discarding the write.");
+                Assert.AreEqual(2, ReplayRemaining(h, transport),
+                    "Both writes survive and replay once the portal is passed — nothing was thrown away.");
+            }
+        }
+
+        // ---- CMD-24: a coded 403 is an authoritative refusal -> drop, unlike a recoverable 401 (CMD-10) ----
+        [Test]
+        public void Flush_CodedForbidden_DropsWrite_AndContinues()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.CommandUpdatePlayerData, FlockFakeTransport.Coded(403, "player.forbidden"));
+            // Refresh succeeds, so the 403 is isolated from any token problem.
+            string refreshOk = "{\"player_id\":\"player-a\",\"access_token\":\"" + FlockTestClient.MakeJwt("player-a", 3600, "refreshed") + "\",\"refresh_token\":\"refresh-2\"}";
+            transport.On(FlockEndpoints.PlayerTokenRefresh, FlockFakeTransport.Ok(refreshOk));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                EnqueueTwoOfflineUpdates(h);
+
+                h.SetReachable(true);
+                h.Run(() => h.Client.Commands.FlushPendingWritesAsync());
+
+                Assert.AreEqual(0, ReplayRemaining(h, transport),
+                    "A forbidden write can never succeed on replay, so both queued writes drop rather than halting the queue.");
+                Assert.IsTrue(h.Logger.Logged(h.Logger.Errors, "Dropping rejected queued write"),
+                    "Discarding a player's write must be reported, not silent.");
+            }
+        }
+
+        // ---- CMD-24b: a BARE 403 is infrastructure, not the backend -> keep the write ----
+        // A proxy, WAF or captive gateway answers 403 with no coded body. Dropping there would destroy player
+        // data over someone else's network policy, for a write the server never rejected.
+        [Test]
+        public void Flush_BareForbidden_KeepsQueued()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.CommandUpdatePlayerData, FlockFakeTransport.Status(403, "<html>blocked by proxy</html>"));
+            string refreshOk = "{\"player_id\":\"player-a\",\"access_token\":\"" + FlockTestClient.MakeJwt("player-a", 3600, "refreshed") + "\",\"refresh_token\":\"refresh-2\"}";
+            transport.On(FlockEndpoints.PlayerTokenRefresh, FlockFakeTransport.Ok(refreshOk));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                EnqueueTwoOfflineUpdates(h);
+
+                h.SetReachable(true);
+                h.Run(() => h.Client.Commands.FlushPendingWritesAsync());
+
+                Assert.AreEqual(2, ReplayRemaining(h, transport),
+                    "An uncoded 403 is not the backend's answer — both writes must survive to replay off that network.");
+            }
+        }
+
+        // ---- CMD-25: the attempt cap is the backstop for anything the classifier still misreads ----
+        [Test]
+        public void Flush_PersistentlyTransientFailure_EventuallyDrops_InsteadOfWedgingForever()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.CommandUpdatePlayerData, FlockFakeTransport.Offline());
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                EnqueueTwoOfflineUpdates(h);
+                h.SetReachable(true);
+
+                // Two writes, 50 attempts each; the head is retried once per flush.
+                for (int i = 0; i < 110; i++)
+                    h.Run(() => h.Client.Commands.FlushPendingWritesAsync());
+
+                Assert.AreEqual(0, ReplayRemaining(h, transport),
+                    "A write that never becomes deliverable must eventually drop rather than block the queue for the life of the app.");
+            }
+        }
     }
 }

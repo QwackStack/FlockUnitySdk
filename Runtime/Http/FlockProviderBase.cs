@@ -83,6 +83,13 @@ namespace Flock.Http
             Client.SnapshotStore?.DeleteScope(snapshotScope);
         }
 
+        /// <summary>Clears a category but keeps records whose key starts with one of these prefixes — for per-player state that other players also own.</summary>
+        protected void DeleteSnapshotCategoryExcept(string category, params string[] keepKeyPrefixes)
+        {
+            string snapshotScope = GetSnapshotScope(category);
+            Client.SnapshotStore?.DeleteScopeExcept(snapshotScope, keepKeyPrefixes);
+        }
+
         protected bool TryReadSnapshot<T>(string category, string key, out T value) where T : class
         {
             FlockSnapshotStore store = Client.SnapshotStore;
@@ -131,7 +138,7 @@ namespace Flock.Http
             // No connection and a cached copy in hand — skip the network entirely.
             if (hasCache && !this.IsServerReachable())
             {
-                Client.Logger.LogWarning($"{context}: serving cached snapshot (no connectivity)");
+                Client.Logger.LogDebug($"{context}: serving cached snapshot (no connectivity)");
                 return cached;
             }
 
@@ -147,7 +154,7 @@ namespace Flock.Http
             {
                 if (!FlockNetworkException.IsPermanentStatus(e.StatusCode) && hasCache)
                 {
-                    Client.Logger.LogWarning($"{context}: serving cached snapshot (couldn't reach server)");
+                    Client.Logger.LogDebug($"{context}: serving cached snapshot (couldn't reach server)");
                     return cached;
                 }
                 throw;

@@ -1,6 +1,8 @@
 using System;
 using System.IO;
+using System.Threading;
 using Flock.Analytics;
+using Flock.Exceptions;
 using Flock.Logging;
 using NUnit.Framework;
 
@@ -43,6 +45,45 @@ namespace Flock.Tests.Editor
             Assert.AreEqual(0, cache.PendingCount);
             string subDir = Path.Combine(_tempDir, "sub");
             Assert.AreEqual(0, Directory.GetFiles(subDir).Length);
+        }
+
+        // ---- A coded 403 must drop the batch, not defer it forever ----
+        // FlockAuthException derives from FlockException, not FlockNetworkException, so it falls past the
+        // permanent-status catch and lands in the generic "transient" one. An authoritative 403 then parks the
+        // batch at the head of the cache and re-sends it on every flush — two POSTs plus a refresh each time —
+        // until TrimOldest evicts it at the cap.
+        [Test]
+        public void Flush_CodedForbidden_DropsBatch()
+        {
+            FlockEventCache<Dummy> cache = new FlockEventCache<Dummy>(_tempDir, "sub", 100, 10, new NullFlockLogger());
+            cache.Enqueue(new Dummy { Value = "a" });
+
+            cache.FlushAsync((batch, ct) => throw new FlockAuthException("Authentication failed (HTTP 403)")
+            {
+                StatusCode = 403,
+                Code = "player.forbidden"
+            }, CancellationToken.None).GetAwaiter().GetResult();
+
+            Assert.AreEqual(0, cache.PendingCount, "A backend-coded 403 will never succeed on replay — drop it rather than stalling the cache.");
+        }
+
+        // ---- 401 and a bare 403 must still be kept ----
+        // 401 clears on re-login; an uncoded 403 is a proxy or WAF, not the backend's answer. Dropping either
+        // would discard telemetry over a condition that resolves itself.
+        [TestCase(401, null, TestName = "Flush_Unauthorized_KeepsBatch")]
+        [TestCase(403, null, TestName = "Flush_BareForbidden_KeepsBatch")]
+        public void Flush_RecoverableAuthFailure_KeepsBatch(int status, string code)
+        {
+            FlockEventCache<Dummy> cache = new FlockEventCache<Dummy>(_tempDir, "sub", 100, 10, new NullFlockLogger());
+            cache.Enqueue(new Dummy { Value = "a" });
+
+            cache.FlushAsync((batch, ct) => throw new FlockAuthException($"Authentication failed (HTTP {status})")
+            {
+                StatusCode = status,
+                Code = code
+            }, CancellationToken.None).GetAwaiter().GetResult();
+
+            Assert.AreEqual(1, cache.PendingCount, "Recoverable auth failures must leave the batch for the next attempt.");
         }
 
         [Test]

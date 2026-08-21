@@ -61,6 +61,40 @@ namespace Flock.Tests.Editor
             }
         }
 
+        // ---- ASST-06: an offline read must not pin the catalog for the rest of the process ----
+        // The offline branch returns before its first await, so the fetch method's finally had already cleared the
+        // in-flight field by the time the caller assigned it — leaving a completed task pinned and every later read
+        // served from it, reconnection or not. ClearCache() did not reset it either.
+        [Test]
+        public void GetAll_OfflineThenReconnect_RefetchesFromServer()
+        {
+            string sharedDir = FetchOnlineThenShutdown("a1", "a2");
+            try
+            {
+                FlockFakeTransport t2 = new FlockFakeTransport();
+                // The catalog gained an asset while the player was offline.
+                t2.On(FlockEndpoints.Asset, FlockFakeTransport.Ok("{\"result\":[{\"id\":\"a1\"},{\"id\":\"a2\"},{\"id\":\"a3\"}]}"));
+                using (FlockTestClient h2 = FlockTestClient.Create(t2, config => config.OfflineCacheDirectory = sharedDir))
+                {
+                    h2.SetReachable(false);
+                    List<AssetSchema> offline = h2.Run(() => h2.Client.Asset.GetAllAsync());
+                    Assert.AreEqual(2, offline.Count, "Offline read is served from the disk index.");
+                    Assert.AreEqual(0, t2.CountTo(FlockEndpoints.Asset), "No network call while offline.");
+
+                    h2.SetReachable(true);
+                    List<AssetSchema> online = h2.Run(() => h2.Client.Asset.GetAllAsync());
+
+                    Assert.AreEqual(3, online.Count, "Reconnecting refetches — an offline read must not pin the catalog.");
+                    Assert.AreEqual(1, t2.CountTo(FlockEndpoints.Asset), "Exactly one fetch, made after reconnecting.");
+                }
+            }
+            finally
+            {
+                if (Directory.Exists(sharedDir))
+                    Directory.Delete(sharedDir, true);
+            }
+        }
+
         // ---- ASST-04: after the catalog is loaded offline, a by-id read is served without the network ----
         [Test]
         public void GetById_Offline_AfterCatalogLoad_ServedWithoutNetwork()

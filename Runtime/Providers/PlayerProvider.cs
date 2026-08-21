@@ -115,8 +115,10 @@ namespace Flock.Providers
             if (_allTemplatesFetchTask != null)
                 return _allTemplatesFetchTask;
 
-            _allTemplatesFetchTask = FetchAllTemplatesAsync(cancellationToken);
-            return _allTemplatesFetchTask;
+            // Never pin a task that already finished — see the same guard in FlockAssetProvider.GetAllAsync.
+            Task<List<PlayerTemplateSchema>> fetch = FetchAllTemplatesAsync(cancellationToken);
+            _allTemplatesFetchTask = fetch.IsCompleted ? null : fetch;
+            return fetch;
         }
 
         private async Task<List<PlayerTemplateSchema>> FetchAllTemplatesAsync(CancellationToken cancellationToken)

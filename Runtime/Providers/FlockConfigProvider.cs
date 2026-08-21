@@ -56,8 +56,10 @@ namespace Flock.Providers
             if (_allPatchesFetchTask != null)
                 return _allPatchesFetchTask;
 
-            _allPatchesFetchTask = FetchAllPatchesAsync(cancellationToken);
-            return _allPatchesFetchTask;
+            // Never pin a task that already finished — see the same guard in FlockAssetProvider.GetAllAsync.
+            Task<List<GamePatchSchema>> fetch = FetchAllPatchesAsync(cancellationToken);
+            _allPatchesFetchTask = fetch.IsCompleted ? null : fetch;
+            return fetch;
         }
 
         private async Task<List<GamePatchSchema>> FetchAllPatchesAsync(CancellationToken cancellationToken)

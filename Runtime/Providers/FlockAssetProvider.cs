@@ -42,8 +42,11 @@ namespace Flock.Providers
             if (_allAssetsFetchTask != null)
                 return _allAssetsFetchTask;
 
-            _allAssetsFetchTask = FetchAllAssetsAsync(cancellationToken);
-            return _allAssetsFetchTask;
+            // The offline branch returns before its first await, so its finally already nulled this field -
+            // pinning a completed task here would serve that one result forever.
+            Task<List<AssetSchema>> fetch = FetchAllAssetsAsync(cancellationToken);
+            _allAssetsFetchTask = fetch.IsCompleted ? null : fetch;
+            return fetch;
         }
 
         private async Task<List<AssetSchema>> FetchAllAssetsAsync(CancellationToken cancellationToken)
@@ -275,6 +278,7 @@ namespace Flock.Providers
             _assetsById.Clear();
             _allAssetsFetched = false;
             _diskIndexLoaded = false;
+            _allAssetsFetchTask = null;
             DeleteSnapshotCategory(SnapshotCategory);
         }
 

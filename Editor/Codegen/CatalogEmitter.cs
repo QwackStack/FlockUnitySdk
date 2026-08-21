@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using Flock.Editor.Catalog;
 using Flock.Models;
 using Newtonsoft.Json;
@@ -36,11 +37,12 @@ namespace Flock.Editor.Codegen
             catalog.gameVersionId = snapshot.GameVersionId ?? "";
             catalog.generatedAtUtc = snapshot.FetchedAt.ToString("o", CultureInfo.InvariantCulture);
 
-            foreach (Shop shop in snapshot.Shops ?? new List<Shop>())
+            // Sorted so an unordered server response doesn't churn the generated catalog asset on every sync.
+            foreach (Shop shop in (snapshot.Shops ?? new List<Shop>()).OrderBy(x => x?.Id ?? "", StringComparer.Ordinal))
             {
                 if (shop == null) continue;
                 CatalogShop entry = new CatalogShop { name = shop.Name ?? "", status = shop.Status ?? "" };
-                foreach (ShopItem item in shop.ShopItems ?? new List<ShopItem>())
+                foreach (ShopItem item in (shop.ShopItems ?? new List<ShopItem>()).OrderBy(x => x?.Id ?? "", StringComparer.Ordinal))
                 {
                     if (item == null) continue;
                     entry.items.Add(new CatalogShopItem
@@ -54,7 +56,7 @@ namespace Flock.Editor.Codegen
                 catalog.shops.Add(entry);
             }
 
-            foreach (GameConfigSchema cfg in snapshot.GameConfigs ?? new List<GameConfigSchema>())
+            foreach (GameConfigSchema cfg in (snapshot.GameConfigs ?? new List<GameConfigSchema>()).OrderBy(x => x?.Id ?? "", StringComparer.Ordinal))
             {
                 if (cfg == null) continue;
                 catalog.configs.Add(new CatalogSchema
@@ -65,7 +67,7 @@ namespace Flock.Editor.Codegen
                 });
             }
 
-            foreach (PlayerTemplateSchema tpl in snapshot.PlayerTemplates ?? new List<PlayerTemplateSchema>())
+            foreach (PlayerTemplateSchema tpl in (snapshot.PlayerTemplates ?? new List<PlayerTemplateSchema>()).OrderBy(x => x?.Id ?? "", StringComparer.Ordinal))
             {
                 if (tpl == null) continue;
                 // The achievement template is surfaced in its own section below — don't list it twice.
@@ -80,7 +82,7 @@ namespace Flock.Editor.Codegen
 
             // Achievements: surface the fields of the single "achievement"-tagged template as their own
             // list so designers see the available FlockAchievementId members without digging through templates.
-            foreach (PlayerTemplateSchema tpl in snapshot.PlayerTemplates ?? new List<PlayerTemplateSchema>())
+            foreach (PlayerTemplateSchema tpl in (snapshot.PlayerTemplates ?? new List<PlayerTemplateSchema>()).OrderBy(x => x?.Id ?? "", StringComparer.Ordinal))
             {
                 if (tpl == null || !string.Equals(tpl.Tag, "achievement", StringComparison.OrdinalIgnoreCase)) continue;
                 foreach (TypedSchema field in tpl.Schema ?? new List<TypedSchema>())
