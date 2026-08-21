@@ -55,7 +55,7 @@ namespace Flock.Editor
         [MenuItem("Qwacks Dev/Package Builder")]
         public static void ShowWindow()
         {
-            var window = GetWindow<FlockPackageBuilder>("Flock Package Builder");
+            FlockPackageBuilder window = GetWindow<FlockPackageBuilder>("Flock Package Builder");
             window.minSize = new Vector2(420, 480);
             window.Show();
         }

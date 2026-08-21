@@ -36,6 +36,8 @@ namespace Flock.Analytics
 
         private int _flushing;
         private int _pendingCount;
+        // Bumped by Clear(). A flush compares it before sending, so an erase abandons the batch in flight.
+        private int _epoch;
 
         // Paths the active flush has read but not yet dropped. Rewrite skips these so a login-time auth-id
         // rewrite can't modify a file that's already in flight (which DropBatch would then delete, losing the
@@ -147,10 +149,17 @@ namespace Flock.Analytics
 
             try
             {
+                int epoch = Volatile.Read(ref _epoch);
+
                 while (!cancellationToken.IsCancellationRequested)
                 {
                     List<CachedEvent> batch = ReadBatch();
                     if (batch.Count == 0)
+                        return;
+
+                    // Erased since this flush started -> do not put it on the wire. A Clear during the send itself
+                    // cannot be recalled; this closes the read-to-wire window.
+                    if (Volatile.Read(ref _epoch) != epoch)
                         return;
 
                     FlushOutcome outcome = await TrySendBatch(sender, batch, cancellationToken).ConfigureAwait(false);
@@ -200,9 +209,16 @@ namespace Flock.Analytics
                 _logger?.LogWarning($"Pending events batch dropped (HTTP {ex.StatusCode}): {ex.Message}");
                 return FlushOutcome.Drop;
             }
+            // FlockAuthException is not a FlockNetworkException, so it falls past the permanent-status catch above.
+            // A backend-coded 403 never clears and would stall the cache on every flush. 401 and a bare 403 defer.
+            catch (FlockAuthException ex) when (ex.StatusCode == 403 && !string.IsNullOrEmpty(ex.Code))
+            {
+                _logger?.LogWarning($"Pending events batch dropped (forbidden: {ex.Code}): {ex.Message}");
+                return FlushOutcome.Drop;
+            }
             catch (Exception ex)
             {
-                // Transient (offline, 5xx, auth, timeout) — leave the files for the next attempt.
+                // Transient (offline, 5xx, 401, timeout) — leave the files for the next attempt.
                 _logger?.LogDebug($"Pending events flush deferred: {ex.Message}");
                 return FlushOutcome.Defer;
             }
@@ -210,6 +226,9 @@ namespace Flock.Analytics
 
         public void Clear()
         {
+            // Bumped before the delete so an in-flight flush abandons the batch it already read.
+            Interlocked.Increment(ref _epoch);
+
             foreach (string path in EnumerateFiles())
                 TryDelete(path);
 

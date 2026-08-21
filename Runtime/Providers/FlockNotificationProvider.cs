@@ -29,15 +29,12 @@ namespace Flock.Providers
         /// <summary>Drops cached inbox reads and the template memo. Pending schedules and the seen-watermark survive — neither is cache: one is the only handle on a cancellable reminder, the other decides what counts as newly received.</summary>
         public void ClearCache()
         {
-            List<PendingSchedule> pending = LoadPendingSchedules();
-            NotificationWatermark mark = LoadWatermark();
             _lastUnreadCount = null;
             _templatesByName.Clear();
-            DeleteSnapshotCategory(SnapshotCategory);
-            if (pending.Count > 0)
-                SavePendingSchedules(pending);
-            if (mark.Seeded)
-                SaveWatermark(mark);
+
+            // Keep every player's schedules and watermarks, not just the signed-in one's: dropping another
+            // player's row orphans a reminder that still fires and can no longer be cancelled.
+            DeleteSnapshotCategoryExcept(SnapshotCategory, PendingSchedulesKey, WatermarkKey);
         }
 
         /// <summary>A page of the signed-in player's inbox, newest first. Set <paramref name="unreadOnly"/> to skip already-read entries.</summary>

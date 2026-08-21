@@ -16,6 +16,9 @@ namespace Flock.Providers
     {
         private const string SnapshotCategory = "command";
         private const string PendingWritesKey = "pending_writes";
+        // Backstop against a write the failure classifier misreads as transient. High enough that a real
+        // multi-day outage keeps the player's writes; low enough that a stuck one eventually clears itself.
+        private const int MaxReplayAttempts = 50;
 
         public FlockCommandProvider(FlockClient client) : base(client) { }
         private Queue<PendingDataWrite> _pendingWrites = new Queue<PendingDataWrite>();
@@ -60,13 +63,21 @@ namespace Flock.Providers
                     }
                     catch (FlockException ex)
                     {
-                        // transient/auth -> keep queued, retry next flush; permanent 4xx will never succeed -> drop so it cant block the queue.
-                        if (!IsPermanentFailure(ex))
+                        write.Attempts++;
+
+                        // transient/401 -> keep queued; permanent 4xx will never succeed -> drop so it cant block the queue.
+                        // The cap backstops anything misread as transient; generous so a real outage keeps the writes.
+                        if (!IsPermanentFailure(ex) && write.Attempts < MaxReplayAttempts)
                         {
-                            Client.Logger.LogWarning($"Pending-write flush halted at '{write.Context}', will retry next flush: {ex.Message}");
+                            PersistQueue();
+                            Client.Logger.LogWarning($"Pending-write flush halted at '{write.Context}' (attempt {write.Attempts}), will retry next flush: {ex.Message}");
                             break;
                         }
-                        Client.Logger.LogError($"Dropping rejected queued write '{write.Context}' (HTTP {ex.StatusCode}): {ex.Message}");
+
+                        if (!IsPermanentFailure(ex))
+                            Client.Logger.LogError($"Dropping queued write '{write.Context}' after {write.Attempts} failed replays — it never became deliverable: {ex.Message}");
+                        else
+                            Client.Logger.LogError($"Dropping rejected queued write '{write.Context}' (HTTP {ex.StatusCode}): {ex.Message}");
                         _pendingWrites.Dequeue();
                         PersistQueue();
                         // the optimistic value we cached for it was never accepted -> evict so the next read refetches authoritative state.
@@ -282,8 +293,13 @@ namespace Flock.Providers
                 PayloadJson = JsonConvert.SerializeObject(payload),
                 Context = context
             });
-            PersistQueue();
-            Client.Logger.LogWarning($"{context}: offline — queued for sync on reconnect");
+            // The overlay is already applied, so claiming "queued" when it never reached disk leaves a read
+            // returning a value the server will never hold.
+            if (PersistQueue())
+                Client.Logger.LogWarning($"{context}: offline — queued for sync on reconnect");
+            else
+                Client.Logger.LogError($"{context}: offline and the queue could not be saved — this change is lost if the app closes before reconnecting.");
+
             return data;
         }
 
@@ -325,11 +341,18 @@ namespace Flock.Providers
             }
         }
 
-        // 4xx except 408/429 is an authoritative failure that wont succeed on retry -> drop; auth is recoverable via re-login -> keep queued.
+        // 4xx except 408/429 is an authoritative failure that wont succeed on retry -> drop; 401 is recoverable via re-login -> keep queued.
         private static bool IsPermanentFailure(FlockException ex)
         {
-            if (ex is FlockAuthException)
+            // Not permanent: a captive portal means the server never saw the write, and we cannot tell that
+            // from a malformed success. Keep it; the attempt cap bounds the stall without discarding the change.
+            if (ex is FlockSerializationException)
                 return false;
+
+            // 401 clears on re-login. Only a backend-coded 403 is authoritative - a bare one is a proxy or WAF.
+            if (ex is FlockAuthException)
+                return ex.StatusCode == 403 && !string.IsNullOrEmpty(ex.Code);
+
             return FlockNetworkException.IsPermanentStatus(ex.StatusCode);
         }
 
@@ -373,9 +396,12 @@ namespace Flock.Providers
                 _pendingWrites = new Queue<PendingDataWrite>(saved);
         }
 
-        private void PersistQueue()
+        // False when the queue never reached disk - still flushes this session, but gone if the app dies first.
+        private bool PersistQueue()
         {
-            Client.SnapshotStore?.Write(GetQueueScope(), PendingWritesKey, new List<PendingDataWrite>(_pendingWrites));
+            if (Client.SnapshotStore == null)
+                return false;
+            return Client.SnapshotStore.Write(GetQueueScope(), PendingWritesKey, new List<PendingDataWrite>(_pendingWrites));
         }
 
         // Player-scoped so each player's offline writes are isolated on disk. Uses the id the queue was loaded

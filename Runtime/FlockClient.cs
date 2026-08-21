@@ -271,7 +271,7 @@ namespace Flock
 
         internal Dictionary<string, string> GetBaseHeaders()
         {
-            var headers = new Dictionary<string, string>(_initConfig.GetBaseHeaders());
+            Dictionary<string, string> headers = new Dictionary<string, string>(_initConfig.GetBaseHeaders());
             if (!string.IsNullOrEmpty(_accessToken))
                 headers["Authorization"] = $"Bearer {_accessToken}";
             return headers;

@@ -45,8 +45,8 @@ namespace Flock.Tests.Editor
             IFlockLogger logger = new UnityFlockLogger(false);
 
             // LogAssert fails the test if the message never arrives, so this asserts the call is not a no-op.
-            LogAssert.Expect(LogType.Error, "[Flock SDK] boom");
-            logger.LogError("boom");
+            LogAssert.Expect(LogType.Error, "[Flock SDK] FlockLoggerTests: expected error, ignore");
+            logger.LogError("FlockLoggerTests: expected error, ignore");
         }
 
         // ---- LOG-02: a quiet logger still reports warnings ----
@@ -55,8 +55,8 @@ namespace Flock.Tests.Editor
         {
             IFlockLogger logger = new UnityFlockLogger(false);
 
-            LogAssert.Expect(LogType.Warning, "[Flock SDK] careful");
-            logger.LogWarning("careful");
+            LogAssert.Expect(LogType.Warning, "[Flock SDK] FlockLoggerTests: expected warning, ignore");
+            logger.LogWarning("FlockLoggerTests: expected warning, ignore");
         }
 
         // ---- LOG-03: verbosity is what EnableDebugLogs controls, and only that ----
@@ -67,8 +67,8 @@ namespace Flock.Tests.Editor
 
             List<string> seen = CaptureLogTypes(() =>
             {
-                logger.LogInfo("chatty");
-                logger.LogDebug("chattier");
+                logger.LogInfo("FlockLoggerTests: expected info, ignore");
+                logger.LogDebug("FlockLoggerTests: expected debug, ignore");
             });
 
             Assert.AreEqual(0, seen.Count, "Info and debug are the only levels EnableDebugLogs gates.");
@@ -82,8 +82,8 @@ namespace Flock.Tests.Editor
 
             List<string> seen = CaptureLogTypes(() =>
             {
-                logger.LogInfo("chatty");
-                logger.LogDebug("chattier");
+                logger.LogInfo("FlockLoggerTests: expected info, ignore");
+                logger.LogDebug("FlockLoggerTests: expected debug, ignore");
             });
 
             Assert.AreEqual(2, seen.Count, "Both info and debug reach the console when verbose.");

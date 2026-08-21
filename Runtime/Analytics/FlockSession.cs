@@ -91,6 +91,12 @@ namespace Flock.Analytics
         // Fired synchronously from inside End() for every end path (including logout via
         // Reset); handlers must persist the snapshot before returning.
         internal event Action<FlockSessionSnapshot> OnSessionEnded;
+
+        // Set from inside OnSessionEnded when the handler could not persist the end durably.
+        private bool _endSpoolFailed;
+
+        /// <summary>Called by the end handler when spooling failed, so End() keeps the live marker.</summary>
+        internal void ReportEndSpoolFailed() => _endSpoolFailed = true;
         // Quit-only: requests a best-effort delivery attempt before the process dies.
         internal event Action<FlockSessionSnapshot> OnQuitFlush;
 
@@ -219,11 +225,14 @@ namespace Flock.Analytics
             FlockSessionSnapshot snapshot = TakeSnapshot();
             snapshot.IsBounce = snapshot.DurationSeconds < _config.BounceThresholdSeconds;
 
-            // Spool-before-clear: the handler persists the end durably; only then is the
-            // live marker safe to drop.
+            // Spool-before-clear: only drop the live marker once the handler says it persisted the end.
+            _endSpoolFailed = false;
             OnSessionEnded?.Invoke(snapshot);
 
-            ClearPersistedState();
+            if (_endSpoolFailed)
+                _logger.LogError($"Session end {SessionId} was not spooled — keeping the live marker for next-launch recovery.");
+            else
+                ClearPersistedState();
 
             _logger.LogInfo($"Session ended: {SessionId} | Duration: {snapshot.DurationSeconds:F1}s | Screens: {snapshot.ScreensViewed} | Pauses: {snapshot.PauseCount} | AvgFPS: {snapshot.AverageFps:F0}{(snapshot.IsBounce ? " [BOUNCE]" : "")}");
 

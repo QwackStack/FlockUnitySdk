@@ -146,7 +146,7 @@ namespace Flock.Providers
             if (_hasConsent)
                 return true;
 
-            Client.Logger.LogWarning("Analytics consent not granted; call SetConsent(true) to enable tracking");
+            Client.Logger.LogDebug("Analytics consent not granted; call SetConsent(true) to enable tracking");
             return false;
         }
 
@@ -764,6 +764,11 @@ namespace Flock.Providers
             Func<IReadOnlyList<T>, CancellationToken, Task> sender,
             CancellationToken token) where T : class
         {
+            // Egress is consent-gated too - withdrawal stops transmission, not just collection. Gated here and
+            // not in FlushAllAsync because session ends also flush directly. Nothing is deleted (decisions.md 5).
+            if (!_hasConsent)
+                return;
+
             if (cache == null || cache.PendingCount == 0)
                 return;
 
@@ -909,7 +914,15 @@ namespace Flock.Providers
             if (_sessionEndCache == null)
                 return;
 
-            _sessionEndCache.Enqueue(snapshot);
+            // A null handle means it never reached disk - say so, or End() clears the marker and the session is gone.
+            string handle = _sessionEndCache.Enqueue(snapshot);
+            if (string.IsNullOrEmpty(handle))
+            {
+                Client.Logger.LogError($"Session end {snapshot.SessionId} was NOT spooled — recovering it on the next launch instead.");
+                _session.ReportEndSpoolFailed();
+                return;
+            }
+
             Client.Logger.LogDebug($"Session end spooled: {snapshot.SessionId}");
         }
 
@@ -1069,6 +1082,10 @@ namespace Flock.Providers
             FlockSessionSnapshot snapshot,
             CancellationToken cancellationToken = default)
         {
+            // Sends one end directly, bypassing the caches, so it needs its own consent gate.
+            if (!_hasConsent)
+                return;
+
             string sessionId = snapshot.ServerSessionId ?? snapshot.SessionId;
             if (string.IsNullOrEmpty(sessionId))
             {

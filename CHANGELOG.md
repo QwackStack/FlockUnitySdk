@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.34.0]
+
+### Fixed
+- **An offline first launch pinned the asset catalog for the whole process.** `FetchAllAssetsAsync`'s offline branch returns before its first `await`, so the method ran synchronously and its `finally` cleared the in-flight field *before* `GetAllAsync` assigned it — leaving a completed task pinned and every later read served from it, reconnection or not. `ClearCache()` reset the flags but not that field, so the documented recovery lever did not work either. The same latent shape in `PlayerProvider` and `FlockConfigProvider` is fixed alongside it.
+- **One unparseable response wedged the offline write queue permanently.** A malformed or empty 2xx — a captive-portal login page is the everyday case — produced an error the queue classifier read as transient, so the write parked at the head of the queue, was re-sent on every flush trigger for the life of the app, and blocked every write behind it across relaunches, with no public API to clear it. The classifier now treats an unparseable body as permanent (matching `RetryPolicy`, which already did — the two layers disagreed) and distinguishes a recoverable 401 from an authoritative 403. A generous per-write attempt cap backstops anything the classifier still misreads, so no single write can block the queue forever.
+- **`FlockEvents.ClearAll()` cleared 16 of its 17 events**, leaking `OnNotificationReceived` across `Shutdown()` and across every play session when Domain Reload is disabled — the delegate kept a destroyed object and the next invoke threw from inside the SDK.
+- **Two codegen emitters were non-deterministic.** `PlayerAccessorEmitter` and `ConfigAccessorEmitter` iterated the raw server response while every sibling sorted, so identical schema content could emit byte-different files. Worse, with two names that sanitize alike, `UnDuplicate` assigns `Foo` and `Foo_2` in iteration order — a reorder silently rebound an accessor to a different template, and `ContentHash` could not see it because the hasher sorts, so `Verify` reported no drift.
+- **A failed session-end spool lost the session and logged success.** `End()` clears the live marker on the invariant that the handler persisted the end durably; the handler discarded the value telling it whether that worked and logged "Session end spooled" either way. On a disk or permissions failure the session vanished from both places at once. The marker is now kept so the next launch recovers it.
+- **Withdrawn analytics consent did not stop transmission of already-queued data.** Every ingress was consent-gated but the flush was not, so revoking consent and signing in again shipped everything spooled beforehand. Egress is now gated too. Nothing is deleted — queued records stay on disk and deliver normally if consent is granted again.
+- **`Notification.ClearCache()` destroyed every other player's pending schedules.** The snapshot scope is shared across players on a device; the method deleted it wholesale and restored only the signed-in player's rows, orphaning reminders that still fire server-side and can no longer be cancelled. It now preserves every player's schedules and watermarks, which also makes it safe to call signed out.
+
+### Added
+- **EditMode tests covering the fixes above.** Most fail against the previous code; the successful-spool case is a non-regression guard rather than a mechanism test: the asset catalog refetching after an offline launch; an unparseable 2xx dropping instead of wedging the write queue; a 403 dropping where a 401 is kept; the attempt cap draining a permanently-stuck queue; `ClearAll` dropping every event (asserted by reflecting over the hub, so a future event is covered automatically) plus a count guard that fails when an event is added; a failed session-end spool leaving a recoverable marker and a successful one clearing it; and one player's pending reminders surviving another player clearing cache.
+
+### Notes
+- **Consent egress gating is implemented but not yet locked by a test.** `FlockAnalyticsConsentTests` runs on a fake that records nothing, so asserting "no request was sent" needs that suite moved onto the shared recording transport first.
+- The write-queue attempt cap is a backstop, not the primary policy — the classifier fix handles the known causes. It is set generously because dropping a queued write is data loss, so a genuine multi-day outage must not trigger it.
+
 ## [1.33.0]
 
 ### Fixed

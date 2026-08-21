@@ -67,7 +67,7 @@ namespace Flock.Editor
         [MenuItem("Flock/Settings")]
         public static void ShowWindow()
         {
-            var window = GetWindow<QwacksEditorWindow>();
+            QwacksEditorWindow window = GetWindow<QwacksEditorWindow>();
             window.titleContent = new GUIContent("Flock", EditorGUIUtility.IconContent("d_SettingsIcon").image);
             window.minSize = new Vector2(520, 640);
             window.Show();
@@ -786,11 +786,11 @@ namespace Flock.Editor
                 return;
             }
 
-            var go = new GameObject("Flock Bootstrap");
+            GameObject go = new GameObject("Flock Bootstrap");
             Undo.RegisterCreatedObjectUndo(go, "Add Flock Bootstrap");
-            var bootstrap = Undo.AddComponent<FlockBootstrap>(go);
+            FlockBootstrap bootstrap = Undo.AddComponent<FlockBootstrap>(go);
 
-            var so = new SerializedObject(bootstrap);
+            SerializedObject so = new SerializedObject(bootstrap);
             SerializedProperty configProp = so.FindProperty("config");
             if (configProp != null)
             {
@@ -918,7 +918,7 @@ namespace Flock.Editor
             EditorUtility.DisplayProgressBar("Test Connection", "Pinging API...", 0.4f);
             try
             {
-                using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+                using HttpClient http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
                 http.DefaultRequestHeaders.Add("X-Flock-API-Key", apiKey);
 
                 HttpResponseMessage response = await http.GetAsync(url);

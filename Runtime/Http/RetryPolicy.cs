@@ -88,7 +88,7 @@ namespace Flock.Http
                 catch (Exception ex)
                 {
                     string note = ex is FlockNetworkException ? " (couldn't reach the server)" : string.Empty;
-                    _logger?.LogError($"Operation failed after {attempt} attempt(s){note}", ex);
+                    _logger?.LogWarning($"Operation failed after {attempt} attempt(s){note}: {ex.Message}");
                     throw;
                 }
             }

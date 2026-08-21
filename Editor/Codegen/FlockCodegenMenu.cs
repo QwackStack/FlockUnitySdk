@@ -25,7 +25,7 @@ namespace Flock.Editor.Codegen
             Debug.Log("[Flock Codegen] Schema provider is excluded from this SDK build — codegen does nothing.");
             await System.Threading.Tasks.Task.CompletedTask;
 #else
-            if (!TryLoadConfig(out var config, out var error))
+            if (!TryLoadConfig(out FlockConfigAsset config, out string error))
             {
                 Debug.LogError($"[Flock Codegen] {error}");
                 return;
@@ -137,7 +137,7 @@ namespace Flock.Editor.Codegen
         {
             // Clean falls back to the default path so it still works
             // in fresh projects with no config asset.
-            string configuredPath = TryLoadConfig(out var config, out _) ? config.generatedCodePath : null;
+            string configuredPath = TryLoadConfig(out FlockConfigAsset config, out _) ? config.generatedCodePath : null;
             if (!TryResolveGeneratedPath(configuredPath, out string generatedFolder, out string pathError))
             {
                 Debug.LogError($"[Flock Codegen] Clean aborted: {pathError}");

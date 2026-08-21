@@ -6,5 +6,6 @@ namespace Flock.Models.CustomModels
         public string Path { get; set; }        // versioned-API-relative endpoint, e.g. game_command/update_player_data
         public string PayloadJson { get; set; } // serialized request body, re-POSTed as-is
         public string Context { get; set; }     // log label for the replay
+        public int Attempts { get; set; }       // failed replays so far; persisted so the count survives a relaunch
     }
 }

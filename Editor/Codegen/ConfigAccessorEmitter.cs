@@ -1,5 +1,7 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 using Flock.Models;
 using UnityEngine;
@@ -32,7 +34,11 @@ namespace Flock.Editor.Codegen
             int methodCount = 0;
             HashSet<string> usedMethodNames = new HashSet<string>();
 
-            foreach (GameConfigSchema c in configs)
+            // Sorted for the same reason as PlayerAccessorEmitter - iteration order decides who gets Foo_2.
+            foreach (GameConfigSchema c in (configs ?? new List<GameConfigSchema>())
+                         .Where(x => x != null)
+                         .OrderBy(x => x.Id ?? "", StringComparer.Ordinal)
+                         .ThenBy(x => x.Name ?? "", StringComparer.Ordinal))
             {
                 if (string.IsNullOrEmpty(c.Id) || string.IsNullOrEmpty(c.Name)) continue;
                 if (!configClassNamesById.TryGetValue(c.Id, out string className)) continue;

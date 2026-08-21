@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using Flock.Editor.Catalog;
 using Flock.Models;
 using Newtonsoft.Json;
@@ -14,33 +15,38 @@ namespace Flock.Editor.Codegen
     // skipped in batch mode (asset creation needs the generated folder already imported by AssetDatabase).
     internal static class CatalogEmitter
     {
-        internal const string Subdir = "Catalog";
+        private const string LegacySubdir = "Catalog";
         internal const string AssetFileName = "FlockContentCatalog.asset";
         private const int MaxValueLength = 400;
 
         /// <summary>Project-relative path of the catalog asset for a given generated root.</summary>
-        internal static string AssetPath(string generatedRoot) => $"{generatedRoot}/{Subdir}/{AssetFileName}";
+        internal static string AssetPath(string generatedRoot) => $"{generatedRoot}/{AssetFileName}";
 
         public static int Emit(FlockSchemaSnapshot snapshot, string gameVersionName, string generatedRoot)
         {
-            string folder = generatedRoot + "/" + Subdir;
             string assetPath = AssetPath(generatedRoot);
 
-            // Reset our own subfolder so a re-sync never leaves a stale catalog behind.
-            if (AssetDatabase.IsValidFolder(folder))
-                AssetDatabase.DeleteAsset(folder);
-            AssetDatabase.CreateFolder(generatedRoot, Subdir);
+            // Delete the asset, not a containing folder: the catalog sits in the generated root now, so
+            // resetting a folder here would take the whole tree with it.
+            if (AssetDatabase.LoadAssetAtPath<FlockContentCatalog>(assetPath) != null)
+                AssetDatabase.DeleteAsset(assetPath);
+
+            // Left behind by versions that emitted into Generated/Catalog/.
+            string legacyFolder = $"{generatedRoot}/{LegacySubdir}";
+            if (AssetDatabase.IsValidFolder(legacyFolder))
+                AssetDatabase.DeleteAsset(legacyFolder);
 
             FlockContentCatalog catalog = ScriptableObject.CreateInstance<FlockContentCatalog>();
             catalog.gameVersion = gameVersionName ?? "";
             catalog.gameVersionId = snapshot.GameVersionId ?? "";
             catalog.generatedAtUtc = snapshot.FetchedAt.ToString("o", CultureInfo.InvariantCulture);
 
-            foreach (Shop shop in snapshot.Shops ?? new List<Shop>())
+            // Sorted so an unordered server response doesn't churn the generated catalog asset on every sync.
+            foreach (Shop shop in (snapshot.Shops ?? new List<Shop>()).OrderBy(x => x?.Id ?? "", StringComparer.Ordinal))
             {
                 if (shop == null) continue;
                 CatalogShop entry = new CatalogShop { name = shop.Name ?? "", status = shop.Status ?? "" };
-                foreach (ShopItem item in shop.ShopItems ?? new List<ShopItem>())
+                foreach (ShopItem item in (shop.ShopItems ?? new List<ShopItem>()).OrderBy(x => x?.Id ?? "", StringComparer.Ordinal))
                 {
                     if (item == null) continue;
                     entry.items.Add(new CatalogShopItem
@@ -54,7 +60,7 @@ namespace Flock.Editor.Codegen
                 catalog.shops.Add(entry);
             }
 
-            foreach (GameConfigSchema cfg in snapshot.GameConfigs ?? new List<GameConfigSchema>())
+            foreach (GameConfigSchema cfg in (snapshot.GameConfigs ?? new List<GameConfigSchema>()).OrderBy(x => x?.Id ?? "", StringComparer.Ordinal))
             {
                 if (cfg == null) continue;
                 catalog.configs.Add(new CatalogSchema
@@ -65,7 +71,7 @@ namespace Flock.Editor.Codegen
                 });
             }
 
-            foreach (PlayerTemplateSchema tpl in snapshot.PlayerTemplates ?? new List<PlayerTemplateSchema>())
+            foreach (PlayerTemplateSchema tpl in (snapshot.PlayerTemplates ?? new List<PlayerTemplateSchema>()).OrderBy(x => x?.Id ?? "", StringComparer.Ordinal))
             {
                 if (tpl == null) continue;
                 // The achievement template is surfaced in its own section below — don't list it twice.
@@ -80,7 +86,7 @@ namespace Flock.Editor.Codegen
 
             // Achievements: surface the fields of the single "achievement"-tagged template as their own
             // list so designers see the available FlockAchievementId members without digging through templates.
-            foreach (PlayerTemplateSchema tpl in snapshot.PlayerTemplates ?? new List<PlayerTemplateSchema>())
+            foreach (PlayerTemplateSchema tpl in (snapshot.PlayerTemplates ?? new List<PlayerTemplateSchema>()).OrderBy(x => x?.Id ?? "", StringComparer.Ordinal))
             {
                 if (tpl == null || !string.Equals(tpl.Tag, "achievement", StringComparison.OrdinalIgnoreCase)) continue;
                 foreach (TypedSchema field in tpl.Schema ?? new List<TypedSchema>())
