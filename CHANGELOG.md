@@ -6,6 +6,41 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.35.0]
+
+### Changed
+- **Errors now say what went wrong and what to do about it.** A failed call used to surface as `Validation failed (HTTP 400)` — a message that named neither the cause nor the fix, with the server's own explanation buried in the raw response body. `FlockException.Message` is now composed from the call that failed, the server's reason, the coded identifier, and an SDK-authored next step. A device login against an unregistered device reads:
+
+  ```
+  Device login failed: Invalid login credentials [player.invalid_login_credentials, HTTP 400]
+  Fix: This device is not registered yet. Call Authentication.RegisterWithDeviceAsync(deviceId) once to create the account, then Authentication.LoginWithDeviceAsync(deviceId) on later launches.
+  ```
+
+  Client-side throws (`"deviceId cannot be null or empty"`) are unaffected — with no status, code or server reason to add, the message stays exactly as it was.
+- **FastAPI's own 422 field errors are now readable.** Those responses put an array in `detail`, which the coded-error parser could not read, so the SDK reported a bare `Validation failed` with no reason at all. They now surface as `body.player_data: Input should be a valid dictionary`, naming the offending field.
+
+### Added
+- **`FlockException.ServerMessage`, `.Hint` and `.Operation`.** The server's human reason, the SDK's suggested next step, and a label for the call that failed. All three feed `Message`; `Body`, `StatusCode`, `Code` and `ErrorCode` are unchanged.
+- **`FlockErrorHints`** — the `FlockErrorCode`→next-step table behind `Hint`, public so callers can reuse the same wording in their own UI. Hints are keyed on the error code, never on message text. `FlockErrorHints.ForAuth` additionally takes the credential, because one code means different things per method: `player.invalid_login_credentials` means "register this device first" for device login but "wrong password" for email.
+- **Dashboard-authored content now points at the sync step.** A missing template, achievement, currency or config reports that it must be authored in the dashboard *and* that `Flock > Settings > Codegen > Sync` has to run afterwards — the sequence newcomers miss.
+- **`FlockErrorMessageTests`** — 10 EditMode tests locking the composed message, the hint table, the credential-specific auth hints, FastAPI field-error parsing, and that a client-side throw's text is untouched.
+- **A Console hint when a compile error looks like un-synced schemas.** Calling a generated accessor before codegen has run is a *compile* error (`'PlayerProvider' does not contain a definition for 'GetPlayerProgressAsync'`), so no SDK exception can ever fire for it — the SDK now watches compilation instead and says what the compiler can't:
+
+  ```
+  [Flock] Codegen has never run in this project, and these compile errors look like generated code that doesn't exist yet:
+    - PlayerProvider.GetPlayerProgressAsync
+
+  Typed accessors like these are generated from the schemas you author in the Flock dashboard — they do not exist in the SDK until codegen runs.
+  Fix: author the schema in the Flock dashboard, then run Flock > Settings > Codegen > Sync Schemas.
+  ```
+
+  It recognises unresolved members on the four providers codegen extends, the `Flock.Generated` namespaces, and the generated id types — and stays silent on ordinary compile errors. Once codegen *has* run, the wording changes to ask for a re-sync and names the game version it last synced for. Toggle in **Flock > Settings > Codegen > Status**; stored per machine in `EditorPrefs`.
+- **A Status card on the Codegen tab** — says plainly when codegen has never run (and that missing accessors fail at compile time, not runtime), when the generated code was synced for a different game version than the project targets, and otherwise which version it matches.
+- **`FlockCodegenHintTests`** — 14 EditMode tests over real Roslyn error text: what the classifier recognises, what it ignores, both hint wordings, per-pass de-duplication, and that the compilation hook is actually subscribed.
+
+### Known limitation
+- **The Console hint fires on recompiles inside a running Editor, not on a cold start.** Unity compiles before `[InitializeOnLoad]` can subscribe, so errors that already exist when the Editor opens produce no hint. That is the case the Codegen tab's Status card covers.
+
 ## [1.34.0]
 
 ### Fixed

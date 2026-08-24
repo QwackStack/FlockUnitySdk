@@ -40,7 +40,7 @@ PackageBuilder/Tests/Editor/   EditMode tests (asmdef Flock.Tests.Editor)
 - **Analytics/FlockAnalyticsProvider** — sends sessions/events/transactions. · **NullAnalyticsProvider** — no-op when `FLOCK_NO_ANALYTICS`.
 
 ## Runtime/Http
-- **FlockHttpClient** — static GET/POST/… facade; maps status→exception, parses error code.
+- **FlockHttpClient** — static GET/POST/… facade; maps status→exception, parses the coded `detail` (object *or* FastAPI's field-error array) into `Code`/`ServerMessage`, attaches the matching `Hint`.
 - **FlockEndpoints** — every relative API path the SDK calls (consts + parameterized builders); no raw path literals at call sites.
 - **FlockProviderBase** — base class for providers; shared fetch + snapshot + validate helpers.
 - **IFlockHttpAdapter** — per-platform transport seam; `FlockHttpRequest`/`FlockHttpResponse`/`FlockHttpResult` normalize it.
@@ -69,7 +69,7 @@ Plain serializable DTOs mirroring backend wire shapes — auth, analytics, shop,
 
 ## Runtime/ (support)
 - **Config/FlockConfigAsset** — the `FlockConfig.asset` ScriptableObject (api key, version, baked id). · **Config/FlockInitConfig** — runtime init params.
-- **Exceptions/** — **FlockException** base (`Body`, `StatusCode`, `Code`/`ErrorCode`) + **Network/Auth/Validation/Serialization** subclasses by failure kind; **FlockErrorCode** enum = typed view of the backend `detail.code` contract (+ `FlockErrorCodes.Parse`).
+- **Exceptions/** — **FlockException** base (`Body`, `StatusCode`, `Code`/`ErrorCode`, `ServerMessage`, `Hint`, `Operation`; `Message` is composed from them) + **Network/Auth/Validation/Serialization** subclasses by failure kind; **FlockErrorCode** enum = typed view of the backend `detail.code` contract (+ `FlockErrorCodes.Parse`); **FlockErrorHints** = code→next-step table behind `Hint` (`ForAuth` disambiguates by credential).
 - **Interfaces/** — provider contracts (`IFlockClient`, `IConfigProvider`, `IPlayerService`, `IAssetProvider`, `IAnalyticProvider`) + `SchemaTag`. Schema/template/config raw getters are `internal` — reachable only through the generated accessors (codegen-only by design).
 - **Logging/** — **IFlockLogger** + **UnityFlockLogger** / **NullFlockLogger**.
 - **Constants/FlockConstant** — shared constants. · **Docs/FlockSdkGuide** — in-editor Getting-Started text.
@@ -79,7 +79,8 @@ Plain serializable DTOs mirroring backend wire shapes — auth, analytics, shop,
 - **FlockConfigLocator** — single source for "which FlockConfig asset".
 - **FlockVersionResolver** — bakes Game-Version name→id at edit time so runtime init needs no network.
 - **FlockPlayModeGuard** / **FlockBuildGuard** — block Play / build when the SDK is unset or schemas drifted.
-- **FlockCodeGenValidator** — warns when the baked version id drifts from generated schemas.
+- **FlockCodeGenValidator** — warns when the baked version id drifts from generated schemas; `GetGeneratedGameVersionId()` returning null is the "codegen never ran" signal.
+- **FlockCodegenCompileHint** / **FlockCodegenHintClassifier** — watch compilation and point at Codegen > Sync when an unresolved member looks like a generated accessor (classifier is pure/testable). Recompiles only — a cold start compiles before `[InitializeOnLoad]`; the Codegen tab's Status card covers that.
 - **FlockSetupChecklist** / **FlockSetupClassifier** (+ `FlockSetupItem`/`FlockSetupState`/`FlockSetupFacts`/verdict enums) — pure, testable setup-readiness logic.
 - **FlockFirstRunBootstrap** — opens the window on first import. · **FlockSdkGuideEditor** — inspector for the guide.
 - **FlockProviderManifest** — maps providers ↔ `FLOCK_NO_*` defines for event-subset builds.
@@ -94,7 +95,7 @@ Writes typed accessors to `Assets/Flock/Generated/` (Flock-owned, wiped each syn
 - **ManifestEmitter** — emits `SchemasManifest` (GameVersionId + hash). · `EmitResult`/`CodegenResult` — codegen DTOs.
 
 ## PackageBuilder/Tests/Editor/
-EditMode tests (run via Unity Test Runner only): **CodeGenNamingHelpersTests**, **FlockBuildGuardTests**, **RetryHandlerTests**, **SchemaHasherTests**, **TypeMapTests**, **FlockErrorPipelineTests** (exception/`FlockErrorCode` mapping; has an `[Explicit]` live-backend test), **FlockConfigResolutionTests** (patch-else-config resolution).
+EditMode tests (run via Unity Test Runner only): **CodeGenNamingHelpersTests**, **FlockBuildGuardTests**, **RetryHandlerTests**, **SchemaHasherTests**, **TypeMapTests**, **FlockErrorPipelineTests** (exception/`FlockErrorCode` mapping; has an `[Explicit]` live-backend test), **FlockErrorMessageTests** (composed `Message`, hints, FastAPI field errors), **FlockCodegenHintTests** (compile-error classification over real Roslyn text), **FlockConfigResolutionTests** (patch-else-config resolution).
 
 ## Offline caching
 

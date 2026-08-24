@@ -1,16 +1,21 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Flock.Exceptions;
 using Flock.Models;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace Flock.Http
 {
     public static class FlockHttpClient
     {
+        // Enough field errors to spot the pattern without flooding the console line.
+        private const int MaxFieldErrorsShown = 3;
+
         private static IFlockHttpAdapter _adapter;
 
         private static IFlockHttpAdapter Adapter
@@ -86,18 +91,23 @@ namespace Flock.Http
             if (code < 200 || code >= 300)
             {
                 string errorContent = response.Body;
-                string errorCode = ParseErrorCode(errorContent);
+                CodedErrorDetail detail = ParseErrorDetail(errorContent);
+                string errorCode = detail?.Code;
+                string serverMessage = detail?.Message;
+                string hint = FlockErrorHints.For(FlockErrorCodes.Parse(errorCode));
 
                 if (code == 401 || code == 403)
-                    throw new FlockAuthException($"Authentication failed (HTTP {code})") { Body = errorContent, StatusCode = code, Code = errorCode };
+                    throw new FlockAuthException("Authentication failed") { Body = errorContent, StatusCode = code, Code = errorCode, ServerMessage = serverMessage, Hint = hint };
 
                 if (code == 400 || code == 422)
-                    throw new FlockValidationException($"Validation failed (HTTP {code})") { Body = errorContent, StatusCode = code, Code = errorCode };
+                    throw new FlockValidationException("Validation failed") { Body = errorContent, StatusCode = code, Code = errorCode, ServerMessage = serverMessage, Hint = hint };
 
-                throw new FlockNetworkException($"HTTP request failed (HTTP {code})", code)
+                throw new FlockNetworkException("HTTP request failed", code)
                 {
                     Body = errorContent,
                     Code = errorCode,
+                    ServerMessage = serverMessage,
+                    Hint = hint,
                     RetryAfter = ParseRetryAfter(response.RetryAfterHeader)
                 };
             }
@@ -115,19 +125,67 @@ namespace Flock.Http
             }
         }
 
-        // Pulls the server's machine-readable error code out of the coded-error body, if present.
-        private static string ParseErrorCode(string body)
+        // Two shapes share `detail`: the game routes' coded {code,message} object, and FastAPI's own 422 array of field errors.
+        private static CodedErrorDetail ParseErrorDetail(string body)
         {
             if (string.IsNullOrEmpty(body))
                 return null;
             try
             {
-                return JsonConvert.DeserializeObject<CodedErrorResponse>(body)?.Detail?.Code;
+                JToken detail = JObject.Parse(body)["detail"];
+                if (detail == null)
+                    return null;
+                if (detail.Type == JTokenType.Object)
+                    return detail.ToObject<CodedErrorDetail>();
+                if (detail.Type == JTokenType.Array)
+                    return new CodedErrorDetail { Message = DescribeFieldErrors((JArray)detail) };
+                return new CodedErrorDetail { Message = detail.ToString() };
             }
             catch (JsonException)
             {
                 return null;
             }
+        }
+
+        // "body.player_data: Input should be a valid dictionary" — names the offending field so the caller can fix the payload.
+        private static string DescribeFieldErrors(JArray errors)
+        {
+            StringBuilder text = new StringBuilder();
+            int shown = 0;
+            foreach (JToken error in errors)
+            {
+                if (shown == MaxFieldErrorsShown)
+                {
+                    text.Append($"; (+{errors.Count - shown} more)");
+                    break;
+                }
+
+                string where = JoinLocation(error["loc"] as JArray);
+                string why = error["msg"]?.ToString();
+                if (string.IsNullOrEmpty(why))
+                    continue;
+
+                if (shown > 0)
+                    text.Append("; ");
+                text.Append(string.IsNullOrEmpty(where) ? why : $"{where}: {why}");
+                shown++;
+            }
+            return text.ToString();
+        }
+
+        private static string JoinLocation(JArray location)
+        {
+            if (location == null)
+                return null;
+
+            StringBuilder path = new StringBuilder();
+            foreach (JToken part in location)
+            {
+                if (path.Length > 0)
+                    path.Append('.');
+                path.Append(part.ToString());
+            }
+            return path.ToString();
         }
 
         // Parses Retry-After as delta-seconds or an HTTP date so the retry handler can honor it.

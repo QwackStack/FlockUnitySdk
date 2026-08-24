@@ -539,9 +539,46 @@ namespace Flock.Editor
             if (!EnsureAssetExistsCard()) return;
 
             configSerialized.Update();
+            DrawCodegenStatusCard();
             DrawCodegenHelpCard();
             DrawCodegenActionsCard();
             configSerialized.ApplyModifiedProperties();
+        }
+
+        // Makes the never-synced state visible: accessors for dashboard schemas don't exist until Sync runs,
+        // and calling one before then fails at COMPILE time, where no SDK error message can reach the user.
+        private void DrawCodegenStatusCard()
+        {
+            EditorGUILayout.BeginVertical(cardStyle);
+            GUILayout.Label("Status", sectionHeaderStyle);
+
+            string syncedGameVersionId = FlockCodeGenValidator.GetGeneratedGameVersionId();
+
+            if (syncedGameVersionId == null)
+                EditorGUILayout.HelpBox(
+                    "Codegen has never run in this project. Typed accessors for the schemas you author in the " +
+                    "dashboard (templates, configs, shops, achievements) do not exist until you Sync — calling one " +
+                    "before then is a compile error, not a runtime error.",
+                    MessageType.Warning);
+            else if (config != null && !string.IsNullOrEmpty(config.gameVersionId)
+                     && !string.Equals(syncedGameVersionId, config.gameVersionId))
+                EditorGUILayout.HelpBox(
+                    $"Generated code was synced for game version ID '{syncedGameVersionId}', but this project is set " +
+                    $"to '{config.gameVersionId}'. Re-sync so the accessors match the version you ship.",
+                    MessageType.Warning);
+            else
+                EditorGUILayout.HelpBox($"Synced for game version ID '{syncedGameVersionId}'.", MessageType.Info);
+
+            bool hintEnabled = FlockCodegenCompileHint.Enabled;
+            bool nextHintEnabled = EditorGUILayout.ToggleLeft(
+                new GUIContent(
+                    "Warn in Console when a compile error looks like un-synced schemas",
+                    "Watches compilation and points at Sync Schemas when an unresolved member looks like a generated accessor. Editor-only, stored per machine."),
+                hintEnabled);
+            if (nextHintEnabled != hintEnabled)
+                FlockCodegenCompileHint.Enabled = nextHintEnabled;
+
+            EditorGUILayout.EndVertical();
         }
 
         private void DrawCodegenActionsCard()

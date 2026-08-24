@@ -1,4 +1,5 @@
 using System;
+using System.Text;
 
 namespace Flock.Exceptions
 {
@@ -13,16 +14,61 @@ namespace Flock.Exceptions
         /// <summary>Server's machine-readable error code from the coded-error body (e.g. "player.email_already_registered"); null when the body had none.</summary>
         public string Code { get; set; }
 
+        /// <summary>Server's human-readable reason from the coded-error body (`detail.message`); null when the body had none.</summary>
+        public string ServerMessage { get; set; }
+
+        /// <summary>SDK-authored next step for this failure (e.g. "call RegisterWithDeviceAsync first"); null when the SDK has no advice beyond the server's reason.</summary>
+        public string Hint { get; set; }
+
+        /// <summary>Short label of the SDK call that failed (e.g. "Device login"), stamped by the provider that issued it.</summary>
+        public string Operation { get; set; }
+
         /// <summary>Typed form of <see cref="Code"/> for readable checks/switches; <see cref="FlockErrorCode.Unknown"/> when there was no code or this SDK version doesn't recognize it.</summary>
         public FlockErrorCode ErrorCode => FlockErrorCodes.Parse(Code);
+
+        /// <summary>Composed from <see cref="Operation"/>, the server's reason, the code/status tag and <see cref="Hint"/> so one console line names both the problem and the fix.</summary>
+        public override string Message => ComposeMessage();
 
         public FlockException(string message) : base(message) { }
         public FlockException(string message, Exception innerException) : base(message, innerException) { }
 
-        /// <summary>Appends <see cref="Body"/> to the standard exception text so logs show the server's reason while Message stays terse for error-tracker grouping.</summary>
+        /// <summary>Appends <see cref="Body"/> to the standard exception text so logs show the raw payload too.</summary>
         public override string ToString()
         {
             return string.IsNullOrEmpty(Body) ? base.ToString() : $"{base.ToString()}\nResponse body: {Body}";
+        }
+
+        // The server's reason beats our generic "Validation failed" whenever the body carried one.
+        private string ComposeMessage()
+        {
+            StringBuilder text = new StringBuilder();
+
+            if (!string.IsNullOrEmpty(Operation))
+                text.Append(Operation).Append(" failed: ");
+
+            text.Append(string.IsNullOrEmpty(ServerMessage) ? base.Message : ServerMessage);
+
+            string tag = ComposeTag();
+            if (tag.Length > 0)
+                text.Append(' ').Append(tag);
+
+            if (!string.IsNullOrEmpty(Hint))
+                text.Append("\nFix: ").Append(Hint);
+
+            return text.ToString();
+        }
+
+        // Bounded, low-cardinality identifiers only — keeps error-tracker grouping meaningful.
+        private string ComposeTag()
+        {
+            bool hasCode = !string.IsNullOrEmpty(Code);
+            if (hasCode && StatusCode.HasValue)
+                return $"[{Code}, HTTP {StatusCode.Value}]";
+            if (hasCode)
+                return $"[{Code}]";
+            if (StatusCode.HasValue)
+                return $"[HTTP {StatusCode.Value}]";
+            return string.Empty;
         }
     }
 

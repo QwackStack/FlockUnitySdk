@@ -49,8 +49,12 @@ namespace Flock.Providers
 
                 return response;
             }
-            catch (FlockException)
+            catch (FlockException ex)
             {
+                // The credential decides what a login failure means, so refine the HTTP layer's context-free hint here.
+                if (string.IsNullOrEmpty(ex.Operation))
+                    ex.Operation = context;
+                ex.Hint = FlockErrorHints.ForAuth(ex.ErrorCode, method) ?? ex.Hint;
                 throw;
             }
             catch (Exception ex)
