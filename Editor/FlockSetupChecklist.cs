@@ -102,7 +102,9 @@ namespace Flock.Editor
                 items.Add(new FlockSetupItem(
                     "schemas", "Schemas",
                     facts.SchemasGenerated ? FlockSetupItemState.Done : FlockSetupItemState.Advisory,
-                    facts.SchemasGenerated ? "Generated." : "Open the Code Generation tab to generate typed accessors."));
+                    facts.SchemasGenerated
+                        ? "Generated."
+                        : "Not generated — accessors for your dashboard schemas won't compile until you Sync. Open the Code Generation tab."));
             }
 
             return items;

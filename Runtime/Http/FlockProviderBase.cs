@@ -45,8 +45,9 @@ namespace Flock.Http
                 {
                     throw;
                 }
-                catch (FlockException)
+                catch (FlockException ex)
                 {
+                    StampOperation(ex, context);
                     throw;
                 }
                 catch (Exception ex)
@@ -59,8 +60,9 @@ namespace Flock.Http
             {
                 throw;
             }
-            catch (FlockException)
+            catch (FlockException ex)
             {
+                StampOperation(ex, context);
                 throw;
             }
             catch (Exception ex)
@@ -68,6 +70,13 @@ namespace Flock.Http
                 Client.Logger.LogError($"{context} failed", ex);
                 throw new FlockNetworkException($"{context} failed", ex);
             }
+        }
+
+        // Names the failing SDK call on the exception; first writer wins so the innermost, most specific context survives.
+        private static void StampOperation(FlockException ex, string context)
+        {
+            if (string.IsNullOrEmpty(ex.Operation))
+                ex.Operation = context;
         }
 
         // Kept protected (not folded into the wrappers below) — FlockCommandProvider's player-scoped
