@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -74,5 +75,9 @@ namespace Flock.Models
 
         [JsonProperty("used_at")]
         public string UsedAt { get; set; }
+
+        // What consuming this row grants. Empty for items that carry no rewards.
+        [JsonProperty("rewards")]
+        public List<ShopItemReward> Rewards { get; set; } = new List<ShopItemReward>();
     }
 }

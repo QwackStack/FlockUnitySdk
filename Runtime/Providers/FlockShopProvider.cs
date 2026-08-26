@@ -175,7 +175,8 @@ namespace Flock.Providers
             return result;
         }
 
-        public async Task<PlayerInventory> PurchaseAsync(
+        /// <summary>Buys a shop item. Returns the inventory row plus anything the purchase granted immediately (Granted/Wallet).</summary>
+        public async Task<PurchaseResult> PurchaseAsync(
             string shopItemId, string playerId = null,
             CancellationToken cancellationToken = default)
         {
@@ -204,7 +205,7 @@ namespace Flock.Providers
             }
 
             // Purchase is non-idempotent: an ambiguous failure may mean the charge already cleared, so surface it rather than re-send (double-charge). Only 408/429 (not processed) retry.
-            PlayerInventory result;
+            PurchaseResult result;
             try
             {
                 result = await ExecuteAsync(async () =>
@@ -215,7 +216,7 @@ namespace Flock.Providers
                         PlayerId = playerId
                     };
 
-                    return await FlockHttpClient.PostAsync<PlayerInventory>(
+                    return await FlockHttpClient.PostAsync<PurchaseResult>(
                         $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.ShopTransaction}", request, Client.GetBaseHeaders(), cancellationToken);
                 }, "Purchase shop item", cancellationToken, idempotent: false);
             }
@@ -261,6 +262,21 @@ namespace Flock.Providers
             }
 
             return result;
+        }
+
+        /// <summary>Consumes an owned inventory item, granting its rewards. Returns the updated row plus what was granted.</summary>
+        public async Task<ConsumeResult> ConsumeAsync(
+            string inventoryId, CancellationToken cancellationToken = default)
+        {
+            RequireNotEmpty(inventoryId, "Inventory ID");
+
+            // Consuming grants currency, so it carries the same double-spend risk as a purchase: an ambiguous failure surfaces rather than being re-sent. Only 408/429 (provably not processed) retry.
+            return await ExecuteAsync(async () =>
+            {
+                // Route takes no request body — an empty object keeps the POST well-formed.
+                return await FlockHttpClient.PostAsync<ConsumeResult>(
+                    $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.PlayerInventoryConsume(inventoryId)}", new { }, Client.GetBaseHeaders(), cancellationToken);
+            }, "Consume inventory item", cancellationToken, idempotent: false);
         }
 
         public async Task<PaginatedResponse<PlayerInventory>> GetPlayerInventoryAsync(

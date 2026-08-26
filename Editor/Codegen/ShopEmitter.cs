@@ -163,7 +163,7 @@ namespace Flock.Editor.Codegen
 
             if (items.Count > 0)
             {
-                sb.AppendLine("        public static Task<PlayerInventory> PurchaseAsync(this FlockShopProvider provider, FlockShopItemId item, CancellationToken cancellationToken = default)");
+                sb.AppendLine("        public static Task<PurchaseResult> PurchaseAsync(this FlockShopProvider provider, FlockShopItemId item, CancellationToken cancellationToken = default)");
                 sb.AppendLine("            => provider.PurchaseAsync(ShopItemUuid(item), cancellationToken: cancellationToken);");
                 sb.AppendLine();
                 sb.AppendLine("        private static string ShopItemUuid(FlockShopItemId item)");

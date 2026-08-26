@@ -65,6 +65,7 @@ namespace Flock.Http
         public static string ShopItemById(string shopItemId) => $"shop_item/{shopItemId}";
         public static string ShopItemsByShop(string shopId) => $"shop_item/shop/{shopId}";
         public static string PlayerInventoryByPlayer(string playerId) => $"player_inventory/player/{playerId}";
+        public static string PlayerInventoryConsume(string inventoryId) => $"player_inventory/{inventoryId}/consume";
 
         // Leaderboards — read-only. There is no submit path by design: a board projects over a player-data field, so scores move by writing that field.
         // Every read is addressed by name — the /v1 surface has no by-id read routes.

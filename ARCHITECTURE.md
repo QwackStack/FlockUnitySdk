@@ -31,7 +31,7 @@ PackageBuilder/Tests/Editor/   EditMode tests (asmdef Flock.Tests.Editor)
 - **PlayerProvider** — player templates + player data (incl. by-name).
 - **FlockConfigProvider** — game configs & patches (incl. by-name).
 - **FlockGameProvider** — game + game-version lookups (incl. by-name).
-- **FlockShopProvider** — shops, items, purchase, inventory (incl. by-name); `PurchaseStatus`/`TransactionType` enums.
+- **FlockShopProvider** — shops, items, purchase, consume, inventory (incl. by-name); `PurchaseStatus`/`TransactionType` enums. `PurchaseAsync` returns `PurchaseResult` (inventory + granted rewards + wallet); `ConsumeAsync` grants an owned item's rewards and is money-safe like a purchase.
 - **FlockLeaderboardProvider** — read-only standings / my-rank / around-me, addressed by board name (resolve memoized per session); no submit path by design.
 - **FlockCommandProvider** — retry-safe game commands (funds, achievements, player-data writes).
 - **FlockAssetProvider** / **FlockAssetCache** — asset fetch + local file cache.

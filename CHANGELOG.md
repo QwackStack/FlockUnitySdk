@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.36.0]
+
+### Added
+- **Shop items can grant rewards, and the SDK now surfaces what was granted.** A purchase or a consume returns the rewards it handed out alongside the updated wallet, so a game can show "+500 Gold" without a follow-up read. `ShopItemReward` carries the reward `Type`, the currency `Code`, and the `Amount`; `ShopItem.Rewards` advertises what an item will grant before it is bought.
+- `FlockShopProvider.ConsumeAsync(inventoryId)` consumes an owned inventory item and returns the updated row plus its granted rewards. Consuming moves currency, so it carries the same money safety as a purchase: an ambiguous failure surfaces instead of being re-sent, and only provably-unprocessed failures (408/429) retry.
+
+### Changed
+- **BREAKING: `PurchaseAsync` now returns `PurchaseResult` instead of `PlayerInventory`.** The inventory row moved to `result.Inventory`, joined by `PurchaseId`, `ItemType`, `Granted` and `Wallet`. The server had already moved to this shape, so the previous return type no longer matched the wire. Update call sites to read `result.Inventory` where they used the returned value directly.
+- Reward types are modelled as strings against `ShopItemRewardTypes.Currency`, not a C# enum — the API stores rewards as typed entries so new kinds can ship without a schema migration, and an unknown value must not break deserialization.
+- `Granted` and `Rewards` default to empty lists rather than null, so callers can iterate without a null check on items that grant nothing.
+
+### Fixed
+- **`GetPlayerInventoryAsync` works again** — the backend route that returned HTTP 500 unconditionally has been fixed server-side and verified returning 200. The 1.35.0 caveat in [Shop](Docs~/shop.md) has been removed. The SDK call was correct throughout and is unchanged; only the documentation moved.
+
 ## [1.35.0]
 
 ### Changed
