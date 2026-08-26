@@ -198,6 +198,31 @@ namespace Flock.Tests.Editor
             Assert.Throws<FlockValidationException>(() => Run(() => client.Authentication.RegisterWithEmailAsync("p@x.com", "pw")));
         }
 
+        // Documented on the public docs site, so lock it: register goes through the same path as login.
+        [Test]
+        public void Register_Success_SignsThePlayerIn()
+        {
+            ScriptedAdapter adapter = new ScriptedAdapter(request => Ok(LoginBody("player-a", MakeJwt("player-a", 3600), "r")));
+            FlockClient client = CreateClient(adapter);
+
+            PlayerLoginResponse response = Run(() => client.Authentication.RegisterWithEmailAsync("p@x.com", "pw"));
+
+            Assert.IsNotNull(response);
+            Assert.IsTrue(client.IsAuthenticated, "Register returned a session but left the client signed out.");
+            Assert.AreEqual("player-a", client.CurrentPlayerId);
+        }
+
+        // The already-registered swallow returns null WITHOUT signing in — the docs tell callers to follow with a login.
+        [Test]
+        public void Register_AlreadyRegistered_LeavesThePlayerSignedOut()
+        {
+            ScriptedAdapter adapter = new ScriptedAdapter(request => Coded(400, "player.device_already_registered"));
+            FlockClient client = CreateClient(adapter);
+
+            Assert.IsNull(Run(() => client.Authentication.RegisterWithDeviceAsync("device-1")));
+            Assert.IsFalse(client.IsAuthenticated);
+        }
+
         // ---- Logout ----
 
         [Test]

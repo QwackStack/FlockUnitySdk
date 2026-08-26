@@ -21,7 +21,28 @@ All SDK exceptions derive from `FlockException` (namespace `Flock.Exceptions`).
 - **`ErrorCode`** — a `FlockErrorCode` enum, the readable form of the server's machine-readable code. Use this for checks. `FlockErrorCode.Unknown` when there was no code or this SDK version predates it.
 - **`Code`** — the raw wire string (e.g. `"shop.insufficient_funds"`). Keep for logging/forward-compat.
 - **`StatusCode`** — the HTTP status when the error came from a server response; `null` for transport failures (an ambiguous outcome — the request may or may not have reached the server).
+- **`ServerMessage`** — the server's own reason (`"Invalid login credentials"`); `null` when the body carried none.
+- **`Hint`** — the SDK's suggested next step; `null` when there is nothing to add beyond the server's reason.
+- **`Operation`** — the SDK call that failed (`"Device login"`), stamped by the provider that issued it.
+- **`Message`** — all of the above composed into one line (see below).
 - **`Body`** — the raw server response body.
+
+## What the message says
+
+`Message` names the call, the server's reason, the coded identifier, the status — then a `Fix:` line:
+
+```
+Device login failed: Invalid login credentials [player.invalid_login_credentials, HTTP 400]
+Fix: This device is not registered yet. Call Authentication.RegisterWithDeviceAsync(deviceId) once to create the account, then Authentication.LoginWithDeviceAsync(deviceId) on later launches.
+```
+
+The fix is specific to context where one code means different things: the same `player.invalid_login_credentials` on an *email* sign-in says the password was wrong instead.
+
+A client-side throw (`"deviceId cannot be null or empty"`) has no status, code or server reason, so its message is exactly the text it was constructed with — nothing is appended.
+
+`FlockErrorHints.For(errorCode)` returns the same next-step text for any code, if you want it in your own debug UI. **It is written for developers, not players** — it names SDK methods and dashboard steps, so write separate player-facing copy.
+
+> Log `ex.Message` to see the composed line; log the exception itself (`Debug.LogException(ex)`) to also get the type, stack, and raw response body that `ToString()` appends.
 
 ## Branching on an error
 
@@ -40,18 +61,26 @@ catch (FlockException ex)
 }
 ```
 
-For the register/login "this identity already belongs to an account" case (email/device/OAuth), use the grouping helper instead of listing each code:
+For the "this identity already belongs to an account" case (email/device/OAuth), use the grouping helper instead of listing each code:
 
 ```csharp
-try
-{
-    await FlockClient.Instance.Authentication.RegisterWithEmailAsync(email, password);
-}
 catch (FlockException ex) when (ex.IsAlreadyRegistered())
 {
     // Offer sign-in instead of register.
 }
 ```
+
+> **`RegisterWith*` will not reach that catch.** Those methods swallow the already-registered codes and return `null` instead of throwing, so test the return value rather than catching:
+>
+> ```csharp
+> FlockAuthProvider auth = FlockClient.Instance.Authentication;
+>
+> // null means "this identity already has an account" — created nothing, signed in nobody.
+> if (await auth.RegisterWithDeviceAsync(deviceId) == null)
+>     await auth.LoginWithDeviceAsync(deviceId);
+> ```
+>
+> A *successful* register does sign the player in, so the login call is only needed on the `null` path. `IsAlreadyRegistered()` remains useful on calls that don't swallow, such as the `Link*Async` methods.
 
 > A taken **display name** is not part of `IsAlreadyRegistered()` — it's a different fix. Catch `FlockErrorCode.PlayerNameAlreadyRegistered` and prompt for another name.
 
