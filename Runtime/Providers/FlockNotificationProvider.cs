@@ -376,36 +376,84 @@ namespace Flock.Providers
         }
 
         /// <summary>Scheduled notifications this install created that haven't reached their delivery time yet.</summary>
-        /// <remarks>Local bookkeeping, not a server query: it only knows what THIS install scheduled, and it infers delivery from the clock because <c>/v1</c> has no route to read a schedule back. Entries whose time has passed are dropped on read.</remarks>
+        /// <remarks>Local bookkeeping, not a server query: it only knows what THIS install scheduled, and it infers delivery from the clock. Prefer <see cref="GetScheduledAsync"/>, which asks the server and so survives a reinstall or a second device; this stays for offline reads.</remarks>
         public List<PendingSchedule> GetPendingSchedules()
         {
             RequireAuthenticated();
             return LoadPendingSchedules();
         }
 
-        /// <summary>Cancels every schedule this install is still tracking and returns how many the server actually cancelled. Entries the server no longer recognises are dropped rather than failing the batch.</summary>
+        /// <summary>The player's scheduled notifications as the server knows them — unlike <see cref="GetPendingSchedules"/> this survives a reinstall and sees schedules made on another device.</summary>
+        /// <param name="status">Which schedules to return; defaults to pending.</param>
+        public async Task<PaginatedResponse<ScheduledNotification>> GetScheduledAsync(
+            string status = ScheduledNotificationStatuses.Pending, int page = 1, int limit = 100,
+            CancellationToken cancellationToken = default)
+        {
+            RequireAuthenticated();
+
+            // Schedules change whenever one is created, cancelled or delivered — always read fresh, never cached.
+            return await ExecuteAsync(async () =>
+            {
+                string url = $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.NotificationSchedule}?page={page}&limit={limit}" +
+                             (!string.IsNullOrEmpty(status) ? $"&status={Uri.EscapeDataString(status)}" : "");
+
+                return await FlockHttpClient.GetAsync<PaginatedResponse<ScheduledNotification>>(
+                    url, Client.GetBaseHeaders(), cancellationToken);
+            }, "List scheduled notifications", cancellationToken);
+        }
+
+        /// <summary>Cancels every pending schedule the player has and returns how many the server actually cancelled. Entries the server no longer recognises are dropped rather than failing the batch.</summary>
+        /// <remarks>Asks the server which schedules are pending, so it also cancels ones made before a reinstall or on another device. Falls back to this install's local list if that read fails.</remarks>
         public async Task<int> CancelAllScheduledAsync(CancellationToken cancellationToken = default)
         {
             RequireAuthenticated();
 
-            List<PendingSchedule> pending = LoadPendingSchedules();
+            List<string> ids = await ResolveCancellableScheduleIdsAsync(cancellationToken);
             int cancelled = 0;
 
-            foreach (PendingSchedule entry in pending)
+            foreach (string id in ids)
             {
                 try
                 {
-                    await CancelScheduledAsync(entry.Id, cancellationToken);
+                    await CancelScheduledAsync(id, cancellationToken);
                     cancelled++;
                 }
                 catch (FlockNetworkException ex) when (FlockNetworkException.IsPermanentStatus(ex.StatusCode))
                 {
                     // Already delivered, already cancelled, or unknown to the server — it isn't pending either way.
-                    UntrackPending(entry.Id);
+                    UntrackPending(id);
                 }
             }
 
             return cancelled;
+        }
+
+        // Server list is authoritative (it spans devices and installs); local bookkeeping is the offline fallback.
+        private async Task<List<string>> ResolveCancellableScheduleIdsAsync(CancellationToken cancellationToken)
+        {
+            List<string> ids = new List<string>();
+            try
+            {
+                PaginatedResponse<ScheduledNotification> pending = await GetScheduledAsync(
+                    ScheduledNotificationStatuses.Pending, cancellationToken: cancellationToken);
+
+                if (pending != null && pending.Items != null)
+                {
+                    foreach (ScheduledNotification entry in pending.Items)
+                        if (entry != null && !string.IsNullOrEmpty(entry.Id))
+                            ids.Add(entry.Id);
+                    return ids;
+                }
+            }
+            catch (FlockNetworkException)
+            {
+                Client.Logger.LogWarning("Could not read scheduled notifications from the server; cancelling only what this install tracked.");
+            }
+
+            foreach (PendingSchedule entry in LoadPendingSchedules())
+                if (!string.IsNullOrEmpty(entry.Id))
+                    ids.Add(entry.Id);
+            return ids;
         }
 
         /// <summary>Cancels the notification returned by <see cref="ScheduleAsync"/>, so callers can hold the object rather than its id.</summary>
