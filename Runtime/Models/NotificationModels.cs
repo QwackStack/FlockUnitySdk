@@ -46,6 +46,14 @@ namespace Flock.Models
         public string Category { get; set; }
     }
 
+    /// <summary>Schedule states the server reports. Strings rather than an enum so a state added later can't break deserialization.</summary>
+    public static class ScheduledNotificationStatuses
+    {
+        public const string Pending = "pending";
+        public const string Delivered = "delivered";
+        public const string Canceled = "canceled";
+    }
+
     /// <summary>A notification queued for future delivery to one player.</summary>
     public class ScheduledNotification
     {

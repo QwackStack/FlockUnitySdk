@@ -1218,5 +1218,83 @@ namespace Flock.Tests.Editor
                 Assert.AreEqual(0, transport.Requests.Count, "Validation short-circuits before any request.");
             }
         }
+
+        // GET notification/schedule returns PaginationResponse at the ROOT — no {"result":...} envelope.
+        private const string TwoPendingBody =
+            "{\"items\":[" +
+            "{\"id\":\"sch-1\",\"player_id\":\"player-a\",\"template_id\":\"tpl-1\",\"status\":\"pending\",\"deliver_at\":\"2026-09-01T00:00:00Z\"}," +
+            "{\"id\":\"sch-2\",\"player_id\":\"player-a\",\"template_id\":\"tpl-2\",\"status\":\"pending\",\"deliver_at\":\"2026-09-02T00:00:00Z\"}" +
+            "],\"total\":2,\"page\":1,\"limit\":100}";
+
+        // ---- NOTIF-10: the schedule list is a server read, so it sees schedules this install never made ----
+        [Test]
+        public void GetScheduled_ParsesRootPagination_AndDefaultsToPending()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.NotificationSchedule, FlockFakeTransport.Ok(TwoPendingBody));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                PaginatedResponse<ScheduledNotification> result = h.Run(() => h.Client.Notification.GetScheduledAsync());
+
+                Assert.AreEqual(2, result.Items.Length);
+                Assert.AreEqual("sch-1", result.Items[0].Id);
+                Assert.AreEqual(2, result.Total);
+                Assert.IsTrue(transport.Sent("status=pending"), "Defaults to the pending filter.");
+            }
+        }
+
+        [Test]
+        public void GetScheduled_NotSignedIn_ThrowsAuth_AndSendsNothing()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                Assert.Throws<FlockAuthException>(() => h.Run(() => h.Client.Notification.GetScheduledAsync()));
+                Assert.AreEqual(0, transport.Requests.Count, "Auth guard short-circuits before any request.");
+            }
+        }
+
+        // ---- NOTIF-11: cancel-all works off the SERVER list, which is what fixes the reinstall / second-device case ----
+        [Test]
+        public void CancelAll_CancelsSchedulesThisInstallNeverTracked()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.NotificationScheduleById("sch-1"), FlockFakeTransport.Ok("{\"result\":{\"id\":\"sch-1\"}}"));
+            transport.On(FlockEndpoints.NotificationScheduleById("sch-2"), FlockFakeTransport.Ok("{\"result\":{\"id\":\"sch-2\"}}"));
+            transport.On(FlockEndpoints.NotificationSchedule, FlockFakeTransport.Ok(TwoPendingBody));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                // Nothing was scheduled through this install, so the local list is empty by construction.
+                int cancelled = h.Run(() => h.Client.Notification.CancelAllScheduledAsync());
+
+                Assert.AreEqual(2, cancelled, "Both server-side schedules are cancelled despite no local bookkeeping.");
+                Assert.IsTrue(transport.Sent("notification/schedule/sch-1"));
+                Assert.IsTrue(transport.Sent("notification/schedule/sch-2"));
+            }
+        }
+
+        // ---- NOTIF-11b: if the server list can't be read, fall back to local bookkeeping rather than cancelling nothing ----
+        [Test]
+        public void CancelAll_ServerListUnreachable_FallsBackToLocalList()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.NotificationSchedule, FlockFakeTransport.Status(503, "{}"));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                // Local list is empty here, so this asserts the fallback path runs and returns cleanly rather than throwing.
+                int cancelled = h.Run(() => h.Client.Notification.CancelAllScheduledAsync());
+
+                Assert.AreEqual(0, cancelled);
+            }
+        }
     }
 }

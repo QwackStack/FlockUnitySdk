@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.37.0]
+
+### Added
+- **`GetScheduledAsync` reads the player's scheduled notifications from the server.** Until now the only list was local bookkeeping of what *this install* had scheduled, so a reinstall or a second device lost the handle and the player could not cancel their own reminders. The server route now exists and the SDK uses it. Filter by state with `ScheduledNotificationStatuses.Pending` / `Delivered` / `Canceled`; pending is the default.
+
+### Changed
+- **`CancelAllScheduledAsync` now cancels everything the *player* has pending, not just what this install tracked.** It reads the server list first and falls back to local bookkeeping only if that read fails, so an offline caller still cancels what it knows about.
+- `GetPendingSchedules()` is unchanged and still local/no-network, but is now the fallback rather than the primary — [the guide](Docs~/notifications.md) says which to reach for.
+
+### Fixed
+- Schedule states are modelled as string constants rather than an enum, so a state added server-side later cannot break deserialization.
+
 ## [1.36.0]
 
 ### Added

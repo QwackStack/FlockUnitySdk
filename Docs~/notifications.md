@@ -123,14 +123,28 @@ So: nothing appears before the delivery time, a push-only schedule never touches
 
 ### Pending schedules
 
-The id returned by `ScheduleAsync` is the only handle on a pending notification, so the SDK persists what it scheduled:
+Ask the server what the player has pending — this is the one that survives a reinstall and sees schedules made on another device:
 
 ```csharp
-List<PendingSchedule> pending = notifications.GetPendingSchedules();   // local, no network
+PaginatedResponse<ScheduledNotification> pending = await notifications.GetScheduledAsync();
+foreach (ScheduledNotification s in pending.Items)
+    Debug.Log($"{s.Id} delivers at {s.DeliverAt}");
+
+// Other states are available too.
+PaginatedResponse<ScheduledNotification> delivered =
+    await notifications.GetScheduledAsync(ScheduledNotificationStatuses.Delivered);
+
+// Cancels everything pending for the player, including schedules this install never made.
 int cancelled = await notifications.CancelAllScheduledAsync();
 ```
 
-This is local bookkeeping, not a server query. It only knows what **this install** scheduled — a reinstall or a second device loses the handle. Entries are dropped once their delivery time passes, because the API has no route to read a schedule back and confirm delivery. `ClearCache()` preserves them; they're state, not cache.
+There is also a local, no-network list of what **this install** scheduled:
+
+```csharp
+List<PendingSchedule> pending = notifications.GetPendingSchedules();   // local, no network
+```
+
+That one is bookkeeping rather than a server query: it only knows this install's own schedules and infers delivery from the clock, dropping entries once their time passes. Prefer `GetScheduledAsync` and keep this for offline reads. `CancelAllScheduledAsync` uses the server list and falls back to this one if that read fails. `ClearCache()` preserves the local list; it's state, not cache.
 
 ## Push device tokens
 
