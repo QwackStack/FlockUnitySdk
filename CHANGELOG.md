@@ -41,6 +41,13 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ### Known limitation
 - **The Console hint fires on recompiles inside a running Editor, not on a cold start.** Unity compiles before `[InitializeOnLoad]` can subscribe, so errors that already exist when the Editor opens produce no hint. That is the case the Codegen tab's Status card covers.
 
+### Documentation
+- [Error handling](Docs~/errors.md): documents `ServerMessage`, `Hint` and `Operation`, what the composed `Message` looks like, that a client-side throw's text is untouched, and `FlockErrorHints.For` — with the caveat that `Hint` is written for developers, not players.
+- **Corrected a `Docs~/errors.md` example that could never fire.** It showed catching `ex.IsAlreadyRegistered()` around `RegisterWithEmailAsync`, but `RegisterWith*` *swallows* those codes and returns `null` rather than throwing, so the catch was unreachable. It now shows the `null`-check-then-login pattern, and notes that a successful register does sign the player in — so the login call is only needed on the `null` path. `IsAlreadyRegistered()` is still documented for calls that don't swallow, such as `Link*Async`.
+- README "Error handling" shows the composed message and states the branch-on-`ErrorCode`-not-text rule.
+- **Swept every `Docs~/` guide for examples that can't run**, after the one above. Checked mechanically: every `*Async` and `Flock*` identifier against the real public surface, every call's argument count against the real overloads, every cited editor menu path against the actual `MenuItem` attributes, and every `catch` against whether that call can throw what it catches. All clean except one:
+- **[Shop](Docs~/shop.md) documented `GetPlayerInventoryAsync` as a working call.** `GET /v1/player_inventory/player/{id}` returns **HTTP 500 unconditionally** — a backend fault, verified against a live server, with the SDK call itself correct. The guide now says so and points at the workarounds (read the `PlayerInventory` a purchase returns, or track ownership in player data). Nothing about the SDK changed.
+
 ## [1.34.0]
 
 ### Fixed

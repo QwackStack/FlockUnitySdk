@@ -15,4 +15,12 @@ var inventory = await FlockClient.Instance.Shop.PurchaseAsync("shop-item-id");
 var playerItems = await FlockClient.Instance.Shop.GetPlayerInventoryAsync();
 ```
 
+> **`GetPlayerInventoryAsync` does not currently work — this is a backend fault, not an SDK one.**
+> `GET /v1/player_inventory/player/{id}` returns **HTTP 500 unconditionally** (verified against a live
+> backend 2026-08-22, with and without query parameters — the server raises before reading anything the
+> SDK sends). The call is wired correctly and will start working the moment the route is fixed; until
+> then it throws `FlockNetworkException` with `StatusCode == 500`. Read a purchase's returned
+> `PlayerInventory` instead, or track owned items in player data. Inventory is never offline-cached, so
+> there is no stale copy to fall back on either.
+
 See also: [Codegen](codegen.md) for typed shop accessors and the `FlockShopItemId` / `FlockFundId` enums, and [Player Data & Game Commands](player-data.md) for `AddGameFundsAsync`.

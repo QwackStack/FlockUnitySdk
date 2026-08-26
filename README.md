@@ -191,6 +191,15 @@ catch (FlockException ex) when (ex.ErrorCode == FlockErrorCode.ShopInsufficientF
 }
 ```
 
+`ex.Message` names the call that failed, the server's own reason, the coded identifier and the status — then a `Fix:` line with the next step:
+
+```
+Device login failed: Invalid login credentials [player.invalid_login_credentials, HTTP 400]
+Fix: This device is not registered yet. Call Authentication.RegisterWithDeviceAsync(deviceId) once to create the account, then Authentication.LoginWithDeviceAsync(deviceId) on later launches.
+```
+
+Branch on `ErrorCode`, never on message text — codes are stable, wording is not.
+
 See the [Error handling guide](Docs~/errors.md) for the exception types, the status→exception mapping, and the full `FlockErrorCode` list.
 
 ## Offline caching
