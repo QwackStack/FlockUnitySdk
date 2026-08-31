@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.39.0]
+
+### Changed
+- The doc comment on `FlockClient.ApiVersion` no longer carries a maintenance note that was aimed at SDK maintainers rather than at callers. The const, its value and its behaviour are unchanged — only the text that shows in tooling differs.
+- The assets guide drops a stale sentence about where uploaded content can be reused. The asset surface itself is unchanged.
+
 ## [1.38.0]
 
 ### Added
