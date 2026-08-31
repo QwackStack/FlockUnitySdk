@@ -16,8 +16,8 @@ permissions:
   contents: read
 
 jobs:
-  editmode:
-    name: EditMode
+  tests:
+    name: EditMode and PlayMode
     # Fork PRs get no secrets, so the licence would be empty and every such run would redline for a
     # reason the contributor cannot fix.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -129,7 +129,7 @@ jobs:
           restore-keys: |
             Library-
 
-      - name: Run EditMode tests
+      - name: Run the tests
         uses: game-ci/unity-test-runner@v4
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
@@ -138,39 +138,49 @@ jobs:
         with:
           # projectPath is deliberately unset — see the note on the generate step above.
           unityVersion: 6000.3.16f1
-          testMode: EditMode
+          testMode: all
           artifactsPath: test-results
 
-      - name: The run actually found tests
+      - name: Every mode actually found tests
         # A green run that executed nothing is the failure this whole job exists to avoid, and it looks
-        # identical to a green run that executed everything unless the count is checked.
+        # identical to a green run that executed everything unless the count is checked. testMode "all"
+        # writes one report per mode, so every report is checked — reading only the first would let an
+        # empty PlayMode run hide behind a healthy EditMode one.
         if: always()
         run: |
           set -euo pipefail
 
-          RESULTS=$(find test-results -name '*.xml' 2>/dev/null | head -1 || true)
-          if [ -z "$RESULTS" ]; then
+          REPORTS=$(find test-results -name '*-results.xml' 2>/dev/null | sort || true)
+          if [ -z "$REPORTS" ]; then
             echo "::error::No results XML under test-results/. The editor did not get far enough to write one — read the step above for the real failure."
             exit 1
           fi
 
-          TOTAL=$(grep -oE 'total="[0-9]+"' "$RESULTS" | head -1 | grep -oE '[0-9]+' || true)
-          if [ -z "$TOTAL" ]; then
-            echo "::error file=$RESULTS::Could not read a total from the results XML. If the report format changed, update this step with it."
-            exit 1
-          fi
+          empty=0
+          for report in $REPORTS; do
+            mode=$(basename "$report" -results.xml)
 
-          if [ "$TOTAL" -eq 0 ]; then
-            echo "::error::The run reported 0 tests, which passes without testing anything. Usually the package stopped being listed under 'testables' in the generated manifest, so UNITY_INCLUDE_TESTS was never defined and the test assemblies were skipped."
-            exit 1
-          fi
+            total=$(grep -oE 'total="[0-9]+"' "$report" | head -1 | grep -oE '[0-9]+' || true)
+            if [ -z "$total" ]; then
+              echo "::error file=$report::Could not read a total from this report. If the format changed, update this step with it."
+              exit 1
+            fi
 
-          echo "$TOTAL EditMode tests ran."
+            if [ "$total" -eq 0 ]; then
+              echo "::error file=$report::The $mode run reported 0 tests, which passes without testing anything. Usually the package stopped being listed under 'testables' in the generated manifest, so UNITY_INCLUDE_TESTS was never defined and the test assemblies were skipped."
+              empty=$((empty + 1))
+              continue
+            fi
+
+            echo "$total $mode tests ran."
+          done
+
+          [ "$empty" -eq 0 ]
 
       - name: Upload the results
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: editmode-results
+          name: test-results
           path: test-results
           if-no-files-found: warn
