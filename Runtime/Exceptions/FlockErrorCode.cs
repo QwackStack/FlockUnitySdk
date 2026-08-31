@@ -11,6 +11,7 @@ namespace Flock.Exceptions
         //* is just the wildcard
         // analytics.*
         AnalyticsCurrencyNotFound,                  // analytics.currency_not_found
+        AnalyticsInvalidCurrencyId,                 // analytics.invalid_currency_id
         AnalyticsPlayerNotFound,                    // analytics.player_not_found
         AnalyticsSessionNotFound,                   // analytics.session_not_found
 
@@ -30,6 +31,7 @@ namespace Flock.Exceptions
         GameCommandPlayerDataNotFound,              // game_command.player_data_not_found
         GameCommandPlayerDataNotLinkedToTemplate,   // game_command.player_data_not_linked_to_template
         GameCommandPlayerTemplateNotFound,          // game_command.player_template_not_found
+        GameCommandRateLimited,                     // game_command.rate_limited
         GameCommandTemplateValidationFailed,        // game_command.template_validation_failed
 
         // game_config.*
@@ -46,6 +48,10 @@ namespace Flock.Exceptions
         // game_version.*
         GameVersionGameVersionByNameNotFound,       // game_version.game_version_by_name_not_found
         GameVersionGameVersionNotFound,             // game_version.game_version_not_found
+
+        // leaderboard.*
+        // Only the by-name lookup answers with a code; the spec under-declares it, so don't drop it.
+        LeaderboardNotFound,                        // leaderboard.not_found
 
         // log_event.*
         LogEventGameNotFound,                       // log_event.game_not_found
@@ -84,6 +90,8 @@ namespace Flock.Exceptions
         PlayerDataPlayerNotFound,                   // player_data.player_not_found
 
         // player_inventory.*
+        PlayerInventoryAlreadyUsed,                 // player_inventory.already_used
+        PlayerInventoryInventoryEntryNotFound,      // player_inventory.inventory_entry_not_found
         PlayerInventoryPlayerNotFound,              // player_inventory.player_not_found
 
         // player_template.*
@@ -95,7 +103,10 @@ namespace Flock.Exceptions
         ShopCurrencyTemplateNotFound,               // shop.currency_template_not_found
         ShopInsufficientFunds,                      // shop.insufficient_funds
         ShopItemNotFound,                           // shop.item_not_found
+        ShopMalformedReward,                        // shop.malformed_reward
+        ShopPackGrantsNothing,                      // shop.pack_grants_nothing
         ShopPlayerNotFound,                         // shop.player_not_found
+        ShopRewardCurrencyNotHeld,                  // shop.reward_currency_not_held
         ShopShopNotFound,                           // shop.shop_not_found
         ShopWalletNotFound,                         // shop.wallet_not_found
 

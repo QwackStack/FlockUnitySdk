@@ -69,7 +69,7 @@ Plain serializable DTOs mirroring backend wire shapes — auth, analytics, shop,
 
 ## Runtime/ (support)
 - **Config/FlockConfigAsset** — the `FlockConfig.asset` ScriptableObject (api key, version, baked id). · **Config/FlockInitConfig** — runtime init params.
-- **Exceptions/** — **FlockException** base (`Body`, `StatusCode`, `Code`/`ErrorCode`, `ServerMessage`, `Hint`, `Operation`; `Message` is composed from them) + **Network/Auth/Validation/Serialization** subclasses by failure kind; **FlockErrorCode** enum = typed view of the backend `detail.code` contract (+ `FlockErrorCodes.Parse`); **FlockErrorHints** = code→next-step table behind `Hint` (`ForAuth` disambiguates by credential).
+- **Exceptions/** — **FlockException** base (`Body`, `StatusCode`, `Code`/`ErrorCode`, `ServerMessage`, `Hint`, `Operation`; `Message` is composed from them) + **Network/Auth/Validation/Serialization** subclasses by failure kind; **FlockErrorCode** enum = typed view of the backend `detail.code` contract (+ `FlockErrorCodes.Parse`); **FlockErrorHints** = code→next-step table behind `Hint` (`ForAuth` disambiguates by credential); every code has a hint except `Unknown`, locked by a test. The enum is diffed against `Tooling~/WireErrorCodes.txt` (maintainer-only snapshot of the wire contract) by the `error-codes` job in `.github/workflows/consistency.yml`.
 - **Interfaces/** — provider contracts (`IFlockClient`, `IConfigProvider`, `IPlayerService`, `IAssetProvider`, `IAnalyticProvider`) + `SchemaTag`. Schema/template/config raw getters are `internal` — reachable only through the generated accessors (codegen-only by design).
 - **Logging/** — **IFlockLogger** + **UnityFlockLogger** / **NullFlockLogger**.
 - **Constants/FlockConstant** — shared constants. · **Docs/FlockSdkGuide** — in-editor Getting-Started text.
@@ -95,7 +95,7 @@ Writes typed accessors to `Assets/Flock/Generated/` (Flock-owned, wiped each syn
 - **ManifestEmitter** — emits `SchemasManifest` (GameVersionId + hash). · `EmitResult`/`CodegenResult` — codegen DTOs.
 
 ## PackageBuilder/Tests/Editor/
-EditMode tests (run via Unity Test Runner only): **CodeGenNamingHelpersTests**, **FlockBuildGuardTests**, **RetryHandlerTests**, **SchemaHasherTests**, **TypeMapTests**, **FlockErrorPipelineTests** (exception/`FlockErrorCode` mapping; has an `[Explicit]` live-backend test), **FlockErrorMessageTests** (composed `Message`, hints, FastAPI field errors), **FlockCodegenHintTests** (compile-error classification over real Roslyn text), **FlockConfigResolutionTests** (patch-else-config resolution).
+EditMode tests (run via Unity Test Runner only): **CodeGenNamingHelpersTests**, **FlockBuildGuardTests**, **RetryHandlerTests**, **SchemaHasherTests**, **TypeMapTests**, **FlockErrorPipelineTests** (exception/`FlockErrorCode` mapping; has an `[Explicit]` live-backend test), **FlockErrorMessageTests** (composed `Message`, hints, FastAPI field errors), **FlockErrorHintCoverageTests** (every `FlockErrorCode` has a hint or is explicitly allowlisted), **FlockCodegenHintTests** (compile-error classification over real Roslyn text), **FlockConfigResolutionTests** (patch-else-config resolution).
 
 ## Offline caching
 
