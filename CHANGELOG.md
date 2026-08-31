@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.38.0]
+
+### Added
+- **Eight error codes the backend can send but the SDK could not name.** `FlockErrorCode` had drifted behind the API, so these failures arrived as `Unknown` and read exactly like an error the server had chosen not to code. Five of them belong to the shop surface added in 1.36.0 — `ShopMalformedReward`, `ShopPackGrantsNothing`, `ShopRewardCurrencyNotHeld`, `PlayerInventoryAlreadyUsed` and `PlayerInventoryInventoryEntryNotFound` — so purchase and consume now have typed outcomes for their own failures. The rest are `LeaderboardNotFound` (an unknown board name, which had never had a code), `GameCommandRateLimited` and `AnalyticsInvalidCurrencyId`.
+- **Every error code now carries a `Fix:` hint.** 24 codes had none, including all eight above and 16 that had shipped unhinted since 1.35.0 — among them `PlayerOauthFailed`, `PlayerInvalidRegistrationRequest`, `GameConfigInvalidTag` and the four "player not found" variants. Coverage is now complete: every member of `FlockErrorCode` has a hint except `Unknown`, which has nothing to advise.
+- A test that walks `FlockErrorCode` and fails if any member is missing a hint, so a code added later cannot ship silently unhinted.
+
+### Fixed
+- `FlockErrorCodes.Parse` now resolves these eight codes to their typed member instead of falling through to `FlockErrorCode.Unknown`. Code that branches on `ErrorCode` sees the real outcome; callers matching on the raw `Code` string are unaffected.
+
 ## [1.37.0]
 
 ### Added

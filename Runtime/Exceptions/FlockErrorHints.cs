@@ -29,6 +29,10 @@ namespace Flock.Exceptions
             { FlockErrorCode.PlayerCannotUnlinkLastCredential, "A player must keep at least one way to sign in. Link another credential before unlinking this one." },
             { FlockErrorCode.PlayerGameJwkNotConfigured, "The game has no signing key configured. Set it up in the Flock dashboard before players can authenticate." },
             { FlockErrorCode.PlayerGameVersionIdRequired, "This route needs a game version. Pick one in Flock > Settings so it is baked into the build." },
+            { FlockErrorCode.PlayerInvalidRegistrationRequest, "The registration was rejected. Check the fields this provider requires — Authentication.RegisterWithEmailAsync(email, password) needs both, and a blank one never reaches the server as null." },
+            { FlockErrorCode.PlayerInvalidDeviceRegistrationRequest, "The device registration was rejected. Pass a stable, non-empty device id to Authentication.RegisterWithDeviceAsync(deviceId) — the same string on every launch, or the account cannot be found again." },
+            { FlockErrorCode.PlayerInvalidLinkRequest, "The link request was rejected. Every Authentication.Link*Async call takes the raw token the platform handed you, not a wrapped payload of your own." },
+            { FlockErrorCode.PlayerOauthFailed, "The identity provider rejected the token. It has usually expired — fetch a fresh one from the platform immediately before calling Authentication.LoginWith*Async." },
             { FlockErrorCode.PlayerPlayerNotFound, "No player matches that id. Sign in first — most calls act on FlockClient.Instance.CurrentPlayerId." },
 
             // Dashboard-authored content the consumer has not created or not synced yet.
@@ -46,6 +50,14 @@ namespace Flock.Exceptions
             { FlockErrorCode.GameConfigConfigNotFound, "No game config by that name. " + AuthorInDashboard },
             { FlockErrorCode.GameConfigFeatureConfigNotFound, "No feature config by that name. " + AuthorInDashboard },
             { FlockErrorCode.NotificationTemplateNotFound, "No notification template by that name. " + AuthorInDashboard },
+            { FlockErrorCode.LeaderboardNotFound, "No leaderboard by that name — boards are addressed by name, never by id. " + AuthorInDashboard },
+            { FlockErrorCode.GamePatchPatchNotFound, "No patch by that id. " + AuthorInDashboard + " Call Config.ClearCache() if it was re-published while the game was running." },
+            { FlockErrorCode.GamePatchGameConfigNotFound, "The patch points at a config that no longer exists. Re-check the config it patches in the Flock dashboard." },
+            { FlockErrorCode.GameConfigInvalidTag, "The backend does not accept that config tag. Valid tags are the SchemaTag values — if generated code is sending something else, re-run Flock > Settings > Codegen > Sync." },
+            { FlockErrorCode.ShopMalformedReward, "The item's stored reward cannot be granted, so the purchase was refused rather than half-applied. Fix that item's rewards in the Flock dashboard — no change to the call will work around it." },
+            { FlockErrorCode.ShopPackGrantsNothing, "This currency pack has no rewards configured, so buying it would grant nothing. Add its rewards in the Flock dashboard, or take it off sale." },
+            { FlockErrorCode.GameMissingStudioId, "The game record has no studio attached. Fix it in the Flock dashboard — nothing in the Unity project can supply it." },
+            { FlockErrorCode.LogEventGameNotFound, "The API key does not resolve to a game, so log events have nowhere to land. Check the API Key in Flock > Settings against the dashboard." },
             { FlockErrorCode.AssetAssetNotFound, "No asset by that id. Upload it in the Flock dashboard and publish it to this game version." },
             { FlockErrorCode.ShopShopNotFound, "No shop by that name. " + AuthorInDashboard },
             { FlockErrorCode.ShopItemNotFound, "No shop item by that id. " + AuthorInDashboard },
@@ -63,6 +75,20 @@ namespace Flock.Exceptions
             { FlockErrorCode.GameCommandPlayerDataNotFound, "The player has no record for that template yet. Reads do not create it — write it first with Commands.UpdatePlayerDataAsync." },
             { FlockErrorCode.PlayerDataNotFound, "The player has no record for that template yet. Reads do not create it — write it first with Commands.UpdatePlayerDataAsync." },
             { FlockErrorCode.AnalyticsCurrencyNotFound, "Transaction analytics need a currency entity for this game. Create one in the Flock dashboard." },
+            { FlockErrorCode.AnalyticsInvalidCurrencyId, "AnalyticsTransactionRequest.CurrencyId is not a 26-character ULID. Leave it null and set CurrencyCode instead — the backend resolves the code to an id." },
+            { FlockErrorCode.AnalyticsSessionNotFound, "That analytics session is no longer open on the server. The SDK opens one on sign-in and closes it on logout; a new one starts on the next sign-in." },
+            { FlockErrorCode.GameCommandRateLimited, "Too many writes to that player-data row. Send the fields together in one Commands.UpdatePlayerDataAsync call instead of one Commands.UpdatePlayerDataFieldAsync per field." },
+            { FlockErrorCode.ShopRewardCurrencyNotHeld, "The reward pays out a currency this player holds no wallet for. Grant that currency once with Commands.AddGameFundsAsync so the wallet exists before the reward lands." },
+            { FlockErrorCode.PlayerInventoryAlreadyUsed, "That inventory entry has already been consumed — each one is spendable once. Re-read Shop.GetPlayerInventoryAsync before offering it again." },
+            { FlockErrorCode.PlayerInventoryInventoryEntryNotFound, "No inventory entry by that id in this game. Shop.ConsumeAsync takes the entry's own id — a PurchaseResult.Inventory.Id — not the shop item id." },
+
+            // Player-scoped calls that name an id. Each provider differs on how the signed-in player is addressed.
+            { FlockErrorCode.AnalyticsPlayerNotFound, "The analytics call named a player the backend does not have. Sessions follow sign-in — start one only after an Authentication.LoginWith*Async call has returned." },
+            { FlockErrorCode.GameConfigPlayerNotFound, "No player matches that id. Player-scoped config reads act on the signed-in player — sign in first, then check FlockClient.Instance.CurrentPlayerId." },
+            { FlockErrorCode.PlayerBanPlayerNotFound, "No player matches that id. Player.GetBanAsync requires a player id — pass FlockClient.Instance.CurrentPlayerId for the signed-in player." },
+            { FlockErrorCode.PlayerDataPlayerNotFound, "No player matches that id. Omit the playerId argument on Player.GetAllDataAsync to read the signed-in player's records." },
+            { FlockErrorCode.PlayerInventoryPlayerNotFound, "No player matches that id. Omit the playerId argument on Shop.GetPlayerInventoryAsync to read the signed-in player's inventory." },
+            { FlockErrorCode.ShopPlayerNotFound, "No player matches that id. A purchase always acts on the signed-in player, so sign in before calling Shop.PurchaseAsync." },
         };
 
         /// <summary>Next step for a coded error, or null when the SDK has nothing to add beyond the server's own reason.</summary>

@@ -1,0 +1,138 @@
+# The backend's coded-error contract: every `detail.code` string the server can send.
+#
+# Why this file exists. FlockErrorCode is hand-maintained, and the codes it mirrors ship with backend
+# features rather than with SDK ones — so nothing connected the two, and the enum drifted silently. On
+# 2026-08-31 a diff against the live spec found 25 documented codes with no member, seven of them on
+# surface this SDK actually calls, including both Consume codes and the three reward codes that landed
+# with the 1.36.0 shop work. Nobody noticed, because a missing member is not an error: it parses to
+# Unknown and reads exactly like a failure the server chose not to code.
+#
+# The OpenAPI spec is not in this repo (it is the backend's artifact and lives beside it), and CI has no
+# route to a running backend, so this file is the checked-in snapshot the consistency workflow diffs the
+# enum against. Refreshing it is a deliberate act, and the point is that the refresh produces a reviewable
+# one-line-per-code diff instead of silence.
+#
+# Format: one code per line. `#` starts a comment. A code under [waived] is one this SDK is not expected
+# to have a member for; every other code must have one, or CI fails.
+#
+# This file is maintainer tooling: the `~` suffix keeps the folder out of Unity's AssetDatabase, and
+# FlockPackageBuilder only walks Runtime/Editor/Samples/Documentation~, so it never ships in the package.
+#
+# To refresh, from a machine that can reach the backend:
+#   curl -s http://localhost:8001/openapi.json > /tmp/live.json
+#   grep -oE '"code"[[:space:]]*:[[:space:]]*"[a-z_]+\.[a-z_]+"' /tmp/live.json \
+#     | grep -oE '[a-z_]+\.[a-z_]+' | sort -u
+# then reconcile the result against the sections below. A code that appears and is not waived needs a
+# FlockErrorCode member (name = the code PascalCased) and a hint in FlockErrorHints.cs.
+#
+# Last refreshed against the live backend: 2026-08-31 (86 documented codes, 90 /v1 paths).
+
+[documented]
+# Declared in the backend OpenAPI spec. Each must have a FlockErrorCode member.
+analytics.invalid_currency_id
+analytics.player_not_found
+analytics.session_not_found
+asset.asset_not_found
+game.game_not_found
+game.missing_studio_id
+game_command.achievement_not_found
+game_command.currency_not_found
+game_command.invalid_amount
+game_command.not_a_wallet
+game_command.not_an_achievement_record
+game_command.player_data_not_found
+game_command.player_data_not_linked_to_template
+game_command.player_template_not_found
+game_command.rate_limited
+game_command.template_validation_failed
+game_config.config_not_found
+game_config.feature_config_not_found
+game_config.invalid_tag
+game_config.player_no_game_version
+game_config.player_not_found
+game_patch.game_config_not_found
+game_patch.patch_not_found
+game_version.game_version_by_name_not_found
+game_version.game_version_not_found
+log_event.game_not_found
+notification_template.not_found
+player.account_already_linked
+player.account_not_linked
+player.apple_account_already_registered
+player.cannot_unlink_last_credential
+player.device_already_registered
+player.email_already_registered
+player.game_jwk_not_configured
+player.game_version_id_required
+player.google_account_already_registered
+player.invalid_device_registration_request
+player.invalid_link_request
+player.invalid_login_credentials
+player.invalid_refresh_token
+player.invalid_registration_request
+player.invalid_reset_code
+player.invalid_verification_code
+player.name_already_registered
+player.no_email_account
+player.oauth_failed
+player.player_not_found
+player.steam_account_already_registered
+player_ban.player_not_found
+player_data.not_found
+player_data.player_not_found
+player_inventory.already_used
+player_inventory.inventory_entry_not_found
+player_inventory.player_not_found
+player_template.not_found
+player_template.not_found_by_name
+shop.currency_not_held
+shop.currency_template_not_found
+shop.insufficient_funds
+shop.item_not_found
+shop.malformed_reward
+shop.pack_grants_nothing
+shop.player_not_found
+shop.reward_currency_not_held
+shop.shop_not_found
+shop.wallet_not_found
+shop_item.shop_item_not_found
+shop_item.shop_not_found
+
+[undocumented]
+# Sent by the running server but absent from the spec, so a spec-only diff would never see them. Listed
+# here so the member that handles each is not mistaken for dead code and removed.
+#
+# leaderboard.not_found  - the four /v1 leaderboard by-name routes declare only 200 and 422, yet an
+#                          unknown board answers 404 with this code. Verified live 2026-08-31 against
+#                          both /by-name/{name} and /by-name/{name}/standings.
+# analytics.currency_not_found - observed live in July 2026 when a transaction named a currency the game
+#                          had no entity for. Not in the current spec, and not reproduced since the
+#                          backend took over code-to-id resolution on 2026-08-26; kept because absence
+#                          from the spec is not evidence of absence from the server, as the line above
+#                          demonstrates. Retire it only after checking the backend, not the spec.
+leaderboard.not_found
+analytics.currency_not_found
+
+[waived]
+# Documented, but for features this SDK does not call — there is no surface for the error to reach.
+# Adding a member for one of these means the feature arrived, so move the code up to [documented] in the
+# same change. CI fails if a waived code turns out to have a member, which is what keeps this list honest
+# rather than letting it become the place unwanted codes go to be forgotten.
+matchmaking.already_queued
+matchmaking.match_not_found
+matchmaking.not_party_leader
+matchmaking.party_too_large
+matchmaking.player_not_eligible
+matchmaking.queue_not_found
+matchmaking.ticket_not_cancelable
+matchmaking.ticket_not_found
+multiplayer.extras_paused
+multiplayer.mint_rate_limited
+party.already_in_party
+party.cannot_kick_leader
+party.full
+party.invalid_invite_code
+party.not_a_member
+party.not_found
+party.not_party_leader
+party.target_not_a_member
