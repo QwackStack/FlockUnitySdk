@@ -1,0 +1,128 @@
+name: Tests
+
+# EditMode tests, run against a throwaway project generated here rather than against any checked-in
+# consuming project — the tests live in this repo (PackageBuilder/Tests/), so the only thing a project
+# is needed for is to give Unity something to open and a manifest to resolve the package through.
+#
+# Requires a Unity licence, so it cannot run on a pull request from a fork: GitHub withholds secrets
+# there. Those runs are skipped rather than failed, and reviewed by running the suite locally.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  editmode:
+    name: EditMode
+    # Fork PRs get no secrets, so the licence would be empty and every such run would redline for a
+    # reason the contributor cannot fix.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the package
+        uses: actions/checkout@v4
+        with:
+          path: package
+
+      - name: Generate a project that consumes the package
+        # "testables" is the load-bearing line. Both test assemblies are gated on UNITY_INCLUDE_TESTS,
+        # which Unity only defines for packages listed here — omit it and the assemblies never compile,
+        # the run finds zero tests, and it passes. Hence the test-count assertion further down.
+        #
+        # Package versions are the ones the real consuming project resolves against this editor, not
+        # guesses. The built-in modules cost nothing: they ship inside the editor image already.
+        run: |
+          set -euo pipefail
+
+          mkdir -p test-project/Packages test-project/ProjectSettings
+
+          cat > test-project/Packages/manifest.json <<'JSON'
+          {
+            "testables": ["com.flock.sdk"],
+            "dependencies": {
+              "com.flock.sdk": "file:../../package",
+              "com.unity.nuget.newtonsoft-json": "3.2.2",
+              "com.unity.test-framework": "1.6.0",
+              "com.unity.modules.androidjni": "1.0.0",
+              "com.unity.modules.animation": "1.0.0",
+              "com.unity.modules.assetbundle": "1.0.0",
+              "com.unity.modules.audio": "1.0.0",
+              "com.unity.modules.imageconversion": "1.0.0",
+              "com.unity.modules.imgui": "1.0.0",
+              "com.unity.modules.jsonserialize": "1.0.0",
+              "com.unity.modules.screencapture": "1.0.0",
+              "com.unity.modules.ui": "1.0.0",
+              "com.unity.modules.uielements": "1.0.0",
+              "com.unity.modules.unitywebrequest": "1.0.0",
+              "com.unity.modules.unitywebrequestassetbundle": "1.0.0",
+              "com.unity.modules.unitywebrequestaudio": "1.0.0",
+              "com.unity.modules.unitywebrequesttexture": "1.0.0",
+              "com.unity.modules.unitywebrequestwww": "1.0.0"
+            }
+          }
+          JSON
+
+          cat > test-project/ProjectSettings/ProjectVersion.txt <<'TXT'
+          m_EditorVersion: 6000.3.16f1
+          TXT
+
+          echo "Generated test-project against package/:"
+          cat test-project/Packages/manifest.json
+
+      - name: Cache the Library folder
+        uses: actions/cache@v4
+        with:
+          path: test-project/Library
+          key: Library-${{ hashFiles('package/**/*.cs', 'test-project/Packages/manifest.json') }}
+          restore-keys: |
+            Library-
+
+      - name: Run EditMode tests
+        uses: game-ci/unity-test-runner@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath: test-project
+          unityVersion: 6000.3.16f1
+          testMode: EditMode
+          artifactsPath: test-results
+
+      - name: The run actually found tests
+        # A green run that executed nothing is the failure this whole job exists to avoid, and it looks
+        # identical to a green run that executed everything unless the count is checked.
+        if: always()
+        run: |
+          set -euo pipefail
+
+          RESULTS=$(find test-results -name '*.xml' 2>/dev/null | head -1 || true)
+          if [ -z "$RESULTS" ]; then
+            echo "::error::No results XML under test-results/. The editor did not get far enough to write one — read the step above for the real failure."
+            exit 1
+          fi
+
+          TOTAL=$(grep -oE 'total="[0-9]+"' "$RESULTS" | head -1 | grep -oE '[0-9]+' || true)
+          if [ -z "$TOTAL" ]; then
+            echo "::error file=$RESULTS::Could not read a total from the results XML. If the report format changed, update this step with it."
+            exit 1
+          fi
+
+          if [ "$TOTAL" -eq 0 ]; then
+            echo "::error::The run reported 0 tests, which passes without testing anything. Usually the package stopped being listed under 'testables' in the generated manifest, so UNITY_INCLUDE_TESTS was never defined and the test assemblies were skipped."
+            exit 1
+          fi
+
+          echo "$TOTAL EditMode tests ran."
+
+      - name: Upload the results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: editmode-results
+          path: test-results
+          if-no-files-found: warn
