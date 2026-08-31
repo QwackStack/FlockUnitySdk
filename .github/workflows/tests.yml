@@ -73,10 +73,9 @@ jobs:
 
       - name: Turn the workspace itself into a project that consumes the package
         # The project lives at the workspace root rather than in a subdirectory, so that projectPath
-        # can be left unset below. The action only appends projectPath to the CLI arguments when it is
-        # given, and that is the argument that ends up prefixed with the container workspace twice —
-        # "Couldn't set project path to: /github/workspace/github/workspace/...". Not passing it keeps
-        # the run on the default, which is the workspace.
+        # can be left unset below. Passing it a subdirectory made the action resolve it against the
+        # container workspace twice — "Couldn't set project path to: /github/workspace/github/
+        # workspace/test-project". Unset, it defaults to the workspace and resolves once.
         #
         # "testables" is the load-bearing line. Both test assemblies are gated on UNITY_INCLUDE_TESTS,
         # which Unity only defines for packages listed here — omit it and the assemblies never compile,
@@ -141,9 +140,6 @@ jobs:
           unityVersion: 6000.3.16f1
           testMode: EditMode
           artifactsPath: test-results
-          # The action's own docs flag coverage as a crash source on some Unity versions, and nothing
-          # here consumes a coverage report.
-          coverageEnabled: false
 
       - name: The run actually found tests
         # A green run that executed nothing is the failure this whole job exists to avoid, and it looks
