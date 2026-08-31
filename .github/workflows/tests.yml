@@ -71,7 +71,13 @@ jobs:
         with:
           path: package
 
-      - name: Generate a project that consumes the package
+      - name: Turn the workspace itself into a project that consumes the package
+        # The project lives at the workspace root rather than in a subdirectory, so that projectPath
+        # can be left unset below. The action only appends projectPath to the CLI arguments when it is
+        # given, and that is the argument that ends up prefixed with the container workspace twice —
+        # "Couldn't set project path to: /github/workspace/github/workspace/...". Not passing it keeps
+        # the run on the default, which is the workspace.
+        #
         # "testables" is the load-bearing line. Both test assemblies are gated on UNITY_INCLUDE_TESTS,
         # which Unity only defines for packages listed here — omit it and the assemblies never compile,
         # the run finds zero tests, and it passes. Hence the test-count assertion further down.
@@ -81,13 +87,13 @@ jobs:
         run: |
           set -euo pipefail
 
-          mkdir -p test-project/Packages test-project/ProjectSettings
+          mkdir -p Packages ProjectSettings Assets
 
-          cat > test-project/Packages/manifest.json <<'JSON'
+          cat > Packages/manifest.json <<'JSON'
           {
             "testables": ["com.flock.sdk"],
             "dependencies": {
-              "com.flock.sdk": "file:../../package",
+              "com.flock.sdk": "file:../package",
               "com.unity.nuget.newtonsoft-json": "3.2.2",
               "com.unity.test-framework": "1.6.0",
               "com.unity.modules.androidjni": "1.0.0",
@@ -109,18 +115,18 @@ jobs:
           }
           JSON
 
-          cat > test-project/ProjectSettings/ProjectVersion.txt <<'TXT'
+          cat > ProjectSettings/ProjectVersion.txt <<'TXT'
           m_EditorVersion: 6000.3.16f1
           TXT
 
-          echo "Generated test-project against package/:"
-          cat test-project/Packages/manifest.json
+          echo "Generated a project at the workspace root, consuming package/:"
+          cat Packages/manifest.json
 
       - name: Cache the Library folder
         uses: actions/cache@v4
         with:
-          path: test-project/Library
-          key: Library-${{ hashFiles('package/**/*.cs', 'test-project/Packages/manifest.json') }}
+          path: Library
+          key: Library-${{ hashFiles('package/**/*.cs', 'Packages/manifest.json') }}
           restore-keys: |
             Library-
 
@@ -131,10 +137,13 @@ jobs:
           UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
           UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
         with:
-          projectPath: test-project
+          # projectPath is deliberately unset — see the note on the generate step above.
           unityVersion: 6000.3.16f1
           testMode: EditMode
           artifactsPath: test-results
+          # The action's own docs flag coverage as a crash source on some Unity versions, and nothing
+          # here consumes a coverage report.
+          coverageEnabled: false
 
       - name: The run actually found tests
         # A green run that executed nothing is the failure this whole job exists to avoid, and it looks
