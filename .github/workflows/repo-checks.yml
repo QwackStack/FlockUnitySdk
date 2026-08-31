@@ -1,0 +1,223 @@
+name: Repo checks
+
+# The gates that need neither Unity nor a backend, so they can run on every PR in seconds.
+# Kept separate from Consistency (the wire-contract diff) on purpose: this file is about the
+# repo agreeing with itself, that one is about the SDK agreeing with the server.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    # package.json is the canonical UPM version. Runtime/FlockSdkVersion.cs mirrors it by hand
+    # (an auto-mirroring baker was considered and rejected as overengineering), so the two drift
+    # the moment someone bumps one and forgets the other — and nothing at runtime notices, because
+    # the const is only ever read for telemetry and support. These four steps are that missing link.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Needed by the "ahead of the base branch" step, which compares against the base tip.
+          fetch-depth: 0
+
+      - name: package.json and FlockSdkVersion.cs agree
+        run: |
+          set -euo pipefail
+
+          PKG='package.json'
+          SRC='Runtime/FlockSdkVersion.cs'
+
+          for f in "$PKG" "$SRC"; do
+            if [ ! -f "$f" ]; then
+              echo "::error::$f is missing. The version check reads both files; if one moved, update this workflow with it."
+              exit 1
+            fi
+          done
+
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          SRC_VERSION=$(grep -oE 'Current[[:space:]]*=[[:space:]]*"[^"]+"' "$SRC" | head -1 | grep -oE '"[^"]+"' | tr -d '"')
+
+          if [ -z "$SRC_VERSION" ]; then
+            echo "::error file=$SRC::Could not read the Current const. This check expects a line of the form: internal const string Current = <quoted version>;"
+            exit 1
+          fi
+
+          if [ "$PKG_VERSION" != "$SRC_VERSION" ]; then
+            echo "::error file=$SRC::FlockSdkVersion.Current is $SRC_VERSION but package.json is $PKG_VERSION. This const is hand-maintained — set it to $PKG_VERSION in the same commit as the package.json bump."
+            exit 1
+          fi
+
+          echo "package.json and $SRC agree on $PKG_VERSION."
+
+      - name: The package version is valid semver
+        run: |
+          set -euo pipefail
+
+          PKG_VERSION=$(node -p "require('./package.json').version")
+
+          if ! printf '%s' "$PKG_VERSION" | grep -qE '^[0-9]+[.][0-9]+[.][0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error file=package.json::version is '$PKG_VERSION', which is not valid semver. UPM needs MAJOR.MINOR.PATCH, optionally followed by a prerelease suffix."
+            exit 1
+          fi
+
+          echo "$PKG_VERSION is valid semver."
+
+      - name: CHANGELOG.md has an entry for the package version
+        run: |
+          set -euo pipefail
+
+          PKG_VERSION=$(node -p "require('./package.json').version")
+
+          if ! grep -qF "## [$PKG_VERSION]" CHANGELOG.md; then
+            echo "::error file=CHANGELOG.md::No entry for $PKG_VERSION. Add a '## [$PKG_VERSION]' heading describing what changed, matching the format of the entries above it."
+            exit 1
+          fi
+
+          echo "CHANGELOG.md documents $PKG_VERSION."
+
+      - name: The package version is ahead of the base branch
+        # Only meaningful on a PR, and only when shipped code actually changed — a docs-only or
+        # CI-only PR has nothing to version, and demanding a bump there just trains people to
+        # bump for no reason.
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+
+          BASE_REF='${{ github.base_ref }}'
+          git fetch --no-tags --quiet origin "$BASE_REF"
+
+          CHANGED=$(git diff --name-only FETCH_HEAD...HEAD -- Runtime Editor)
+          if [ -z "$CHANGED" ]; then
+            echo "No files under Runtime/ or Editor/ changed — no version bump required."
+            exit 0
+          fi
+
+          git show FETCH_HEAD:package.json > /tmp/base-package.json
+          BASE_VERSION=$(node -p "require('/tmp/base-package.json').version")
+          PKG_VERSION=$(node -p "require('./package.json').version")
+
+          if [ "$PKG_VERSION" = "$BASE_VERSION" ]; then
+            echo "::error file=package.json::This PR changes Runtime/ or Editor/ but leaves version at $PKG_VERSION, the same as $BASE_REF. Bump package.json and Runtime/FlockSdkVersion.cs together, and add the CHANGELOG entry."
+            exit 1
+          fi
+
+          LOWEST=$(printf '%s\n%s\n' "$BASE_VERSION" "$PKG_VERSION" | sort -V | head -1)
+          if [ "$LOWEST" != "$BASE_VERSION" ]; then
+            echo "::error file=package.json::version $PKG_VERSION is behind $BASE_REF, which is at $BASE_VERSION. Bump to something above $BASE_VERSION."
+            exit 1
+          fi
+
+          echo "$PKG_VERSION is ahead of $BASE_REF ($BASE_VERSION)."
+
+  conventions:
+    # Three repo rules that are cheap to state and easy to break in a hurry. Each one has already
+    # been broken at least once by hand, which is why it is here rather than in a style guide.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Nothing tracked under Assets/Flock/Generated
+        run: |
+          set -euo pipefail
+
+          TRACKED=$(git ls-files -- 'Assets/Flock/Generated')
+
+          if [ -n "$TRACKED" ]; then
+            printf '%s\n' "$TRACKED" | while IFS= read -r f; do
+              [ -n "$f" ] || continue
+              echo "::error file=$f::Tracked codegen output."
+            done
+            echo "::error::Assets/Flock/Generated/ is Flock-owned and wiped on every Codegen sync, so anything committed there is lost without warning. Untrack it with: git rm -r --cached 'Assets/Flock/Generated'"
+            exit 1
+          fi
+
+          echo "Nothing tracked under Assets/Flock/Generated."
+
+      - name: Explicit types only — no var in Runtime or Editor
+        # A plain grep for the word is not good enough: the in-editor guide holds C# samples inside
+        # multi-line verbatim strings, and those samples legitimately read "var game = ...". So this
+        # strips comments and string literals first and only then looks for the token.
+        run: |
+          set -euo pipefail
+
+          cat > /tmp/find-var.pl <<'PERL'
+          # Strips comments and string literals, then reports a real `var` token.
+          # Deliberately backslash-free so it survives being embedded in this heredoc.
+          my $BS = chr(92);
+          my ($in_block, $in_verbatim, $found) = (0, 0, 0);
+          while (<>) {
+              my $line = $_;
+              my ($out, $i, $len) = ('', 0, length($line));
+              while ($i < $len) {
+                  my $c = substr($line, $i, 1);
+                  my $n = ($i + 1 < $len) ? substr($line, $i + 1, 1) : '';
+                  if ($in_block) {
+                      if ($c eq '*' && $n eq '/') { $in_block = 0; $i += 2; } else { $i++; }
+                      next;
+                  }
+                  if ($in_verbatim) {
+                      if ($c eq '"' && $n eq '"') { $i += 2; }
+                      elsif ($c eq '"') { $in_verbatim = 0; $i++; }
+                      else { $i++; }
+                      next;
+                  }
+                  if ($c eq '/' && $n eq '/') { last; }
+                  if ($c eq '/' && $n eq '*') { $in_block = 1; $i += 2; next; }
+                  if ($c eq '@' && $n eq '"') { $in_verbatim = 1; $i += 2; next; }
+                  if ($c eq '"' || $c eq "'") {
+                      my $q = $c; $i++;
+                      while ($i < $len) {
+                          my $d = substr($line, $i, 1);
+                          if ($d eq $BS) { $i += 2; next; }
+                          if ($d eq $q) { $i++; last; }
+                          $i++;
+                      }
+                      next;
+                  }
+                  $out .= $c; $i++;
+              }
+              if ($out =~ /(?<![A-Za-z0-9_])var(?![A-Za-z0-9_])/) {
+                  print "$ARGV:$.: $line";
+                  $found = 1;
+              }
+              if (eof) { close ARGV; ($in_block, $in_verbatim) = (0, 0); }
+          }
+          exit($found ? 1 : 0);
+          PERL
+
+          FILES=$(git ls-files -- Runtime Editor | grep -E '[.]cs$' || true)
+          if [ -z "$FILES" ]; then
+            echo "::error::No C# files found under Runtime/ or Editor/. If the layout changed, update this workflow with it."
+            exit 1
+          fi
+
+          if printf '%s\n' "$FILES" | xargs perl /tmp/find-var.pl; then
+            echo "$(printf '%s\n' "$FILES" | wc -l) C# files checked — no var."
+          else
+            echo "::error::Explicit types only. Replace each var above with the concrete type; the codebase had a dedicated pass removing them and reintroducing one silently undoes it."
+            exit 1
+          fi
+
+      - name: No shipped file mentions another engine's SDK
+        # CHANGELOG.md is excluded because its released entries are a published record and one of
+        # them names another engine on purpose. .github/workflows/ is excluded because this very
+        # step has to contain the words it searches for.
+        run: |
+          set -euo pipefail
+
+          HITS=$(git ls-files -z \
+            | grep -zvE '^(CHANGELOG[.]md|[.]github/workflows/)' \
+            | xargs -0 grep -IinE 'unreal|blueprint|godot|[.]uplugin' || true)
+
+          if [ -n "$HITS" ]; then
+            printf '%s\n' "$HITS"
+            echo "::error::Shipped code and docs never mention another engine's SDK — cross-references belong in the internal working docs. Remove the mention above, keeping the sentence otherwise intact."
+            exit 1
+          fi
+
+          echo "No cross-engine references in shipped files."

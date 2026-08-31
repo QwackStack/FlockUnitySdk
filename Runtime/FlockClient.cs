@@ -19,8 +19,7 @@ namespace Flock
     {
         /// <summary>
         /// API version segment appended to <see cref="GetApiUrl"/> for all SDK HTTP calls.
-        /// Single source of truth — bump here (and in the Unreal SDK for parity) when the
-        /// backend cuts a new major API version.
+        /// Single source of truth — bump here when the backend cuts a new major API version.
         /// </summary>
         public const string ApiVersion = "v1";
 

@@ -5,9 +5,8 @@
 Assets are stand-alone files you upload via the Flock dashboard (images, audio,
 JSON, raw bytes) and download at runtime — think "files on a CDN with metadata".
 Good for content you want to swap without rebuilding the game (icons, sound effects,
-art swaps), and for content shared with the Unreal SDK. NOT a replacement for Unity
-Addressables: prefabs, scenes, ScriptableObjects, materials and shaders still need
-Unity's own pipeline.
+art swaps). NOT a replacement for Unity Addressables: prefabs, scenes,
+ScriptableObjects, materials and shaders still need Unity's own pipeline.
 
 ```csharp
 // Assets — list / lookup

@@ -11,8 +11,8 @@ For security problems, follow [SECURITY.md](SECURITY.md) instead of opening a pu
 ## Before writing code
 
 For anything beyond a small fix, **open an issue first** and wait for a maintainer
-to confirm the direction. The SDK is kept at feature parity with a separate Unreal
-SDK, so API changes are weighed against that — an early heads-up avoids wasted work.
+to confirm the direction. Changes to the public API surface are weighed carefully
+against what already ships — an early heads-up avoids wasted work.
 
 ## Development setup
 
