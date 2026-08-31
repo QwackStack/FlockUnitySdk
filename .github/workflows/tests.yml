@@ -150,32 +150,38 @@ jobs:
         run: |
           set -euo pipefail
 
-          REPORTS=$(find test-results -name '*-results.xml' 2>/dev/null | sort || true)
-          if [ -z "$REPORTS" ]; then
-            echo "::error::No results XML under test-results/. The editor did not get far enough to write one — read the step above for the real failure."
-            exit 1
-          fi
+          # One report per mode, named after it. Naming the modes rather than globbing is what makes a
+          # mode that never ran a failure: a missing file is silence, and silence would otherwise pass.
+          # If testMode above changes, change this list with it.
+          EXPECTED="editmode playmode"
 
-          empty=0
-          for report in $REPORTS; do
-            mode=$(basename "$report" -results.xml)
+          bad=0
+          for mode in $EXPECTED; do
+            report="test-results/${mode}-results.xml"
+
+            if [ ! -f "$report" ]; then
+              echo "::error::No $mode report at $report, so that mode did not run. Read the step above for the real failure, or update EXPECTED here if testMode changed."
+              bad=$((bad + 1))
+              continue
+            fi
 
             total=$(grep -oE 'total="[0-9]+"' "$report" | head -1 | grep -oE '[0-9]+' || true)
             if [ -z "$total" ]; then
               echo "::error file=$report::Could not read a total from this report. If the format changed, update this step with it."
-              exit 1
+              bad=$((bad + 1))
+              continue
             fi
 
             if [ "$total" -eq 0 ]; then
               echo "::error file=$report::The $mode run reported 0 tests, which passes without testing anything. Usually the package stopped being listed under 'testables' in the generated manifest, so UNITY_INCLUDE_TESTS was never defined and the test assemblies were skipped."
-              empty=$((empty + 1))
+              bad=$((bad + 1))
               continue
             fi
 
             echo "$total $mode tests ran."
           done
 
-          [ "$empty" -eq 0 ]
+          [ "$bad" -eq 0 ]
 
       - name: Upload the results
         uses: actions/upload-artifact@v4
