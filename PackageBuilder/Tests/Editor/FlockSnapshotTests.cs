@@ -108,6 +108,87 @@ namespace Flock.Tests.Editor
             Assert.IsFalse(_store.TryRead<SnapshotProbe>("gv-old/cat", "k", out _), "Other versions pruned.");
         }
 
+        // ---- SNAP-13b: state must outlive a version bump (X11) ----
+        [Test]
+        public void PruneOtherVersions_NeverTouchesTheStateScope()
+        {
+            // The defect: the offline write queue used to live at {version}/command/{player}, so shipping a
+            // build with a new GameVersionId deleted the player's unsent writes — no error, no log.
+            string state = $"{FlockSnapshotStore.StateScope}/command/p-1";
+            _store.Write(state, "pending_writes", Probe("queued"));
+            _store.Write("gv-old/cat", "k", Probe("cached"));
+
+            _store.PruneOtherVersions("gv-new");
+
+            Assert.IsTrue(_store.TryRead<SnapshotProbe>(state, "pending_writes", out _),
+                "Queued writes must survive a game-version change.");
+            Assert.IsFalse(_store.TryRead<SnapshotProbe>("gv-old/cat", "k", out _),
+                "Cached answers from another version must still be pruned.");
+
+            _store.PruneOtherVersions("gv-newer-still");
+            Assert.IsTrue(_store.TryRead<SnapshotProbe>(state, "pending_writes", out _),
+                "And must survive every subsequent one too.");
+        }
+
+        // ---- SNAP-13c: the pre-fix queue is rescued, not pruned (X11) ----
+        [Test]
+        public void MigrateLegacyState_MovesAQueueOutOfTheVersionTree_BeforeItIsPruned()
+        {
+            _store.Write("gv-old/command/p-1", "pending_writes", Probe("queued"));
+            _store.Write("gv-old/cat", "k", Probe("cached"));
+
+            Assert.AreEqual(1, _store.MigrateLegacyState("command"), "One queue file should have moved.");
+            _store.PruneOtherVersions("gv-new");
+
+            Assert.IsTrue(_store.TryRead<SnapshotProbe>(
+                    $"{FlockSnapshotStore.StateScope}/command/p-1", "pending_writes", out SnapshotProbe kept),
+                "The queued write should have survived the upgrade.");
+            Assert.AreEqual("queued", kept.Value);
+            Assert.IsFalse(_store.TryRead<SnapshotProbe>("gv-old/command/p-1", "pending_writes", out _),
+                "And should no longer be in the version tree.");
+            Assert.IsFalse(_store.TryRead<SnapshotProbe>("gv-old/cat", "k", out _),
+                "Cache beside it is left for the pruner — the migration moves state and nothing else.");
+        }
+
+        // ---- SNAP-13d ----
+        [Test]
+        public void MigrateLegacyState_IsIdempotent_AndPrefersTheNewerLayout()
+        {
+            // It runs on every Create(), so it has to be idempotent rather than merely correct once.
+            _store.Write("gv-old/command/p-1", "pending_writes", Probe("legacy"));
+            Assert.AreEqual(1, _store.MigrateLegacyState("command"));
+            Assert.AreEqual(0, _store.MigrateLegacyState("command"), "Second run has nothing left to move.");
+
+            // Two versions can each hold a queue for one player — one from before an upgrade, one from a
+            // build that was rolled back. The newer layout wins; the point is that neither is left in the
+            // version tree for the pruner to eat.
+            _store.Write("gv-older/command/p-1", "pending_writes", Probe("even-older"));
+            _store.MigrateLegacyState("command");
+
+            Assert.IsTrue(_store.TryRead<SnapshotProbe>(
+                $"{FlockSnapshotStore.StateScope}/command/p-1", "pending_writes", out SnapshotProbe kept));
+            Assert.AreEqual("legacy", kept.Value, "The already-migrated copy should win.");
+            Assert.IsFalse(_store.TryRead<SnapshotProbe>("gv-older/command/p-1", "pending_writes", out _),
+                "And the legacy copy must not be left behind for the pruner.");
+        }
+
+        // ---- SNAP-13e ----
+        [Test]
+        public void StateScope_CannotCollideWithARealGameVersion()
+        {
+            // A version id is a ULID ([0-9A-Z]) so it can never sanitize to the reserved name, and an unset
+            // version sanitizes to "_" rather than to it. Without both, the pruner would either eat state or
+            // spare a stale version — and neither would be visible.
+            _store.Write($"{FlockSnapshotStore.StateScope}/command/p-1", "pending_writes", Probe("queued"));
+            _store.PruneOtherVersions("01KZ3ZY8RQHTXRK9VS8H89P296");
+
+            Assert.IsTrue(_store.TryRead<SnapshotProbe>(
+                    $"{FlockSnapshotStore.StateScope}/command/p-1", "pending_writes", out _),
+                "A realistic ULID version must not collide with the reserved state scope.");
+            Assert.IsTrue(FlockSnapshotStore.StateScope.StartsWith("_"),
+                "The reserved name must not look like a ULID.");
+        }
+
         // ---- SNAP-14 ----
         [Test]
         public void Keys_WithUnsafeChars_DoNotCollide_ViaHashSuffix()

@@ -289,6 +289,15 @@ namespace Flock.Providers
             }, $"Fetch player data for template {playerTemplateId}", cancellationToken);
         }
 
+        /// <summary>The player's ban record. Never null — check <see cref="PlayerBan.IsBanned"/>, because a player with no ban is the ordinary case rather than an error.</summary>
+        /// <remarks>
+        /// This is one of the few routes whose <c>result</c> is nullable: a 2xx carrying <c>result: null</c> is
+        /// the server saying "not banned", not a malformed response. It therefore does not go through
+        /// <see cref="FlockProviderBase.ValidateResponse{T}"/>, which rejects a null result and is right to for
+        /// every route whose result is required. Routing it through there made the majority path — any player
+        /// who has never been banned — throw <c>FlockNetworkException("Invalid response from server")</c>, which
+        /// also pointed the developer at the network and the backend when the request had in fact succeeded.
+        /// </remarks>
         public async Task<PlayerBan> GetBanAsync(string playerId, CancellationToken cancellationToken = default)
         {
             RequireNotEmpty(playerId, "Player ID");
@@ -298,8 +307,13 @@ namespace Flock.Providers
             {
                 GenericResponse<PlayerBan> response = await FlockHttpClient.GetAsync<GenericResponse<PlayerBan>>(
                     $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.PlayerBan}?player_id={playerId}", Client.GetBaseHeaders(), cancellationToken);
-                ValidateResponse(response);
-                return response.Result;
+
+                // No envelope at all is still a misread and still throws. Only the null RESULT is tolerated,
+                // and it is tolerated as data rather than smoothed over.
+                if (response == null)
+                    throw new FlockNetworkException("Invalid response from server");
+
+                return response.Result ?? new PlayerBan();
             }, "Get player ban", cancellationToken);
         }
     }
