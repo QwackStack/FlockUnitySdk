@@ -6,6 +6,39 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.40.0]
+
+### Fixed
+- **`Player.GetBanAsync` no longer throws for a player who is not banned.** The server answers a 2xx with
+  `result: null` for anyone with no ban — the ordinary state of almost every player — and that was going
+  through the shared null-result check and surfacing as
+  `FlockNetworkException("Invalid response from server")`. The message compounded it: the caller was told
+  the *network* had failed and the *server* had misbehaved, when the request had in fact succeeded.
+  The call now returns an empty `PlayerBan` for that answer and **never returns null**.
+- **Shipping a build with a new Game Version no longer discards the player's queued offline writes.** A
+  write made with no reachable server is kept on disk and replayed when one comes back — but the queue
+  was stored under the game version, and the SDK deletes every *other* version's stored data at startup.
+  So a player who saved offline and then took an app update lost those writes: no error, no log. The
+  queue now lives outside the version-scoped tree, where that cleanup cannot reach it.
+
+  **A queue written by an older build is moved for you, once, on the next `FlockClient.Create`** — nothing
+  is lost by upgrading. A write queued under an older version still routes and still addresses the right
+  row; if its template changed in the meantime the server refuses the replay and the queue reports that
+  and drops it, which is a far better outcome than deleting the write unasked.
+
+### Added
+- **`PlayerBan.IsBanned`** — the only test for whether a record describes a real ban, since `GetBanAsync`
+  now always returns a record. **`PlayerBan.IsBannedFrom(feature)`** for the per-feature question, because
+  a player can be banned from one feature and not others.
+- **`FlockSnapshotStore.StateScope`**, the reserved place for things that are not re-fetchable. The
+  offline cache is scoped by game version and pruned when that version changes, which is right for a
+  cached response and wrong for anything the server has never seen. Anything written under this scope
+  survives a version change.
+
+### Notes
+- **Cached answers behave exactly as before**: a new game version still drops the previous one's
+  snapshots, so a running build picks up dashboard changes rather than serving stale content.
+
 ## [1.39.0]
 
 ### Changed

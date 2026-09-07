@@ -135,6 +135,11 @@ namespace Flock
                         "Game Version, then rebuild. The Game Version ID is baked into FlockConfig at " +
                         "edit time — runtime init never contacts the server.");
 
+                // Order matters and is the whole fix: rescue state out of the version-scoped tree BEFORE
+                // pruning it. A queue left where older builds put it would already be deleted by the time its
+                // provider went looking, which is how a game-version change used to lose a player's unsent
+                // offline writes.
+                client._snapshotStore?.MigrateLegacyState(FlockCommandProvider.SnapshotCategory);
                 client._snapshotStore?.PruneOtherVersions(client._initConfig.GameVersionId);
                 client.InitializeServices();
                 _instance = client;

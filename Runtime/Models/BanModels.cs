@@ -34,5 +34,24 @@ namespace Flock.Models
 
         [JsonProperty("updated_at")]
         public string UpdatedAt { get; set; }
+
+        /// <summary>True when this is a real ban record rather than the "not banned" empty one.</summary>
+        /// <remarks>
+        /// <b>The only test.</b> <c>GetBanAsync</c> never returns null: a player with no ban is the ordinary
+        /// state of almost everyone, so the server answers a 2xx with <c>result: null</c> and the SDK turns
+        /// that into an empty record — not an error, and not a null every call site has to guard.
+        /// </remarks>
+        [JsonIgnore]
+        public bool IsBanned => !string.IsNullOrEmpty(Id);
+
+        /// <summary>True when this player is banned from <paramref name="feature"/> specifically.</summary>
+        /// <remarks>
+        /// A player can be banned from one feature and not others, so <see cref="IsBanned"/> alone is not
+        /// enough to gate a particular action.
+        /// </remarks>
+        public bool IsBannedFrom(string feature)
+        {
+            return Data != null && Data.ContainsKey(feature);
+        }
     }
 }
