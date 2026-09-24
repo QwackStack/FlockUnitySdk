@@ -17,6 +17,21 @@ namespace Flock.Http
             Client = client ?? throw new ArgumentNullException(nameof(client));
         }
 
+        /// <summary>Runs an <paramref name="operation"/> that has nothing to return, with the same retry, refresh and error rules as <see cref="ExecuteAsync{T}"/>.</summary>
+        protected Task ExecuteWithoutResultAsync(
+            Func<Task> operation,
+            string context,
+            CancellationToken cancellationToken,
+            bool idempotent = true,
+            int? maxRetriesOverride = null)
+        {
+            return ExecuteAsync(async () =>
+            {
+                await operation();
+                return true;
+            }, context, cancellationToken, idempotent, maxRetriesOverride);
+        }
+
         /// <summary>Runs <paramref name="operation"/> via the retry handler. Pass idempotent=false for non-idempotent mutations (e.g. currency grants): ambiguous failures surface instead of being re-sent, and only provably-not-processed failures (408/429) are retried.</summary>
         protected async Task<T> ExecuteAsync<T>(
             Func<Task<T>> operation,

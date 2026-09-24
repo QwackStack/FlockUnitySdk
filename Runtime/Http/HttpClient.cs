@@ -78,7 +78,73 @@ namespace Flock.Http
             CancellationToken cancellationToken = default)
             => SendAsync<T>(new FlockHttpRequest { Method = "DELETE", Url = url, Headers = headers }, cancellationToken);
 
+        /// <summary>Sends to a route whose answer has nothing to read: a 2xx with no body or a JSON body is a success, a 204 included.</summary>
+        public static Task PostAsync(string url, object data, Dictionary<string, string> headers = null,
+            CancellationToken cancellationToken = default)
+            => SendWithoutReadingAsync(new FlockHttpRequest
+            {
+                Method = "POST", Url = url, Headers = headers, JsonBody = JsonConvert.SerializeObject(data)
+            }, cancellationToken);
+
+        /// <summary>Sends to a route whose answer has nothing to read: a 2xx with no body or a JSON body is a success, a 204 included.</summary>
+        public static Task PutAsync(string url, object data, Dictionary<string, string> headers = null,
+            CancellationToken cancellationToken = default)
+            => SendWithoutReadingAsync(new FlockHttpRequest
+            {
+                Method = "PUT", Url = url, Headers = headers, JsonBody = JsonConvert.SerializeObject(data)
+            }, cancellationToken);
+
+        /// <summary>Sends to a route whose answer has nothing to read: a 2xx with no body or a JSON body is a success, a 204 included.</summary>
+        public static Task PatchAsync(string url, object data, Dictionary<string, string> headers = null,
+            CancellationToken cancellationToken = default)
+            => SendWithoutReadingAsync(new FlockHttpRequest
+            {
+                Method = "PATCH", Url = url, Headers = headers, JsonBody = JsonConvert.SerializeObject(data)
+            }, cancellationToken);
+
+        /// <summary>Sends to a route whose answer has nothing to read: a 2xx with no body or a JSON body is a success, a 204 included.</summary>
+        public static Task DeleteAsync(string url, Dictionary<string, string> headers = null,
+            CancellationToken cancellationToken = default)
+            => SendWithoutReadingAsync(new FlockHttpRequest { Method = "DELETE", Url = url, Headers = headers }, cancellationToken);
+
+        // A body that is there must still be JSON: a captive portal's page is not the server's answer.
+        private static async Task SendWithoutReadingAsync(FlockHttpRequest request, CancellationToken cancellationToken)
+        {
+            FlockHttpResponse response = await SendAndCheckStatusAsync(request, cancellationToken);
+
+            if (string.IsNullOrWhiteSpace(response.Body))
+                return;
+
+            try
+            {
+                JToken.Parse(response.Body);
+            }
+            catch (JsonException ex)
+            {
+                throw new FlockSerializationException("Malformed response body", ex) { Body = response.Body };
+            }
+        }
+
+        // A read exists for its body, so a 2xx without one still fails it.
         private static async Task<T> SendAsync<T>(FlockHttpRequest request, CancellationToken cancellationToken)
+        {
+            FlockHttpResponse response = await SendAndCheckStatusAsync(request, cancellationToken);
+
+            if (string.IsNullOrEmpty(response.Body))
+                throw new FlockSerializationException("Empty response from server");
+
+            try
+            {
+                return JsonConvert.DeserializeObject<T>(response.Body);
+            }
+            catch (JsonException ex)
+            {
+                throw new FlockSerializationException("Malformed response body", ex) { Body = response.Body };
+            }
+        }
+
+        // The one place a response's status becomes an exception, for reads and sends alike.
+        private static async Task<FlockHttpResponse> SendAndCheckStatusAsync(FlockHttpRequest request, CancellationToken cancellationToken)
         {
             FlockHttpResponse response = await Adapter.SendAsync(request, cancellationToken);
 
@@ -112,17 +178,7 @@ namespace Flock.Http
                 };
             }
 
-            if (string.IsNullOrEmpty(response.Body))
-                throw new FlockSerializationException("Empty response from server");
-
-            try
-            {
-                return JsonConvert.DeserializeObject<T>(response.Body);
-            }
-            catch (JsonException ex)
-            {
-                throw new FlockSerializationException("Malformed response body", ex) { Body = response.Body };
-            }
+            return response;
         }
 
         // Two shapes share `detail`: the game routes' coded {code,message} object, and FastAPI's own 422 array of field errors.

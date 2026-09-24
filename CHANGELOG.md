@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.41.0]
+
+### Fixed
+- **Games built with IL2CPP at Medium or High managed stripping can sign players in and send analytics again.**
+  At those levels the linker removed what only the JSON serializer reaches: the constructors and property getters of
+  the SDK's models. Every request reached the server without its fields (sign-in, session start and log events were
+  refused), responses could not be read, and queued log events were dropped as refused. The SDK now keeps its own
+  models in every player build, at every stripping level. Minimal and Low were never affected.
+  - **Code generated with Codegen is kept too**, with nothing to regenerate: the classes under `Flock.Generated` are
+    kept in whichever assembly they compile into, and the rest of your game is stripped as before.
+  - This happens in the build itself. A `link.xml` shipped inside a package is not read by Unity's linker, so the SDK
+    hands the linker its list on every player build instead.
+- **A success with nothing in its body is now a success.** A `204 No Content`, or a `200` with an empty body, from a
+  route that has nothing to return (analytics events, log events, transactions, ending a session) used to raise
+  `FlockSerializationException: Empty response from server`, and a batch of queued events answered that way was
+  deleted as unreadable. Reads that exist for their answer still fail on an empty body, as before.
+- **Queued events are kept when the answer is not the server's.** A `200` whose body is not JSON (a captive portal's
+  sign-in page, say) used to delete the batch it answered as unreadable, though the server never saw it. The batch now
+  stays queued and goes out on a later flush.
+
+### Added
+- **`FlockHttpClient.PostAsync`, `PutAsync`, `PatchAsync` and `DeleteAsync` without a type argument**, for a route
+  whose answer has nothing to read: a 2xx with no body or a JSON body is a success, a 204 included. A body that is
+  not JSON raises `FlockSerializationException`, and every refusal is raised exactly as the reading overloads raise it.
+- **`FlockProviderBase.ExecuteWithoutResultAsync`**, for a provider of your own: runs a call that returns nothing with
+  the same retry, token refresh and error rules as `ExecuteAsync`.
+
 ## [1.40.0]
 
 ### Fixed

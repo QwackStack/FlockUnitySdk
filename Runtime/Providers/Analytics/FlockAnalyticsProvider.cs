@@ -583,8 +583,8 @@ namespace Flock.Providers
         // Public APIs go through the cache; the buffered flush uses the batch endpoint.
         private Task SendLogEventAsync(LogEventRequest request, CancellationToken cancellationToken)
         {
-            return ExecuteAsync(
-                () => FlockHttpClient.PostAsync<Dictionary<string, object>>(
+            return ExecuteWithoutResultAsync(
+                () => FlockHttpClient.PostAsync(
                     $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.LogEventSingle}",
                     request, Client.GetBaseHeaders(), cancellationToken),
                 "Log event (single)", cancellationToken);
@@ -598,8 +598,8 @@ namespace Flock.Providers
                 Events = requests as List<LogEventRequest> ?? new List<LogEventRequest>(requests)
             };
 
-            return ExecuteAsync(
-                () => FlockHttpClient.PostAsync<Dictionary<string, object>>(
+            return ExecuteWithoutResultAsync(
+                () => FlockHttpClient.PostAsync(
                     $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.LogEvent}",
                     payload, Client.GetBaseHeaders(), cancellationToken),
                 "Log events (batch)", cancellationToken);
@@ -694,8 +694,8 @@ namespace Flock.Providers
             AnalyticsEventRequest eve,
             CancellationToken cancellationToken)
         {
-            return ExecuteAsync(
-                () => FlockHttpClient.PostAsync<Dictionary<string, object>>(
+            return ExecuteWithoutResultAsync(
+                () => FlockHttpClient.PostAsync(
                     $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.AnalyticsEventsSingle}",
                     eve, Client.GetBaseHeaders(), cancellationToken),
                 "Track single event", cancellationToken);
@@ -710,8 +710,8 @@ namespace Flock.Providers
                 Events = events as List<AnalyticsEventRequest> ?? new List<AnalyticsEventRequest>(events)
             };
 
-            return ExecuteAsync(
-                () => FlockHttpClient.PostAsync<Dictionary<string, object>>(
+            return ExecuteWithoutResultAsync(
+                () => FlockHttpClient.PostAsync(
                     $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.AnalyticsEvents}",
                     payload, Client.GetBaseHeaders(), cancellationToken),
                 "Track events", cancellationToken);
@@ -835,8 +835,8 @@ namespace Flock.Providers
             if (string.IsNullOrEmpty(request.CreatedAt))
                 request.CreatedAt = DateTime.UtcNow.ToString("o");
 
-            await ExecuteAsync(
-                () => FlockHttpClient.PostAsync<Dictionary<string, object>>(
+            await ExecuteWithoutResultAsync(
+                () => FlockHttpClient.PostAsync(
                     $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.AnalyticsTransactions}",
                     request, Client.GetBaseHeaders(), cancellationToken),
                 "Record transaction", cancellationToken);
@@ -1117,8 +1117,8 @@ namespace Flock.Providers
                 EndedAt = (snapshot.EndTimeUtc ?? DateTime.UtcNow).ToString("o")
             };
 
-            await ExecuteAsync(
-                () => FlockHttpClient.PatchAsync<Dictionary<string, object>>(
+            await ExecuteWithoutResultAsync(
+                () => FlockHttpClient.PatchAsync(
                     $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.AnalyticsSessionById(sessionId)}",
                     request, Client.GetBaseHeaders(), cancellationToken),
                 "End session", cancellationToken).ConfigureAwait(false);

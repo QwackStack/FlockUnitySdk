@@ -199,10 +199,11 @@ namespace Flock.Analytics
                 _logger?.LogWarning($"Pending events batch dropped (validation): {ex.Message}");
                 return FlushOutcome.Drop;
             }
+            // A success that cannot be read was not the server's answer (a captive portal's page), so the batch is kept.
             catch (FlockSerializationException ex)
             {
-                _logger?.LogWarning($"Pending events batch dropped (unreadable response): {ex.Message}");
-                return FlushOutcome.Drop;
+                _logger?.LogDebug($"Pending events flush deferred (unreadable response): {ex.Message}");
+                return FlushOutcome.Defer;
             }
             catch (FlockNetworkException ex) when (FlockNetworkException.IsPermanentStatus(ex.StatusCode))
             {

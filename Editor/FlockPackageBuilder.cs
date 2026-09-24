@@ -362,6 +362,9 @@ namespace Flock.Editor
             {
                 CleanStagingArea();
                 StageFiles(normalizedSource, excludedRelpaths, excludedFolders);
+                // Without the Editor folder there is no build hook to keep the models, but a link.xml under Assets is read.
+                if (!_includeEditor)
+                    File.WriteAllText(StagingRoot + "Runtime/link.xml", FlockModelPreservation.BuildLinkXml(new Dictionary<string, SortedSet<string>>()));
                 WriteOrDeleteRsp(StagingRuntimeRsp, defines);
                 if (_includeEditor)
                     WriteOrDeleteRsp(StagingEditorRsp, defines);

@@ -40,9 +40,9 @@ PackageBuilder/Tests/Editor/   EditMode tests (asmdef Flock.Tests.Editor)
 - **Analytics/FlockAnalyticsProvider** — sends sessions/events/transactions. · **NullAnalyticsProvider** — no-op when `FLOCK_NO_ANALYTICS`.
 
 ## Runtime/Http
-- **FlockHttpClient** — static GET/POST/… facade; maps status→exception, parses the coded `detail` (object *or* FastAPI's field-error array) into `Code`/`ServerMessage`, attaches the matching `Hint`.
+- **FlockHttpClient** — static GET/POST/… facade; maps status→exception in one place for every call, parses the coded `detail` (object *or* FastAPI's field-error array) into `Code`/`ServerMessage`, attaches the matching `Hint`. `…Async<T>` reads the body and fails on an empty one; the overloads without a type argument are for routes with nothing to read (a 2xx with no body or a JSON body is a success, a 204 included; a body that is not JSON, such as a captive portal's page, still fails) and carry the six no-schema analytics/log/session-end calls.
 - **FlockEndpoints** — every relative API path the SDK calls (consts + parameterized builders); no raw path literals at call sites.
-- **FlockProviderBase** — base class for providers; shared fetch + snapshot + validate helpers.
+- **FlockProviderBase** — base class for providers; shared fetch + snapshot + validate helpers. `ExecuteAsync<T>` runs a call through retry + token refresh; `ExecuteWithoutResultAsync` does the same for a call that returns nothing.
 - **IFlockHttpAdapter** — per-platform transport seam; `FlockHttpRequest`/`FlockHttpResponse`/`FlockHttpResult` normalize it.
 - **SystemNetHttpAdapter** (non-WebGL) / **UnityWebRequestHttpAdapter** (WebGL) — transport impls.
 - **RetryPolicy** / **RetryHandler** — transient-failure backoff honoring `Retry-After`.
@@ -79,6 +79,7 @@ Plain serializable DTOs mirroring backend wire shapes — auth, analytics, shop,
 - **FlockConfigLocator** — single source for "which FlockConfig asset".
 - **FlockVersionResolver** — bakes Game-Version name→id at edit time so runtime init needs no network.
 - **FlockPlayModeGuard** / **FlockBuildGuard** — block Play / build when the SDK is unset or schemas drifted.
+- **FlockModelPreservation** — `IUnityLinkerProcessor`: on every player build writes `Library/Flock/link.xml` keeping `Flock.Runtime` whole and each `Flock.Generated.*` namespace in whichever player assembly holds it, so IL2CPP Medium/High stripping cannot remove what Newtonsoft reaches by reflection. A `link.xml` inside a UPM package is not read by the linker (measured); a runtime-only `.unitypackage` (Package Builder, Editor unticked) ships a static one instead.
 - **FlockCodeGenValidator** — warns when the baked version id drifts from generated schemas; `GetGeneratedGameVersionId()` returning null is the "codegen never ran" signal.
 - **FlockCodegenCompileHint** / **FlockCodegenHintClassifier** — watch compilation and point at Codegen > Sync when an unresolved member looks like a generated accessor (classifier is pure/testable). Recompiles only — a cold start compiles before `[InitializeOnLoad]`; the Codegen tab's Status card covers that.
 - **FlockSetupChecklist** / **FlockSetupClassifier** (+ `FlockSetupItem`/`FlockSetupState`/`FlockSetupFacts`/verdict enums) — pure, testable setup-readiness logic.
@@ -95,7 +96,7 @@ Writes typed accessors to `Assets/Flock/Generated/` (Flock-owned, wiped each syn
 - **ManifestEmitter** — emits `SchemasManifest` (GameVersionId + hash). · `EmitResult`/`CodegenResult` — codegen DTOs.
 
 ## PackageBuilder/Tests/Editor/
-EditMode tests (run via Unity Test Runner only): **CodeGenNamingHelpersTests**, **FlockBuildGuardTests**, **RetryHandlerTests**, **SchemaHasherTests**, **TypeMapTests**, **FlockErrorPipelineTests** (exception/`FlockErrorCode` mapping; has an `[Explicit]` live-backend test), **FlockErrorMessageTests** (composed `Message`, hints, FastAPI field errors), **FlockErrorHintCoverageTests** (every `FlockErrorCode` has a hint or is explicitly allowlisted), **FlockCodegenHintTests** (compile-error classification over real Roslyn text), **FlockConfigResolutionTests** (patch-else-config resolution).
+EditMode tests (run via Unity Test Runner only): **CodeGenNamingHelpersTests**, **FlockBuildGuardTests**, **RetryHandlerTests**, **SchemaHasherTests**, **TypeMapTests**, **FlockErrorPipelineTests** (exception/`FlockErrorCode` mapping; has an `[Explicit]` live-backend test), **FlockErrorMessageTests** (composed `Message`, hints, FastAPI field errors), **FlockErrorHintCoverageTests** (every `FlockErrorCode` has a hint or is explicitly allowlisted), **FlockCodegenHintTests** (compile-error classification over real Roslyn text), **FlockConfigResolutionTests** (patch-else-config resolution), **FlockEmptySuccessTests** (a 2xx with no body on a route with nothing to read), **FlockModelPreservationTests** (the build's link.xml).
 
 ## Offline caching
 
