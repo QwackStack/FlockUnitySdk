@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
   package (`?path=/ProtokitePlaytest~`). This first version sets it up: settings with playtesting off, and a status
   that says what it is waiting for. See its own CHANGELOG.
 
+### Fixed
+- **Installing the SDK by git URL no longer warns that `Runtime/Docs` has no `.meta` file.** A `.gitignore` rule meant for a
+  folder at the repository root matched that file too, and Package Manager leaves out ignored files when it installs a git
+  package, so the folder's `.meta` never reached studios. The rule is anchored to the root, and CI now fails any tracked
+  file an ignore rule matches.
+
 ## [1.41.0]
 
 ### Fixed
