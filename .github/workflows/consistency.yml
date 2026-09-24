@@ -6,6 +6,17 @@ on:
     branches: [main]
 
 jobs:
+  playtest-package:
+    # The Protokite Playtest package lives in ProtokitePlaytest~ in this repository and ships from the same tag. The
+    # script checks that it carries the Flock SDK's version, has no package dependency on it (studios who imported
+    # Flock from the .unitypackage could not install it otherwise), is never named by the SDK's runtime, and has a
+    # .meta beside every file (a git-URL install leaves out any file without one). Needs no Unity and no backend.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: The playtest package is separate from the Flock SDK and installable
+        run: bash "Tooling~/check-playtest-package.sh" .
+
   error-codes:
     # FlockErrorCode mirrors the backend's detail.code set, and the two have no mechanical link: the codes
     # ship with backend features, the enum is edited here by hand. A code with no member is not an error —

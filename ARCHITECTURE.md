@@ -86,6 +86,8 @@ Plain serializable DTOs mirroring backend wire shapes — auth, analytics, shop,
 - **FlockFirstRunBootstrap** — opens the window on first import. · **FlockSdkGuideEditor** — inspector for the guide.
 - **FlockProviderManifest** — maps providers ↔ `FLOCK_NO_*` defines for event-subset builds.
 - **FlockPackageBuilder** — assembles the distributable package.
+- **FlockPlaytestInstaller** — the Playtesting tab's install, update and remove for the Protokite Playtest package: downloads `ProtokitePlaytest-<version>.unitypackage` from the GitHub release matching `FlockSdkVersion.Current` (a blocking, cancellable download, so a script reload cannot drop it) and imports it; an update deletes the old `Assets/` copy only once the new one has downloaded, so a dropped file cannot linger; every download result but success counts as a failure (a failed disk write answers 200). Finds an installed copy from its assembly definition, wherever it is. Reads the version through `InternalsVisibleTo("Flock.Editor")`.
+- **FlockPlaytestPackageBuilder** — maintainer tooling (**Qwacks Dev > Build Protokite Playtest Package**, or `-executeMethod ...BuildFromCommandLine -playtestOut <folder>`): stages the playtest under `Assets/ProtokitePlaytest/` with GUIDs made from their paths and exports it. Excluded from core's own `.unitypackage`.
 
 ## Editor/Codegen/
 Writes typed accessors to `Assets/Flock/Generated/` (Flock-owned, wiped each sync).
@@ -96,7 +98,24 @@ Writes typed accessors to `Assets/Flock/Generated/` (Flock-owned, wiped each syn
 - **ManifestEmitter** — emits `SchemasManifest` (GameVersionId + hash). · `EmitResult`/`CodegenResult` — codegen DTOs.
 
 ## PackageBuilder/Tests/Editor/
-EditMode tests (run via Unity Test Runner only): **CodeGenNamingHelpersTests**, **FlockBuildGuardTests**, **RetryHandlerTests**, **SchemaHasherTests**, **TypeMapTests**, **FlockErrorPipelineTests** (exception/`FlockErrorCode` mapping; has an `[Explicit]` live-backend test), **FlockErrorMessageTests** (composed `Message`, hints, FastAPI field errors), **FlockErrorHintCoverageTests** (every `FlockErrorCode` has a hint or is explicitly allowlisted), **FlockCodegenHintTests** (compile-error classification over real Roslyn text), **FlockConfigResolutionTests** (patch-else-config resolution), **FlockEmptySuccessTests** (a 2xx with no body on a route with nothing to read), **FlockModelPreservationTests** (the build's link.xml).
+EditMode tests (run via Unity Test Runner only): **CodeGenNamingHelpersTests**, **FlockBuildGuardTests**, **RetryHandlerTests**, **SchemaHasherTests**, **TypeMapTests**, **FlockErrorPipelineTests** (exception/`FlockErrorCode` mapping; has an `[Explicit]` live-backend test), **FlockErrorMessageTests** (composed `Message`, hints, FastAPI field errors), **FlockErrorHintCoverageTests** (every `FlockErrorCode` has a hint or is explicitly allowlisted), **FlockCodegenHintTests** (compile-error classification over real Roslyn text), **FlockConfigResolutionTests** (patch-else-config resolution), **FlockEmptySuccessTests** (a 2xx with no body on a route with nothing to read), **FlockModelPreservationTests** (the build's link.xml), **FlockPlaytestInstallerTests** (release URL, version match, which downloads are imported).
+
+## ProtokitePlaytest~/ — the Protokite Playtest package
+
+A second package, `com.protokite.playtest`, in a `~` folder so Unity never imports it as part of core; it ships from the same
+tag at core's version. **It declares no package dependency on `com.flock.sdk`** (a studio that imported Flock from the
+`.unitypackage` has no such package) and reaches Flock through the `Flock.Runtime` assembly. Core's runtime never names it
+(`Tooling~/check-playtest-package.sh`, run by `consistency.yml` and `release.yml`, also checks the version match and a `.meta`
+beside every file). Development reaches it through a junction, `Qwacks/Libraries/Unity/packages/com.protokite.playtest`:
+**Unity cannot link a script to its class when the path contains a `~`**, so a ScriptableObject created there is saved with no
+script.
+- **ProtokitePlaytestSettings** — the `ScriptableObject` at `Assets/Resources/ProtokitePlaytestSettings.asset`: playtesting off,
+  Protokite API URL `https://api-protokite.qwacks.com` (production) by default.
+- **ProtokitePlaytest.Status** — worked out on every read from the settings and `FlockClient.IsInitialized` (Flock clears event
+  subscriptions on shutdown, so an event-kept status would go stale).
+- **ProtokitePlaytestSettingsMenu** — **Protokite > Playtest > Settings**; creates the asset, and refuses to save one Unity
+  cannot link to its script.
+- Tests: **ProtokitePlaytestStatusTests**.
 
 ## Offline caching
 

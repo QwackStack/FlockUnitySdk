@@ -15,6 +15,7 @@ The Flock Unity SDK provides access to Flock's game backend services from Unity 
   - [Code-Based Configuration](#code-based-configuration)
 - [Quick Start](#quick-start)
 - [Feature guides](#feature-guides)
+- [Playtesting with Protokite](#playtesting-with-protokite)
 - [Error handling](#error-handling)
 - [Offline caching](#offline-caching)
 - [Platform notes](#platform-notes)
@@ -175,6 +176,16 @@ Per-feature usage and examples live in their own guides:
 | [SDK Events](Docs~/events.md) | The `FlockEvents` hub — lifecycle, auth, and session events |
 | [Codegen](Docs~/codegen.md) | Sync Schemas, generated templates/configs/shops/achievements, content catalog |
 | [Error handling](Docs~/errors.md) | The `FlockException` hierarchy, `.ErrorCode`, and the full coded-error list |
+
+## Playtesting with Protokite
+
+The **Protokite Playtest** package records play sessions, gameplay and in-game feedback for your Protokite playtests. It
+is a separate package, released with each Flock SDK version; the SDK itself never depends on it.
+
+To add it, open **Flock > Settings > Playtesting** and press **Install Protokite Playtest**. It downloads the version
+that matches your Flock SDK and imports it, with no Git needed. The same tab opens its settings, updates it when you
+update Flock, and removes it. Other ways to install it, and how to switch it on, are in
+[its README](ProtokitePlaytest~/README.md).
 
 ## Error handling
 

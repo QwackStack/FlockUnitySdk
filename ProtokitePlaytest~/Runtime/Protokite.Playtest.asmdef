@@ -1,0 +1,16 @@
+{
+    "name": "Protokite.Playtest",
+    "rootNamespace": "Protokite.Playtest",
+    "references": [
+        "Flock.Runtime"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

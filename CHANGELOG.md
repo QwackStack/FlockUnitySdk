@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.42.0]
+
+### Added
+- **A Playtesting tab in Flock > Settings** that installs the Protokite Playtest package in one click: it downloads the
+  version released with your Flock SDK and imports it, with no Git needed and however you installed Flock. Once
+  installed, the tab opens its settings, warns when its version differs from Flock's (and updates it), and removes it.
+  The SDK's runtime never depends on the playtest; only the editor tab knows it exists.
+- **The Protokite Playtest package** ships in the same release, as its own `.unitypackage` and as a Package Manager
+  package (`?path=/ProtokitePlaytest~`). This first version sets it up: settings with playtesting off, and a status
+  that says what it is waiting for. See its own CHANGELOG.
+
 ## [1.41.0]
 
 ### Fixed
