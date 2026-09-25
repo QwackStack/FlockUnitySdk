@@ -1,6 +1,6 @@
 {
   "name": "com.protokite.playtest",
-  "version": "1.44.0",
+  "version": "1.45.0",
   "displayName": "Protokite Playtest",
   "description": "Playtesting for games built with the Flock SDK: sessions, gameplay recording and in-game feedback, reported to Protokite. Requires the Flock SDK at the same version.",
   "unity": "2021.3",

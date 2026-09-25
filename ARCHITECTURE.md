@@ -105,8 +105,9 @@ EditMode tests (run via Unity Test Runner only): **CodeGenNamingHelpersTests**, 
 A second package, `com.protokite.playtest`, in a `~` folder so Unity never imports it as part of core; it ships from the same
 tag at core's version. **It declares no package dependency on `com.flock.sdk`** (a studio that imported Flock from the
 `.unitypackage` has no such package) and reaches Flock through the `Flock.Runtime` assembly. Core's runtime never names it
-(`Tooling~/check-playtest-package.sh`, run by `consistency.yml` and `release.yml`, also checks the version match and a `.meta`
-beside every file). Development reaches it through a junction, `Qwacks/Libraries/Unity/packages/com.protokite.playtest`:
+(`Tooling~/check-playtest-package.sh`, run by `consistency.yml` and `release.yml`, also checks the version match, a `.meta`
+beside every file outside `~` folders, the version constant sessions report, and the video DLL with its licences and its
+`.meta`'s platforms). Development reaches it through a junction, `Qwacks/Libraries/Unity/packages/com.protokite.playtest`:
 **Unity cannot link a script to its class when the path contains a `~`**, so a ScriptableObject created there is saved with no
 script.
 - **ProtokitePlaytestSettings** — the `ScriptableObject` at `Assets/Resources/ProtokitePlaytestSettings.asset`: playtesting off,
@@ -130,6 +131,20 @@ script.
   written through a temporary file of its own and moved into place, read back after, never replaced when unreadable; stray
   temporary files over a minute old are swept. `SetSteamId` refuses an id with whitespace rather than trim it. Tests point
   it elsewhere with `DeviceIdFilePathForTesting`, and a fixture checks the game's own file is untouched.
+- **Video encoder (`Runtime/Video/`)** — `IProtokitePlaytestVideoEncoder` (configure, encode an I420 frame, finish) is
+  the one seam recording goes through; `ProtokitePlaytestLibVpx` is its only implementation and the only file that names
+  libvpx (a test scans for it). It calls `Runtime/Plugins/x86_64/protokite_vpx.dll`, a flat C wrapper over a static
+  libvpx 1.17.0 (VP8 + VP9, static CRT, KERNEL32 only), with timestamps in milliseconds. The DLL's own wrapper version is
+  checked before any other call; a missing, 32-bit or stale DLL means no video, logged once (Warning on Windows, Log
+  elsewhere). The DllImports are fenced to Windows, so every other platform compiles none. The C wrapper owns the checks
+  that guard native memory (frame length, codec, speed range). Settings default to D-Y9, with VP9 getting its own speed.
+- **Native~/** — `protokite_vpx.c`, `build-protokite-vpx.sh` (maintainers: finds Visual Studio 2022 through vswhere,
+  downloads libvpx, nasm and make pinned by SHA-256, builds, links, and refuses a DLL that needs more than KERNEL32;
+  `--check-dll <dll>` runs those checks alone) and `link-protokite-vpx.bat`. A `~` folder, so
+  Unity never imports it and it carries no `.meta`.
+- **ProtokitePlaytestNativePluginImport** (Editor) — the DLL's platforms (64-bit Windows editor and players only) set
+  through `PluginImporter` and saved, never by hand; run after every script load, because settings changed from an import
+  rule do not stick to a native plugin (measured).
 - **ProtokitePlaytestDriver** — a hidden `DontDestroyOnLoad` object started `BeforeSceneLoad` only when playtesting is on; calls
   `Refresh()` every frame and `Stop()` when destroyed.
 - **ProtokiteClient** (internal) — `GET /game/sdk/playtest-config` through core's `FlockHttpClient` and a `RetryHandler` built
@@ -138,7 +153,8 @@ script.
   A missing or non-boolean feature is off; a null form or a form without an id is none; a question without an id is dropped.
 - **ProtokitePlaytestSettingsMenu** — **Protokite > Playtest > Settings**; creates the asset, and refuses to save one Unity
   cannot link to its script.
-- Tests: **ProtokitePlaytestStatusTests**, **ProtokitePlaytestSessionTests** (held starts and ends for the quit and late-answer
+- Tests: **ProtokitePlaytestStatusTests**, **ProtokitePlaytestVideoEncoderTests** (encode and decode frame for frame
+  with each codec, a fake encoder held to the same contract), **ProtokitePlaytestSessionTests** (held starts and ends for the quit and late-answer
   cases), **ProtokitePlaytestConfigTests** (EditMode, fake transport; a held-answer adapter
   for late replies), **ProtokitePlaytestDriverTests** (PlayMode, the real driver). A live `[Explicit]` check lives in
   FlockUnityProject: `ProtokitePlaytestLiveConfigTests`.
