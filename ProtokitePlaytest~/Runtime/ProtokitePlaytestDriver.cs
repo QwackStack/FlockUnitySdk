@@ -19,6 +19,11 @@ namespace Protokite.Playtest
             GameObject driver = new GameObject("Protokite Playtest") { hideFlags = HideFlags.HideInHierarchy };
             DontDestroyOnLoad(driver);
             _running = driver.AddComponent<ProtokitePlaytestDriver>();
+
+            // Quitting, before any object is destroyed, is when the launch's session is ended. Removed first so a second Play
+            // with domain reload off does not add it twice.
+            Application.quitting -= ProtokitePlaytest.HandleGameQuitting;
+            Application.quitting += ProtokitePlaytest.HandleGameQuitting;
         }
 
         private void Update() => ProtokitePlaytest.Refresh();

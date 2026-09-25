@@ -37,6 +37,9 @@ namespace Protokite.Playtest.Tests
             ProtokitePlaytest.ResetForNewLaunch();
             Assert.IsFalse(FlockClient.IsInitialized, "Precondition: no Flock client left running by another test");
             _settings = new ProtokitePlaytestSettingsForTests();
+            // A Flock session started here starts a playtest session too, which must never use the game's own device id.
+            ProtokitePlaytest.DeviceIdFilePathForTesting = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+                "protokite_config_" + Guid.NewGuid().ToString("N"), "device_id.txt");
         }
 
         [TearDown]
@@ -45,6 +48,10 @@ namespace Protokite.Playtest.Tests
             if (FlockClient.IsInitialized)
                 FlockClient.Shutdown();
             ProtokitePlaytest.ResetForNewLaunch();
+            string folder = System.IO.Path.GetDirectoryName(ProtokitePlaytest.DeviceIdFilePathForTesting);
+            ProtokitePlaytest.DeviceIdFilePathForTesting = null;
+            if (System.IO.Directory.Exists(folder))
+                System.IO.Directory.Delete(folder, true);
             _settings.Dispose();
             FlockHttpClient.Configure(TimeSpan.FromSeconds(30));
         }

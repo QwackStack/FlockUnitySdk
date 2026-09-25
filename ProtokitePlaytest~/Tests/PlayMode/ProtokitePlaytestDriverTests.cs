@@ -60,6 +60,9 @@ namespace Protokite.Playtest.Tests
             _settings.PlaytestingEnabled = true;
             _settings.ProtokiteApiUrl = "http://protokite.test";
             ProtokitePlaytest.ResetForNewLaunch();
+            // A session started here must never read or write the game's own device id.
+            ProtokitePlaytest.DeviceIdFilePathForTesting = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+                "protokite_driver_" + Guid.NewGuid().ToString("N"), "device_id.txt");
         }
 
         [TearDown]
@@ -70,11 +73,38 @@ namespace Protokite.Playtest.Tests
             if (FlockClient.IsInitialized)
                 FlockClient.Shutdown();
             FlockHttpClient.Configure(TimeSpan.FromSeconds(30));
+            if (ProtokitePlaytest.DeviceIdFilePathForTesting != null)
+            {
+                string folder = System.IO.Path.GetDirectoryName(ProtokitePlaytest.DeviceIdFilePathForTesting);
+                ProtokitePlaytest.DeviceIdFilePathForTesting = null;
+                if (System.IO.Directory.Exists(folder))
+                    System.IO.Directory.Delete(folder, true);
+            }
             if (_settings != null)
             {
                 _settings.PlaytestingEnabled = _wasEnabled;
                 _settings.ProtokiteApiUrl = _oldUrl;
             }
+        }
+
+        [Test]
+        public void TheDriverEndsTheSessionWhenTheGameQuits()
+        {
+            ProtokitePlaytestDriver.StartWhenPlaytestingIsOn();
+            ProtokitePlaytestDriver.StartWhenPlaytestingIsOn();
+
+            // Unity keeps the quitting handlers in a private field; read it to see the hook is there, once.
+            System.Reflection.FieldInfo field = typeof(Application).GetField("quitting",
+                System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+            Assert.IsNotNull(field, "Application.quitting's handlers were found where this Unity keeps them");
+            Delegate handlers = (Delegate)field.GetValue(null);
+            int hooked = 0;
+            foreach (Delegate handler in handlers?.GetInvocationList() ?? Array.Empty<Delegate>())
+            {
+                if (handler.Method.Name == nameof(ProtokitePlaytest.HandleGameQuitting) && handler.Method.DeclaringType == typeof(ProtokitePlaytest))
+                    hooked++;
+            }
+            Assert.AreEqual(1, hooked, "The session end runs when the game quits, once however often the driver starts");
         }
 
         [UnityTest]

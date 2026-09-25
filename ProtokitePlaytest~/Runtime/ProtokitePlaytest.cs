@@ -30,7 +30,9 @@ namespace Protokite.Playtest
         /// <summary>Protokite answered with the playtest of another Game Version ID than this build sent.</summary>
         PlaytestConfigForAnotherVersion,
         /// <summary>The playtest config is loaded and the playtest can run.</summary>
-        Ready
+        Ready,
+        /// <summary>The playtest has closed and takes no more sessions, so playtesting is off until the game is launched again.</summary>
+        PlaytestNoLongerCollecting
     }
 
     /// <summary>Where fetching the playtest config has got to, for the Flock client it was fetched under.</summary>
@@ -46,7 +48,7 @@ namespace Protokite.Playtest
     }
 
     /// <summary>The playtest's entry point.</summary>
-    public static class ProtokitePlaytest
+    public static partial class ProtokitePlaytest
     {
         private const string LogPrefix = "[Protokite Playtest] ";
         private const string GameVersionHeader = "X-Game-Version-ID";
@@ -60,10 +62,11 @@ namespace Protokite.Playtest
         private static int _timesConfigForgotten;
         private static CancellationTokenSource _configFetchCancel;
         private static ProtokitePlaytestStatus? _statusLastReported;
-        private static ProtokitePlaytestConfigState? _configStateAtLastRefresh;
+        private static (ProtokitePlaytestConfigState, ProtokitePlaytestSessionState, bool)? _stateAtLastRefresh;
 
         /// <summary>Whether the playtest can run right now, and if not, what stops it. Read it on the main thread.</summary>
-        public static ProtokitePlaytestStatus Status => StatusFor(ProtokitePlaytestSettings.Load(), RunningFlock() != null, ConfigStateForRunningFlock());
+        public static ProtokitePlaytestStatus Status
+            => StatusFor(ProtokitePlaytestSettings.Load(), RunningFlock() != null, ConfigStateForRunningFlock(), _playtestNoLongerCollecting);
 
         /// <summary>This build's playtest config, or null until <see cref="Status"/> is <see cref="ProtokitePlaytestStatus.Ready"/>. Main thread only.</summary>
         public static ProtokitePlaytestConfig Config => Status == ProtokitePlaytestStatus.Ready ? _config : null;
@@ -73,7 +76,7 @@ namespace Protokite.Playtest
 
         /// <summary>The status for these settings (null means the project has none), whether Flock is running, and the config state.</summary>
         internal static ProtokitePlaytestStatus StatusFor(ProtokitePlaytestSettings settings, bool flockIsRunning,
-            ProtokitePlaytestConfigState configState = ProtokitePlaytestConfigState.NotFetched)
+            ProtokitePlaytestConfigState configState = ProtokitePlaytestConfigState.NotFetched, bool playtestNoLongerCollecting = false)
         {
             if (settings == null || !settings.PlaytestingEnabled)
                 return ProtokitePlaytestStatus.TurnedOff;
@@ -83,6 +86,8 @@ namespace Protokite.Playtest
                 return ProtokitePlaytestStatus.ProtokiteApiUrlMissing;
             if (!IsUsableApiUrl(url))
                 return ProtokitePlaytestStatus.ProtokiteApiUrlUnusable;
+            if (playtestNoLongerCollecting)
+                return ProtokitePlaytestStatus.PlaytestNoLongerCollecting;
             if (!flockIsRunning)
                 return ProtokitePlaytestStatus.WaitingForFlock;
 
@@ -132,9 +137,10 @@ namespace Protokite.Playtest
             FlockClient running = RunningFlock();
             bool flockChanged = !ReferenceEquals(running, _flock);
 
-            // Nothing to do when neither the Flock client nor the config has changed since the last frame: the settings are
-            // fixed in a build, and every change of state here calls Refresh itself.
-            if (!flockChanged && _configState == _configStateAtLastRefresh)
+            // Nothing to do when neither the Flock client nor the playtest's state has changed since the last frame, unless a
+            // session is waiting only for a Flock session to reach the server. The settings are fixed in a build, and every
+            // change of state here calls Refresh itself.
+            if (!flockChanged && CurrentState() == _stateAtLastRefresh && !SessionCanStart(running))
                 return;
 
             if (flockChanged)
@@ -150,14 +156,21 @@ namespace Protokite.Playtest
 
             ProtokitePlaytestSettings settings = ProtokitePlaytestSettings.Load();
             // A fetch already on its way never gets here: its state has not changed, so the early return above skipped it.
-            if (StatusFor(settings, running != null, _configState) == ProtokitePlaytestStatus.FetchingPlaytestConfig)
+            if (StatusFor(settings, running != null, _configState, _playtestNoLongerCollecting) == ProtokitePlaytestStatus.FetchingPlaytestConfig)
             {
                 StartPlaytestConfigFetch(running, settings.ProtokiteApiUrl);
             }
 
-            _configStateAtLastRefresh = _configState;
-            ReportStatus(StatusFor(settings, running != null, _configState));
+            // One session per launch: whatever became of it, a later sign-in or Flock session never starts another.
+            if (StatusFor(settings, running != null, _configState, _playtestNoLongerCollecting) == ProtokitePlaytestStatus.Ready)
+                StartPlaytestSessionWhenAllowed(running, settings.ProtokiteApiUrl);
+
+            _stateAtLastRefresh = CurrentState();
+            ReportStatus(StatusFor(settings, running != null, _configState, _playtestNoLongerCollecting));
         }
+
+        private static (ProtokitePlaytestConfigState, ProtokitePlaytestSessionState, bool) CurrentState()
+            => (_configState, _sessionState, _playtestNoLongerCollecting);
 
         /// <summary>Stops everything the playtest has under way, for when the game is closing.</summary>
         internal static void Stop()
@@ -171,8 +184,9 @@ namespace Protokite.Playtest
         internal static void ResetForNewLaunch()
         {
             Stop();
+            ResetSessionForNewLaunch();
             _statusLastReported = null;
-            _configStateAtLastRefresh = null;
+            _stateAtLastRefresh = null;
         }
 
         // Only a failure to reach Protokite is worth asking again: a refusal gives the same answer on a second try.
@@ -260,6 +274,7 @@ namespace Protokite.Playtest
                 case ProtokitePlaytestStatus.ProtokiteRefusedApiKey:
                 case ProtokitePlaytestStatus.PlaytestConfigUnavailable:
                 case ProtokitePlaytestStatus.PlaytestConfigForAnotherVersion:
+                case ProtokitePlaytestStatus.PlaytestNoLongerCollecting:
                     Debug.LogWarning(LogPrefix + Describe(status) + (string.IsNullOrEmpty(_configProblem) ? "" : " " + _configProblem));
                     break;
             }
@@ -290,6 +305,8 @@ namespace Protokite.Playtest
                     return "Protokite answered with the playtest of a different Game Version ID than this build sent, so playtesting stays off. A proxy that drops the X-Game-Version-ID header causes this.";
                 case ProtokitePlaytestStatus.Ready:
                     return "Playtesting is ready: this build's playtest is loaded.";
+                case ProtokitePlaytestStatus.PlaytestNoLongerCollecting:
+                    return "This playtest has closed and takes no more sessions (Protokite answered HTTP 400), so playtesting is off until the game is launched again. Reopen the playtest in Protokite, or point the Game Version at a playtest that is still running.";
             }
             return "";
         }
