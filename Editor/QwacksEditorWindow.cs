@@ -37,7 +37,7 @@ namespace Flock.Editor
         private static readonly Color DestructiveAction = new Color(0.85f, 0.40f, 0.40f);
         private static readonly Color HighlightAction = new Color(0.95f, 0.75f, 0.25f);
 
-        private enum Tab { Configuration, Advanced, CodeGen }
+        private enum Tab { Configuration, Advanced, CodeGen, Playtesting }
 
         private Tab activeTab = Tab.Configuration;
         private Vector2 scroll;
@@ -100,6 +100,7 @@ namespace Flock.Editor
             {
                 case Tab.Configuration: DrawConfigurationTab(); break;
                 case Tab.Advanced: DrawAdvancedTab(); break;
+                case Tab.Playtesting: DrawPlaytestingTab(); break;
 #if !FLOCK_NO_SCHEMA
                 case Tab.CodeGen: DrawCodegenTab(); break;
 #endif
@@ -166,6 +167,7 @@ namespace Flock.Editor
             if (activeTab == Tab.CodeGen) activeTab = Tab.Configuration;
 #endif
             DrawTabButton("Advanced Settings", Tab.Advanced);
+            DrawTabButton("Playtesting", Tab.Playtesting);
             GUILayout.FlexibleSpace();
             EditorGUILayout.EndHorizontal();
         }
@@ -192,6 +194,74 @@ namespace Flock.Editor
             DrawCredentialsCard();
             DrawAssetStatusCard();
             configSerialized.ApplyModifiedProperties();
+        }
+
+        // Playtesting tab — installs, updates and removes the Protokite Playtest package.
+        private void DrawPlaytestingTab()
+        {
+            InstalledPlaytest installed = FlockPlaytestInstaller.FindInstalled();
+            PlaytestInstallState state = FlockPlaytestInstaller.StateFor(installed, FlockPlaytestInstaller.FlockVersion);
+
+            EditorGUILayout.BeginVertical(cardStyle);
+            GUILayout.Label("Protokite Playtest", sectionHeaderStyle);
+            EditorGUILayout.LabelField(
+                "Records play sessions, gameplay video and in-game feedback for your Protokite playtests.",
+                EditorStyles.wordWrappedMiniLabel);
+            EditorGUILayout.Space(4);
+
+            // Between the import and the script reload the package is on disk but not yet compiled, so it reads as missing.
+            if (FlockPlaytestInstaller.InstalledThisSession)
+            {
+                EditorGUILayout.LabelField("Installed. Unity is compiling it; this tab updates when it finishes.", EditorStyles.wordWrappedMiniLabel);
+                EditorGUILayout.EndVertical();
+                return;
+            }
+
+            {
+                switch (state)
+                {
+                    case PlaytestInstallState.NotInstalled:
+                        EditorGUILayout.LabelField($"Not installed. Installs version {FlockPlaytestInstaller.FlockVersion}, matching your Flock SDK.", EditorStyles.wordWrappedMiniLabel);
+                        if (GUILayout.Button("Install Protokite Playtest", GUILayout.Height(28)))
+                            FlockPlaytestInstaller.Install(ShowStatus);
+                        break;
+
+                    case PlaytestInstallState.InstalledAtFlocksVersion:
+                        EditorGUILayout.LabelField($"Installed: version {installed.Version}, in {installed.RootFolder}.", EditorStyles.wordWrappedMiniLabel);
+                        if (GUILayout.Button("Open Playtest Settings", GUILayout.Height(24)))
+                            EditorApplication.ExecuteMenuItem(FlockPlaytestInstaller.SettingsMenuPath);
+                        DrawRemovePlaytestButton(installed);
+                        break;
+
+                    case PlaytestInstallState.InstalledAtAnotherVersion:
+                        EditorGUILayout.HelpBox(
+                            $"Protokite Playtest {installed.Version ?? "(unknown version)"} is installed, but your Flock SDK is {FlockPlaytestInstaller.FlockVersion}. They are released together and need the same version.",
+                            MessageType.Warning);
+                        // Updating over a Package Manager install would leave two copies, so that route is updated where it was installed.
+                        if (installed.RootFolder.StartsWith("Assets/"))
+                        {
+                            if (GUILayout.Button($"Update to {FlockPlaytestInstaller.FlockVersion}", GUILayout.Height(28)))
+                                FlockPlaytestInstaller.Install(ShowStatus, installed);
+                        }
+                        else
+                        {
+                            EditorGUILayout.LabelField($"Installed through Package Manager: change its version to {FlockPlaytestInstaller.FlockVersion} there.", EditorStyles.wordWrappedMiniLabel);
+                        }
+                        DrawRemovePlaytestButton(installed);
+                        break;
+                }
+            }
+
+            EditorGUILayout.EndVertical();
+        }
+
+        private void DrawRemovePlaytestButton(InstalledPlaytest installed)
+        {
+            if (!GUILayout.Button("Remove", GUILayout.Height(20)))
+                return;
+            if (EditorUtility.DisplayDialog("Remove Protokite Playtest",
+                    $"Remove the package from {installed.RootFolder}? Your playtest settings asset is kept.", "Remove", "Cancel"))
+                FlockPlaytestInstaller.Remove(installed);
         }
 
         // Advanced tab — extra/optional settings most projects can leave at their defaults

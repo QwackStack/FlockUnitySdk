@@ -6,6 +6,36 @@ on:
     branches: [main]
 
 jobs:
+  tracked-files:
+    # Package Manager installs a git package without the files .gitignore matches, even tracked ones. An unanchored
+    # "docs.meta" rule once matched Runtime/Docs.meta, so every git-URL install warned that the folder had no .meta.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: No tracked file is matched by an ignore rule
+        run: |
+          set -euo pipefail
+          # Matched as on Windows and macOS, where studios install: "docs.meta" matches "Docs.meta" there, not on Linux.
+          git config core.ignorecase true
+          ignored=$(git ls-files -ci --exclude-standard)
+          if [ -n "$ignored" ]; then
+            echo "::error::These tracked files match a .gitignore rule, so a git-URL install of the package leaves them out. Narrow the rule (anchor it with a leading /):"
+            echo "$ignored"
+            exit 1
+          fi
+          echo "No tracked file is ignored."
+
+  playtest-package:
+    # The Protokite Playtest package lives in ProtokitePlaytest~ in this repository and ships from the same tag. The
+    # script checks that it carries the Flock SDK's version, has no package dependency on it (studios who imported
+    # Flock from the .unitypackage could not install it otherwise), is never named by the SDK's runtime, and has a
+    # .meta beside every file (a git-URL install leaves out any file without one). Needs no Unity and no backend.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: The playtest package is separate from the Flock SDK and installable
+        run: bash "Tooling~/check-playtest-package.sh" .
+
   error-codes:
     # FlockErrorCode mirrors the backend's detail.code set, and the two have no mechanical link: the codes
     # ship with backend features, the enum is edited here by hand. A code with no member is not an error —

@@ -48,6 +48,7 @@ namespace Flock.Editor
         private static readonly string[] BuilderInternalFiles =
         {
             "Editor/FlockPackageBuilder.cs",
+            "Editor/FlockPlaytestPackageBuilder.cs",
             "Editor/FlockProviderManifest.cs",
         };
 

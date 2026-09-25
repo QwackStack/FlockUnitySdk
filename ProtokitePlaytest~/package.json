@@ -1,0 +1,27 @@
+{
+  "name": "com.protokite.playtest",
+  "version": "1.42.0",
+  "displayName": "Protokite Playtest",
+  "description": "Playtesting for games built with the Flock SDK: sessions, gameplay recording and in-game feedback, reported to Protokite. Requires the Flock SDK at the same version.",
+  "unity": "2021.3",
+  "keywords": [
+    "playtest",
+    "feedback",
+    "recording",
+    "protokite",
+    "flock"
+  ],
+  "author": {
+    "name": "Flock",
+    "email": "support@qwacks.com",
+    "url": "https://flock.qwacks.com"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/QwackStack/FlockUnitySDK.git"
+  },
+  "documentationUrl": "https://github.com/QwackStack/FlockUnitySDK/blob/main/ProtokitePlaytest~/README.md",
+  "changelogUrl": "https://github.com/QwackStack/FlockUnitySDK/blob/main/ProtokitePlaytest~/CHANGELOG.md",
+  "licensesUrl": "https://github.com/QwackStack/FlockUnitySDK/blob/main/ProtokitePlaytest~/LICENSE.md"
+}
