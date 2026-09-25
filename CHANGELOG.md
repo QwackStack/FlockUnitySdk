@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.44.0]
+
+### Added
+- **`FlockClient.ServerSessionId`**: the id the server gave the current analytics session, or null until that session has
+  reached the server (and once it has ended). `CurrentSessionId` still falls back to the local id; this one never does, so
+  a service that must name the server's session can tell the two apart.
+
 ## [1.43.0]
 
 ### Added

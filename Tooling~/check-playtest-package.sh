@@ -39,6 +39,15 @@ if [ "$core_version" != "$playtest_version" ]; then
   error "The playtest package is $playtest_version but the Flock SDK is $core_version. They ship from one tag at one version: bump ProtokitePlaytest~/package.json with package.json."
 fi
 
+# 1b. The version each session reports is a constant in the package's code, bumped by hand with package.json.
+version_file="$PLAYTEST/Runtime/ProtokitePlaytestVersion.cs"
+code_version=$(grep -oE 'Current = "[^"]*"' "$version_file" 2>/dev/null | sed -E 's/Current = "(.*)"/\1/')
+if [ -z "$code_version" ]; then
+  error "Could not read the version constant in $version_file. Sessions report it as sdk_version; if it moved, update this script with it."
+elif [ "$code_version" != "$playtest_version" ]; then
+  error "ProtokitePlaytestVersion.Current is $code_version but ProtokitePlaytest~/package.json is $playtest_version. Bump the constant with the package."
+fi
+
 # 2. No package dependency on the Flock SDK: a studio that imported Flock from the .unitypackage has no com.flock.sdk
 #    package, and Package Manager would refuse the playtest. The playtest reaches Flock through its assembly instead.
 dependencies=$(json_member "$PLAYTEST/package.json" dependencies)

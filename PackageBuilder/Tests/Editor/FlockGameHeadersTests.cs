@@ -25,6 +25,38 @@ namespace Flock.Tests.Editor
         }
 
         [Test]
+        public void ServerSessionIdIsTheServersIdOnlyWhileTheSessionIsLive()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport()
+                .On("/analytics/sessions", FlockFakeTransport.Ok("{\"session_id\":\"01K5SERVERSESSION00000001\"}"));
+            using (FlockTestClient flock = FlockTestClient.Create(transport))
+            {
+                Assert.IsNull(flock.Client.ServerSessionId, "No session yet");
+                flock.Client.Analytics.InitializeAsync(System.Threading.CancellationToken.None).GetAwaiter().GetResult();
+                flock.Run(() => flock.Client.Analytics.StartSessionAsync());
+                Assert.AreEqual("01K5SERVERSESSION00000001", flock.Client.ServerSessionId);
+                Assert.AreNotEqual(flock.Client.ServerSessionId, flock.Client.Session.SessionId, "The server's id, not the local one");
+
+                flock.Run(() => flock.Client.Analytics.EndSessionAsync());
+                Assert.IsNull(flock.Client.ServerSessionId, "An ended session has no live id");
+            }
+        }
+
+        [Test]
+        public void ServerSessionIdIsNullUntilTheSessionReachesTheServer()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport().On("/analytics/sessions", FlockFakeTransport.Offline());
+            using (FlockTestClient flock = FlockTestClient.Create(transport))
+            {
+                flock.Client.Analytics.InitializeAsync(System.Threading.CancellationToken.None).GetAwaiter().GetResult();
+                flock.Run(() => flock.Client.Analytics.StartSessionAsync());
+                Assert.IsTrue(flock.Client.HasActiveSession, "Precondition: the session runs locally");
+                Assert.IsNull(flock.Client.ServerSessionId);
+                Assert.IsNotNull(flock.Client.CurrentSessionId, "CurrentSessionId falls back to the local id; ServerSessionId never does");
+            }
+        }
+
+        [Test]
         public void GameHeadersAreACopy()
         {
             using (FlockTestClient flock = FlockTestClient.Create(new FlockFakeTransport()))

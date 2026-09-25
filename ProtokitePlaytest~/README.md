@@ -3,8 +3,8 @@
 Playtesting for games built with the Flock SDK: each play session, gameplay recording and in-game feedback,
 reported to your Protokite playtest.
 
-> **Early version.** This release installs the package and loads your playtest's config from Protokite. Sessions,
-> recording and the feedback form arrive in the releases that follow.
+> **Early version.** This release loads your playtest's config and runs one Protokite session per launch. Recording and
+> the feedback form arrive in the releases that follow.
 
 ## Install
 
@@ -53,6 +53,7 @@ logged once, as a warning that says what to change.
 | `PlaytestConfigUnavailable` | Protokite could not be reached. The game carries on, and it is asked again when the next Flock session starts |
 | `PlaytestConfigForAnotherVersion` | Protokite answered with another version's playtest (a proxy dropping the version header does this) |
 | `Ready` | The playtest's config is loaded |
+| `PlaytestNoLongerCollecting` | The playtest has closed and takes no more sessions, so playtesting is off until the game is launched again |
 
 A refusal (`PlaytestNotLinked`, `ProtokiteRefusedApiKey`, `PlaytestConfigForAnotherVersion`) is not asked again until the Flock SDK
 is started again (or the game relaunched), since the answer would be the same.
@@ -62,6 +63,24 @@ is started again (or the game relaunched), since the answer would be the same.
 `ProtokitePlaytest.Config` is the loaded config (null until `Ready`): the playtest's `TestId`, its feature switches and
 its feedback form (`Form`, null when the playtest has none). Check a feature with
 `ProtokitePlaytest.IsFeatureEnabled(ProtokitePlaytestFeatures.VideoRecording)`; a feature the config does not mention is off.
+
+## Sessions
+
+Each launch runs **one** Protokite session. It starts once the playtest's config is loaded and a Flock session has reached
+the server, which happens when a player signs in with **Analytics Enabled** and **Analytics Auto Start Session** on in
+**Flock > Settings** (or when you call `StartSessionAsync`), and consent given when **Analytics Require Explicit Consent** is
+on. The playtest never signs a player in. Signing out and in, a new Flock session or restarting Flock never start a second
+one. The session ends when the game quits; quitting waits up to 3 seconds for Protokite to take the end.
+`ProtokitePlaytest.PlaytestSessionId` is its id once it has started.
+
+**Who is playing.** The package makes a device id once and keeps it in `ProtokitePlaytest/device_id.txt` under the game's
+persistent data folder. A game with Steam sends the Steam id instead, before the session starts:
+
+```csharp
+ProtokitePlaytest.SetSteamId(SteamUser.GetSteamID().ToString(), SteamFriends.GetPersonaName());
+```
+
+An id that is empty, longer than 64 characters or holds whitespace is refused (not trimmed), and the device id is sent.
 
 ## Remove it
 

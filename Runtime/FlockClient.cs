@@ -264,6 +264,9 @@ namespace Flock
         public bool HasActiveSession => _session?.IsActive ?? false;
         public string CurrentSessionId => _session?.ServerSessionId ?? _session?.SessionId;
 
+        /// <summary>The id the server gave the current analytics session; null until that session has reached the server.</summary>
+        public string ServerSessionId => _session != null && _session.IsActive ? _session.ServerSessionId : null;
+
         public string CurrentPlayerId => _tokenClaims?.PlayerId;
         public string GameId => _initConfig.GameId;
         public string GameVersionId => _initConfig.GameVersionId;
