@@ -66,16 +66,48 @@ if [ -n "$named" ]; then
   echo "$named"
 fi
 
-# 4. Package Manager treats a git package as read-only and ignores any file or folder without a .meta beside it.
+# 4. Package Manager treats a git package as read-only and ignores any file or folder without a .meta beside it. Folders
+#    ending in ~ (the native source in Native~) are never imported, so they carry none.
 missing=0
 while IFS= read -r path; do
   if [ ! -f "$path.meta" ]; then
     echo "  no .meta: ${path#"$ROOT/"}"
     missing=1
   fi
-done < <(find "$PLAYTEST" -mindepth 1 ! -name "*.meta" ! -name ".*" ! -path "*/.*")
+done < <(find "$PLAYTEST" -mindepth 1 ! -name "*.meta" ! -name ".*" ! -path "*/.*" ! -path "$PLAYTEST/*~" ! -path "$PLAYTEST/*~/*")
 if [ "$missing" -ne 0 ]; then
   error "Files in ProtokitePlaytest~ have no .meta, so a git-URL install would leave them out. Open the package in a Unity project (Libraries/Unity/packages/com.protokite.playtest links to it) so Unity writes them, then commit them."
+fi
+
+# 5. The Windows video encoder ships with its licences, and its .meta keeps it to the 64-bit Windows editor and players:
+#    a .meta fallen back to Unity's defaults would hand every other platform's build a Windows DLL.
+PLUGINS="$PLAYTEST/Runtime/Plugins/x86_64"
+for file in protokite_vpx.dll libvpx-LICENSE.txt libvpx-PATENTS.txt; do
+  [ -f "$PLUGINS/$file" ] || error "$file is missing from Runtime/Plugins/x86_64. Rebuild it with Native~/build-protokite-vpx.sh."
+done
+# Prints whether a platform is enabled in the DLL's .meta: 1, 0, or "absent".
+platform_enabled() {
+  awk -v platform="$1" '
+    $0 ~ "^    " platform ":[[:space:]]*$" { inside = 1; next }
+    inside && /^      enabled:/ { gsub(/[^0-9]/, "", $2); print $2; found = 1; exit }
+    inside && /^    [A-Za-z0-9]+:/ { exit }
+    END { if (!found) print "absent" }
+  ' "$PLUGINS/protokite_vpx.dll.meta" | tr -d '\r'
+}
+if [ -f "$PLUGINS/protokite_vpx.dll.meta" ]; then
+  for expected in "Any 0" "Editor 1" "Win64 1"; do
+    set -- $expected
+    [ "$(platform_enabled "$1")" = "$2" ] || error "protokite_vpx.dll.meta has $1 enabled '$(platform_enabled "$1")', expected $2. Open the package in Unity so ProtokitePlaytestNativePluginImport sets the platforms, then commit the .meta."
+  done
+  for other in Win OSXUniversal Linux64 Android iPhone WebGL; do
+    case "$(platform_enabled "$other")" in
+      0|absent) ;;
+      *) error "protokite_vpx.dll.meta enables $other; the DLL is for the 64-bit Windows editor and players only." ;;
+    esac
+  done
+  grep -q "OS: Windows" "$PLUGINS/protokite_vpx.dll.meta" || error "protokite_vpx.dll.meta does not keep the DLL to the Windows editor (OS: Windows)."
+else
+  error "protokite_vpx.dll.meta is missing, so a git-URL install would leave the DLL out."
 fi
 
 if [ "$fail" -eq 0 ]; then

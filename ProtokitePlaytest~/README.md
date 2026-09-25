@@ -82,6 +82,18 @@ ProtokitePlaytest.SetSteamId(SteamUser.GetSteamID().ToString(), SteamFriends.Get
 
 An id that is empty, longer than 64 characters or holds whitespace is refused (not trimmed), and the device id is sent.
 
+## Platforms
+
+Everything above runs wherever the Flock SDK runs. **Video is recorded on 64-bit Windows only** (the Editor and players,
+Mono and IL2CPP): the package carries its encoder there as `Runtime/Plugins/x86_64/protokite_vpx.dll`. Any other build
+leaves the DLL out, records no video, and says so once in the log. That includes 32-bit and ARM64 Windows builds, which
+are told video is for 64-bit Windows rather than that the DLL is missing.
+
+## Third-party software
+
+The Windows video encoder contains **libvpx 1.17.0** (VP8 and VP9), © The WebM Project authors, under a BSD licence with an
+additional patent grant: see `Runtime/Plugins/x86_64/libvpx-LICENSE.txt` and `libvpx-PATENTS.txt`, which ship with it.
+
 ## Remove it
 
 Flock's **Playtesting** tab has a **Remove** button, or remove it as you installed it (delete

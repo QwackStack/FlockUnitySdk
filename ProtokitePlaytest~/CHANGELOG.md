@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 It is released with the Flock SDK, at the Flock SDK's version.
 
 
+## [1.45.0]
+
+### Added
+- **A video encoder for 64-bit Windows**, ready for the recording that follows in the next releases: VP8 or VP9, through
+  libvpx 1.17.0 in `Runtime/Plugins/x86_64/protokite_vpx.dll`, beside libvpx's licence and patent grant. It loads in the
+  64-bit Windows editor and 64-bit Windows players only, in Mono and IL2CPP builds alike (checked at High stripping).
+- **Every other platform builds with the package and records no video**, saying so once; everything else in the playtest
+  runs. So does a Windows build whose DLL is missing, or a DLL of another version. A 32-bit or ARM64 Windows build is
+  told video is for 64-bit Windows, as a plain message rather than a warning about a missing DLL.
+- The defaults are the ones a slow PC can afford: VP8 at speed 12 on one thread, 15 frames a second, 1280×720 at 1.5 Mbps.
+  A VP9 recording gets VP9's own default speed.
+
 ## [1.44.0]
 
 ### Added
