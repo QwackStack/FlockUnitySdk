@@ -273,6 +273,12 @@ namespace Flock
             _tokenClaims.ExpirationTime.Value <= DateTime.UtcNow;
         public JwtTokenClaims TokenClaims => _tokenClaims;
 
+        /// <summary>A new copy of the headers that identify this game to a Qwacks service: X-Flock-API-Key and X-Game-Version-ID. Never carries the player's sign-in.</summary>
+        public Dictionary<string, string> GetGameHeaders() => new Dictionary<string, string>(_initConfig.GetBaseHeaders());
+
+        /// <summary>A copy of the retry settings this client was initialized with, for a service that should retry the same way.</summary>
+        public RetryPolicy RetryPolicy => (_initConfig.RetryPolicy ?? new RetryPolicy()).Copy();
+
         internal Dictionary<string, string> GetBaseHeaders()
         {
             Dictionary<string, string> headers = new Dictionary<string, string>(_initConfig.GetBaseHeaders());

@@ -18,7 +18,7 @@ PackageBuilder/Tests/Editor/   EditMode tests (asmdef Flock.Tests.Editor)
 ```
 
 ## Runtime/ (root)
-- **FlockClient** — central singleton + entry point; created once via `Create()`, owns providers/tokens/config.
+- **FlockClient** — central singleton + entry point; created once via `Create()`, owns providers/tokens/config. Public seams for a separate Qwacks service (no `InternalsVisibleTo`): `GetGameHeaders()` (a copy of the key + version headers, never the bearer) and `RetryPolicy` (a copy of the init retry settings).
 - **FlockBootstrap** — drop-in MonoBehaviour that calls `Create()` for you.
 - **FlockAutoInitializer** — opt-in zero-touch init before the first scene (no component).
 - **FlockBehaviour** — internal hidden MonoBehaviour; main-thread dispatch + app pause/quit hooks.
@@ -111,11 +111,24 @@ beside every file). Development reaches it through a junction, `Qwacks/Libraries
 script.
 - **ProtokitePlaytestSettings** — the `ScriptableObject` at `Assets/Resources/ProtokitePlaytestSettings.asset`: playtesting off,
   Protokite API URL `https://api-protokite.qwacks.com` (production) by default.
-- **ProtokitePlaytest.Status** — worked out on every read from the settings and `FlockClient.IsInitialized` (Flock clears event
-  subscriptions on shutdown, so an event-kept status would go stale).
+- **ProtokitePlaytest** — the entry point. `Status` is worked out on every read from the settings, the running `FlockClient`
+  and the config fetched **under that client** (a config fetched under a client that has since shut down reads as none,
+  before any refresh). `Refresh()` follows Flock by comparing the running client instance (Flock clears event subscriptions
+  on shutdown, so a restart is invisible to events), returns at once while neither the client nor the config state has changed, fetches once per client, forgets and cancels on a change (a counter
+  ignores late answers, the cancel stops retries), re-subscribes to `FlockEvents.OnSessionStarted` per client and fetches
+  again there only after `PlaytestConfigUnavailable`. Failures are judged by HTTP status alone: core counts a 403 as an
+  auth failure, but Protokite never sends one. Each status change is logged once.
+- **ProtokitePlaytestDriver** — a hidden `DontDestroyOnLoad` object started `BeforeSceneLoad` only when playtesting is on; calls
+  `Refresh()` every frame and `Stop()` when destroyed.
+- **ProtokiteClient** (internal) — `GET /game/sdk/playtest-config` through core's `FlockHttpClient` and a `RetryHandler` built
+  from `FlockClient.RetryPolicy`; headers from `FlockClient.GetGameHeaders()` (key + version, never the bearer). The answer is
+  enveloped; **`ProtokitePlaytestConfig` is read by hand from `JObject`** so IL2CPP stripping has no model of ours to strip.
+  A missing or non-boolean feature is off; a null form or a form without an id is none; a question without an id is dropped.
 - **ProtokitePlaytestSettingsMenu** — **Protokite > Playtest > Settings**; creates the asset, and refuses to save one Unity
   cannot link to its script.
-- Tests: **ProtokitePlaytestStatusTests**.
+- Tests: **ProtokitePlaytestStatusTests**, **ProtokitePlaytestConfigTests** (EditMode, fake transport; a held-answer adapter
+  for late replies), **ProtokitePlaytestDriverTests** (PlayMode, the real driver). A live `[Explicit]` check lives in
+  FlockUnityProject: `ProtokitePlaytestLiveConfigTests`.
 
 ## Offline caching
 
