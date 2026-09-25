@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.43.0]
+
+### Added
+- **`FlockClient.GetGameHeaders()`**: a copy of the headers that identify your game to another Qwacks service (your API
+  key and Game Version ID). It never carries the player's sign-in.
+- **`FlockClient.RetryPolicy`**: a copy of the retry settings the client was initialized with, so a service that calls its
+  own API can retry the way the SDK does. Changing the copy changes nothing in the client.
+
 ## [1.42.0]
 
 ### Added

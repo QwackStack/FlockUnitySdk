@@ -40,8 +40,9 @@ namespace Protokite.Playtest.Tests
         [TestCase(true, "ftp://protokite.example", true, ProtokitePlaytestStatus.ProtokiteApiUrlUnusable)]
         [TestCase(true, "not a url", true, ProtokitePlaytestStatus.ProtokiteApiUrlUnusable)]
         [TestCase(true, "http://localhost:8020", false, ProtokitePlaytestStatus.WaitingForFlock)]
-        [TestCase(true, "http://localhost:8020", true, ProtokitePlaytestStatus.Ready)]
-        [TestCase(true, "  https://api.protokite.example/  ", true, ProtokitePlaytestStatus.Ready)]
+        [TestCase(true, "http://localhost:8020", true, ProtokitePlaytestStatus.FetchingPlaytestConfig)]
+        [TestCase(true, "  https://api.protokite.example/  ", true, ProtokitePlaytestStatus.FetchingPlaytestConfig)]
+        [TestCase(true, "http://local host:8020", true, ProtokitePlaytestStatus.ProtokiteApiUrlUnusable)]
         public void StatusFollowsTheSettingsAndFlock(bool enabled, string url, bool flockIsRunning, ProtokitePlaytestStatus expected)
         {
             ProtokitePlaytestSettings settings = Settings(enabled, url);
@@ -69,11 +70,11 @@ namespace Protokite.Playtest.Tests
                 Assert.AreEqual(ProtokitePlaytestStatus.WaitingForFlock, ProtokitePlaytest.Status);
 
                 using (FlockTestClient.Create(new FlockFakeTransport()))
-                    Assert.AreEqual(ProtokitePlaytestStatus.Ready, ProtokitePlaytest.Status);
+                    Assert.AreEqual(ProtokitePlaytestStatus.FetchingPlaytestConfig, ProtokitePlaytest.Status, "Running, with no config fetched yet");
                 Assert.AreEqual(ProtokitePlaytestStatus.WaitingForFlock, ProtokitePlaytest.Status, "After Flock shuts down");
 
                 using (FlockTestClient.Create(new FlockFakeTransport()))
-                    Assert.AreEqual(ProtokitePlaytestStatus.Ready, ProtokitePlaytest.Status, "After Flock starts again");
+                    Assert.AreEqual(ProtokitePlaytestStatus.FetchingPlaytestConfig, ProtokitePlaytest.Status, "After Flock starts again");
             }
             finally
             {

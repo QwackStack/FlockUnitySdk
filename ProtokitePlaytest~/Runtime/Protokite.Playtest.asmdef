@@ -2,7 +2,8 @@
     "name": "Protokite.Playtest",
     "rootNamespace": "Protokite.Playtest",
     "references": [
-        "Flock.Runtime"
+        "Flock.Runtime",
+        "Unity.Newtonsoft.Json"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
