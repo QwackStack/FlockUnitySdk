@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 It is released with the Flock SDK, at the Flock SDK's version.
 
 
+## [1.46.0]
+
+### Added
+- **Recordings are written as WebM files**, ready for the video capture that follows in the next release: VP8 or VP9, a file a
+  browser plays with nothing installed. Each frame reaches the operating system as it is written, so a recording cut off by
+  a crash or a power cut still plays up to the cut, and a later launch can finish it (its whole frames kept, a half-written
+  frame cut off, its length stamped in).
+- **Which game frames are captured is decided by the frame they are nearest**, at the recording's frame rate: a steady
+  rhythm when frame times wobble, time spent in the background left out, and a length limit.
+
 ## [1.45.0]
 
 ### Added
