@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.46.0]
+
+No changes to the Flock SDK: this version is released together with the Protokite Playtest package's recording files.
+
 ## [1.45.0]
 
 No changes to the Flock SDK: this version is released together with the Protokite Playtest package's video encoder.

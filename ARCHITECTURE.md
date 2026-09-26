@@ -138,6 +138,17 @@ script.
   checked before any other call; a missing, 32-bit or stale DLL means no video, logged once (Warning on Windows, Log
   elsewhere). The DllImports are fenced to Windows, so every other platform compiles none. The C wrapper owns the checks
   that guard native memory (frame length, codec, speed range). Settings default to D-Y9, with VP9 getting its own speed.
+- **Recording file (`Runtime/Video/`)** — `IProtokitePlaytestRecordingFile` (open, write an encoded frame, close, finish a
+  file a dead run left) is the seam a recording's frames go through, and names its own content type for the upload;
+  `ProtokitePlaytestWebmFile` is its only implementation and the only file that names WebM (a test scans for it). VP8 or
+  VP9, one cluster per frame, every size written before its bytes, each frame handed to the operating system as it is
+  written; only the length and the duration are stamped on close, so a file cut off anywhere plays up to the cut. Every
+  offset is read off the file itself, never a constant, so the name written into the file can change. Finishing a cut-off
+  file checks each frame's first bytes against its codec (read from the file's own track), and the writer refuses any
+  frame that check would stop at; after a failed write it takes no more frames, and closing cuts the torn one off
+  (so does finishing the file after a crash). Written unbuffered, so a write the disk refuses fails where it happens.
+  **ProtokitePlaytestFrameSchedule** decides which game frames are captured and when each is shown (the frame nearest each
+  capture time, background time left out, times always rising, a length limit).
 - **Native~/** — `protokite_vpx.c`, `build-protokite-vpx.sh` (maintainers: finds Visual Studio 2022 through vswhere,
   downloads libvpx, nasm and make pinned by SHA-256, builds, links, and refuses a DLL that needs more than KERNEL32;
   `--check-dll <dll>` runs those checks alone) and `link-protokite-vpx.bat`. A `~` folder, so
@@ -154,7 +165,9 @@ script.
 - **ProtokitePlaytestSettingsMenu** — **Protokite > Playtest > Settings**; creates the asset, and refuses to save one Unity
   cannot link to its script.
 - Tests: **ProtokitePlaytestStatusTests**, **ProtokitePlaytestVideoEncoderTests** (encode and decode frame for frame
-  with each codec, a fake encoder held to the same contract), **ProtokitePlaytestSessionTests** (held starts and ends for the quit and late-answer
+  with each codec, a fake encoder held to the same contract), **ProtokitePlaytestWebmFileTests** (real VP8 and VP9
+  recordings read back by a reader of their own, decoded frame for frame, cut off and finished; a fake recording file held
+  to the same contract), **ProtokitePlaytestFrameScheduleTests**, **ProtokitePlaytestSessionTests** (held starts and ends for the quit and late-answer
   cases), **ProtokitePlaytestConfigTests** (EditMode, fake transport; a held-answer adapter
   for late replies), **ProtokitePlaytestDriverTests** (PlayMode, the real driver). A live `[Explicit]` check lives in
   FlockUnityProject: `ProtokitePlaytestLiveConfigTests`.
