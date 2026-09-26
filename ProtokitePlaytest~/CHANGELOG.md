@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 It is released with the Flock SDK, at the Flock SDK's version.
 
 
+## [1.47.0]
+
+### Added
+- **The playtest records the game's screen** on 64-bit Windows when its config turns video_recording on: from the moment the
+  config loads, before anyone signs in, one recording a launch, written as it records to `ProtokitePlaytest/Recordings/` as a
+  WebM file. It stops for good at the length or size limit, or when the game quits, which waits for the file within the same
+  3 seconds as the session end. This version keeps recordings on disk; sending them comes in a later one.
+- **Frames are captured without making the game wait**: copied, scaled and converted on the graphics card and read back
+  asynchronously, with encoding and writing each on a thread of their own. A frame that cannot keep up is dropped and
+  counted, never waited for. Measured at the defaults: on a fast PC the main thread's median frame time went from 2.60 ms to
+  2.86 ms and the frame rate did not move; on a slow laptop (4 cores, integrated graphics) it cost 10.6% of the frame rate,
+  with no frame dropped.
+- **Video settings** in Protokite > Playtest > Settings: codec, largest size (each side rounded down to a multiple of 16),
+  frames per second, bitrate, encoder threads, the encoder's speed (or the codec's own), whether the encoder gives way to
+  the game, and the length and size limits.
+- Recorded upright and in the screen's own colours (within 1 of each channel) on Direct3D 11 and 12, Vulkan and OpenGL, in
+  the Built-in Render Pipeline and URP, in Linear and Gamma colour, in Mono and IL2CPP players.
+
 ## [1.46.0]
 
 ### Added

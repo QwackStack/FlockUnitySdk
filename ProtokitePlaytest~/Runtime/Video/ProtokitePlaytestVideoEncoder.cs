@@ -4,10 +4,19 @@ using System.Collections.Generic;
 namespace Protokite.Playtest
 {
     /// <summary>The video codecs a recording can use.</summary>
-    internal enum ProtokitePlaytestVideoCodec
+    public enum ProtokitePlaytestVideoCodec
     {
+        /// <summary>The cheaper to encode, and the default: a slow PC can afford it.</summary>
         Vp8 = 8,
+        /// <summary>Smaller files for the same picture, at a higher cost to the processor.</summary>
         Vp9 = 9
+    }
+
+    /// <summary>How the pixels of a frame are laid out when they are handed to an encoder.</summary>
+    internal enum ProtokitePlaytestPixelFormat
+    {
+        /// <summary>Tightly packed Y, then U, then V, each chroma plane half the width and half the height.</summary>
+        I420
     }
 
     /// <summary>How a recording is encoded. Every value is a studio setting; <see cref="Defaults"/> is what a slow PC can afford.</summary>
@@ -57,6 +66,9 @@ namespace Protokite.Playtest
     /// </summary>
     internal interface IProtokitePlaytestVideoEncoder : IDisposable
     {
+        /// <summary>The pixel layout this encoder takes, which the capture converts each frame to.</summary>
+        ProtokitePlaytestPixelFormat InputPixelFormat { get; }
+
         /// <summary>Gets ready for frames of the settings' size. False, with why, when it cannot.</summary>
         bool Configure(ProtokitePlaytestVideoEncoderSettings settings, out string error);
 

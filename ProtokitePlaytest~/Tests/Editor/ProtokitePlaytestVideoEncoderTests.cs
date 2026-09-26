@@ -343,6 +343,8 @@ namespace Protokite.Playtest.Tests
     internal sealed class FakeVideoEncoder : IProtokitePlaytestVideoEncoder
     {
         private ProtokitePlaytestVideoEncoderSettings _settings;
+
+        public ProtokitePlaytestPixelFormat InputPixelFormat => ProtokitePlaytestPixelFormat.I420;
         private bool _finished;
 
         public bool Configure(ProtokitePlaytestVideoEncoderSettings settings, out string error)

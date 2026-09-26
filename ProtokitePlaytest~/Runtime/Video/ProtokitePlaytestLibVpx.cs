@@ -142,6 +142,8 @@ namespace Protokite.Playtest
         private sealed class Encoder : IProtokitePlaytestVideoEncoder
         {
             private IntPtr _encoder;
+
+            public ProtokitePlaytestPixelFormat InputPixelFormat => ProtokitePlaytestPixelFormat.I420;
             private bool _finished;
 
             public bool Configure(ProtokitePlaytestVideoEncoderSettings settings, out string error)
@@ -283,11 +285,19 @@ namespace Protokite.Playtest
         /// <summary>Never built here: nothing outside Windows calls it.</summary>
         private sealed class Encoder : IProtokitePlaytestVideoEncoder
         {
+            public ProtokitePlaytestPixelFormat InputPixelFormat => ProtokitePlaytestPixelFormat.I420;
             public bool Configure(ProtokitePlaytestVideoEncoderSettings settings, out string error) { error = CheckTheLibrary(); return false; }
             public bool Encode(byte[] i420, long timestampMs, long durationMs, bool forceKeyframe, List<ProtokitePlaytestEncodedFrame> output, out string error) { error = CheckTheLibrary(); return false; }
             public bool Finish(List<ProtokitePlaytestEncodedFrame> output, out string error) { error = CheckTheLibrary(); return false; }
             public void Dispose() { }
         }
 #endif
+    }
+
+    /// <summary>The encoder recordings use on this platform, so nothing outside this file names the library behind it.</summary>
+    internal static class ProtokitePlaytestVideoEncoders
+    {
+        /// <summary>An encoder, or null with why when this build has none; the first "no video" of a launch is logged.</summary>
+        public static IProtokitePlaytestVideoEncoder Create(out string whyNot) => ProtokitePlaytestLibVpx.CreateEncoder(out whyNot);
     }
 }

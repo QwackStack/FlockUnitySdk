@@ -149,6 +149,21 @@ script.
   (so does finishing the file after a crash). Written unbuffered, so a write the disk refuses fails where it happens.
   **ProtokitePlaytestFrameSchedule** decides which game frames are captured and when each is shown (the frame nearest each
   capture time, background time left out, times always rising, a length limit).
+- **Video capture (`Runtime/Video/`, `Runtime/ProtokitePlaytestVideo.cs`)** — `UpdateVideo` runs at the end of every
+  frame from the driver's coroutine (a batchmode editor never gets there, so its tests run in a windowed editor). It starts
+  the launch's one recording when the loaded config turns video on, before sign-in; a Flock restart (config fetched again)
+  does not stop it, a loaded config with video off or a closed playtest does. **ProtokitePlaytestVideoRecording** owns the
+  schedule, an encoding thread (below the game's priority by default) and a writing thread, each fed by a bounded queue
+  (8 and 300); frames are dropped before encoding and counted, the size limit is checked where a frame is handed to be
+  written, the file is written as `.part` and renamed when finished, and a failure keeps every whole frame.
+  **ProtokitePlaytestScreenFrameSource** is the one GPU class: `ScreenCapture.CaptureScreenshotIntoRenderTexture`, a blit to
+  the video size, the `ProtokitePlaytestRgbaToI420` compute shader (in the package's `Resources`), and
+  `AsyncGPUReadback` with at most 3 frames on their way, into a pool of blocks (`ProtokitePlaytestFrameBlocks`). Rows flip
+  only where textures start at the bottom (OpenGL); Linear projects convert back to sRGB before conversion. The capture
+  is asked for the encoder's pixel layout (the Android seam); `ProtokitePlaytestVideoEncoders` and
+  `ProtokitePlaytestRecordingFiles` are the only places that pick libvpx and WebM. **ProtokitePlaytestVideoSettings**
+  reads the settings asset's video values in range and fits the video to the screen, each side a multiple of 16. Quitting
+  stops the capture first and waits for the file within the session end's 3 seconds.
 - **Native~/** — `protokite_vpx.c`, `build-protokite-vpx.sh` (maintainers: finds Visual Studio 2022 through vswhere,
   downloads libvpx, nasm and make pinned by SHA-256, builds, links, and refuses a DLL that needs more than KERNEL32;
   `--check-dll <dll>` runs those checks alone) and `link-protokite-vpx.bat`. A `~` folder, so
@@ -167,7 +182,11 @@ script.
 - Tests: **ProtokitePlaytestStatusTests**, **ProtokitePlaytestVideoEncoderTests** (encode and decode frame for frame
   with each codec, a fake encoder held to the same contract), **ProtokitePlaytestWebmFileTests** (real VP8 and VP9
   recordings read back by a reader of their own, decoded frame for frame, cut off and finished; a fake recording file held
-  to the same contract), **ProtokitePlaytestFrameScheduleTests**, **ProtokitePlaytestSessionTests** (held starts and ends for the quit and late-answer
+  to the same contract), **ProtokitePlaytestFrameScheduleTests**, **ProtokitePlaytestVideoRecordingTests** (fake frames and a fake encoder
+  through the real file: limits, drops, failures, the bounded wait), **ProtokitePlaytestScreenFrameSourceTests** (the real
+  shader and readback on known colours), **ProtokitePlaytestVideoSettingsTests**, **ProtokitePlaytestVideoTests** (when the
+  playtest records and what stops it), and in PlayMode **ProtokitePlaytestScreenRecordingTests** (the real screen, encoder
+  and file, judged against the screen; windowed editor only), **ProtokitePlaytestSessionTests** (held starts and ends for the quit and late-answer
   cases), **ProtokitePlaytestConfigTests** (EditMode, fake transport; a held-answer adapter
   for late replies), **ProtokitePlaytestDriverTests** (PlayMode, the real driver). A live `[Explicit]` check lives in
   FlockUnityProject: `ProtokitePlaytestLiveConfigTests`.

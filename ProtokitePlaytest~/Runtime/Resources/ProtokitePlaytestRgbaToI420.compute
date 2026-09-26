@@ -1,0 +1,71 @@
+// Converts a colour frame to tightly packed I420 (BT.601, limited range), four bytes packed in each uint.
+// The width must be a multiple of 8 and the height a multiple of 2; the recording rounds both sides to multiples of 16.
+#pragma kernel LumaKernel
+#pragma kernel ChromaKernel
+
+Texture2D<float4> Source;
+RWStructuredBuffer<uint> Output;
+uint Width;
+uint Height;
+uint FlipVertically;
+uint SourceIsLinear;
+
+float3 LinearToSrgb(float3 c)
+{
+    return c <= 0.0031308 ? c * 12.92 : 1.055 * pow(c, 1.0 / 2.4) - 0.055;
+}
+
+// Whether the source's first row is the top of the picture depends on the graphics API; the video's first row is the top.
+float3 Pixel(uint x, uint y)
+{
+    uint row = FlipVertically != 0 ? Height - 1 - y : y;
+    // A linear-colour project reads its sRGB texture back as linear values; a gamma project reads the stored values as they are.
+    float3 c = Source.Load(int3(x, row, 0)).rgb;
+    return saturate(SourceIsLinear != 0 ? LinearToSrgb(c) : c);
+}
+
+uint Luma(float3 c) { return (uint)round(16.0 + 65.481 * c.r + 128.553 * c.g + 24.966 * c.b); }
+uint Blue(float3 c) { return (uint)round(128.0 - 37.797 * c.r - 74.203 * c.g + 112.0 * c.b); }
+uint Red(float3 c) { return (uint)round(128.0 + 112.0 * c.r - 93.786 * c.g - 18.214 * c.b); }
+
+// One thread per four pixels of a row: one uint of the Y plane.
+[numthreads(64, 1, 1)]
+void LumaKernel(uint3 id : SV_DispatchThreadID)
+{
+    uint wordsPerRow = Width / 4;
+    if (id.x >= wordsPerRow * Height) return;
+    uint y = id.x / wordsPerRow;
+    uint x = (id.x % wordsPerRow) * 4;
+    uint word = 0;
+    for (uint i = 0; i < 4; i++)
+    {
+        word |= (Luma(Pixel(x + i, y)) & 0xFF) << (8 * i);
+    }
+    Output[id.x] = word;
+}
+
+// One thread per four chroma samples (an 8x2 block of pixels): one uint of U and one of V.
+[numthreads(64, 1, 1)]
+void ChromaKernel(uint3 id : SV_DispatchThreadID)
+{
+    uint chromaWidth = Width / 2;
+    uint chromaHeight = Height / 2;
+    uint wordsPerRow = chromaWidth / 4;
+    if (id.x >= wordsPerRow * chromaHeight) return;
+    uint cy = id.x / wordsPerRow;
+    uint cx = (id.x % wordsPerRow) * 4;
+    uint u = 0;
+    uint v = 0;
+    for (uint i = 0; i < 4; i++)
+    {
+        uint px = (cx + i) * 2;
+        uint py = cy * 2;
+        float3 c = (Pixel(px, py) + Pixel(px + 1, py) + Pixel(px, py + 1) + Pixel(px + 1, py + 1)) * 0.25;
+        u |= (Blue(c) & 0xFF) << (8 * i);
+        v |= (Red(c) & 0xFF) << (8 * i);
+    }
+    uint lumaWords = (Width * Height) / 4;
+    uint chromaWords = (chromaWidth * chromaHeight) / 4;
+    Output[lumaWords + id.x] = u;
+    Output[lumaWords + chromaWords + id.x] = v;
+}

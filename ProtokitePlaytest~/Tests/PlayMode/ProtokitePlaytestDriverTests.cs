@@ -135,5 +135,72 @@ namespace Protokite.Playtest.Tests
                 Assert.AreEqual(ProtokitePlaytestStatus.Ready, ProtokitePlaytest.Status);
             }
         }
+
+        private const string VideoAnswer =
+            "{\"result\":{\"session_started_event\":\"session_started\",\"test_id\":\"driven\",\"flock_game_version_id\":\"test-gvid\",\"features\":{\"video_recording\":true},\"form\":null}}";
+
+        [UnityTest]
+        public IEnumerator TheDriverAloneRecordsWhenTheConfigTurnsVideoOn()
+        {
+            if (Application.isBatchMode)
+                Assert.Ignore("A batchmode editor never reaches the end of a frame, where the driver records; run the PlayMode tests in a windowed editor.");
+            string folder = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "protokite_driver_video_" + Guid.NewGuid().ToString("N"));
+            CountingFrameSource source = new CountingFrameSource();
+            ProtokitePlaytest.RecordingsFolderForTesting = folder;
+            ProtokitePlaytest.VideoFrameSourceForTesting = (settings, format) => source;
+            try
+            {
+                ProtokitePlaytestDriver.StartWhenPlaytestingIsOn();
+                using (FlockTestClient.Create(new FlockFakeTransport().On(ConfigRoute, FlockFakeTransport.Ok(VideoAnswer))))
+                {
+                    yield return new WaitForSecondsRealtime(1.5f);
+                    Assert.IsTrue(ProtokitePlaytest.IsRecordingVideo, "Recording, with nothing but the driver calling the playtest");
+                    Assert.GreaterOrEqual(source.Captures, 15, "A second and a half of play at 15 frames a second");
+
+                    ProtokitePlaytest.HandleGameQuitting();
+                    Assert.IsNotNull(ProtokitePlaytest.FinishedVideo, "Quitting finishes the file");
+                    Assert.Greater(ProtokitePlaytest.FinishedVideo.FramesWritten, 0, ProtokitePlaytest.FinishedVideo.Error);
+                }
+            }
+            finally
+            {
+                ProtokitePlaytest.ResetForNewLaunch();
+                ProtokitePlaytest.VideoFrameSourceForTesting = null;
+                ProtokitePlaytest.RecordingsFolderForTesting = null;
+                if (System.IO.Directory.Exists(folder))
+                    System.IO.Directory.Delete(folder, true);
+            }
+        }
+
+        /// <summary>Frames of a moving picture, counted.</summary>
+        private sealed class CountingFrameSource : IProtokitePlaytestFrameSource
+        {
+            private readonly System.Collections.Generic.List<ProtokitePlaytestCapturedFrame> _arrived = new System.Collections.Generic.List<ProtokitePlaytestCapturedFrame>();
+            public int Width => 64;
+            public int Height => 48;
+            public bool IsReadyForAnotherFrame => true;
+            public int Captures;
+            public int FramesLostOnTheGraphicsCard => 0;
+            public int FramesDroppedForWantOfABlock => 0;
+
+            public void CaptureFrame(long timestampMs)
+            {
+                Captures++;
+                byte[] pixels = new byte[ProtokitePlaytestI420.FrameLength(Width, Height)];
+                for (int i = 0; i < pixels.Length; i++)
+                    pixels[i] = (byte)(timestampMs / 7 + i);
+                _arrived.Add(new ProtokitePlaytestCapturedFrame(pixels, timestampMs));
+            }
+
+            public void TakeCapturedFrames(System.Collections.Generic.List<ProtokitePlaytestCapturedFrame> frames)
+            {
+                frames.AddRange(_arrived);
+                _arrived.Clear();
+            }
+
+            public void ReturnBlock(byte[] pixels) { }
+            public void Stop(System.Collections.Generic.List<ProtokitePlaytestCapturedFrame> frames) => TakeCapturedFrames(frames);
+            public void Dispose() { }
+        }
     }
 }

@@ -194,9 +194,13 @@ namespace Protokite.Playtest
 #endif
         }
 
-        /// <summary>Ends this launch's session before the game closes, waiting a bounded time for Protokite to take it.</summary>
+        /// <summary>
+        /// Ends this launch's session before the game closes, waiting a bounded time for Protokite to take it. The video's file is
+        /// finished on its own threads meanwhile, and waited for in the same time.
+        /// </summary>
         internal static void HandleGameQuitting()
         {
+            StopVideoForQuitting();
 #if UNITY_WEBGL && !UNITY_EDITOR
             // A page closing cannot be held up, and the transport needs the main thread this would block: the end is sent once.
             if (_sessionState == ProtokitePlaytestSessionState.Started)
@@ -266,6 +270,7 @@ namespace Protokite.Playtest
                 }
             }
 
+            WaitForVideoAtQuit(Remaining(until));
 #endif
             // From here on, a start still on its way belongs to a launch that has ended.
             _launch++;

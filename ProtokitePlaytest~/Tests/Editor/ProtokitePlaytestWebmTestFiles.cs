@@ -252,6 +252,7 @@ namespace Protokite.Playtest.Tests
 
         public string ContentType => "application/x-protokite-test";
         public string FileExtension => ".frames";
+        public int BytesAddedToEachFrame => 0;
         public long BytesWritten { get; private set; }
         public int FramesWritten { get; private set; }
         public long LastTimestampMs { get; private set; } = -1;

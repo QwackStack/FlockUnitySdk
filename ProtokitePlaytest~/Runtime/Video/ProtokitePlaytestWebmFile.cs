@@ -67,6 +67,7 @@ namespace Protokite.Playtest
 
         public string ContentType => "video/webm";
         public string FileExtension => ".webm";
+        public int BytesAddedToEachFrame => FrameHeaderBytes;
         public long BytesWritten { get; private set; }
         public int FramesWritten { get; private set; }
         public long LastTimestampMs { get; private set; } = -1;
@@ -725,5 +726,12 @@ namespace Protokite.Playtest
             }
             return total;
         }
+    }
+
+    /// <summary>The kind of file recordings are written to on this platform, so nothing outside this file names it.</summary>
+    internal static class ProtokitePlaytestRecordingFiles
+    {
+        /// <summary>A new file, not yet open.</summary>
+        public static IProtokitePlaytestRecordingFile Create() => new ProtokitePlaytestWebmFile();
     }
 }

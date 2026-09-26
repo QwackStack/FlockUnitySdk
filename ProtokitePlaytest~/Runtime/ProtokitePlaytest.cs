@@ -177,6 +177,7 @@ namespace Protokite.Playtest
         {
             ForgetPlaytestConfig();
             _flock = null;
+            StopVideoForQuitting();
         }
 
         /// <summary>Puts the playtest back as a fresh launch finds it; statics outlive a Play Mode session when domain reload is off.</summary>
@@ -184,6 +185,7 @@ namespace Protokite.Playtest
         internal static void ResetForNewLaunch()
         {
             Stop();
+            ResetVideoForNewLaunch();
             ResetSessionForNewLaunch();
             _statusLastReported = null;
             _stateAtLastRefresh = null;

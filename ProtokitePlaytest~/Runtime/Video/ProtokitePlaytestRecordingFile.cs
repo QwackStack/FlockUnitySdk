@@ -25,6 +25,9 @@ namespace Protokite.Playtest
         /// <summary>The ending a finished recording's file name takes, dot included.</summary>
         string FileExtension { get; }
 
+        /// <summary>What writing a frame adds to the file on top of the frame's own bytes, so a size limit can be kept exactly.</summary>
+        int BytesAddedToEachFrame { get; }
+
         /// <summary>Bytes written so far, header included.</summary>
         long BytesWritten { get; }
 

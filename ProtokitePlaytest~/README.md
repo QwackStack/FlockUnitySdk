@@ -82,12 +82,42 @@ ProtokitePlaytest.SetSteamId(SteamUser.GetSteamID().ToString(), SteamFriends.Get
 
 An id that is empty, longer than 64 characters or holds whitespace is refused (not trimmed), and the device id is sent.
 
+## Video
+
+When the playtest's config turns **video_recording** on, the game's screen is recorded from the moment the config loads,
+before anyone signs in: one recording a launch, written as it records to `ProtokitePlaytest/Recordings/` under the game's
+persistent data folder, as a WebM file a browser plays with nothing installed. It stops for good at the length or size
+limit, or when the game quits; quitting waits for the file within the same 3 seconds as the session end, and a file not
+finished by then stays as its `.part` file. Time the game spends in the background is left out. This version keeps
+recordings on disk and does not send them to Protokite yet.
+
+The frame is copied, scaled and converted on the graphics card and read back without waiting for it; encoding and writing
+each run on a thread of their own, and a frame that cannot keep up is dropped rather than stalling the game. The log says
+where the recording goes when it starts, and what it holds, and how many frames were dropped and why, when it ends.
+
+The settings are in **Protokite > Playtest > Settings**, under **Video recording**:
+
+| Setting | Default | |
+|---|---|---|
+| Video Codec | VP8 | VP8 costs a slow PC least; VP9 makes smaller files for more processor time |
+| Video Width, Video Height | 1280, 720 | The largest the video is. The screen's shape is kept, a smaller window is not enlarged, and each side is rounded down to a multiple of 16 |
+| Video Frames Per Second | 15 | |
+| Video Bitrate Kbps | 1500 | |
+| Encoder Threads | 1 | |
+| Use Codec Default Speed, Encoder Speed | on, 12 | Off: the speed you set (VP8 -16 to 16, VP9 -9 to 9; higher is faster and looks worse) |
+| Encoder Below Game Priority | on | The encoder gives way to the game when the processor is busy |
+| Max Recording Minutes | 60 | |
+| Max Recording Size Mb | 1536 | |
+
 ## Platforms
 
 Everything above runs wherever the Flock SDK runs. **Video is recorded on 64-bit Windows only** (the Editor and players,
 Mono and IL2CPP): the package carries its encoder there as `Runtime/Plugins/x86_64/protokite_vpx.dll`. Any other build
 leaves the DLL out, records no video, and says so once in the log. That includes 32-bit and ARM64 Windows builds, which
-are told video is for 64-bit Windows rather than that the DLL is missing.
+are told video is for 64-bit Windows rather than that the DLL is missing. On 64-bit Windows, recording runs on Direct3D 11
+and 12, Vulkan and OpenGL, in the Built-in Render Pipeline and URP, in Linear and Gamma colour. It needs a graphics card
+that runs compute shaders; a game that draws nothing (a server build, or one started with `-nographics` or `-batchmode`)
+records nothing.
 
 ## Third-party software
 

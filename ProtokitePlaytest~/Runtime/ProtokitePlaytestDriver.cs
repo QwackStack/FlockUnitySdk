@@ -1,3 +1,4 @@
+using System.Collections;
 using UnityEngine;
 
 namespace Protokite.Playtest
@@ -27,6 +28,29 @@ namespace Protokite.Playtest
         }
 
         private void Update() => ProtokitePlaytest.Refresh();
+
+        // A frame is captured after it is drawn, so the video work runs at the end of every frame.
+        private IEnumerator Start()
+        {
+            WaitForEndOfFrame endOfFrame = new WaitForEndOfFrame();
+            while (true)
+            {
+                yield return endOfFrame;
+                ProtokitePlaytest.UpdateVideo(Time.unscaledDeltaTime);
+            }
+        }
+
+        private void OnApplicationFocus(bool hasFocus)
+        {
+            if (hasFocus)
+                ProtokitePlaytest.HandleGameLeftOrCameBack();
+        }
+
+        private void OnApplicationPause(bool paused)
+        {
+            if (!paused)
+                ProtokitePlaytest.HandleGameLeftOrCameBack();
+        }
 
         private void OnDestroy()
         {
