@@ -312,15 +312,15 @@ namespace Protokite.Playtest.Tests
         [Test]
         public void MakingRoomCountsARunStillInUseAtItsReservationAndNeverDeletesIt()
         {
-            // Its recording finished and its launch still runs: only the lock stands between it and deletion.
-            string running = Plant(_root, TestVideo, "20260101-000000-00000001", 400000, finishedVideo: new byte[200000]);
+            // Its launch has just made it and still runs, with nothing written yet: only the lock stands between it and deletion.
+            string running = Plant(_root, TestVideo, "20260101-000000-00000001", 400000);
             Held(HoldLock(running));
 
             ProtokitePlaytestRoomMade room = ProtokitePlaytestRecordingsFolder.MakeRoom(_root, null, 1000000, 100000, 0);
-            Assert.AreEqual(600000, room.BytesLeft, "At the 400 KB it reserved, not the 200 KB it holds so far");
+            Assert.AreEqual(600000, room.BytesLeft, "At the 400 KB it reserved, though it holds nothing yet");
 
             room = ProtokitePlaytestRecordingsFolder.MakeRoom(_root, null, 450000, 100000, 0);
-            Assert.IsTrue(File.Exists(VideoPath(running, TestVideo)), "Never deleted, though it is the oldest and a test video");
+            Assert.IsTrue(Directory.Exists(running), "Never deleted, though it is the oldest and a test video");
             Assert.AreEqual(0, room.TestVideosDeleted);
             Assert.AreEqual(50000, room.BytesLeft);
 
@@ -331,15 +331,34 @@ namespace Protokite.Playtest.Tests
         }
 
         [Test]
-        public void ARunTheFinishingPassHoldsCountsAtItsReservationAndIsNotDeleted()
+        public void ARunHeldWithItsVideoFinishedCountsAtWhatItTakesAndIsNotDeleted()
+        {
+            // Being uploaded, or its launch still running after its recording finished: it grows no more.
+            string uploading = Plant(_root, Playtest, "20260101-000000-00000001", 800000, "pk-1", finishedVideo: new byte[200000]);
+            Held(HoldLock(uploading));
+            // A stray file is not a finished video: a run holding only one still counts at its reservation.
+            string starting = Plant(_root, Playtest, "20260101-000000-00000002", 300000);
+            File.WriteAllBytes(Path.Combine(starting, "desktop.ini"), new byte[10]);
+            Held(HoldLock(starting));
+
+            ProtokitePlaytestRoomMade room = ProtokitePlaytestRecordingsFolder.MakeRoom(_root, null, 2000000, 100000, 0);
+            Assert.AreEqual(2000000 - Total(uploading) - 300000, room.BytesLeft, "The finished one at the 200 KB it takes, not the 800 KB it once reserved");
+
+            room = ProtokitePlaytestRecordingsFolder.MakeRoom(_root, null, 400000, 100000, 0);
+            Assert.IsTrue(File.Exists(VideoPath(uploading, Playtest)), "Held, so never deleted");
+            Assert.AreEqual(0, room.WaitingRecordingsDeleted);
+        }
+
+        [Test]
+        public void ARunTheFinishingPassHoldsIsNotDeleted()
         {
             string held = Plant(_root, TestVideo, "20260101-000000-00000001", 500000, finishedVideo: new byte[100000]);
             ProtokitePlaytestRoomMade room = null;
-            ProtokitePlaytestRecordingsFolder.FinishEndedRuns(_root, folder => room = ProtokitePlaytestRecordingsFolder.MakeRoom(_root, null, 600000, 200000, 0));
+            ProtokitePlaytestRecordingsFolder.FinishEndedRuns(_root, folder => room = ProtokitePlaytestRecordingsFolder.MakeRoom(_root, null, 150000, 200000, 0));
 
             Assert.IsNotNull(room, "Precondition: room was made while the pass held the run");
-            Assert.AreEqual(100000, room.BytesLeft, "Counted at the 500 KB it reserved");
-            Assert.AreEqual(0, room.TestVideosDeleted);
+            Assert.AreEqual(150000 - Total(held), room.BytesLeft, "Its video is finished, so it counts at what it takes");
+            Assert.AreEqual(0, room.TestVideosDeleted, "Room was short, yet the run the pass holds stays");
             Assert.IsTrue(File.Exists(VideoPath(held, TestVideo)), "Not deleted while the pass works on it");
         }
 

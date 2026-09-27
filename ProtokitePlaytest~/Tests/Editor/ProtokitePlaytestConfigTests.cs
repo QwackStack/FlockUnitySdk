@@ -395,16 +395,13 @@ namespace Protokite.Playtest.Tests
                 ProtokitePlaytest.Refresh();
                 Assert.AreEqual(0, flock.Transport.CountTo(ConfigRoute));
                 Assert.AreEqual(ProtokitePlaytestStatus.TurnedOff, ProtokitePlaytest.Status);
-
-                ProtokitePlaytestDriver.StartWhenPlaytestingIsOn();
-                Assert.AreEqual(0, Resources.FindObjectsOfTypeAll<ProtokitePlaytestDriver>().Length, "No driver runs with playtesting off");
             }
         }
 
         [Test]
         public void TheDriverStartsBeforeTheFirstSceneLoads()
         {
-            MethodInfo start = typeof(ProtokitePlaytestDriver).GetMethod(nameof(ProtokitePlaytestDriver.StartWhenPlaytestingIsOn),
+            MethodInfo start = typeof(ProtokitePlaytestDriver).GetMethod(nameof(ProtokitePlaytestDriver.StartWithTheGame),
                 BindingFlags.Static | BindingFlags.NonPublic);
             RuntimeInitializeOnLoadMethodAttribute attribute = start.GetCustomAttribute<RuntimeInitializeOnLoadMethodAttribute>();
             Assert.IsNotNull(attribute, "Unity calls it at start-up");

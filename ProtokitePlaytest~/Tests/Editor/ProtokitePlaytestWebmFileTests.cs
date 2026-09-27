@@ -590,6 +590,10 @@ namespace Protokite.Playtest.Tests
             }
             Assert.AreEqual("video/webm", new ProtokitePlaytestWebmFile().ContentType, "What the upload sends a WebM recording as");
             Assert.AreEqual(".webm", new ProtokitePlaytestWebmFile().FileExtension);
+            // A later launch knows a recording only by its ending, so the two must name the same kind.
+            Assert.AreEqual(new ProtokitePlaytestWebmFile().ContentType, ProtokitePlaytestRecordingFiles.ContentTypeFor("recording" + new ProtokitePlaytestWebmFile().FileExtension),
+                "Sent as the same kind by the launch that wrote it and by a later one");
+            Assert.IsNull(ProtokitePlaytestRecordingFiles.ContentTypeFor("recording.webm.part"), "Never one still being written");
         }
 
         [Test]

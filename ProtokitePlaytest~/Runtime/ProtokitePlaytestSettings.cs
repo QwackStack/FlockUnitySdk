@@ -14,7 +14,7 @@ namespace Protokite.Playtest
         /// <summary>The Protokite API a new project talks to: production. Set http://localhost:8020 for a local stack.</summary>
         public const string DefaultProtokiteApiUrl = "https://api-protokite.qwacks.com";
 
-        [Tooltip("Off by default. While off, the playtest records nothing and sends nothing.")]
+        [Tooltip("Off by default. While off, the playtest records nothing and starts no session; recordings an earlier playtest build of the game kept are still uploaded.")]
         [SerializeField] private bool playtestingEnabled;
 
         [Tooltip("The Protokite API this game reports to.")]

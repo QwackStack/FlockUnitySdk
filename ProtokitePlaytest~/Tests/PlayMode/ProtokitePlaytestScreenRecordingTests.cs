@@ -108,7 +108,7 @@ namespace Protokite.Playtest.Tests
         public IEnumerator TheRecordingIsTheScreenUprightAndInItsOwnColours()
         {
             BuildTheScene();
-            ProtokitePlaytestDriver.StartWhenPlaytestingIsOn();
+            ProtokitePlaytestDriver.StartWithTheGame();
             Texture2D screen;
             using (FlockTestClient.Create(new FlockFakeTransport().On(ConfigRoute, FlockFakeTransport.Ok(VideoAnswer))))
             {

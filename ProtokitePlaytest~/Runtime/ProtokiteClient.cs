@@ -76,6 +76,29 @@ namespace Protokite.Playtest
             }, cancellationToken);
         }
 
+        /// <summary>The address that gives one session's recording somewhere to be uploaded to; the session id is escaped.</summary>
+        internal static string RecordingUploadLinkUrl(string protokiteApiUrl, string playtestSessionId)
+            => JoinUrl(protokiteApiUrl, "/game/sdk/playtest-session/" + System.Uri.EscapeDataString(playtestSessionId) + "/recording-upload");
+
+        /// <summary>Asks for a link the recording can be uploaded to, signed for this content type; a link is not an upload.</summary>
+        // Retried like a read, since a second link only replaces the first. Protokite counts the recording from the moment it hands one out.
+        internal Task<ProtokitePlaytestRecordingLink> RequestRecordingUploadLinkAsync(string protokiteApiUrl, Dictionary<string, string> headers,
+            string playtestSessionId, string contentType, CancellationToken cancellationToken)
+        {
+            string url = RecordingUploadLinkUrl(protokiteApiUrl, playtestSessionId);
+            // Webcam and voice are left out: the server defaults both to false, and a playtest recording carries neither.
+            JObject body = new JObject { ["content_type"] = contentType };
+            return _retryHandler.ExecuteAsync(async () =>
+            {
+                // Enveloped: the route answers GenericResponse[PlaytestRecordingUploadResponse].
+                JObject envelope = await FlockHttpClient.PostAsync<JObject>(url, body, headers, cancellationToken);
+                ProtokitePlaytestRecordingLink link = ProtokitePlaytestRecordingLink.FromJson(envelope?["result"] as JObject);
+                if (link == null)
+                    throw new FlockSerializationException("The recording upload answer names no usable upload_url") { Body = envelope?.ToString() };
+                return link;
+            }, cancellationToken);
+        }
+
         // Only trailing slashes are removed: a URL with spaces inside is refused before it gets here.
         private static string JoinUrl(string protokiteApiUrl, string route) => protokiteApiUrl.Trim().TrimEnd('/') + route;
     }

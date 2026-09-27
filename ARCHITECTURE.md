@@ -47,6 +47,12 @@ PackageBuilder/Tests/Editor/   EditMode tests (asmdef Flock.Tests.Editor)
 - **FlockProviderBase** — base class for providers; shared fetch + snapshot + validate helpers. `ExecuteAsync<T>` runs a call through retry + token refresh; `ExecuteWithoutResultAsync` does the same for a call that returns nothing.
 - **IFlockHttpAdapter** — per-platform transport seam; `FlockHttpRequest`/`FlockHttpResponse`/`FlockHttpResult` normalize it.
 - **SystemNetHttpAdapter** (non-WebGL) / **UnityWebRequestHttpAdapter** (WebGL) — transport impls.
+- **IFlockFileUploader** / **UnityWebRequestFileUploader** — the file upload (C-4, public): `FlockHttpClient.UploadFileAsync`
+  PUTs a file from disk with `UploadHandlerFile`, only the Content-Type it is given, no whole-upload timeout but a 60 s stall
+  timeout read off `uploadedBytes` on a `Stopwatch`, and answers a `FlockFileUploadOutcome` (`IsUploaded` = a 2xx); what
+  Unity refuses by throwing (an address it cannot parse, a file held open to another program) comes back as an outcome too. Kept apart from
+  `IFlockHttpAdapter` (public, a studio may implement it) so no adapter changes; `UseFileUploader` swaps it for tests. WebGL
+  sends nothing. Main thread only (UnityWebRequest's rule).
 - **RetryPolicy** / **RetryHandler** — transient-failure backoff honoring `Retry-After`.
 
 ## Runtime/Auth
@@ -177,13 +183,24 @@ script.
   the finishing pass (`FinishEndedRuns`: finish a `.part` through `IProtokitePlaytestRecordingFile`, keep a playtest
   recording with a session and a test video, delete a playtest recording with no session and a run left with no video,
   list what it cannot finish or delete) and the budget (`MakeRoom`). The pass runs on `Task.Run`, started by the driver, and
-  the recording starts only once it is done (10 s at most), since `MakeRoom` counts a run the pass has not finished at its whole reservation.
+  the recording starts only once it is done (10 s at most), since `MakeRoom` counts a cut-off run the pass has not finished at its whole reservation.
   `StartVideoRecording` makes its run with the room `BytesToMakeRoomFor` wants **before** making room, so a game starting at
-  the same moment counts it; a run in use, or with an unfinished video, counts at its reservation and is never deleted;
+  the same moment counts it; a run in use, or with an unfinished video, counts at its reservation and is never deleted,
+  except that a held run whose video is finished (`FinishedVideoPath`: a file of a kind Protokite takes, so a stray file
+  never counts) is counted at its files, since it grows no more and an upload may hold it for minutes;
   ended runs go test videos first, then waiting uploads, oldest first; under 1 MB left, no recording. The size limit is cut
   to the room left and the reservation raised to match. The session is saved into the run when it starts
   (`FinishPlaytestSessionStartAsync`, and quitting's wait for a start on its way) and when a recording starts after it.
   Unity has no test-video entry point yet, so that kind is tested with runs planted by hand.
+- **Uploads (`Runtime/ProtokitePlaytestUploads.cs`)** — this launch's recording goes when its file is finished and its session
+  has started, whichever is second (`ReportFinishedVideo` and `FinishPlaytestSessionStartAsync` both ask), with the session's
+  own URL and headers; never at quit (the session is no longer Started). Earlier launches' go from `Refresh` once the finishing
+  pass is done and Flock runs: one at a time, oldest first, each run claimed while sent, with this launch's API key and the
+  session's Game Version ID (`HeadersForTheSession`). Each upload: a link (`ProtokiteClient.RequestRecordingUploadLinkAsync`,
+  enveloped `upload_url`) only now, then core's `UploadFileAsync` with the file's own content type (this launch's from its
+  writer, an earlier one's from its ending through `ContentTypeFor`, a test holding the two equal); uploaded only on the
+  storage's 2xx; one more try with a fresh link unless S3 said `SignatureDoesNotMatch`; uploaded → `DeleteEverything`. One
+  `CancellationTokenSource` a launch, cancelled at quit, by `Stop` and on a new launch.
 - **Native~/** — `protokite_vpx.c`, `build-protokite-vpx.sh` (maintainers: finds Visual Studio 2022 through vswhere,
   downloads libvpx, nasm and make pinned by SHA-256, builds, links, and refuses a DLL that needs more than KERNEL32;
   `--check-dll <dll>` runs those checks alone) and `link-protokite-vpx.bat`. A `~` folder, so
@@ -191,8 +208,10 @@ script.
 - **ProtokitePlaytestNativePluginImport** (Editor) — the DLL's platforms (64-bit Windows editor and players only) set
   through `PluginImporter` and saved, never by hand; run after every script load, because settings changed from an import
   rule do not stick to a native plugin (measured).
-- **ProtokitePlaytestDriver** — a hidden `DontDestroyOnLoad` object started `BeforeSceneLoad` only when playtesting is on; calls
-  `Refresh()` every frame and `Stop()` when destroyed.
+- **ProtokitePlaytestDriver** — a hidden `DontDestroyOnLoad` object started `BeforeSceneLoad` (`StartWithTheGame`) in every
+  launch, playtesting on or off: with it off the status stays `TurnedOff` (no config, no session, no recording) and the
+  driver only finishes and uploads what earlier launches kept, so a build with it off never strands a recording.
+  Calls `Refresh()` every frame and `Stop()` when destroyed.
 - **ProtokiteClient** (internal) — `GET /game/sdk/playtest-config` through core's `FlockHttpClient` and a `RetryHandler` built
   from `FlockClient.RetryPolicy`; headers from `FlockClient.GetGameHeaders()` (key + version, never the bearer). The answer is
   enveloped; **`ProtokitePlaytestConfig` is read by hand from `JObject`** so IL2CPP stripping has no model of ours to strip.

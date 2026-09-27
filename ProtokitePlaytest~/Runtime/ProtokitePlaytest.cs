@@ -136,6 +136,8 @@ namespace Protokite.Playtest
         {
             FlockClient running = RunningFlock();
             bool flockChanged = !ReferenceEquals(running, _flock);
+            // Before the early return below: it waits on the finishing pass, which changes no state Refresh follows.
+            UploadEarlierRecordingsWhenReady(running);
 
             // Nothing to do when neither the Flock client nor the playtest's state has changed since the last frame, unless a
             // session is waiting only for a Flock session to reach the server. The settings are fixed in a build, and every
@@ -177,6 +179,7 @@ namespace Protokite.Playtest
         {
             ForgetPlaytestConfig();
             _flock = null;
+            StopUploads();
             StopVideoForQuitting();
         }
 
@@ -187,6 +190,7 @@ namespace Protokite.Playtest
             Stop();
             ResetVideoForNewLaunch();
             ResetSessionForNewLaunch();
+            ResetUploadsForNewLaunch();
             _statusLastReported = null;
             _stateAtLastRefresh = null;
         }
