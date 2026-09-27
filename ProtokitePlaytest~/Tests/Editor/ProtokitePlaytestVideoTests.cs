@@ -56,6 +56,10 @@ namespace Protokite.Playtest.Tests
             if (FlockClient.IsInitialized)
                 FlockClient.Shutdown();
             ProtokitePlaytest.ResetForNewLaunch();
+            Assert.IsTrue(ProtokitePlaytest.WaitForEarlierRecordingsForTesting(TimeSpan.FromSeconds(10)), "The finishing pass ended before its folder is deleted");
+            ProtokitePlaytest.BeforeFinishingEachEarlierRecordingForTesting = null;
+            ProtokitePlaytest.LongestWaitForEarlierRecordingsForTesting = null;
+            ProtokitePlaytestRecordingsFolder.BeforeNextMakingRoomForTesting = null;
             ProtokitePlaytest.VideoEncoderForTesting = null;
             ProtokitePlaytest.VideoFrameSourceForTesting = null;
             ProtokitePlaytest.RecordingsFolderForTesting = null;
@@ -340,6 +344,280 @@ namespace Protokite.Playtest.Tests
             finally
             {
                 LogAssert.ignoreFailingMessages = false;
+            }
+        }
+
+        // Where the recording lives on disk, and the disk budget
+
+        private string Recordings => Path.Combine(_folder, "Recordings");
+
+        private const long Megabyte = 1024L * 1024;
+
+        [Test]
+        public void TheRecordingIsWrittenInARunFolderHeldUntilTheLaunchEnds()
+        {
+            using (FlockWithConfig(true))
+            {
+                ProtokitePlaytest.Refresh();
+                Frames(1);
+                ProtokitePlaytestRecordingRun run = ProtokitePlaytest.RecordingRunForTesting;
+                Assert.IsNotNull(run, "Precondition: recording");
+                string runFolder = run.FolderPath;
+                string name = Path.GetFileName(runFolder);
+                Assert.AreEqual(Path.GetFullPath(Path.Combine(Recordings, "Playtest")), Path.GetDirectoryName(runFolder), "A playtest recording's run");
+                Assert.AreEqual(Path.Combine(runFolder, "recording-" + name + ".webm.part"), ProtokitePlaytest.VideoRecordingForTesting.PartPath);
+                Assert.AreEqual(ProtokitePlaytest.VideoRecordingForTesting.MaxBytes.ToString(), File.ReadAllText(Path.Combine(runFolder, "reserved-bytes.txt")),
+                    "Other launches count it at the most it may grow to");
+
+                Frames(30);
+                Assert.IsTrue(ProtokitePlaytest.StopVideoRecording());
+                WaitUntilFinished();
+                Assert.AreEqual(Path.Combine(runFolder, "recording-" + name + ".webm"), ProtokitePlaytest.FinishedVideo.FilePath);
+                Assert.IsNull(ProtokitePlaytestRecordingRun.ClaimEnded(runFolder, ProtokitePlaytestRecordingKind.Playtest),
+                    "Still held once written: its Protokite session may yet start and be saved beside it");
+
+                ProtokitePlaytest.HandleGameQuitting();
+                using (ProtokitePlaytestRecordingRun claimed = ProtokitePlaytestRecordingRun.ClaimEnded(runFolder, ProtokitePlaytestRecordingKind.Playtest))
+                    Assert.IsNotNull(claimed, "Let go when the launch ends, so a game started after it (or after Play Mode) can keep or finish it");
+            }
+        }
+
+        [Test]
+        public void ARunWhoseFileIsStillBeingWrittenAtQuitIsLetGoOnlyByTheNextLaunch()
+        {
+            ManualResetEventSlim holdEncoding = new ManualResetEventSlim(false);
+            ProtokitePlaytest.VideoEncoderForTesting = () => new HeldEncoder(_encoder, holdEncoding);
+            try
+            {
+                using (FlockWithConfig(true))
+                {
+                    ProtokitePlaytest.Refresh();
+                    Frames(30);
+                    string runFolder = ProtokitePlaytest.RecordingRunForTesting.FolderPath;
+                    LogAssert.Expect(LogType.Warning, new Regex(@"could not be finished before the game closed"));
+                    ProtokitePlaytest.HandleGameQuitting();
+                    Assert.IsNull(ProtokitePlaytestRecordingRun.ClaimEnded(runFolder, ProtokitePlaytestRecordingKind.Playtest),
+                        "Its file is still being written, so no other launch may finish it yet");
+
+                    holdEncoding.Set();
+                    ProtokitePlaytest.ResetForNewLaunch();
+                    using (ProtokitePlaytestRecordingRun claimed = ProtokitePlaytestRecordingRun.ClaimEnded(runFolder, ProtokitePlaytestRecordingKind.Playtest))
+                        Assert.IsNotNull(claimed, "The next launch waits for it, then lets go");
+                }
+            }
+            finally
+            {
+                holdEncoding.Set();
+            }
+        }
+
+        [Test]
+        public void ARecordingMakesRoomOnlyOnceEarlierLaunchesRecordingsAreGoneThrough()
+        {
+            _settings.Settings.RecordingsDiskBudgetMb = 4;
+            _settings.Settings.MaxRecordingMinutes = 0.1f;
+            // Waiting to upload, reserved at 3 MB and holding 1 KB: counted at 3 MB while the pass holds it, at 1 KB after.
+            string upload = ProtokitePlaytestPlantedRuns.Plant(Recordings, ProtokitePlaytestRecordingKind.Playtest, "20260101-000000-00000001", 3 * Megabyte,
+                "pk-1", finishedVideo: new byte[1024]);
+            ManualResetEventSlim letItFinish = new ManualResetEventSlim(false);
+            ProtokitePlaytest.BeforeFinishingEachEarlierRecordingForTesting = run => letItFinish.Wait(TimeSpan.FromSeconds(5));
+            try
+            {
+                ProtokitePlaytest.StartFinishingEarlierRecordings();
+                using (FlockWithConfig(true))
+                {
+                    ProtokitePlaytest.Refresh();
+                    Frames(30);
+                    Assert.IsFalse(ProtokitePlaytest.IsRecordingVideo, "No room is made while the pass still works on what earlier launches left");
+
+                    letItFinish.Set();
+                    Assert.IsTrue(ProtokitePlaytest.WaitForEarlierRecordingsForTesting(TimeSpan.FromSeconds(10)));
+                    Frames(1);
+                    Assert.IsTrue(ProtokitePlaytest.IsRecordingVideo, "Once it is done, recording starts");
+                    long uploadBytes = ProtokitePlaytestRecordingRun.BytesOnDisk(upload);
+                    Assert.AreEqual(4 * Megabyte - uploadBytes, ProtokitePlaytest.VideoRecordingForTesting.MaxBytes, "The ended upload counts at what it holds");
+                }
+            }
+            finally
+            {
+                letItFinish.Set();
+            }
+        }
+
+        [Test]
+        public void ARecordingWaitsForEarlierLaunchesRecordingsNoLongerThanItsBound()
+        {
+            ProtokitePlaytest.LongestWaitForEarlierRecordingsForTesting = TimeSpan.FromMilliseconds(500);
+            ProtokitePlaytestPlantedRuns.Plant(Recordings, ProtokitePlaytestRecordingKind.Playtest, "20260101-000000-00000001", 1024, "pk-1", finishedVideo: new byte[1024]);
+            ManualResetEventSlim letItFinish = new ManualResetEventSlim(false);
+            ProtokitePlaytest.BeforeFinishingEachEarlierRecordingForTesting = run => letItFinish.Wait(TimeSpan.FromSeconds(5));
+            try
+            {
+                ProtokitePlaytest.StartFinishingEarlierRecordings();
+                using (FlockWithConfig(true))
+                {
+                    ProtokitePlaytest.Refresh();
+                    Frames(1);
+                    Assert.IsFalse(ProtokitePlaytest.IsRecordingVideo, "Precondition: waiting for the pass");
+                    Thread.Sleep(700);
+                    Frames(1);
+                    Assert.IsFalse(ProtokitePlaytest.WaitForEarlierRecordingsForTesting(TimeSpan.Zero), "Precondition: the pass is still held");
+                    Assert.IsTrue(ProtokitePlaytest.IsRecordingVideo, "A pass that takes too long does not cost the launch its recording");
+                }
+            }
+            finally
+            {
+                letItFinish.Set();
+            }
+        }
+
+        [Test]
+        public void ARecordingThatCannotStartLeavesNoRunBehind()
+        {
+            _source = new FakeFrameSource(1, 1);
+            using (FlockWithConfig(true))
+            {
+                ProtokitePlaytest.Refresh();
+                LogAssert.Expect(LogType.Warning, new Regex(@"This launch records no playtest video: a 1x1 video cannot be recorded"));
+                Frames(1);
+                Assert.IsFalse(ProtokitePlaytest.IsRecordingVideo);
+                Assert.IsEmpty(ProtokitePlaytestPlantedRuns.Runs(Recordings, ProtokitePlaytestRecordingKind.Playtest), "Its run is deleted with it");
+            }
+        }
+
+        [Test]
+        public void TheRecordingMayTakeOnlyTheRoomTheBudgetHasLeft()
+        {
+            _settings.Settings.RecordingsDiskBudgetMb = 3;
+            _settings.Settings.MaxRecordingMinutes = 0.1f;
+            string otherGame = ProtokitePlaytestPlantedRuns.Plant(Recordings, ProtokitePlaytestRecordingKind.Playtest, "20260101-000000-00000001", Megabyte);
+            using (ProtokitePlaytestPlantedRuns.HoldLock(otherGame))
+            using (FlockWithConfig(true))
+            {
+                ProtokitePlaytest.Refresh();
+                LogAssert.Expect(LogType.Log, new Regex(@"before the file passes 2 MB \(Max Recording Size Mb is 1536 MB, but Recordings Disk Budget Mb has only this much left\)"));
+                Frames(1);
+                Assert.AreEqual(2 * Megabyte, ProtokitePlaytest.VideoRecordingForTesting.MaxBytes, "The 3 MB budget less the 1 MB another game still running reserved");
+                Assert.AreEqual((2 * Megabyte).ToString(), File.ReadAllText(Path.Combine(ProtokitePlaytest.RecordingRunForTesting.FolderPath, "reserved-bytes.txt")));
+                Assert.IsTrue(Directory.Exists(otherGame));
+            }
+        }
+
+        [Test]
+        public void NoRoomLeftInTheBudgetRecordsNothingAndNamesTheSettingToRaise()
+        {
+            _settings.Settings.RecordingsDiskBudgetMb = 2;
+            _settings.Settings.MaxRecordingMinutes = 0.1f;
+            string otherGame = ProtokitePlaytestPlantedRuns.Plant(Recordings, ProtokitePlaytestRecordingKind.Playtest, "20260101-000000-00000001", 3 * Megabyte / 2);
+            Regex noRoom = new Regex(@"This launch records no playtest video: the recordings in .* take 1\.5 MB of Recordings Disk Budget Mb \(2 MB\).*" +
+                                     @"Raise Recordings Disk Budget Mb in Protokite > Playtest > Settings");
+            int said = 0;
+            Application.LogCallback count = (message, stack, type) =>
+            {
+                if (type == LogType.Warning && noRoom.IsMatch(message))
+                    said++;
+            };
+            using (ProtokitePlaytestPlantedRuns.HoldLock(otherGame))
+            using (FlockWithConfig(true))
+            {
+                ProtokitePlaytest.Refresh();
+                Application.logMessageReceived += count;
+                try
+                {
+                    Frames(60);
+                }
+                finally
+                {
+                    Application.logMessageReceived -= count;
+                }
+                Assert.AreEqual(1, said, "Said once, as a warning naming the setting");
+                Assert.IsFalse(ProtokitePlaytest.IsRecordingVideo, "Half a megabyte is too little to start with");
+                Assert.AreEqual(1, ProtokitePlaytestPlantedRuns.Runs(Recordings, ProtokitePlaytestRecordingKind.Playtest).Length, "Its own run is deleted again");
+                Assert.IsTrue(_encoder.Disposed, "The encoder is let go");
+                Assert.IsTrue(_source.Disposed, "And the capture");
+            }
+        }
+
+        [Test]
+        public void AShortRecordingNeverDeletesARecordingWaitingToUpload()
+        {
+            _settings.Settings.RecordingsDiskBudgetMb = 10;
+            _settings.Settings.MaxRecordingMinutes = 0.1f;
+            string upload = ProtokitePlaytestPlantedRuns.Plant(Recordings, ProtokitePlaytestRecordingKind.Playtest, "20260101-000000-00000001",
+                sessionId: "pk-1", finishedVideo: new byte[7 * Megabyte]);
+            using (FlockWithConfig(true))
+            {
+                ProtokitePlaytest.Refresh();
+                Frames(1);
+                Assert.IsTrue(ProtokitePlaytest.IsRecordingVideo);
+                Assert.IsTrue(File.Exists(ProtokitePlaytestPlantedRuns.VideoPath(upload, ProtokitePlaytestRecordingKind.Playtest)),
+                    "Six seconds at its bitrate fit beside it; the 1.5 GB size limit is no reason to delete it");
+            }
+        }
+
+        [Test]
+        public void TwoGamesStartingToRecordTogetherNeverTakeEachOthersRoom()
+        {
+            _settings.Settings.RecordingsDiskBudgetMb = 4;
+            _settings.Settings.MaxRecordingMinutes = 0.1f;
+            ProtokitePlaytestVideoSettings other = ProtokitePlaytestVideoSettings.From(_settings.Settings);
+            long wanted = other.BytesToMakeRoomFor(ProtokitePlaytestWebmFile.FrameHeaderBytes);
+            long otherMaxBytes = 0;
+            ProtokitePlaytestRecordingRun otherRun = null;
+            // Another game starts just as this one makes room, and does as this one does: its run and reservation, then room.
+            ProtokitePlaytestRecordingsFolder.BeforeNextMakingRoomForTesting = () =>
+            {
+                otherRun = ProtokitePlaytestRecordingRun.Start(Recordings, ProtokitePlaytestRecordingKind.Playtest, wanted, out _);
+                ProtokitePlaytestRoomMade room = ProtokitePlaytestRecordingsFolder.MakeRoom(Recordings, otherRun, other.DiskBudgetBytes, wanted, other.MaxBytes);
+                otherMaxBytes = Math.Min(other.MaxBytes, room.BytesLeft);
+                otherRun.SaveReservedBytes(otherMaxBytes, out _);
+            };
+            try
+            {
+                using (FlockWithConfig(true))
+                {
+                    ProtokitePlaytest.Refresh();
+                    Frames(1);
+                    Assert.IsNotNull(otherRun, "Precondition: the other game started while this one made room");
+                    Assert.IsTrue(ProtokitePlaytest.IsRecordingVideo, "This game records");
+                    long mine = ProtokitePlaytest.VideoRecordingForTesting.MaxBytes;
+                    Assert.GreaterOrEqual(otherMaxBytes, wanted, "The other game has the room it wanted");
+                    Assert.GreaterOrEqual(mine, wanted, "And so does this one");
+                    Assert.LessOrEqual(mine + otherMaxBytes, 4 * Megabyte, "Together they fit the budget");
+                }
+            }
+            finally
+            {
+                otherRun?.Dispose();
+            }
+        }
+
+        [Test]
+        public void WhatEarlierLaunchesLeftIsGoneThroughOffTheMainThreadWithoutHoldingUpTheLaunch()
+        {
+            string noSession = ProtokitePlaytestPlantedRuns.Plant(Recordings, ProtokitePlaytestRecordingKind.Playtest, "20260101-000000-00000001",
+                finishedVideo: new byte[100]);
+            ManualResetEventSlim letItFinish = new ManualResetEventSlim(false);
+            int finishingThread = -1;
+            ProtokitePlaytest.BeforeFinishingEachEarlierRecordingForTesting = run =>
+            {
+                finishingThread = Thread.CurrentThread.ManagedThreadId;
+                letItFinish.Wait(TimeSpan.FromSeconds(5));
+            };
+            try
+            {
+                System.Diagnostics.Stopwatch clock = System.Diagnostics.Stopwatch.StartNew();
+                ProtokitePlaytest.StartFinishingEarlierRecordings();
+                Assert.Less(clock.Elapsed.TotalSeconds, 1.0, "Started, not waited for");
+                Assert.IsFalse(ProtokitePlaytest.WaitForEarlierRecordingsForTesting(TimeSpan.FromMilliseconds(200)), "Still held by the test");
+                letItFinish.Set();
+                Assert.IsTrue(ProtokitePlaytest.WaitForEarlierRecordingsForTesting(TimeSpan.FromSeconds(10)));
+                Assert.AreNotEqual(Thread.CurrentThread.ManagedThreadId, finishingThread, "On a thread of its own");
+                Assert.IsFalse(Directory.Exists(noSession), "And it did its work");
+            }
+            finally
+            {
+                letItFinish.Set();
             }
         }
 

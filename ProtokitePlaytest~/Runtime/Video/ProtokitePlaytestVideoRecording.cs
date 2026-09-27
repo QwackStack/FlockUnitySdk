@@ -70,7 +70,8 @@ namespace Protokite.Playtest
         /// <summary>Encoded frames are small, so many may wait for a disk that has stopped for a moment.</summary>
         internal const int MostFramesWaitingToWrite = 300;
 
-        private const string PartSuffix = ".part";
+        /// <summary>What a video's file name ends with until it is finished.</summary>
+        internal const string PartSuffix = ".part";
 
         private readonly IProtokitePlaytestFrameSource _source;
         private readonly IProtokitePlaytestVideoEncoder _encoder;
@@ -172,6 +173,9 @@ namespace Protokite.Playtest
 
         /// <summary>The file the recording is written to while it runs.</summary>
         public string PartPath => _partPath;
+
+        /// <summary>The size the file stops before passing.</summary>
+        public long MaxBytes => _settings.MaxBytes;
 
         /// <summary>The encoding thread's priority, which the settings can set below the game's.</summary>
         internal ThreadPriority EncoderThreadPriority => _encodingThread.Priority;

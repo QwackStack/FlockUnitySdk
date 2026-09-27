@@ -167,6 +167,23 @@ script.
   `ProtokitePlaytestRecordingFiles` are the only places that pick libvpx and WebM. **ProtokitePlaytestVideoSettings**
   reads the settings asset's video values in range and fits the video to the screen, each side a multiple of 16. Quitting
   stops the capture first and waits for the file within the session end's 3 seconds.
+- **Recording files on disk (`Runtime/Video/ProtokitePlaytestRecordingsFolder.cs`)** — self-contained (it does not use core's
+  launch folders). **ProtokitePlaytestRecordingRun** is one recording's folder, `Recordings/Playtest/` or
+  `Recordings/TestVideos/` + `<UTC time>-<8 hex>`: the video, `session.json` (session id, API URL, the session's Game
+  Version ID; never the API key), `reserved-bytes.txt` and `in-use.lock`, opened with `FileShare.None` for the launch's life
+  and let go at the end of quitting once the file is written (the Editor stays open after Play Mode), else in
+  `ResetVideoForNewLaunch` after waiting for it. Another launch touches a run only after opening that lock itself (`ClaimEnded`),
+  and small files are saved through a temporary file of their own per write. **ProtokitePlaytestRecordingsFolder** holds
+  the finishing pass (`FinishEndedRuns`: finish a `.part` through `IProtokitePlaytestRecordingFile`, keep a playtest
+  recording with a session and a test video, delete a playtest recording with no session and a run left with no video,
+  list what it cannot finish or delete) and the budget (`MakeRoom`). The pass runs on `Task.Run`, started by the driver, and
+  the recording starts only once it is done (10 s at most), since `MakeRoom` counts a run the pass has not finished at its whole reservation.
+  `StartVideoRecording` makes its run with the room `BytesToMakeRoomFor` wants **before** making room, so a game starting at
+  the same moment counts it; a run in use, or with an unfinished video, counts at its reservation and is never deleted;
+  ended runs go test videos first, then waiting uploads, oldest first; under 1 MB left, no recording. The size limit is cut
+  to the room left and the reservation raised to match. The session is saved into the run when it starts
+  (`FinishPlaytestSessionStartAsync`, and quitting's wait for a start on its way) and when a recording starts after it.
+  Unity has no test-video entry point yet, so that kind is tested with runs planted by hand.
 - **Native~/** — `protokite_vpx.c`, `build-protokite-vpx.sh` (maintainers: finds Visual Studio 2022 through vswhere,
   downloads libvpx, nasm and make pinned by SHA-256, builds, links, and refuses a DLL that needs more than KERNEL32;
   `--check-dll <dll>` runs those checks alone) and `link-protokite-vpx.bat`. A `~` folder, so

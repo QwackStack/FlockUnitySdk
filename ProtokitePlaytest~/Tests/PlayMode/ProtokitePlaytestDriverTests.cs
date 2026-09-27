@@ -20,6 +20,7 @@ namespace Protokite.Playtest.Tests
         private ProtokitePlaytestSettings _settings;
         private bool _wasEnabled;
         private string _oldUrl;
+        private string _recordings;
 
         // What Unity's own start-up left, read once before any test tidies it away.
         private static bool _playtestingWasOnAtStartUp;
@@ -60,9 +61,12 @@ namespace Protokite.Playtest.Tests
             _settings.PlaytestingEnabled = true;
             _settings.ProtokiteApiUrl = "http://protokite.test";
             ProtokitePlaytest.ResetForNewLaunch();
-            // A session started here must never read or write the game's own device id.
-            ProtokitePlaytest.DeviceIdFilePathForTesting = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
-                "protokite_driver_" + Guid.NewGuid().ToString("N"), "device_id.txt");
+            // A session started here must never read or write the game's own device id, and the driver goes through recordings
+            // earlier launches left, which must never be the game's own.
+            string folder = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "protokite_driver_" + Guid.NewGuid().ToString("N"));
+            ProtokitePlaytest.DeviceIdFilePathForTesting = System.IO.Path.Combine(folder, "device_id.txt");
+            _recordings = System.IO.Path.Combine(folder, "Recordings");
+            ProtokitePlaytest.RecordingsFolderForTesting = _recordings;
         }
 
         [TearDown]
@@ -73,6 +77,9 @@ namespace Protokite.Playtest.Tests
             if (FlockClient.IsInitialized)
                 FlockClient.Shutdown();
             FlockHttpClient.Configure(TimeSpan.FromSeconds(30));
+            ProtokitePlaytest.ResetForNewLaunch();
+            Assert.IsTrue(ProtokitePlaytest.WaitForEarlierRecordingsForTesting(TimeSpan.FromSeconds(10)), "The finishing pass ended before its folder is deleted");
+            ProtokitePlaytest.RecordingsFolderForTesting = null;
             if (ProtokitePlaytest.DeviceIdFilePathForTesting != null)
             {
                 string folder = System.IO.Path.GetDirectoryName(ProtokitePlaytest.DeviceIdFilePathForTesting);
@@ -144,9 +151,7 @@ namespace Protokite.Playtest.Tests
         {
             if (Application.isBatchMode)
                 Assert.Ignore("A batchmode editor never reaches the end of a frame, where the driver records; run the PlayMode tests in a windowed editor.");
-            string folder = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "protokite_driver_video_" + Guid.NewGuid().ToString("N"));
             CountingFrameSource source = new CountingFrameSource();
-            ProtokitePlaytest.RecordingsFolderForTesting = folder;
             ProtokitePlaytest.VideoFrameSourceForTesting = (settings, format) => source;
             try
             {
@@ -166,10 +171,22 @@ namespace Protokite.Playtest.Tests
             {
                 ProtokitePlaytest.ResetForNewLaunch();
                 ProtokitePlaytest.VideoFrameSourceForTesting = null;
-                ProtokitePlaytest.RecordingsFolderForTesting = null;
-                if (System.IO.Directory.Exists(folder))
-                    System.IO.Directory.Delete(folder, true);
             }
+        }
+
+        [UnityTest]
+        public IEnumerator TheDriverGoesThroughWhatEarlierLaunchesLeftWhenItStarts()
+        {
+            // A recording an earlier launch left, whose Protokite session never started.
+            string run = System.IO.Path.Combine(_recordings, "Playtest", "20260101-000000-00000001");
+            System.IO.Directory.CreateDirectory(run);
+            System.IO.File.WriteAllBytes(System.IO.Path.Combine(run, "in-use.lock"), new byte[0]);
+            System.IO.File.WriteAllBytes(System.IO.Path.Combine(run, "recording-20260101-000000-00000001.webm"), new byte[100]);
+
+            ProtokitePlaytestDriver.StartWhenPlaytestingIsOn();
+            Assert.IsTrue(ProtokitePlaytest.WaitForEarlierRecordingsForTesting(TimeSpan.FromSeconds(10)));
+            Assert.IsFalse(System.IO.Directory.Exists(run), "Deleted by the next launch, with nothing but Unity starting the driver");
+            yield return null;
         }
 
         /// <summary>Frames of a moving picture, counted.</summary>

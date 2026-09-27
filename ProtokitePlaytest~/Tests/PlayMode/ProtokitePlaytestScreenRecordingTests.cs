@@ -67,6 +67,7 @@ namespace Protokite.Playtest.Tests
             foreach (Object made in _made)
                 Object.Destroy(made);
             _made.Clear();
+            Assert.IsTrue(ProtokitePlaytest.WaitForEarlierRecordingsForTesting(TimeSpan.FromSeconds(10)), "The finishing pass ended before its folder is deleted");
             ProtokitePlaytest.RecordingsFolderForTesting = null;
             ProtokitePlaytest.DeviceIdFilePathForTesting = null;
             if (_settings != null && _settingsAsTheyWere != null)

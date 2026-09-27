@@ -25,6 +25,9 @@ namespace Protokite.Playtest
             // with domain reload off does not add it twice.
             Application.quitting -= ProtokitePlaytest.HandleGameQuitting;
             Application.quitting += ProtokitePlaytest.HandleGameQuitting;
+
+            // With the launch, off the main thread: what earlier launches left is finished, kept or deleted.
+            ProtokitePlaytest.StartFinishingEarlierRecordings();
         }
 
         private void Update() => ProtokitePlaytest.Refresh();

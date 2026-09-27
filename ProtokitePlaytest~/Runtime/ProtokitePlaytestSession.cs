@@ -170,6 +170,7 @@ namespace Protokite.Playtest
             {
                 _sessionState = ProtokitePlaytestSessionState.Started;
                 _playtestSessionId = sessionId;
+                SaveSessionBesideRecording();
                 Debug.Log(LogPrefix + $"Protokite session {sessionId} started for this launch, with the player's {(sentSteamId ? "Steam id" : "device id")} and Flock session {flockSessionId}.");
             }
             else
@@ -225,6 +226,7 @@ namespace Protokite.Playtest
                     _playtestSessionId = _sessionStart.Result;
                     _sessionState = ProtokitePlaytestSessionState.Started;
                     _sessionStartEndedAtQuit = _sessionStart;
+                    SaveSessionBesideRecording();
                 }
             }
 
@@ -272,6 +274,7 @@ namespace Protokite.Playtest
 
             WaitForVideoAtQuit(Remaining(until));
 #endif
+            LetGoOfRecordingRunOnceWritten();
             // From here on, a start still on its way belongs to a launch that has ended.
             _launch++;
         }

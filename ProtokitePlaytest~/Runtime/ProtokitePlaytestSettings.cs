@@ -54,6 +54,9 @@ namespace Protokite.Playtest
         [Tooltip("A recording stops for good before its file passes this many megabytes.")]
         [SerializeField, Min(1)] private int maxRecordingSizeMb = 1536;
 
+        [Tooltip("The most every recording kept on this machine may take together, in megabytes. To make room for a new recording, those whose game has closed are deleted, the oldest first.")]
+        [SerializeField, Min(1)] private int recordingsDiskBudgetMb = 4096;
+
         /// <summary>Whether playtesting is switched on for this project.</summary>
         public bool PlaytestingEnabled
         {
@@ -97,6 +100,9 @@ namespace Protokite.Playtest
 
         /// <summary>Minutes of play after which a recording stops for good.</summary>
         public float MaxRecordingMinutes { get => maxRecordingMinutes; set => maxRecordingMinutes = value; }
+
+        /// <summary>The most every recording kept on this machine may take together, in megabytes.</summary>
+        public int RecordingsDiskBudgetMb { get => recordingsDiskBudgetMb; set => recordingsDiskBudgetMb = value; }
 
         /// <summary>Megabytes a recording's file stops before passing.</summary>
         public int MaxRecordingSizeMb { get => maxRecordingSizeMb; set => maxRecordingSizeMb = value; }

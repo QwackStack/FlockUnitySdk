@@ -25,6 +25,9 @@ namespace Protokite.Playtest.Tests
         private const string Config =
             "{\"result\":{\"session_started_event\":\"session_started\",\"test_id\":\"t\",\"flock_game_version_id\":\"test-gvid\",\"features\":{},\"form\":null}}";
 
+        private const string ConfigWithVideo =
+            "{\"result\":{\"session_started_event\":\"session_started\",\"test_id\":\"t\",\"flock_game_version_id\":\"test-gvid\",\"features\":{\"video_recording\":true},\"form\":null}}";
+
         private static string StartAnswer(string sessionId) => "{\"result\":{\"session_id\":\"" + sessionId + "\"}}";
 
         private ProtokitePlaytestSettingsForTests _settings;
@@ -55,6 +58,9 @@ namespace Protokite.Playtest.Tests
                 FlockClient.Shutdown();
             ProtokitePlaytest.ResetForNewLaunch();
             ProtokitePlaytest.DeviceIdFilePathForTesting = null;
+            ProtokitePlaytest.RecordingsFolderForTesting = null;
+            ProtokitePlaytest.VideoEncoderForTesting = null;
+            ProtokitePlaytest.VideoFrameSourceForTesting = null;
             _settings.Dispose();
             FlockHttpClient.Configure(TimeSpan.FromSeconds(30));
             if (Directory.Exists(_folder))
@@ -63,11 +69,11 @@ namespace Protokite.Playtest.Tests
 
         private static string Stamp(string path) => File.Exists(path) ? File.GetLastWriteTimeUtc(path).Ticks + ":" + File.ReadAllText(path) : "none";
 
-        private static FlockFakeTransport Transport(FlockHttpResponse start)
+        private static FlockFakeTransport Transport(FlockHttpResponse start, string config = Config)
             => new FlockFakeTransport()
                 .On(EndRoute, FlockFakeTransport.Status(204, ""))
                 .On(StartRoute, start)
-                .On(ConfigRoute, FlockFakeTransport.Ok(Config))
+                .On(ConfigRoute, FlockFakeTransport.Ok(config))
                 .On(FlockSessionRoute, FlockFakeTransport.Ok("{\"session_id\":\"" + ServerSessionId + "\"}"));
 
         // A Flock session that reached the server, the way a game's sign-in makes one; then the playtest follows.
@@ -524,6 +530,101 @@ namespace Protokite.Playtest.Tests
                 while (Time.realtimeSinceStartup < until)
                     yield return null;
                 Assert.AreEqual(sentWhileWaiting, transport.CountTo(EndRoute), "Once quitting gives up, its retries stop");
+            }
+        }
+
+        // The session beside the recording, so a later launch uploads the recording rather than delete it
+
+        // Frames and an encoder of the test's own, into the test's own folder.
+        private void RecordWithFakes()
+        {
+            ProtokitePlaytest.RecordingsFolderForTesting = Path.Combine(_folder, "Recordings");
+            ProtokitePlaytest.VideoEncoderForTesting = () => new FakeVp8Encoder();
+            ProtokitePlaytest.VideoFrameSourceForTesting = (settings, format) => new FakeFrameSource();
+        }
+
+        private static string SessionFileBesideTheRecording()
+        {
+            Assert.IsNotNull(ProtokitePlaytest.RecordingRunForTesting, "Precondition: a recording started this launch");
+            return Path.Combine(ProtokitePlaytest.RecordingRunForTesting.FolderPath, "session.json");
+        }
+
+        [UnityTest]
+        public IEnumerator ASessionThatStartsAfterTheRecordingIsSavedBesideItWithoutTheApiKey()
+        {
+            RecordWithFakes();
+            using (FlockTestClient flock = FlockTestClient.Create(Transport(FlockFakeTransport.Ok(StartAnswer("pk-1")), ConfigWithVideo)))
+            {
+                ProtokitePlaytest.Refresh();
+                ProtokitePlaytest.UpdateVideo(1.0 / 60.0);
+                Assert.IsTrue(ProtokitePlaytest.IsRecordingVideo, "Precondition: recording from the config, before any session");
+                string sessionFile = SessionFileBesideTheRecording();
+                Assert.IsFalse(File.Exists(sessionFile), "No session yet");
+
+                StartAFlockSession(flock);
+                yield return TheStartSettles();
+                string saved = File.ReadAllText(sessionFile);
+                StringAssert.DoesNotContain("test-key", saved, "Never the API key: a later launch sends its own");
+                JObject session = JObject.Parse(saved);
+                Assert.AreEqual("pk-1", (string)session["protokite_session_id"]);
+                Assert.AreEqual(ProtokitePlaytestSettingsForTests.ProtokiteApiUrl, (string)session["protokite_api_url"]);
+                Assert.AreEqual("test-gvid", (string)session["flock_game_version_id"], "The version the session started with, which a later launch uploads under");
+                Assert.AreEqual(3, session.Count);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator ASessionThatStartedBeforeTheRecordingIsSavedWhenTheRecordingStarts()
+        {
+            RecordWithFakes();
+            using (FlockTestClient flock = FlockTestClient.Create(Transport(FlockFakeTransport.Ok(StartAnswer("pk-1")), ConfigWithVideo)))
+            {
+                StartAFlockSession(flock);
+                yield return TheStartSettles();
+                Assert.AreEqual("pk-1", ProtokitePlaytest.PlaytestSessionId, "Precondition: the session started first");
+                Assert.IsNull(ProtokitePlaytest.RecordingRunForTesting, "Precondition: nothing recorded yet");
+
+                ProtokitePlaytest.UpdateVideo(1.0 / 60.0);
+                Assert.IsTrue(ProtokitePlaytest.IsRecordingVideo);
+                Assert.AreEqual("pk-1", (string)JObject.Parse(File.ReadAllText(SessionFileBesideTheRecording()))["protokite_session_id"]);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator AStartQuittingWaitsForIsSavedBesideTheRecording()
+        {
+            RecordWithFakes();
+            HeldStart transport = new HeldStart(Transport(FlockFakeTransport.Ok(StartAnswer("pk-held")), ConfigWithVideo));
+            using (FlockTestClient flock = FlockTestClient.Create(new FlockFakeTransport()))
+            {
+                FlockHttpClient.Configure(transport);
+                StartAFlockSession(flock);
+                ProtokitePlaytest.UpdateVideo(1.0 / 60.0);
+                Assert.IsTrue(ProtokitePlaytest.IsRecordingVideo, "Precondition: recording");
+                Assert.AreEqual(ProtokitePlaytestSessionState.Starting, ProtokitePlaytest.SessionState, "Precondition: the start is held");
+                string sessionFile = SessionFileBesideTheRecording();
+
+                transport.ReleaseAfter(TimeSpan.FromMilliseconds(300));
+                LogAssert.Expect(LogType.Log, new Regex("Protokite session pk-held ended"));
+                ProtokitePlaytest.HandleGameQuitting();
+                Assert.AreEqual("pk-held", (string)JObject.Parse(File.ReadAllText(sessionFile))["protokite_session_id"],
+                    "Saved at quit, so a later launch uploads the recording rather than delete it");
+                yield return null;
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator NoSessionIsSavedWhenTheStartFails()
+        {
+            RecordWithFakes();
+            using (FlockTestClient flock = FlockTestClient.Create(Transport(FlockFakeTransport.Status(422, "{}"), ConfigWithVideo)))
+            {
+                ProtokitePlaytest.Refresh();
+                ProtokitePlaytest.UpdateVideo(1.0 / 60.0);
+                LogAssert.Expect(LogType.Warning, new Regex("No Protokite session was started"));
+                StartAFlockSession(flock);
+                yield return TheStartSettles();
+                Assert.IsFalse(File.Exists(SessionFileBesideTheRecording()), "Nothing to upload to, so a later launch deletes the recording");
             }
         }
 

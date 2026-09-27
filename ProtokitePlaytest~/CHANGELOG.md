@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 It is released with the Flock SDK, at the Flock SDK's version.
 
 
+## [1.49.0]
+
+### Added
+- **A recording cut off by a crash, a power cut or a killed game is kept.** Each recording now has a folder of its own,
+  `ProtokitePlaytest/Recordings/Playtest/<UTC time>-<8 hex digits>/`, holding the video, the Protokite session it belongs to
+  (`session.json`: the session id, the Protokite API URL and the Game Version ID the session started with, never the API
+  key), the room it may take, and a lock file the game keeps open, shared with nobody, for as long as it runs. When a later
+  launch starts, a thread of its own goes through the folders whose game has ended: a cut-off video is finished with every
+  whole frame it holds, and a recording with a saved session is kept to be uploaded to that session. A recording no Protokite
+  session started for is deleted, and so is a folder left with no video. A folder whose game still runs is never touched.
+  Anything that cannot be finished or deleted is named in a warning and tried again by the next launch.
+- **Recordings Disk Budget Mb** (4096) in Protokite > Playtest > Settings: the most every recording kept on the machine may
+  take together. Before a recording starts, recordings whose game has ended are deleted, the oldest first, until it fits.
+  A recording makes room only for what its length limit records at its bitrate, with a quarter to spare, so a short recording
+  never deletes one waiting to be uploaded that it would fit beside. It may
+  then grow into all the room left, up to Max Recording Size Mb. A recording still being written counts at the most it
+  may grow to and is never deleted. With less than 1 MB left, that launch records no video and says which setting to raise.
+- Two copies of a game starting to record at the same moment never take each other's room: each makes its own folder and
+  reserves its room before making room, so each counts the other.
+- A recording starts once the launch has gone through what earlier launches left (usually a few milliseconds; at most 10
+  seconds), so a cut-off recording not yet finished is never counted at more than it holds, and no recording waiting to be
+  uploaded is deleted for room that is in fact free.
+- A launch lets go of its recording's folder when it ends, once the file is written: the Editor, which stays open after Play
+  Mode, no longer keeps it held until the next Play.
+- A session that starts after its recording, and one quitting waits for, is saved beside the recording, so the recording
+  can still be uploaded to it.
+
+### Changed
+- Recordings are written into their run folder. Files 1.47.0 left straight in `ProtokitePlaytest/Recordings/` are left where
+  they are, and not counted against the budget; delete them by hand if you no longer want them.
+
 ## [1.48.0]
 
 No changes to the Protokite Playtest package: this version is released together with the Flock SDK's own launch folders.
