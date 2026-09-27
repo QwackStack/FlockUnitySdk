@@ -21,6 +21,10 @@ namespace Protokite.Playtest
         public bool EncoderBelowGamePriority = true;
         public double MaxSeconds = 3600.0;
         public long MaxBytes = 1536L * 1024 * 1024;
+        public long DiskBudgetBytes = 4096L * 1024 * 1024;
+
+        /// <summary>Room a file's header takes, with plenty to spare.</summary>
+        private const long FileHeaderAllowance = 4096;
 
         /// <summary>How long each captured frame is shown, in milliseconds.</summary>
         public long FrameDurationMs => Math.Max(1L, (long)Math.Round(1000.0 / FramesPerSecond));
@@ -42,7 +46,20 @@ namespace Protokite.Playtest
             float minutes = settings.MaxRecordingMinutes;
             video.MaxSeconds = float.IsNaN(minutes) || minutes < 0.1f ? 6.0 : Math.Min(minutes, 1e6) * 60.0;
             video.MaxBytes = Math.Max(1L, settings.MaxRecordingSizeMb) * 1024 * 1024;
+            video.DiskBudgetBytes = Math.Max(1L, settings.RecordingsDiskBudgetMb) * 1024 * 1024;
             return video;
+        }
+
+        /// <summary>The room a recording is expected to need: its length limit at its bitrate plus a quarter, never more than its size limit.</summary>
+        // Reserving the size limit instead would have the shortest recording delete recordings waiting to upload.
+        public long BytesToMakeRoomFor(int bytesAddedToEachFrame)
+        {
+            // Measured: a 148 s recording at the defaults came to 0.7% over its bitrate, container included.
+            double seconds = Math.Max(0.0, MaxSeconds);
+            double videoBytes = BitrateKbps * 1000.0 / 8.0 * seconds * 1.25;
+            double frameBytes = Math.Ceiling(seconds * FramesPerSecond) * bytesAddedToEachFrame;
+            double wanted = Math.Ceiling(videoBytes + frameBytes + FileHeaderAllowance);
+            return wanted >= MaxBytes ? MaxBytes : (long)wanted;
         }
 
         /// <summary>What the encoder is configured with for a video of this size.</summary>

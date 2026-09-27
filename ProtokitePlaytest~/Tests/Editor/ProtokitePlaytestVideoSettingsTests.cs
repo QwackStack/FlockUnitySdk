@@ -23,8 +23,26 @@ namespace Protokite.Playtest.Tests
             Assert.IsTrue(video.EncoderBelowGamePriority);
             Assert.AreEqual(3600.0, video.MaxSeconds, 1e-9, "An hour");
             Assert.AreEqual(1536L * 1024 * 1024, video.MaxBytes, "1.5 GB");
+            Assert.AreEqual(4096L * 1024 * 1024, video.DiskBudgetBytes, "4 GB for every recording kept on the machine");
             Assert.AreEqual(67, video.FrameDurationMs);
             Object.DestroyImmediate(asset);
+        }
+
+        [Test]
+        public void ARecordingMakesRoomForItsLengthLimitAtItsBitrateNotItsSizeLimit()
+        {
+            ProtokitePlaytestVideoSettings video = ProtokitePlaytestVideoSettings.From(NewSettings());
+            // An hour at 1500 kbps with a quarter to spare, 23 bytes around each of 54,000 frames, and 4 KB for the header.
+            long expected = 843750000L + 54000L * 23 + 4096;
+            Assert.AreEqual(expected, video.BytesToMakeRoomFor(23));
+            Assert.Less(expected, video.MaxBytes, "Well under the 1.5 GB size limit");
+
+            video.MaxSeconds = 5.0;
+            Assert.AreEqual(1171875L + 75L * 23 + 4096, video.BytesToMakeRoomFor(23), "Five seconds wants about a megabyte");
+
+            video.MaxSeconds = 3600.0;
+            video.MaxBytes = 1024L * 1024;
+            Assert.AreEqual(1024L * 1024, video.BytesToMakeRoomFor(23), "Never more than the size limit");
         }
 
         [Test]
@@ -43,6 +61,7 @@ namespace Protokite.Playtest.Tests
             asset.EncoderBelowGamePriority = false;
             asset.MaxRecordingMinutes = 7f;
             asset.MaxRecordingSizeMb = 11;
+            asset.RecordingsDiskBudgetMb = 13;
 
             ProtokitePlaytestVideoSettings video = ProtokitePlaytestVideoSettings.From(asset);
             Assert.AreEqual(ProtokitePlaytestVideoCodec.Vp9, video.Codec);
@@ -55,6 +74,7 @@ namespace Protokite.Playtest.Tests
             Assert.IsFalse(video.EncoderBelowGamePriority);
             Assert.AreEqual(420.0, video.MaxSeconds, 1e-9);
             Assert.AreEqual(11L * 1024 * 1024, video.MaxBytes);
+            Assert.AreEqual(13L * 1024 * 1024, video.DiskBudgetBytes);
 
             ProtokitePlaytestVideoEncoderSettings encoder = video.EncoderSettings(640, 352);
             Assert.AreEqual(ProtokitePlaytestVideoCodec.Vp9, encoder.Codec);
@@ -81,6 +101,7 @@ namespace Protokite.Playtest.Tests
             asset.EncoderSpeed = -99;
             asset.MaxRecordingMinutes = float.NaN;
             asset.MaxRecordingSizeMb = -4;
+            asset.RecordingsDiskBudgetMb = 0;
 
             ProtokitePlaytestVideoSettings video = ProtokitePlaytestVideoSettings.From(asset);
             Assert.AreEqual(ProtokitePlaytestVideoCodec.Vp8, video.Codec, "A codec this build does not know is VP8");
@@ -92,6 +113,7 @@ namespace Protokite.Playtest.Tests
             Assert.AreEqual(-16, video.Speed);
             Assert.AreEqual(6.0, video.MaxSeconds, 1e-9, "The shortest a recording may be");
             Assert.AreEqual(1024L * 1024, video.MaxBytes, "At least a megabyte");
+            Assert.AreEqual(1024L * 1024, video.DiskBudgetBytes, "At least a megabyte");
             Object.DestroyImmediate(asset);
         }
 

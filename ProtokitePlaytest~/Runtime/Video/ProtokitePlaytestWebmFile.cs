@@ -733,5 +733,15 @@ namespace Protokite.Playtest
     {
         /// <summary>A new file, not yet open.</summary>
         public static IProtokitePlaytestRecordingFile Create() => new ProtokitePlaytestWebmFile();
+
+        /// <summary>A file that can finish a cut-off recording to be kept at finishedPath, or null for a kind of recording this build does not write.</summary>
+        public static IProtokitePlaytestRecordingFile ForFinishing(string finishedPath)
+        {
+            IProtokitePlaytestRecordingFile file = Create();
+            if (finishedPath.EndsWith(file.FileExtension, StringComparison.OrdinalIgnoreCase))
+                return file;
+            file.Dispose();
+            return null;
+        }
     }
 }
