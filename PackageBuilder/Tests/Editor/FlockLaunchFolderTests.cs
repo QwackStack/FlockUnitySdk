@@ -10,6 +10,7 @@ using Flock.Providers;
 using Flock.Tests.Support;
 using NUnit.Framework;
 using UnityEngine;
+using UnityEngine.TestTools;
 
 namespace Flock.Tests.Editor
 {
@@ -119,7 +120,9 @@ namespace Flock.Tests.Editor
             Assert.IsNull(FlockLaunchFolder.ClaimEnded(folder));
         }
 
+        // An open file stops a delete or a move on Windows only; macOS and Linux let both go ahead.
         [Test]
+        [UnityPlatform(RuntimePlatform.WindowsEditor)]
         public void DeleteEverything_FileThatCannotBeDeleted_KeepsTheLockSoALaterLaunchFindsItAgain()
         {
             string ended = PlantEndedLaunch(markerJson: MarkerJson("s1"));
@@ -172,6 +175,7 @@ namespace Flock.Tests.Editor
         }
 
         [Test]
+        [UnityPlatform(RuntimePlatform.WindowsEditor)]
         public void Start_QueuedEntryThatCouldNotMove_KeepsTheEndedLaunchEvenOnceItCouldBeDeleted()
         {
             string ended = PlantEndedLaunch(null, null);
@@ -618,6 +622,7 @@ namespace Flock.Tests.Editor
         }
 
         [Test]
+        [UnityPlatform(RuntimePlatform.WindowsEditor)]
         public void Sdk_QueuedEntryThatCouldNotMove_KeepsTheEndedLaunch_WithoutItsReportedRecords()
         {
             string ended = PlantEndedLaunchUnderTheTestFolder("s-crashed");
