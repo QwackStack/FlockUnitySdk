@@ -64,6 +64,8 @@ namespace Flock
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
         private static void ResetStaticState()
         {
+            // The previous play session's launch lets go of its folder, so this one can take it over.
+            _instance?._analyticsLaunches?.Dispose();
             _instance = null;
             IsRestoringSession = false;
             InitializationError = null;
@@ -98,6 +100,7 @@ namespace Flock
         private FlockNotificationProvider _notification;
 #endif
         private FlockSession _session;
+        private FlockAnalyticsLaunches _analyticsLaunches;
 #if !FLOCK_NO_ANALYTICS
         private IAnalyticProvider _analytics;
 #endif
@@ -139,8 +142,12 @@ namespace Flock
                 // pruning it. A queue left where older builds put it would already be deleted by the time its
                 // provider went looking, which is how a game-version change used to lose a player's unsent
                 // offline writes.
+#if !FLOCK_NO_COMMANDS
+                // Only the commands queue was ever kept there; a build without commands has nothing to rescue.
                 client._snapshotStore?.MigrateLegacyState(FlockCommandProvider.SnapshotCategory);
+#endif
                 client._snapshotStore?.PruneOtherVersions(client._initConfig.GameVersionId);
+                client._snapshotStore?.DeleteLeftOverFiles();
                 client.InitializeServices();
                 _instance = client;
                 InitializationError = null;
@@ -172,6 +179,8 @@ namespace Flock
             _instance._commands?.UnsubscribeFlushTriggers();
 #endif
             _instance.ClearTokens();
+            // After the session end is spooled: a later Create takes this launch's folder over.
+            _instance._analyticsLaunches?.Dispose();
             _instance = null;
             FlockEvents.InvokeShutdown();
             FlockEvents.ClearAll();
@@ -210,7 +219,15 @@ namespace Flock
 #if !FLOCK_NO_ANALYTICS
             if (_initConfig.AnalyticsConfig.Enabled)
             {
-                _session = new FlockSession(_initConfig.AnalyticsConfig, _logger);
+                // Each launch keeps its crash marker, live-session record and queues in a folder of its own, locked while it
+                // runs, and takes over the files of launches that have ended.
+                string testingFolder = FlockAnalyticsLaunches.FolderForTesting;
+                _analyticsLaunches = FlockAnalyticsLaunches.Start(
+                    testingFolder ?? FlockAnalyticsLaunches.DefaultFolder(),
+                    testingFolder == null ? FlockEarlierBuildFiles.OnThisMachine() : null);
+                if (!_analyticsLaunches.IsHoldingItsFolder)
+                    _logger.LogWarning("Could not lock a folder for this launch's analytics files, so launches that ended before this one are not reported this time.");
+                _session = new FlockSession(_initConfig.AnalyticsConfig, _logger, _analyticsLaunches.SessionStatePath);
                 _analytics = new FlockAnalyticsProvider(this);
             }
             else
@@ -261,6 +278,7 @@ namespace Flock
         public IAnalyticProvider Analytics => _analytics;
 #endif
         internal FlockSession Session => _session;
+        internal FlockAnalyticsLaunches AnalyticsLaunches => _analyticsLaunches;
         public bool HasActiveSession => _session?.IsActive ?? false;
         public string CurrentSessionId => _session?.ServerSessionId ?? _session?.SessionId;
 

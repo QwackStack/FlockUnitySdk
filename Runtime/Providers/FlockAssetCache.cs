@@ -10,7 +10,6 @@ namespace Flock.Providers
     {
         private const string DefaultFolder = "flock_assets";
         private const string CacheExt = ".cache";
-        private const string TempExt = ".tmp";
 
         public string Directory { get; }
         public long MaxSizeBytes { get; }
@@ -52,14 +51,14 @@ namespace Flock.Providers
 
             DeleteOtherVersions(assetId, finalPath);
 
-            string tmpPath = finalPath + TempExt;
-            File.WriteAllBytes(tmpPath, bytes);
-            if (File.Exists(finalPath))
-                File.Delete(finalPath);
-            File.Move(tmpPath, finalPath);
+            // A temporary file of its own per write: two downloads of one asset never share one.
+            FlockTemporaryFiles.Save(finalPath, bytes);
 
             EnforceMaxSize();
         }
+
+        /// <summary>Deletes temporary files a download that never finished left over a minute ago.</summary>
+        public int DeleteLeftOverFiles() => FlockTemporaryFiles.DeleteLeftOverFiles(Directory, false);
 
         public void Clear()
         {

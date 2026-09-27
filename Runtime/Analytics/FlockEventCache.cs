@@ -11,6 +11,12 @@ using UnityEngine;
 
 namespace Flock.Analytics
 {
+    /// <summary>The file names every event queue uses, whatever it holds.</summary>
+    internal static class FlockEventCacheNames
+    {
+        internal const string Extension = ".evt";
+    }
+
     // Spool directory: one event = one JSON file. The filename starts with a
     // sortable timestamp so flushes go oldest-first, and the only commit step
     // is renaming a .tmp into place. A crash anywhere just leaves files on
@@ -26,8 +32,7 @@ namespace Flock.Analytics
             Drop, 
             Defer
         }
-        private const string Extension = ".evt";
-        private const string TmpExtension = ".evt.tmp";
+        private const string Extension = FlockEventCacheNames.Extension;
 
         private readonly string _dir;
         private readonly int _maxEvents;
@@ -67,12 +72,22 @@ namespace Flock.Analytics
 
             string name = $"{DateTime.UtcNow.Ticks:D19}_{Guid.NewGuid():N}";
             string finalPath = Path.Combine(_dir, name + Extension);
-            string tmpPath = Path.Combine(_dir, name + TmpExtension);
+            string tmpPath = FlockTemporaryFiles.MakePath(finalPath);
 
             try
             {
+                string json = JsonConvert.SerializeObject(evt);
                 // Write to tmp then rename so a crash mid-write can never expose a partial event file.
-                File.WriteAllText(tmpPath, JsonConvert.SerializeObject(evt));
+                try
+                {
+                    File.WriteAllText(tmpPath, json);
+                }
+                catch (DirectoryNotFoundException)
+                {
+                    // Made again if something deleted it while this launch runs, so the events that follow are not lost.
+                    Directory.CreateDirectory(_dir);
+                    File.WriteAllText(tmpPath, json);
+                }
                 File.Move(tmpPath, finalPath);
                 Interlocked.Increment(ref _pendingCount);
                 TrimOldest();
@@ -118,11 +133,8 @@ namespace Flock.Analytics
 
                         setAuthID(evt);
 
-                        // Atomic swap: write tmp, replace original. File.Replace is atomic on the local FS
-                        // and avoids the empty-file window that File.WriteAllText would leave behind.
-                        string tmpPath = path + TmpExtension;
-                        File.WriteAllText(tmpPath, JsonConvert.SerializeObject(evt));
-                        File.Replace(tmpPath, path, null);
+                        // Replaced only while it is still there, so a rewrite never brings back an entry erased meanwhile.
+                        FlockTemporaryFiles.Replace(path, JsonConvert.SerializeObject(evt));
                         rewritten++;
                     }
                     catch (Exception ex)
@@ -297,17 +309,16 @@ namespace Flock.Analytics
             }
         }
 
-        // One pass: deletes tmp files left by a crash between WriteAllText and Move, and counts the live .evt files.
+        // Deletes temporary files a write that never finished left over a minute ago, and counts the live .evt files.
         private int SweepStaleTempFilesAndCount()
         {
+            FlockTemporaryFiles.DeleteLeftOverFiles(_dir, false);
             int count = 0;
             try
             {
                 foreach (string path in Directory.EnumerateFiles(_dir))
                 {
-                    if (path.EndsWith(TmpExtension, StringComparison.Ordinal))
-                        TryDelete(path);
-                    else if (path.EndsWith(Extension, StringComparison.Ordinal))
+                    if (path.EndsWith(Extension, StringComparison.Ordinal))
                         count++;
                 }
             }

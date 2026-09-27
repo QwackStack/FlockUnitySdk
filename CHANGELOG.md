@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.48.0]
+
+### Fixed
+- **Two copies of one game on one machine no longer disturb each other's analytics.** Every copy of a game, and the Editor
+  beside a player, shares `Application.persistentDataPath` and PlayerPrefs, and the SDK kept one crash marker, one
+  live-session record and one set of event queues for all of them. A second copy read the first's live marker as a crash,
+  ended the first's session on the server, and sent the events the first had queued, a second time. Each launch now keeps
+  those files in a folder of its own under `Flock/analytics/launches/`, locked while it runs, and takes over only the
+  folders of launches that have ended, however they ended: their queued events are sent once and their crash and open
+  session are reported once. Consent and the saved sign-in stay one per install.
+- **Every file the SDK saves through a temporary file now has a temporary file of its own** (the event queues, the offline
+  snapshots, the asset cache), and only temporary files over a minute old are deleted as left over. Two copies saving the
+  same file no longer write, move or delete each other's, and a fresh temporary file (another copy still writing) survives.
+  The offline snapshots and the asset cache now delete their left-over temporary files at all.
+- **A package built without the Commands provider now compiles.** `FlockClient` named the commands queue's snapshot
+  category outside the Commands guard, so every such export failed with CS0103. Every other single provider left out, and
+  all of them at once, compiled already.
+
+### Changed
+- The crash marker and the live-session record are files in the launch's folder rather than PlayerPrefs keys. The first
+  launch of this version takes over what an earlier version left, once: its queued events, its crash marker and its open
+  session.
+- The Editor now reports a crash of a standalone player of the same game, since they share the folder. The Editor still
+  never records a crash marker of its own.
+
 ## [1.47.0]
 
 No changes to the Flock SDK: this version is released together with the Protokite Playtest package's video recording.

@@ -1,5 +1,5 @@
 using System;
-using UnityEngine;
+using System.IO;
 using NUnit.Framework;
 using Flock.Analytics;
 using Flock.Logging;
@@ -10,23 +10,34 @@ namespace Flock.Tests.Editor
     // (FlockBehaviour subscriptions) and real dirty-exit behavior are Unity-only.
     public class FlockTerminationTrackerTests
     {
-        private const string KeyMarker = "flock_termination_marker";
+        private string _folder;
+        private string _markerPath;
 
         [SetUp]
         public void SetUp()
         {
-            PlayerPrefs.DeleteKey(KeyMarker);
+            _folder = Path.Combine(Path.GetTempPath(), "flock_marker_" + Guid.NewGuid().ToString("N"));
+            _markerPath = Path.Combine(_folder, FlockAnalyticsLaunches.TerminationMarkerFileName);
         }
 
         [TearDown]
         public void TearDown()
         {
-            PlayerPrefs.DeleteKey(KeyMarker);
+            if (Directory.Exists(_folder))
+                Directory.Delete(_folder, true);
         }
 
         private FlockTerminationTracker CreateTracker(bool enabled = true)
         {
-            return new FlockTerminationTracker(new NullFlockLogger(), enabled);
+            return new FlockTerminationTracker(new NullFlockLogger(), enabled, _markerPath);
+        }
+
+        private FlockTerminationMarker ReadMarker() => FlockTerminationTracker.ReadMarker(_markerPath, new NullFlockLogger());
+
+        private void PlantMarker(string json)
+        {
+            Directory.CreateDirectory(_folder);
+            File.WriteAllText(_markerPath, json);
         }
 
         [Test]
@@ -58,36 +69,33 @@ namespace Flock.Tests.Editor
         }
 
         [Test]
-        public void ReadSurvivingMarker_NoMarker_ReturnsNull()
+        public void ReadMarker_NoMarker_ReturnsNull()
         {
-            Assert.IsNull(CreateTracker().ReadSurvivingMarker());
+            Assert.IsNull(ReadMarker());
         }
 
         [Test]
-        public void ReadSurvivingMarker_MalformedJson_ClearsKeyAndReturnsNull()
+        public void ReadMarker_MalformedJson_DeletesFileAndReturnsNull()
         {
-            PlayerPrefs.SetString(KeyMarker, "{not valid json");
-            FlockTerminationTracker tracker = CreateTracker();
-            Assert.IsNull(tracker.ReadSurvivingMarker());
-            Assert.IsFalse(PlayerPrefs.HasKey(KeyMarker));
+            PlantMarker("{not valid json");
+            Assert.IsNull(ReadMarker());
+            Assert.IsFalse(File.Exists(_markerPath));
         }
 
         [Test]
-        public void ReadSurvivingMarker_MissingSessionId_ClearsKeyAndReturnsNull()
+        public void ReadMarker_MissingSessionId_DeletesFileAndReturnsNull()
         {
-            PlayerPrefs.SetString(KeyMarker, "{\"last_state\":\"foreground\"}");
-            FlockTerminationTracker tracker = CreateTracker();
-            Assert.IsNull(tracker.ReadSurvivingMarker());
-            Assert.IsFalse(PlayerPrefs.HasKey(KeyMarker));
+            PlantMarker("{\"last_state\":\"foreground\"}");
+            Assert.IsNull(ReadMarker());
+            Assert.IsFalse(File.Exists(_markerPath));
         }
 
         [Test]
-        public void ReadSurvivingMarker_ValidMarker_RoundTrips()
+        public void ReadMarker_ValidMarker_RoundTrips()
         {
             DateTime alive = new DateTime(2026, 7, 2, 12, 0, 0, DateTimeKind.Utc);
-            PlayerPrefs.SetString(KeyMarker,
-                "{\"session_id\":\"s1\",\"last_state\":\"background\",\"last_alive_utc\":\"2026-07-02T12:00:00Z\",\"exception_count\":3}");
-            FlockTerminationMarker marker = CreateTracker().ReadSurvivingMarker();
+            PlantMarker("{\"session_id\":\"s1\",\"last_state\":\"background\",\"last_alive_utc\":\"2026-07-02T12:00:00Z\",\"exception_count\":3}");
+            FlockTerminationMarker marker = ReadMarker();
             Assert.IsNotNull(marker);
             Assert.AreEqual("s1", marker.SessionId);
             Assert.AreEqual("background", marker.LastState);
@@ -96,36 +104,30 @@ namespace Flock.Tests.Editor
         }
 
         [Test]
-        public void ReadSurvivingMarker_DisabledTracker_ReturnsNull()
+        public void ClearMarker_DeletesFile()
         {
-            PlayerPrefs.SetString(KeyMarker, "{\"session_id\":\"s1\",\"last_state\":\"foreground\"}");
-            Assert.IsNull(CreateTracker(enabled: false).ReadSurvivingMarker());
-        }
-
-        [Test]
-        public void ClearMarker_RemovesKey()
-        {
-            PlayerPrefs.SetString(KeyMarker, "{\"session_id\":\"s1\"}");
+            PlantMarker("{\"session_id\":\"s1\"}");
             CreateTracker().ClearMarker();
-            Assert.IsFalse(PlayerPrefs.HasKey(KeyMarker));
+            Assert.IsFalse(File.Exists(_markerPath));
         }
 
         [Test]
         public void BeginTracking_WritesForegroundMarker()
         {
             CreateTracker().BeginTracking("s1");
-            FlockTerminationMarker marker = CreateTracker().ReadSurvivingMarker();
+            FlockTerminationMarker marker = ReadMarker();
             Assert.IsNotNull(marker);
             Assert.AreEqual("s1", marker.SessionId);
             Assert.AreEqual("foreground", marker.LastState);
             Assert.AreEqual(0, marker.ExceptionCount);
+            Assert.AreEqual(1, Directory.GetFiles(_folder).Length, "The marker is saved through a temporary file that is moved into place.");
         }
 
         [Test]
         public void BeginTracking_Disabled_WritesNothing()
         {
             CreateTracker(enabled: false).BeginTracking("s1");
-            Assert.IsFalse(PlayerPrefs.HasKey(KeyMarker));
+            Assert.IsFalse(File.Exists(_markerPath));
         }
 
         [Test]
@@ -134,7 +136,7 @@ namespace Flock.Tests.Editor
             FlockTerminationTracker tracker = CreateTracker();
             tracker.BeginTracking("s1");
             tracker.StopTracking();
-            Assert.IsFalse(PlayerPrefs.HasKey(KeyMarker));
+            Assert.IsFalse(File.Exists(_markerPath));
         }
 
         [Test]
@@ -144,10 +146,10 @@ namespace Flock.Tests.Editor
             tracker.BeginTracking("s1");
 
             tracker.HandleAppBackgrounded(true);
-            Assert.AreEqual("background", CreateTracker().ReadSurvivingMarker().LastState);
+            Assert.AreEqual("background", ReadMarker().LastState);
 
             tracker.HandleAppBackgrounded(false);
-            Assert.AreEqual("foreground", CreateTracker().ReadSurvivingMarker().LastState);
+            Assert.AreEqual("foreground", ReadMarker().LastState);
         }
 
         [Test]
@@ -159,10 +161,10 @@ namespace Flock.Tests.Editor
             tracker.HandleException("boom", "stack");
             tracker.HandleException("boom2", "stack");
             // In-memory only until a persistence point — an exception loop must not hammer disk.
-            Assert.AreEqual(0, CreateTracker().ReadSurvivingMarker().ExceptionCount);
+            Assert.AreEqual(0, ReadMarker().ExceptionCount);
 
             tracker.HandleHeartbeat();
-            Assert.AreEqual(2, CreateTracker().ReadSurvivingMarker().ExceptionCount);
+            Assert.AreEqual(2, ReadMarker().ExceptionCount);
         }
 
         [Test]
@@ -170,9 +172,9 @@ namespace Flock.Tests.Editor
         {
             FlockTerminationTracker tracker = CreateTracker();
             tracker.BeginTracking("s1");
-            DateTime before = CreateTracker().ReadSurvivingMarker().LastAliveUtc;
+            DateTime before = ReadMarker().LastAliveUtc;
             tracker.HandleHeartbeat();
-            Assert.GreaterOrEqual(CreateTracker().ReadSurvivingMarker().LastAliveUtc, before);
+            Assert.GreaterOrEqual(ReadMarker().LastAliveUtc, before);
         }
 
         [Test]
@@ -182,7 +184,7 @@ namespace Flock.Tests.Editor
             tracker.HandleAppBackgrounded(true);
             tracker.HandleHeartbeat();
             tracker.HandleException("boom", "stack");
-            Assert.IsFalse(PlayerPrefs.HasKey(KeyMarker));
+            Assert.IsFalse(File.Exists(_markerPath));
         }
     }
 }

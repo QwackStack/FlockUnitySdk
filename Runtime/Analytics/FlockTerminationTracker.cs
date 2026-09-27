@@ -1,14 +1,13 @@
 using System;
+using System.IO;
 using Flock.Logging;
 using Newtonsoft.Json;
-using UnityEngine;
 
 namespace Flock.Analytics
 {
-    /// <summary>Next-launch dirty-exit detection: keeps a tombstone marker alive during the session, classifies a survivor on the following boot.</summary>
+    /// <summary>Next-launch dirty-exit detection: keeps a tombstone marker alive during the session in this launch's own folder, classifies a survivor when a later launch takes that folder over.</summary>
     internal class FlockTerminationTracker
     {
-        private const string PrefKeyMarker = "flock_termination_marker";
         private const string StateForeground = "foreground";
         private const string StateBackground = "background";
 
@@ -18,6 +17,7 @@ namespace Flock.Analytics
 
         private readonly IFlockLogger _logger;
         private readonly bool _enabled;
+        private readonly string _markerPath;
 
         private FlockBehaviour _behaviour;
         private FlockTerminationMarker _marker;
@@ -25,10 +25,11 @@ namespace Flock.Analytics
         private bool _tracking;
 
         // enabled is computed by the owner (config + platform guards) so this class stays testable in EditMode.
-        internal FlockTerminationTracker(IFlockLogger logger, bool enabled)
+        internal FlockTerminationTracker(IFlockLogger logger, bool enabled, string markerPath)
         {
             _logger = logger;
             _enabled = enabled;
+            _markerPath = markerPath;
         }
 
         // Lifecycle-only verdict: died backgrounded = OS eviction/swipe-close; anything else = foreground death.
@@ -100,14 +101,21 @@ namespace Flock.Analytics
                 _pendingExceptionCount++;
         }
 
-        internal FlockTerminationMarker ReadSurvivingMarker()
+        // Whatever this launch's own switch says: the marker belongs to a launch that has ended.
+        internal static FlockTerminationMarker ReadMarker(string markerPath, IFlockLogger logger)
         {
-            if (!_enabled)
+            string json;
+            try
+            {
+                if (!File.Exists(markerPath))
+                    return null;
+                json = File.ReadAllText(markerPath);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning($"Could not read termination marker: {ex.Message}");
                 return null;
-
-            string json = PlayerPrefs.GetString(PrefKeyMarker, null);
-            if (string.IsNullOrEmpty(json))
-                return null;
+            }
 
             try
             {
@@ -117,27 +125,28 @@ namespace Flock.Analytics
             }
             catch (Exception ex)
             {
-                _logger.LogWarning($"Discarding malformed termination marker: {ex.Message}");
+                logger.LogWarning($"Discarding malformed termination marker: {ex.Message}");
             }
 
-            // Corrupt or incomplete — clear so it can't poison future launches.
-            ClearMarker();
+            // Corrupt or incomplete — delete so it can't poison future launches.
+            DeleteMarker(markerPath, logger);
             return null;
         }
 
-        // Not gated on _enabled: the provider must be able to drop undeliverable markers.
-        internal void ClearMarker()
+        internal static void DeleteMarker(string markerPath, IFlockLogger logger)
         {
             try
             {
-                PlayerPrefs.DeleteKey(PrefKeyMarker);
-                PlayerPrefs.Save();
+                if (File.Exists(markerPath))
+                    File.Delete(markerPath);
             }
             catch (Exception ex)
             {
-                _logger.LogWarning($"Failed to clear termination marker: {ex.Message}");
+                logger.LogWarning($"Failed to clear termination marker: {ex.Message}");
             }
         }
+
+        internal void ClearMarker() => DeleteMarker(_markerPath, _logger);
 
         private void FoldPendingExceptions()
         {
@@ -178,9 +187,7 @@ namespace Flock.Analytics
         {
             try
             {
-                PlayerPrefs.SetString(PrefKeyMarker, JsonConvert.SerializeObject(_marker));
-                // Explicit Save is load-bearing: a crash loses anything not flushed to disk.
-                PlayerPrefs.Save();
+                FlockTemporaryFiles.Save(_markerPath, JsonConvert.SerializeObject(_marker));
             }
             catch (Exception ex)
             {

@@ -88,12 +88,9 @@ namespace Flock.Providers
                 return false;
 
             string path = BuildPath(scope, key);
-            string tmpPath = path + ".tmp";
 
             try
             {
-                Directory.CreateDirectory(Path.GetDirectoryName(path));
-
                 Envelope<T> envelope = new Envelope<T>
                 {
                     Version = EnvelopeVersion,
@@ -102,20 +99,13 @@ namespace Flock.Providers
                     Data = value
                 };
 
-                File.WriteAllText(tmpPath, JsonConvert.SerializeObject(envelope));
-                // Atomic swap: File.Replace overwrites in one step so a crash can't leave the prior snapshot
-                // deleted-but-not-yet-replaced (the delete-then-move window). Move covers the first write.
-                if (File.Exists(path))
-                    File.Replace(tmpPath, path, null);
-                else
-                    File.Move(tmpPath, path);
-
+                // A temporary file of its own per write, replaced over the snapshot in one step.
+                FlockTemporaryFiles.Save(path, JsonConvert.SerializeObject(envelope));
                 return true;
             }
             catch (Exception ex)
             {
                 _logger?.LogWarning($"Snapshot write failed for {scope}/{key}: {ex.Message}");
-                TryDelete(tmpPath);
                 return false;
             }
         }
@@ -259,6 +249,9 @@ namespace Flock.Providers
             }
             return moved;
         }
+
+        /// <summary>Deletes temporary files a write that never finished left over a minute ago; a fresh one may be another copy of the game writing.</summary>
+        public int DeleteLeftOverFiles() => FlockTemporaryFiles.DeleteLeftOverFiles(_root, true);
 
         public void PruneOtherVersions(string keepGameVersionId)
         {

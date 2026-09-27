@@ -33,8 +33,8 @@ List<Sprite> sprites = await FlockClient.Instance.Asset.DownloadAsync<Sprite>(as
 // Override via FlockInitConfig.AssetCacheDirectory; disable via EnableAssetCache=false.
 // Cap total size with FlockInitConfig.AssetCacheMaxSizeMB (default 100 MB; 0 = unlimited).
 // When the cap is exceeded the oldest entries are evicted (LRU by last access).
-// Writes are atomic (.tmp + move) and previous versions of the same asset
-// are deleted automatically when a newer UpdatedAt is cached.
+// Writes are atomic (a temporary file of their own, then a move) and previous versions of
+// the same asset are deleted automatically when a newer UpdatedAt is cached.
 string cacheDir = FlockClient.Instance.Asset.CacheDirectory; // resolved absolute path
 FlockClient.Instance.Asset.ClearCache();
 

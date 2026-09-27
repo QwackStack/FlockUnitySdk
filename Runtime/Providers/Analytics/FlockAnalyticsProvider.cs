@@ -24,6 +24,8 @@ namespace Flock.Providers
         private readonly IEventCache<FlockSessionSnapshot> _sessionEndCache;
         private FlockSession _session;
         private readonly FlockTerminationTracker _terminationTracker;
+        // This launch's own folder, and the launches that ended before it.
+        private readonly FlockAnalyticsLaunches _launches;
         private bool _initialized;
         private bool _exceptionHookInstalled;
         private string _currentPlayerId;
@@ -35,9 +37,10 @@ namespace Flock.Providers
         public FlockAnalyticsProvider(FlockClient client) : base(client)
         {
             _config = client.InitConfig.AnalyticsConfig;
-            _eventCache = TryCreateCache<AnalyticsEventRequest>(client, "analytics_events", _config.CacheFailedEvents);
-            _logEventCache = TryCreateCache<LogEventRequest>(client, "log_events", _config.CacheFailedEvents);
-            _sessionEndCache = TryCreateCache<FlockSessionSnapshot>(client, "session_ends", _config.PersistSessionOnDisk);
+            _launches = client.AnalyticsLaunches;
+            _eventCache = TryCreateCache<AnalyticsEventRequest>(client, FlockAnalyticsLaunches.AnalyticsEventsQueueName, _config.CacheFailedEvents);
+            _logEventCache = TryCreateCache<LogEventRequest>(client, FlockAnalyticsLaunches.LogEventsQueueName, _config.CacheFailedEvents);
+            _sessionEndCache = TryCreateCache<FlockSessionSnapshot>(client, FlockAnalyticsLaunches.SessionEndsQueueName, _config.PersistSessionOnDisk);
 
             // A previously-recorded decision always wins; otherwise fall back to the
             // config's default policy (opt-out unless RequireExplicitConsent is on).
@@ -49,7 +52,7 @@ namespace Flock.Providers
             bool terminationTrackingEnabled = _config.PersistSessionOnDisk
                 && !Application.isEditor
                 && Application.platform != RuntimePlatform.WebGLPlayer;
-            _terminationTracker = new FlockTerminationTracker(client.Logger, terminationTrackingEnabled);
+            _terminationTracker = new FlockTerminationTracker(client.Logger, terminationTrackingEnabled, _launches.TerminationMarkerPath);
             if (_config.PersistSessionOnDisk && Application.platform == RuntimePlatform.WebGLPlayer)
                 client.Logger.LogWarning("Termination tracking is disabled on WebGL (no reliable quit/pause lifecycle)");
         }
@@ -62,7 +65,7 @@ namespace Flock.Providers
             try
             {
                 return new FlockEventCache<T>(
-                    Path.Combine(Application.persistentDataPath, "Flock"),
+                    _launches.Folder,
                     subfolder,
                     _config.MaxCachedEvents, _config.CacheFlushBatchSize, client.Logger);
             }
@@ -202,27 +205,7 @@ namespace Flock.Providers
             _session.OnHeartbeat -= _terminationTracker.HandleHeartbeat;
             _session.OnHeartbeat += _terminationTracker.HandleHeartbeat;
 
-            FlockSessionSnapshot orphaned = _session.RecoverOrphanedSession();
-            if (orphaned != null)
-            {
-                if (_sessionEndCache != null)
-                {
-                    // Spool first, clear after — clearing first loses the session if the send fails.
-                    string handle = _sessionEndCache.Enqueue(orphaned);
-                    if (handle != null)
-                    {
-                        _session.ClearPersistedState();
-                        Client.Logger.LogDebug($"Orphaned session end spooled: {orphaned.SessionId}");
-                    }
-                }
-                else
-                {
-                    _session.ClearPersistedState();
-                    await TrySendSessionEndAsync(orphaned, cancellationToken);
-                }
-            }
-
-            EmitPendingTermination();
+            await ReportWhatEndedLaunchesLeftAsync(cancellationToken);
 
             // Deliver unconfirmed ends from previous runs before a new session registers.
             // When offline, the spool drains on later flush triggers instead.
@@ -926,21 +909,62 @@ namespace Flock.Providers
             Client.Logger.LogDebug($"Session end spooled: {snapshot.SessionId}");
         }
 
-        // Next-launch => an existing marker means the previous run died without
-        // Unity's quit path. Classified lifecycle-only and sent as a
-        // normal analytics event so consent/spool/retry are there.
-        private void EmitPendingTermination()
+        // Once per launch, before this launch's session starts: the crash marker and the open session of every launch
+        // that ended, each reported once. A launch whose records could not be queued keeps its folder for a later launch.
+        private async Task ReportWhatEndedLaunchesLeftAsync(CancellationToken cancellationToken)
         {
-            FlockTerminationMarker marker = _terminationTracker.ReadSurvivingMarker();
+            // Handed over before the first await, so a second initialization reports none of them again.
+            List<FlockEndedLaunch> endedLaunches = _launches.TakeEndedLaunches();
+            foreach (FlockEndedLaunch ended in endedLaunches)
+            {
+                bool reported = EmitSurvivingTermination(ended.TerminationMarkerPath);
+                reported &= await RecoverOrphanedSessionAsync(ended.SessionStatePath, cancellationToken);
+                if (reported)
+                    ended.DeleteEverything();
+                else
+                    ended.Dispose();
+            }
+        }
+
+        // Returns false when the end could not reach the spool, so the ended launch is kept for a later one.
+        private async Task<bool> RecoverOrphanedSessionAsync(string sessionStatePath, CancellationToken cancellationToken)
+        {
+            FlockSessionSnapshot orphaned = FlockSession.ReadOrphanedSession(sessionStatePath, Client.Logger);
+            if (orphaned == null)
+                return true;
+
+            if (_sessionEndCache == null)
+            {
+                FlockSession.DeleteRecord(sessionStatePath, Client.Logger);
+                await TrySendSessionEndAsync(orphaned, cancellationToken);
+                return true;
+            }
+
+            // Spooled before the record is deleted — deleting first loses the session if the write fails.
+            if (_sessionEndCache.Enqueue(orphaned) == null)
+            {
+                Client.Logger.LogWarning($"Could not spool the end of orphaned session '{orphaned.SessionId}'; keeping it for the next launch");
+                return false;
+            }
+            FlockSession.DeleteRecord(sessionStatePath, Client.Logger);
+            Client.Logger.LogDebug($"Orphaned session end spooled: {orphaned.SessionId}");
+            return true;
+        }
+
+        // A marker a launch that ended left means it died without Unity's quit path. Classified lifecycle-only and sent
+        // as a normal analytics event so consent/spool/retry are there. Returns false when it is kept for a later launch.
+        private bool EmitSurvivingTermination(string markerPath)
+        {
+            FlockTerminationMarker marker = FlockTerminationTracker.ReadMarker(markerPath, Client.Logger);
             if (marker == null)
-                return;
+                return true;
 
             // No cache means the event could never be delivered; no consent means the data
             // must be discarded. Either way, drop the marker instead of retrying.
             if (_eventCache == null || !_hasConsent)
             {
-                _terminationTracker.ClearMarker();
-                return;
+                FlockTerminationTracker.DeleteMarker(markerPath, Client.Logger);
+                return true;
             }
 
             Dictionary<string, object> properties = new Dictionary<string, object>
@@ -956,14 +980,14 @@ namespace Flock.Providers
             string handle = TrackEvent(FlockTerminationTracker.EventName, "session", properties);
             if (handle != null)
             {
-                // Clear only after the durable enqueue — a failed write retries next launch.
-                _terminationTracker.ClearMarker();
+                // Deleted only after the durable enqueue — a failed write retries next launch.
+                FlockTerminationTracker.DeleteMarker(markerPath, Client.Logger);
                 Client.Logger.LogInfo($"Previous run terminated dirty ({properties["classification"]}); app_termination queued for session {marker.SessionId}");
+                return true;
             }
-            else
-            {
-                Client.Logger.LogWarning("app_termination enqueue failed; marker kept for retry next launch");
-            }
+
+            Client.Logger.LogWarning("app_termination enqueue failed; marker kept for retry next launch");
+            return false;
         }
 
         // Quit path: the end is already spooled by HandleSessionEnded. Best-effort delivery
