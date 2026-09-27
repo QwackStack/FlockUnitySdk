@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 It is released with the Flock SDK, at the Flock SDK's version.
 
 
+## [1.50.0]
+
+### Added
+- **Recordings are uploaded to their Protokite session.** This launch's recording goes once its file is finished (it reached
+  its length or size limit, or the game stopped it) and its Protokite session has started, whichever comes second. A
+  recording still going when the game quits is kept, and so is one whose upload the quit interrupted: the next launch sends
+  it. When a launch starts, the recordings earlier launches kept go too, once the folders are gone through and the Flock SDK
+  is running, one at a time and the oldest first, each with this launch's API key and the Game Version ID its own session
+  started with (Protokite finds a session's playtest from that version, so a later build's own would be refused).
+- **A recording counts as uploaded only when the storage answers its upload with a 2xx.** Protokite marks a session as having
+  a recording as soon as it hands out a link, so a link is never taken for an upload. The link is asked for only once the
+  file is finished, for the content type the file is written as, and a failed upload is tried once more with a fresh link
+  (not when the storage refused the link's signature, which a fresh link would repeat). An uploaded recording is deleted; one
+  that was not is kept, with its session, for a later launch, and the log says why.
+- **What earlier launches kept is uploaded with Playtesting Enabled off too**, so a release build never strands what a
+  playtest build of the game recorded; with it off nothing is recorded, no session is started and no playtest config is
+  fetched. Every refusal (403 another playtest's session, 404 no such session included) keeps the recording for a later
+  launch to ask again, until a launch that records needs its room.
+
+### Changed
+- **Recordings earlier launches left are finished, kept or deleted in every launch**, Playtesting Enabled or not, since the
+  upload above needs them finished; before, a build with it off left them untouched.
+- **A finished recording that is in use counts against Recordings Disk Budget Mb at what it takes**, no longer at the room
+  it once reserved: an upload holds one for as long as it takes to send, and counting it at its reservation meanwhile could
+  delete a recording waiting to be uploaded, or cut this launch's recording short, for room that was free. It is still never
+  deleted while in use. A stray file in a recording's folder (one a file browser leaves) is never taken for its video.
+
 ## [1.49.0]
 
 ### Added

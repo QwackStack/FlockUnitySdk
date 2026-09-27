@@ -215,7 +215,8 @@ namespace Protokite.Playtest.Tests
         {
             FakeFrameSource source = new FakeFrameSource();
             ProtokitePlaytestVideoRecording recording = Start(source, new FakeVp8Encoder(), Settings(s => s.MaxSeconds = 1.0));
-            Assert.AreEqual(ProtokitePlaytestVideoStopReason.ReachedLengthLimit, Play(recording, 600));
+            // Paced like a game's frames: unpaced, a loaded machine drops some and the count below is short (12 of 15, measured).
+            Assert.AreEqual(ProtokitePlaytestVideoStopReason.ReachedLengthLimit, Play(recording, 600, pacedBy: source));
             Assert.IsFalse(recording.IsCapturing);
             Assert.IsNull(recording.AddFrame(SixtyFps), "Nothing is captured after it stopped");
             Assert.IsTrue(recording.WaitUntilWritten(Plenty));

@@ -17,6 +17,7 @@ namespace Flock.Http
         private const int MaxFieldErrorsShown = 3;
 
         private static IFlockHttpAdapter _adapter;
+        private static IFlockFileUploader _fileUploader;
 
         private static IFlockHttpAdapter Adapter
         {
@@ -38,6 +39,21 @@ namespace Flock.Http
         public static void Configure(IFlockHttpAdapter adapter)
         {
             _adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
+        }
+
+        /// <summary>Uses this uploader for <see cref="UploadFileAsync"/> (a stand-in for tests, or a studio's own); null goes back to the platform's.</summary>
+        public static void UseFileUploader(IFlockFileUploader uploader)
+        {
+            _fileUploader = uploader;
+        }
+
+        /// <summary>PUTs a file to a URL, such as a presigned storage link, with this Content-Type and no other SDK header, never whole in memory. Main thread.</summary>
+        public static Task<FlockFileUploadOutcome> UploadFileAsync(string url, string filePath, string contentType,
+            CancellationToken cancellationToken = default)
+        {
+            if (_fileUploader == null)
+                _fileUploader = new UnityWebRequestFileUploader();
+            return _fileUploader.UploadFileAsync(url, filePath, contentType, cancellationToken);
         }
 
         private static IFlockHttpAdapter CreateDefaultAdapter(TimeSpan timeout)

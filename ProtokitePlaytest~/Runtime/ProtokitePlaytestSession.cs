@@ -116,7 +116,7 @@ namespace Protokite.Playtest
                 if (deviceId == null)
                 {
                     _sessionState = ProtokitePlaytestSessionState.NoPlayerIdentity;
-                    Debug.LogWarning(LogPrefix + "No Protokite session is started this launch, and nothing is sent: " + whyNone);
+                    Debug.LogWarning(LogPrefix + "No Protokite session is started this launch, so nothing this launch collects is sent: " + whyNone);
                     return;
                 }
                 body["device_id"] = deviceId;
@@ -172,6 +172,8 @@ namespace Protokite.Playtest
                 _playtestSessionId = sessionId;
                 SaveSessionBesideRecording();
                 Debug.Log(LogPrefix + $"Protokite session {sessionId} started for this launch, with the player's {(sentSteamId ? "Steam id" : "device id")} and Flock session {flockSessionId}.");
+                // A recording that finished before its session started goes now.
+                UploadThisLaunchsRecordingWhenReady();
             }
             else
             {
@@ -201,6 +203,8 @@ namespace Protokite.Playtest
         /// </summary>
         internal static void HandleGameQuitting()
         {
+            // An upload still going stops here and its recording is kept: the next launch sends it.
+            StopUploads();
             StopVideoForQuitting();
 #if UNITY_WEBGL && !UNITY_EDITOR
             // A page closing cannot be held up, and the transport needs the main thread this would block: the end is sent once.

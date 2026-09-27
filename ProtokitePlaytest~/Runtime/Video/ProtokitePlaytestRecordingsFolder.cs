@@ -193,6 +193,10 @@ namespace Protokite.Playtest
             return videos;
         }
 
+        /// <summary>The run's finished video, of a kind Protokite takes, or null while it has none; a stray file beside it is never taken for it.</summary>
+        internal static string FinishedVideoPath(string runFolder)
+            => VideoFiles(runFolder).FirstOrDefault(path => ProtokitePlaytestRecordingFiles.ContentTypeFor(path) != null);
+
         /// <summary>Whether a video in the run is still unfinished: being written, or cut off when its launch ended.</summary>
         internal static bool HasUnfinishedVideo(string runFolder)
             => VideoFiles(runFolder).Any(path => path.EndsWith(ProtokitePlaytestVideoRecording.PartSuffix, StringComparison.OrdinalIgnoreCase));
@@ -557,8 +561,9 @@ namespace Protokite.Playtest
 
                     long onDisk = ProtokitePlaytestRecordingRun.BytesOnDisk(folder);
                     // An unfinished video is the finishing pass's to finish, so its run is never claimed here.
+                    bool unfinished = ProtokitePlaytestRecordingRun.HasUnfinishedVideo(folder);
                     bool ended = false;
-                    if (!ProtokitePlaytestRecordingRun.HasUnfinishedVideo(folder))
+                    if (!unfinished)
                     {
                         using (ProtokitePlaytestRecordingRun claimed = ProtokitePlaytestRecordingRun.ClaimEnded(folder, kind))
                             ended = claimed != null;
@@ -568,6 +573,11 @@ namespace Protokite.Playtest
                     {
                         used += onDisk;
                         deletable.Add((folder, kind, onDisk));
+                    }
+                    else if (!unfinished && ProtokitePlaytestRecordingRun.FinishedVideoPath(folder) != null)
+                    {
+                        // Held with its video finished (being uploaded, or its launch still running): it grows no more, so it counts at what it takes.
+                        used += onDisk;
                     }
                     else
                     {

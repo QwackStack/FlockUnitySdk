@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.50.0]
+
+### Added
+- **`FlockHttpClient.UploadFileAsync(url, filePath, contentType)`** streams a file from disk to a URL with a PUT, the way a
+  presigned storage link wants it: the file is read as it is sent and is never whole in memory (measured: 1.5 GiB on Mono and
+  IL2CPP), the request carries the Content-Type it is given and no other header of the SDK's, and a whole upload has no time
+  limit, while one that sends nothing and gets no answer for 60 seconds is given up. It answers a `FlockFileUploadOutcome`:
+  the storage's status and body when it answered, and `IsUploaded` only for a 2xx. Cancelling throws; every other failure
+  comes back in the outcome, including a missing file and an upload Unity will not begin (an address it cannot parse, or a
+  file another program holds open to itself). Call it on the main thread. On WebGL, which cannot stream a file, it sends
+  nothing and says so, rather than reading the file into memory.
+- **`IFlockFileUploader`** is the seam behind it, kept apart from `IFlockHttpAdapter` so an adapter a studio wrote needs no
+  change; `FlockHttpClient.UseFileUploader` puts a stand-in in place for tests (null goes back to the platform's own
+  `UnityWebRequestFileUploader`).
+
 ## [1.49.0]
 
 No changes to the Flock SDK: this version is released together with the Protokite Playtest package's recordings kept on disk

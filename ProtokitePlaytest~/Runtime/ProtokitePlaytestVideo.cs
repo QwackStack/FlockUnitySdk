@@ -34,6 +34,9 @@ namespace Protokite.Playtest
         /// <summary>Stands in for the encoder the platform has.</summary>
         internal static Func<IProtokitePlaytestVideoEncoder> VideoEncoderForTesting;
 
+        /// <summary>Stands in for the file a recording is written to, so a test can give it another kind.</summary>
+        internal static Func<IProtokitePlaytestRecordingFile> RecordingFileForTesting;
+
         /// <summary>Where recordings go instead of the game's own folder.</summary>
         internal static string RecordingsFolderForTesting;
 
@@ -174,7 +177,7 @@ namespace Protokite.Playtest
                 return;
             }
 
-            IProtokitePlaytestRecordingFile file = ProtokitePlaytestRecordingFiles.Create();
+            IProtokitePlaytestRecordingFile file = RecordingFileForTesting != null ? RecordingFileForTesting() : ProtokitePlaytestRecordingFiles.Create();
             long sizeLimit = settings.MaxBytes;
             string error;
             if (!StartRecordingRun(settings, file, out error))
@@ -196,6 +199,8 @@ namespace Protokite.Playtest
                 Debug.LogWarning(LogPrefix + "This launch records no playtest video: " + error + " Everything else in the playtest still runs.");
                 return;
             }
+            // Uploaded as the kind of file it is written as, so a platform writing another kind sends its own.
+            _recordingContentType = file.ContentType;
             SaveSessionBesideRecording();
             string cutShort = settings.MaxBytes < sizeLimit
                 ? $" (Max Recording Size Mb is {sizeLimit / BytesPerMegabyte:0.#} MB, but Recordings Disk Budget Mb has only this much left)"
@@ -289,6 +294,7 @@ namespace Protokite.Playtest
                     $"fell behind, {summary.FramesNotReadyInTime} because earlier frames were still on their way, {summary.FramesLostOnTheGraphicsCard} lost on the " +
                     $"graphics card and {summary.FramesDroppedForWantOfABlock} for want of room.");
             }
+            UploadThisLaunchsRecordingWhenReady();
         }
 
         /// <summary>Stops capturing, so the recording's threads finish the file while the rest of quitting goes on.</summary>
@@ -331,6 +337,9 @@ namespace Protokite.Playtest
             // Let go once the last launch's recording has been waited for, so this launch's pass may finish or keep it.
             _recordingRun?.Dispose();
             _recordingRun = null;
+            // The last launch's pass is let finish (5 s at most) before this launch's driver starts its own, then forgotten.
+            _earlierRecordings?.Wait(TimeSpan.FromSeconds(5));
+            _earlierRecordings = null;
             _videoStartedThisLaunch = false;
             FinishedVideo = null;
         }

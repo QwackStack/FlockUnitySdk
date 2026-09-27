@@ -3,18 +3,18 @@ using UnityEngine;
 
 namespace Protokite.Playtest
 {
-    /// <summary>Keeps the playtest following the Flock SDK, once a frame, for as long as the game runs with playtesting on.</summary>
+    /// <summary>Keeps the playtest following the Flock SDK, once a frame, for as long as the game runs.</summary>
     [AddComponentMenu("")]
     internal sealed class ProtokitePlaytestDriver : MonoBehaviour
     {
         private static ProtokitePlaytestDriver _running;
 
-        /// <summary>Starts the driver when the project has playtesting on. With it off, nothing runs and nothing is sent.</summary>
+        /// <summary>Starts the driver with every launch. With playtesting off it records nothing and starts no session, but still uploads what earlier launches kept.</summary>
+        // Whatever the setting, so a build with playtesting off never strands the recordings a playtest build of the game left.
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
-        internal static void StartWhenPlaytestingIsOn()
+        internal static void StartWithTheGame()
         {
-            ProtokitePlaytestSettings settings = ProtokitePlaytestSettings.Load();
-            if (_running != null || settings == null || !settings.PlaytestingEnabled)
+            if (_running != null)
                 return;
 
             GameObject driver = new GameObject("Protokite Playtest") { hideFlags = HideFlags.HideInHierarchy };

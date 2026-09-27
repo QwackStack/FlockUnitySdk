@@ -4,8 +4,7 @@ Playtesting for games built with the Flock SDK: each play session, gameplay reco
 reported to your Protokite playtest.
 
 > **Early version.** This release loads your playtest's config, runs one Protokite session per launch, and records the
-> game's screen on 64-bit Windows, keeping recordings on disk. Uploading them and the feedback form arrive in the releases
-> that follow.
+> game's screen on 64-bit Windows and uploads it to that session. The feedback form arrives in a release that follows.
 
 ## Install
 
@@ -89,7 +88,25 @@ When the playtest's config turns **video_recording** on, the game's screen is re
 before anyone signs in: one recording a launch, written as it records as a WebM file a browser plays with nothing installed.
 It stops for good at the length or size limit, or when the game quits; quitting waits for the file within the same 3
 seconds as the session end, and a file not finished by then stays as its `.part` file. Time the game spends in the
-background is left out. This version keeps recordings on disk and does not send them to Protokite yet.
+background is left out.
+
+### Uploading
+
+A recording is uploaded to its Protokite session once its file is finished (it reached its length or size limit, or the game
+stopped it) and the session has started, whichever comes second. It is sent straight from disk, never whole in memory, and
+counts as uploaded only when the storage accepts the file itself: Protokite marks a session as having a recording as soon as
+it hands out a link, which is not the same thing. A failed upload is tried once more with a fresh link. An uploaded
+recording is deleted from disk; one that was not is kept, with its session, and the log says why.
+
+Nothing is uploaded while the game quits: a recording still going then, or an upload the quit interrupts, is kept and sent by
+the next launch. When a launch starts, the recordings earlier launches kept go once the folders below are gone through and
+the Flock SDK is running, one at a time and the oldest first, with this build's API key and the Game Version ID each
+recording's session started with. **This happens with Playtesting Enabled off too**, so a release build of the game never
+strands what a playtest build recorded; with it off, nothing else is recorded or sent.
+
+Every refusal keeps the recording, including Protokite saying the session belongs to another playtest (403) or no longer
+exists (404): a later launch asks again. Such a recording goes only when a launch that records needs its room in the disk
+budget, so a build that never records keeps asking for it, and says so in the log each launch.
 
 ### Where recordings are kept
 
@@ -109,17 +126,19 @@ When a later launch starts, a thread of its own goes through the folders whose g
 - A folder whose game still runs is never touched. Anything that cannot be finished or deleted (another program has it
   open) is named in a warning and tried again by the next launch.
 
-This runs only in a build with Playtesting Enabled. Files an earlier version left straight in `ProtokitePlaytest/Recordings/`
+This runs in every launch, Playtesting Enabled or not. Files an earlier version left straight in `ProtokitePlaytest/Recordings/`
 are left where they are and not counted below.
 
 **Recordings Disk Budget Mb** is the most every recording kept on the machine may take together. Before a recording starts,
 recordings whose game has closed are deleted, the oldest first, until it fits. A recording starts once the folders above have
-been gone through (usually milliseconds, at most 10 seconds), so nothing is deleted for room a cut-off file only seems to take. A recording makes room only for what its
-length limit records at its bitrate, with a quarter to spare (about 845 MB at the defaults), so a short recording never
-deletes one waiting to be uploaded that it would fit beside; it may then grow into all the room left, up to Max Recording
-Size Mb, and the log says so when the budget cuts it shorter. A recording still being written counts at the most it may
-grow to and is never deleted, so two copies of the game recording at once never take each other's room. With less than
-1 MB left, that launch records no video, and a warning names the setting to raise.
+been gone through (usually milliseconds, at most 10 seconds), so nothing is deleted for room a cut-off file only seems to
+take. A recording makes room only for what its length limit records at its bitrate, with a quarter to spare (about 845 MB
+at the defaults), so a short recording never deletes one waiting to be uploaded that it would fit beside; it may then grow
+into all the room left, up to Max Recording Size Mb, and the log says so when the budget cuts it shorter. A recording still
+being written counts at the most it may grow to and is never deleted, so two copies of the game recording at once never
+take each other's room. One that is finished but in use (being uploaded, or its game still running) is never deleted
+either, and counts at what it takes. With less than 1 MB left, that launch records no video, and a warning names the
+setting to raise.
 
 The frame is copied, scaled and converted on the graphics card and read back without waiting for it; encoding and writing
 each run on a thread of their own, and a frame that cannot keep up is dropped rather than stalling the game. The log says

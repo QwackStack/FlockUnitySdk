@@ -37,16 +37,17 @@ namespace Protokite.Playtest.Tests
         }
 
         [Test]
-        public void UnityStartsOneDriverExactlyWhenTheProjectHasPlaytestingOn()
+        public void UnityStartsOneDriverWhateverThePlaytestingSetting()
         {
-            Assert.AreEqual(_playtestingWasOnAtStartUp ? 1 : 0, _driversStartedByUnity,
+            // With playtesting off it still uploads what earlier launches kept, so it runs either way.
+            Assert.AreEqual(1, _driversStartedByUnity,
                 $"Playtesting was {(_playtestingWasOnAtStartUp ? "on" : "off")} in the project's settings when Play Mode started");
         }
 
         [UnitySetUp]
         public IEnumerator SetUp()
         {
-            // Entering Play Mode ran the project's own start-up: its Flock client and, with playtesting on, a driver.
+            // Entering Play Mode ran the project's own start-up: its Flock client and a driver, whatever the playtesting setting.
             foreach (ProtokitePlaytestDriver driver in Resources.FindObjectsOfTypeAll<ProtokitePlaytestDriver>())
                 Object.Destroy(driver.gameObject);
             if (FlockClient.IsInitialized)
@@ -97,8 +98,8 @@ namespace Protokite.Playtest.Tests
         [Test]
         public void TheDriverEndsTheSessionWhenTheGameQuits()
         {
-            ProtokitePlaytestDriver.StartWhenPlaytestingIsOn();
-            ProtokitePlaytestDriver.StartWhenPlaytestingIsOn();
+            ProtokitePlaytestDriver.StartWithTheGame();
+            ProtokitePlaytestDriver.StartWithTheGame();
 
             // Unity keeps the quitting handlers in a private field; read it to see the hook is there, once.
             System.Reflection.FieldInfo field = typeof(Application).GetField("quitting",
@@ -117,8 +118,8 @@ namespace Protokite.Playtest.Tests
         [UnityTest]
         public IEnumerator TheDriverFetchesOncePerFlockClientAndFollowsARestart()
         {
-            ProtokitePlaytestDriver.StartWhenPlaytestingIsOn();
-            ProtokitePlaytestDriver.StartWhenPlaytestingIsOn();
+            ProtokitePlaytestDriver.StartWithTheGame();
+            ProtokitePlaytestDriver.StartWithTheGame();
             Assert.AreEqual(1, Resources.FindObjectsOfTypeAll<ProtokitePlaytestDriver>().Length, "One driver, however often it is started");
 
             FlockFakeTransport transport = new FlockFakeTransport().On(ConfigRoute, FlockFakeTransport.Ok(Answer));
@@ -155,7 +156,7 @@ namespace Protokite.Playtest.Tests
             ProtokitePlaytest.VideoFrameSourceForTesting = (settings, format) => source;
             try
             {
-                ProtokitePlaytestDriver.StartWhenPlaytestingIsOn();
+                ProtokitePlaytestDriver.StartWithTheGame();
                 using (FlockTestClient.Create(new FlockFakeTransport().On(ConfigRoute, FlockFakeTransport.Ok(VideoAnswer))))
                 {
                     yield return new WaitForSecondsRealtime(1.5f);
@@ -183,10 +184,65 @@ namespace Protokite.Playtest.Tests
             System.IO.File.WriteAllBytes(System.IO.Path.Combine(run, "in-use.lock"), new byte[0]);
             System.IO.File.WriteAllBytes(System.IO.Path.Combine(run, "recording-20260101-000000-00000001.webm"), new byte[100]);
 
-            ProtokitePlaytestDriver.StartWhenPlaytestingIsOn();
+            ProtokitePlaytestDriver.StartWithTheGame();
             Assert.IsTrue(ProtokitePlaytest.WaitForEarlierRecordingsForTesting(TimeSpan.FromSeconds(10)));
             Assert.IsFalse(System.IO.Directory.Exists(run), "Deleted by the next launch, with nothing but Unity starting the driver");
             yield return null;
+        }
+
+        [UnityTest]
+        public IEnumerator WithPlaytestingOffTheDriverStillUploadsWhatEarlierLaunchesKeptAndDoesNothingElse()
+        {
+            _settings.PlaytestingEnabled = false;
+            // A recording a playtest build left, waiting for its session.
+            string run = System.IO.Path.Combine(_recordings, "Playtest", "20260101-000000-00000001");
+            System.IO.Directory.CreateDirectory(run);
+            System.IO.File.WriteAllBytes(System.IO.Path.Combine(run, "in-use.lock"), new byte[0]);
+            System.IO.File.WriteAllBytes(System.IO.Path.Combine(run, "recording-20260101-000000-00000001.webm"), new byte[100]);
+            System.IO.File.WriteAllText(System.IO.Path.Combine(run, "session.json"),
+                "{\"protokite_session_id\":\"pk-9\",\"protokite_api_url\":\"http://protokite.test\",\"flock_game_version_id\":\"session-gvid\"}");
+            AcceptingUploader uploader = new AcceptingUploader();
+            FlockHttpClient.UseFileUploader(uploader);
+            FlockFakeTransport transport = new FlockFakeTransport()
+                .On("/playtest-session/pk-9/recording-upload", FlockFakeTransport.Ok(
+                    "{\"result\":{\"upload_url\":\"http://storage.test/pk-9?X-Amz-Signature=1\",\"bucket\":\"b\",\"key\":\"k\"}}"))
+                .On(ConfigRoute, FlockFakeTransport.Ok(Answer));
+            try
+            {
+                ProtokitePlaytestDriver.StartWithTheGame();
+                using (FlockTestClient.Create(transport))
+                {
+                    float until = Time.realtimeSinceStartup + 10f;
+                    while (Time.realtimeSinceStartup < until && System.IO.Directory.Exists(run))
+                        yield return null;
+                    // A second more, in which nothing else may be sent.
+                    yield return new WaitForSecondsRealtime(1f);
+
+                    Assert.AreEqual(1, uploader.Calls, "Uploaded, with nothing but the driver Unity started");
+                    Assert.AreEqual(1, transport.CountTo("/recording-upload"));
+                    Assert.IsFalse(System.IO.Directory.Exists(run), "Uploaded, so no longer kept");
+                    Assert.AreEqual(0, transport.CountTo(ConfigRoute), "No playtest config is asked for");
+                    Assert.AreEqual(ProtokitePlaytestStatus.TurnedOff, ProtokitePlaytest.Status);
+                    Assert.IsFalse(ProtokitePlaytest.IsRecordingVideo);
+                }
+            }
+            finally
+            {
+                FlockHttpClient.UseFileUploader(null);
+            }
+        }
+
+        /// <summary>Takes every file upload and answers 200.</summary>
+        private sealed class AcceptingUploader : IFlockFileUploader
+        {
+            public int Calls;
+
+            public System.Threading.Tasks.Task<FlockFileUploadOutcome> UploadFileAsync(string url, string filePath, string contentType,
+                System.Threading.CancellationToken cancellationToken)
+            {
+                Calls++;
+                return System.Threading.Tasks.Task.FromResult(new FlockFileUploadOutcome { Result = FlockHttpResult.Success, StatusCode = 200 });
+            }
         }
 
         /// <summary>Frames of a moving picture, counted.</summary>
