@@ -304,8 +304,9 @@ namespace Flock.Editor
             bool schemasGenerated = false;
 #if !FLOCK_NO_SCHEMA
             includeSchemas = true;
-            if (configExists && !string.IsNullOrEmpty(config.generatedCodePath) && Directory.Exists(config.generatedCodePath))
-                schemasGenerated = Directory.GetFiles(config.generatedCodePath, "*.cs", SearchOption.AllDirectories).Length > 0;
+            // The manifest every sync writes, not any script: the output folder may be one the game shares.
+            if (configExists && !string.IsNullOrEmpty(config.generatedCodePath))
+                schemasGenerated = ManifestEmitter.IsWrittenIn(config.generatedCodePath);
 #else
             includeSchemas = false;
 #endif
@@ -676,7 +677,7 @@ namespace Flock.Editor
             using (new BackgroundColorScope(DestructiveAction))
             {
                 if (GUILayout.Button(
-                        new GUIContent("Delete Generated Code", "Remove the entire generated folder. Asks for confirmation."),
+                        new GUIContent("Delete Generated Code", "Remove the files codegen generated, and the folders that leaves empty; files of your own there are kept. Asks for confirmation."),
                         GUILayout.Height(36)))
                     FlockCodegenMenu.CleanGenerated();
             }

@@ -1,4 +1,4 @@
-using System;
+using Flock.Models;
 
 namespace Flock.Editor.Codegen
 {
@@ -9,15 +9,10 @@ namespace Flock.Editor.Codegen
         // SchemaPropertyEmitter and never pass through here.
         public static string MapPrimitiveTypeString(string typeString)
         {
-            string normalized = (typeString ?? "").Trim().ToLowerInvariant();
-
             // An optional field arrives as "datetime?" / "integer?". Without stripping the marker the whole
             // field was written off as an unknown type and silently skipped.
-            bool optional = normalized.EndsWith("?", StringComparison.Ordinal);
-            if (optional)
-                normalized = normalized.Substring(0, normalized.Length - 1).TrimEnd();
-
-            string mapped = MapBase(normalized);
+            bool optional = TypedSchema.IsNullableType(typeString);
+            string mapped = MapBase(TypedSchema.BaseTypeOf(typeString));
             if (mapped == null)
                 return null;
 

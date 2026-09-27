@@ -25,9 +25,7 @@ namespace Flock.Editor.Codegen
 
         public static int Emit(IList<PlayerTemplateSchema> playerTemplates, string outputDir)
         {
-            if (Directory.Exists(outputDir))
-                Directory.Delete(outputDir, recursive: true);
-            Directory.CreateDirectory(outputDir);
+            GeneratedFiles.ClearFolder(outputDir);
 
             // Tags are unique per the provider contract, so the first match is the achievements template.
             PlayerTemplateSchema template = (playerTemplates ?? new List<PlayerTemplateSchema>())

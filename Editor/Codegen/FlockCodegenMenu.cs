@@ -146,43 +146,35 @@ namespace Flock.Editor.Codegen
 
             bool confirmed = EditorUtility.DisplayDialog(
                 "Flock — Clean Generated",
-                $"This deletes every generated .cs file under:\n\n{generatedFolder}\n\nContinue?",
+                $"This deletes the files Flock codegen wrote under:\n\n{generatedFolder}\n\nFiles of your own there are kept. Continue?",
                 "Delete", "Cancel");
             if (!confirmed) return;
 
-            int removed = 0;
-            if (AssetDatabase.IsValidFolder(generatedFolder))
-            {
-                if (AssetDatabase.DeleteAsset(generatedFolder))
-                {
-                    Debug.Log($"[Flock Codegen] Deleted {generatedFolder}");
-                    removed++;
-                }
-                else
-                {
-                    Debug.LogWarning($"[Flock Codegen] AssetDatabase.DeleteAsset failed for {generatedFolder}; falling back to filesystem delete.");
-                    try
-                    {
-                        if (Directory.Exists(generatedFolder))
-                            Directory.Delete(generatedFolder, recursive: true);
-                        string metaPath = generatedFolder + ".meta";
-                        if (File.Exists(metaPath))
-                            File.Delete(metaPath);
-                        removed++;
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.LogError($"[Flock Codegen] Filesystem delete also failed: {ex.Message}");
-                    }
-                }
-            }
-            else
+            if (!Directory.Exists(generatedFolder))
             {
                 Debug.Log($"[Flock Codegen] No generated folder at {generatedFolder} — nothing to delete.");
+                return;
             }
 
+            try
+            {
+                int removed = CleanGeneratedFolder(generatedFolder);
+                Debug.Log($"[Flock Codegen] Clean complete ({removed} generated file(s) removed).");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[Flock Codegen] Clean stopped, some generated files may remain: {ex.Message}");
+            }
             AssetDatabase.Refresh();
-            Debug.Log($"[Flock Codegen] Clean complete ({removed} item(s) removed).");
+        }
+
+        /// <summary>Deletes what codegen wrote under the folder, and the folders that leaves empty; a game's own files there stay. Returns how many generated files went.</summary>
+        internal static int CleanGeneratedFolder(string generatedFolder)
+        {
+            int removed = CatalogEmitter.DeleteCatalog(generatedFolder) + GeneratedFiles.DeleteUnder(generatedFolder);
+            if (removed > 0)
+                GeneratedFiles.DeleteFolderIfEmpty(generatedFolder);
+            return removed;
         }
 
         internal static bool TryResolveGeneratedPath(string configured, out string resolved, out string error)

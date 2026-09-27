@@ -6,6 +6,39 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.51.0]
+
+### Fixed
+- **Nullable list, dict and object fields are generated, read and saved.** A player-template or game-config field typed
+  `list?`, `dict?` or `object?` (the dashboard's nullable marker, which the backend also writes itself when it converts an
+  older template) was skipped by codegen, so the generated class had no property for it and a typed `UpdateAsync` sent
+  `null` in its place; the update replaces the whole row, so every typed save erased that field. Such fields are now
+  generated as `List<T>`, `Dictionary<string, T>` or a nested class, like their non-nullable forms, read back as plain
+  values, and saved with what they hold. Run **Codegen > Sync** again to get the new properties.
+- **A write made online no longer overtakes an older write still queued.** After a reconnect the queued writes wait for a
+  flush; a save made online in the meantime went straight to the server, and the older write's replay then put the old
+  value back. `UpdatePlayerDataAsync`, `UpdatePlayerDataFieldAsync` and `UnlockAchievementAsync` now queue behind any write
+  of the same player still waiting, and start a flush. The call then returns the cached row with the change applied (null
+  when the row is not cached), as it does offline; with nothing waiting it goes straight to the server as before.
+- **A flush under way when the signed-in player changes no longer takes a write off the next player's queue.** It stops;
+  the write it was sending stays queued for its own player and is sent again when they next sign in (a queued write may
+  reach the server twice; money is never queued), and the next player's own queue is sent straight after.
+- **A token refresh answered after the player signed out, or after another player signed in, changes nothing.** It used to
+  sign the old player back in and save their tokens (so the next launch restored them), replace the new player's tokens,
+  or sign the new player out when it failed; and a request refused as one player could be sent again as the next. Each
+  sign-in (a login, a restored session) and each sign-out now ends the sign-in before it, and a refresh or a retry for one
+  that ended is dropped.
+- **An asset download whose link has expired fetches a fresh link and tries once more.** A download link is signed for a
+  few minutes, while an asset's record is kept for the whole session and reloaded on the next launch, so a download some
+  minutes after the list was read failed with 403 until `ClearCache()`. A 401 or 403 from storage now reads that asset's
+  record again, keeps it, and tries once more (`DownloadAsync` and `PreloadAsync`); when that read fails, the download's
+  own failure is reported.
+- **Codegen deletes only the files it wrote.** Sync deleted its `Player`, `Configs`, `Commands`, `Shops` and `Achievements`
+  folders whole, and **Delete Generated Code** the whole output folder, so an output path shared with the game (such as
+  `Assets/Scripts`) lost the game's own scripts. Both now delete only `.g.cs` files that carry codegen's header, with their
+  `.meta`, and only the folders that leaves empty. The `Catalog/` folder older versions wrote goes only when the catalog
+  was all that was in it, and the Codegen tab reads "generated" only when a sync's manifest is there.
+
 ## [1.50.0]
 
 ### Added

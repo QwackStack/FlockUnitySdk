@@ -181,7 +181,9 @@ player signs out on a shared device or you're responding to a compromised sessio
 
 The SDK silently refreshes the access token on `401` responses. You can also
 trigger it manually, and listen for the case where the refresh fails (the
-player must re-authenticate).
+player must re-authenticate). A refresh that answers after the player signed out,
+or after another player signed in, is ignored, so it never signs the earlier player
+back in.
 
 ```csharp
 FlockClient.Instance.OnSessionExpired += () => ShowLoginScreen();

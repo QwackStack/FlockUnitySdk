@@ -47,44 +47,66 @@ namespace Flock.Providers
             if (_flushInFlight)
                 return;
             _flushInFlight = true;
+            bool stoppedForAnotherQueue = false;
             try
             {
                 EnsureQueueLoaded();
-                if (_pendingWrites.Count == 0 || !IsServerReachable())
+                // What this flush sends for. A sign-in change, or a reload of the same player's queue, replaces them under it.
+                Queue<PendingDataWrite> queue = _pendingWrites;
+                string playerId = _queuePlayerId;
+                if (queue.Count == 0 || !IsServerReachable())
                     return;
 
-                while (_pendingWrites.Count > 0)
+                while (queue.Count > 0)
                 {
-                    PendingDataWrite write = _pendingWrites.Peek();
+                    PendingDataWrite write = queue.Peek();
+                    PlayerData result = null;
+                    FlockException failure = null;
                     try
                     {
-                        PlayerData result = await ExecuteAsync(
+                        result = await ExecuteAsync(
                             () => FlockHttpClient.PostAsync<PlayerData>(
                                 $"{Client.GetVersionedApiUrl()}/{write.Path}",
                                 JObject.Parse(write.PayloadJson), Client.GetBaseHeaders(), cancellationToken),
                             write.Context, cancellationToken);
+                    }
+                    catch (FlockException ex)
+                    {
+                        failure = ex;
+                    }
 
+                    // Touching the queue now would take an entry off another player's queue, or off a copy of this one
+                    // that newer writes went into. The write stays queued and is sent again, which a queueable write allows.
+                    if (!ReferenceEquals(queue, _pendingWrites) || Client.CurrentPlayerId != playerId)
+                    {
+                        Client.Logger.LogInfo($"Pending-write flush stopped at '{write.Context}': the signed-in player changed while it was being sent. It stays queued for its player.");
+                        stoppedForAnotherQueue = true;
+                        break;
+                    }
+
+                    if (failure == null)
+                    {
                         _pendingWrites.Dequeue();
                         PersistQueue();
                         ApplyToPlayerCache(result);
                     }
-                    catch (FlockException ex)
+                    else
                     {
                         write.Attempts++;
 
                         // transient/401 -> keep queued; permanent 4xx will never succeed -> drop so it cant block the queue.
                         // The cap backstops anything misread as transient; generous so a real outage keeps the writes.
-                        if (!IsPermanentFailure(ex) && write.Attempts < MaxReplayAttempts)
+                        if (!IsPermanentFailure(failure) && write.Attempts < MaxReplayAttempts)
                         {
                             PersistQueue();
-                            Client.Logger.LogWarning($"Pending-write flush halted at '{write.Context}' (attempt {write.Attempts}), will retry next flush: {ex.Message}");
+                            Client.Logger.LogWarning($"Pending-write flush halted at '{write.Context}' (attempt {write.Attempts}), will retry next flush: {failure.Message}");
                             break;
                         }
 
-                        if (!IsPermanentFailure(ex))
-                            Client.Logger.LogError($"Dropping queued write '{write.Context}' after {write.Attempts} failed replays — it never became deliverable: {ex.Message}");
+                        if (!IsPermanentFailure(failure))
+                            Client.Logger.LogError($"Dropping queued write '{write.Context}' after {write.Attempts} failed replays — it never became deliverable: {failure.Message}");
                         else
-                            Client.Logger.LogError($"Dropping rejected queued write '{write.Context}' (HTTP {ex.StatusCode}): {ex.Message}");
+                            Client.Logger.LogError($"Dropping rejected queued write '{write.Context}' (HTTP {failure.StatusCode}): {failure.Message}");
                         _pendingWrites.Dequeue();
                         PersistQueue();
                         // the optimistic value we cached for it was never accepted -> evict so the next read refetches authoritative state.
@@ -96,6 +118,10 @@ namespace Flock.Providers
             {
                 _flushInFlight = false;
             }
+
+            // The next queue waited behind this flush, and the sign-in that would have started it found this one running.
+            if (stoppedForAnotherQueue)
+                TriggerFlush();
         }
 
         // Auto-flush wiring: replays the queue when the app regains focus, when connectivity returns mid-session, and right after login. Called once from FlockClient init.
@@ -165,6 +191,7 @@ namespace Flock.Providers
             }
         }
 
+        /// <summary>Replaces a player-data row: send every field its template declares, nullable ones included, or the server refuses the write; while older writes of this player are queued it queues behind them and returns the cached row with the change applied.</summary>
         public async Task<PlayerData> UpdatePlayerDataAsync(
             string playerDataId, List<DataField> data,
             CancellationToken cancellationToken = default)
@@ -175,20 +202,8 @@ namespace Flock.Providers
                 PlayerDataId = playerDataId,
                 Data = data.ToFlatObject()
             };
-
-            if (!IsServerReachable())
-            {
-                PlayerData playerData = ApplyOffline(playerDataId, data);
-                return EnqueueOffline(FlockEndpoints.CommandUpdatePlayerData, request, "Update player data", playerData);
-            }
-
-            PlayerData result = await ExecuteAsync(
-                () => FlockHttpClient.PostAsync<PlayerData>(
-                    $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.CommandUpdatePlayerData}",
-                    request, Client.GetBaseHeaders(), cancellationToken),
-                "Update player data", cancellationToken);
-
-            return ApplyToPlayerCache(result);
+            return await SendOrQueueAsync(FlockEndpoints.CommandUpdatePlayerData, request, "Update player data",
+                () => ApplyToCachedRow(playerDataId, data), cancellationToken);
         }
 
         /// <summary>Writes one field of a player-data row.</summary>
@@ -206,16 +221,8 @@ namespace Flock.Providers
                 Value = value
             };
 
-            if (!IsServerReachable())
-                return EnqueueOffline(FlockEndpoints.CommandUpdatePlayerDataKey, request, "Update player data field", ApplyOffline(playerDataId, new List<DataField> { new DataField { FieldName = key, Value = value } }));
-
-            PlayerData result = await ExecuteAsync(
-                () => FlockHttpClient.PostAsync<PlayerData>(
-                    $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.CommandUpdatePlayerDataKey}",
-                    request, Client.GetBaseHeaders(), cancellationToken),
-                "Update player data field", cancellationToken);
-
-            return ApplyToPlayerCache(result);
+            return await SendOrQueueAsync(FlockEndpoints.CommandUpdatePlayerDataKey, request, "Update player data field",
+                () => ApplyToCachedRow(playerDataId, new List<DataField> { new DataField { FieldName = key, Value = value } }), cancellationToken);
         }
 
 #if !FLOCK_NO_PLAYER
@@ -277,23 +284,39 @@ namespace Flock.Providers
                 AchievementName = achievementName
             };
 
-            if (!IsServerReachable())
-                return EnqueueOffline(FlockEndpoints.CommandUnlockAchievement, request, "Unlock achievement", row);
-
-            PlayerData result = await ExecuteAsync(
-                () => FlockHttpClient.PostAsync<PlayerData>(
-                    $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.CommandUnlockAchievement}",
-                    request, Client.GetBaseHeaders(), cancellationToken),
-                "Unlock achievement", cancellationToken);
-
-            return ApplyToPlayerCache(result);
+            return await SendOrQueueAsync(FlockEndpoints.CommandUnlockAchievement, request, "Unlock achievement",
+                () => row, cancellationToken);
         }
 #endif
 
-        // offline path for every queueable write: persist, enqueue for replay, return the (optimistically updated) cached row.
-        private PlayerData EnqueueOffline(string path, object payload, string context, PlayerData data)
+        // A write sent while older ones of this player wait would reach the server first, and their replay would then
+        // undo it; so it queues behind them, as it does offline, and returns the cached row with the change applied.
+        private async Task<PlayerData> SendOrQueueAsync(string path, object request, string context,
+            Func<PlayerData> applyToCachedRow, CancellationToken cancellationToken)
         {
             EnsureQueueLoaded();
+            bool reachable = IsServerReachable();
+            if (!reachable || _pendingWrites.Count > 0)
+            {
+                PlayerData queued = EnqueueWrite(path, request, context, applyToCachedRow(), reachable);
+                if (reachable)
+                    TriggerFlush();
+                return queued;
+            }
+
+            PlayerData result = await ExecuteAsync(
+                () => FlockHttpClient.PostAsync<PlayerData>(
+                    $"{Client.GetVersionedApiUrl()}/{path}",
+                    request, Client.GetBaseHeaders(), cancellationToken),
+                context, cancellationToken);
+
+            return ApplyToPlayerCache(result);
+        }
+
+        // queued path for every queueable write: persist, enqueue for replay, return the (optimistically updated) cached row.
+        private PlayerData EnqueueWrite(string path, object payload, string context, PlayerData data, bool reachable)
+        {
+            int waitingBefore = _pendingWrites.Count;
             _pendingWrites.Enqueue(new PendingDataWrite
             {
                 Path = path,
@@ -302,16 +325,18 @@ namespace Flock.Providers
             });
             // The overlay is already applied, so claiming "queued" when it never reached disk leaves a read
             // returning a value the server will never hold.
-            if (PersistQueue())
+            if (!PersistQueue())
+                Client.Logger.LogError($"{context}: queued, but the queue could not be saved — this change is lost if the app closes before it is sent.");
+            else if (!reachable)
                 Client.Logger.LogWarning($"{context}: offline — queued for sync on reconnect");
             else
-                Client.Logger.LogError($"{context}: offline and the queue could not be saved — this change is lost if the app closes before reconnecting.");
+                Client.Logger.LogInfo($"{context}: queued behind {waitingBefore} earlier write(s) still being sent, so it cannot overtake them");
 
             return data;
         }
 
-        // overlays the queued change onto the cached row in place so reads-after-write see it; null if not cached, reconciled on flush.
-        private PlayerData ApplyOffline(string playerDataId, List<DataField> changes)
+        // overlays a queued change onto the cached row in place so reads-after-write see it; null if not cached, reconciled on flush.
+        private PlayerData ApplyToCachedRow(string playerDataId, List<DataField> changes)
         {
 #if !FLOCK_NO_PLAYER
             PlayerData cached = Client.Player?.TryGetCachedRow(playerDataId);

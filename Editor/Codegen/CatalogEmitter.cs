@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using Flock.Editor.Catalog;
 using Flock.Models;
@@ -22,19 +23,30 @@ namespace Flock.Editor.Codegen
         /// <summary>Project-relative path of the catalog asset for a given generated root.</summary>
         internal static string AssetPath(string generatedRoot) => $"{generatedRoot}/{AssetFileName}";
 
-        public static int Emit(FlockSchemaSnapshot snapshot, string gameVersionName, string generatedRoot)
+        /// <summary>Deletes the catalog assets codegen wrote under this root, and the legacy Catalog folder once that leaves it empty. Returns how many went.</summary>
+        internal static int DeleteCatalog(string generatedRoot)
         {
-            string assetPath = AssetPath(generatedRoot);
-
-            // Delete the asset, not a containing folder: the catalog sits in the generated root now, so
-            // resetting a folder here would take the whole tree with it.
-            if (AssetDatabase.LoadAssetAtPath<FlockContentCatalog>(assetPath) != null)
-                AssetDatabase.DeleteAsset(assetPath);
+            // Assets, never a containing folder: the root may be a folder the game shares with codegen.
+            int removed = 0;
+            if (AssetDatabase.LoadAssetAtPath<FlockContentCatalog>(AssetPath(generatedRoot)) != null && AssetDatabase.DeleteAsset(AssetPath(generatedRoot)))
+                removed++;
 
             // Left behind by versions that emitted into Generated/Catalog/.
             string legacyFolder = $"{generatedRoot}/{LegacySubdir}";
-            if (AssetDatabase.IsValidFolder(legacyFolder))
-                AssetDatabase.DeleteAsset(legacyFolder);
+            string legacyAsset = $"{legacyFolder}/{AssetFileName}";
+            if (AssetDatabase.LoadAssetAtPath<FlockContentCatalog>(legacyAsset) != null && AssetDatabase.DeleteAsset(legacyAsset))
+            {
+                removed++;
+                if (!Directory.EnumerateFileSystemEntries(legacyFolder).Any())
+                    AssetDatabase.DeleteAsset(legacyFolder);
+            }
+            return removed;
+        }
+
+        public static int Emit(FlockSchemaSnapshot snapshot, string gameVersionName, string generatedRoot)
+        {
+            string assetPath = AssetPath(generatedRoot);
+            DeleteCatalog(generatedRoot);
 
             FlockContentCatalog catalog = ScriptableObject.CreateInstance<FlockContentCatalog>();
             catalog.gameVersion = gameVersionName ?? "";

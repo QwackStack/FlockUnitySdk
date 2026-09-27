@@ -23,6 +23,18 @@ namespace Flock.Models
 
         public TypedSchema SchemaAsSingle() => Schema as TypedSchema;
         public List<TypedSchema> SchemaAsList() => Schema as List<TypedSchema>;
+
+        /// <summary>The type trimmed, in lower case and without its nullable marker, so "List?" reads as "list".</summary>
+        internal static string BaseTypeOf(string type)
+        {
+            string normalized = (type ?? "").Trim().ToLowerInvariant();
+            return normalized.EndsWith("?", StringComparison.Ordinal)
+                ? normalized.Substring(0, normalized.Length - 1).TrimEnd()
+                : normalized;
+        }
+
+        /// <summary>True when the type carries the nullable marker, as "integer?" does.</summary>
+        internal static bool IsNullableType(string type) => (type ?? "").Trim().EndsWith("?", StringComparison.Ordinal);
     }
 
     public class DataField
@@ -85,7 +97,7 @@ namespace Flock.Models
         private static JToken ToJToken(DataField field)
         {
             if (field == null || field.Value == null) return JValue.CreateNull();
-            string type = (field.Type ?? "").Trim().ToLowerInvariant();
+            string type = TypedSchema.BaseTypeOf(field.Type);
 
             if (type == "object" && field.Value is IList<DataField> objFields)
                 return ToFlatObject(objFields);
@@ -137,7 +149,7 @@ namespace Flock.Models
         private static object ConvertJToken(JToken token, TypedSchema schema)
         {
             if (token == null || token.Type == JTokenType.Null) return null;
-            string type = (schema.Type ?? "").Trim().ToLowerInvariant();
+            string type = TypedSchema.BaseTypeOf(schema.Type);
 
             if (type == "object")
             {

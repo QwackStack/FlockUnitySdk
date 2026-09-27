@@ -40,6 +40,8 @@ namespace Flock.Http
             bool idempotent = true,
             int? maxRetriesOverride = null)
         {
+            // The sign-in this request goes out under; once it ends, the request is never re-sent as whoever signed in next.
+            int signInNumber = Client.SignInNumber;
             try
             {
                 return await Client.RetryHandler.ExecuteAsync(operation, cancellationToken, retryAmbiguousFailures: idempotent, maxRetriesOverride: maxRetriesOverride);
@@ -48,7 +50,7 @@ namespace Flock.Http
             catch (FlockAuthException) when (Client.IsAuthenticated)
             {
                 Client.Logger.LogDebug("Access token expired, attempting silent refresh");
-                bool refreshed = await Client.TryRefreshTokenAsync(cancellationToken);
+                bool refreshed = await Client.TryRefreshTokenAsync(signInNumber, cancellationToken);
                 if (!refreshed)
                     throw;
 

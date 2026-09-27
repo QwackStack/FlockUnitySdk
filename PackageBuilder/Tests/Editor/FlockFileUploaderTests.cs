@@ -1,12 +1,10 @@
 using System;
 using System.Collections;
-using System.Collections.Generic;
 using System.IO;
-using System.Net;
-using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 using Flock.Http;
+using Flock.Tests.Support;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine.TestTools;
@@ -17,7 +15,7 @@ namespace Flock.Tests
     public class FlockFileUploaderTests
     {
         private string _folder;
-        private LocalStorage _storage;
+        private FlockLocalStorage _storage;
 
         [SetUp]
         public void SetUp()
@@ -26,7 +24,7 @@ namespace Flock.Tests
                 Assert.Ignore("This project refuses plain http, which the storage stand-in on this machine answers on.");
             _folder = Path.Combine(Path.GetTempPath(), "flock_upload_" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(_folder);
-            _storage = new LocalStorage();
+            _storage = new FlockLocalStorage();
         }
 
         [TearDown]
@@ -48,26 +46,17 @@ namespace Flock.Tests
             return path;
         }
 
-        // UnityWebRequest moves only while the editor ticks, so a test waits in frames.
-        private static IEnumerator Finish(Task<FlockFileUploadOutcome> upload, float seconds)
-        {
-            DateTime until = DateTime.UtcNow.AddSeconds(seconds);
-            while (!upload.IsCompleted && DateTime.UtcNow < until)
-                yield return null;
-            Assert.IsTrue(upload.IsCompleted, $"The upload ended within {seconds} s");
-        }
-
         [UnityTest]
         public IEnumerator TheFileIsPutWithItsContentTypeAndNoOtherHeaderOfTheSdks()
         {
             string path = MakeFile(300000);
             Task<FlockFileUploadOutcome> upload = FlockHttpClient.UploadFileAsync(_storage.Url + "bucket/key?X-Amz-Signature=abc", path, "video/webm");
-            yield return Finish(upload, 20);
+            yield return FlockTestWait.Until(() => upload.IsCompleted, "The upload ended within 20 s", 20);
 
             FlockFileUploadOutcome outcome = upload.Result;
             Assert.IsTrue(outcome.IsUploaded, $"{outcome.Result} {outcome.StatusCode} {outcome.Body}");
             Assert.AreEqual(300000, outcome.BytesSent);
-            LocalStorage.Received sent = _storage.Single();
+            FlockLocalStorage.Received sent = _storage.Single();
             Assert.AreEqual("PUT", sent.Method);
             Assert.AreEqual("/bucket/key?X-Amz-Signature=abc", sent.PathAndQuery, "The presigned address exactly as given");
             Assert.AreEqual("video/webm", sent.ContentType, "Exactly the type the link was signed for");
@@ -81,7 +70,7 @@ namespace Flock.Tests
         {
             _storage.Answer = (403, "<Error><Code>AccessDenied</Code><Message>Request has expired</Message></Error>");
             Task<FlockFileUploadOutcome> upload = FlockHttpClient.UploadFileAsync(_storage.Url + "bucket/key", MakeFile(1000), "video/webm");
-            yield return Finish(upload, 20);
+            yield return FlockTestWait.Until(() => upload.IsCompleted, "The upload ended within 20 s", 20);
 
             FlockFileUploadOutcome outcome = upload.Result;
             Assert.AreEqual(FlockHttpResult.Success, outcome.Result, "A status came back");
@@ -94,7 +83,7 @@ namespace Flock.Tests
         public IEnumerator AFileThatIsNotThereSendsNothing()
         {
             Task<FlockFileUploadOutcome> upload = FlockHttpClient.UploadFileAsync(_storage.Url + "bucket/key", Path.Combine(_folder, "missing.webm"), "video/webm");
-            yield return Finish(upload, 10);
+            yield return FlockTestWait.Until(() => upload.IsCompleted, "The upload ended within 10 s", 10);
 
             Assert.IsFalse(upload.Result.IsUploaded);
             Assert.AreEqual(FlockHttpResult.ConnectionError, upload.Result.Result);
@@ -113,7 +102,7 @@ namespace Flock.Tests
                 foreach ((string url, string path) in new[] { ("http://[not an address", MakeFile(1000)), (_storage.Url + "bucket/key", held) })
                 {
                     Task<FlockFileUploadOutcome> upload = FlockHttpClient.UploadFileAsync(url, path, "video/webm");
-                    yield return Finish(upload, 10);
+                    yield return FlockTestWait.Until(() => upload.IsCompleted, "The upload ended within 10 s", 10);
 
                     Assert.IsFalse(upload.IsFaulted, url + ": no exception, but " + upload.Exception?.GetBaseException().Message);
                     Assert.AreEqual(FlockHttpResult.ConnectionError, upload.Result.Result, url);
@@ -132,7 +121,7 @@ namespace Flock.Tests
             FlockHttpClient.UseFileUploader(new UnityWebRequestFileUploader(TimeSpan.FromSeconds(1)));
             DateTime began = DateTime.UtcNow;
             Task<FlockFileUploadOutcome> upload = FlockHttpClient.UploadFileAsync(_storage.Url + "bucket/key", MakeFile(1000), "video/webm");
-            yield return Finish(upload, 15);
+            yield return FlockTestWait.Until(() => upload.IsCompleted, "The upload ended within 15 s", 15);
 
             Assert.AreEqual(FlockHttpResult.Timeout, upload.Result.Result, upload.Result.Body);
             Assert.Less((DateTime.UtcNow - began).TotalSeconds, 10.0, "Given up, not left hanging");
@@ -145,7 +134,7 @@ namespace Flock.Tests
             _storage.ReadBytesPerTenthOfASecond = 256 * 1024;
             FlockHttpClient.UseFileUploader(new UnityWebRequestFileUploader(TimeSpan.FromSeconds(1)));
             Task<FlockFileUploadOutcome> upload = FlockHttpClient.UploadFileAsync(_storage.Url + "bucket/key", MakeFile(10 * 1024 * 1024), "video/webm");
-            yield return Finish(upload, 60);
+            yield return FlockTestWait.Until(() => upload.IsCompleted, "The upload ended within 60 s", 60);
 
             Assert.IsTrue(upload.Result.IsUploaded, $"{upload.Result.Result} {upload.Result.StatusCode} {upload.Result.Body}");
             Assert.AreEqual(10 * 1024 * 1024, _storage.Single().Body.Length);
@@ -191,135 +180,6 @@ namespace Flock.Tests
                 Calls++;
                 ContentType = contentType;
                 return Task.FromResult(new FlockFileUploadOutcome { Result = FlockHttpResult.Success, StatusCode = 200 });
-            }
-        }
-
-        /// <summary>Storage of the test's own on this machine: takes each PUT, keeps what arrived, and answers as the test says.</summary>
-        private sealed class LocalStorage : IDisposable
-        {
-            internal sealed class Received
-            {
-                public string Method;
-                public string PathAndQuery;
-                public string ContentType;
-                public System.Collections.Specialized.NameValueCollection Headers;
-                public byte[] Body;
-            }
-
-            private readonly HttpListener _listener = new HttpListener();
-            private readonly List<Received> _received = new List<Received>();
-            private readonly ManualResetEventSlim _stopped = new ManualResetEventSlim(false);
-            private readonly Thread _thread;
-
-            public (int Status, string Body) Answer = (200, "");
-            public volatile bool NeverAnswer;
-            public int ReadBytesPerTenthOfASecond;
-
-            public string Url { get; }
-
-            public LocalStorage()
-            {
-                TcpListener probe = new TcpListener(IPAddress.Loopback, 0);
-                probe.Start();
-                int port = ((IPEndPoint)probe.LocalEndpoint).Port;
-                probe.Stop();
-                Url = $"http://127.0.0.1:{port}/";
-                _listener.Prefixes.Add(Url);
-                _listener.Start();
-                _thread = new Thread(Serve) { IsBackground = true, Name = "Local storage for upload tests" };
-                _thread.Start();
-            }
-
-            public int Count
-            {
-                get { lock (_received) return _received.Count; }
-            }
-
-            public Received Single()
-            {
-                lock (_received)
-                {
-                    Assert.AreEqual(1, _received.Count, "One request reached the storage");
-                    return _received[0];
-                }
-            }
-
-            private void Serve()
-            {
-                while (!_stopped.IsSet)
-                {
-                    HttpListenerContext context;
-                    try
-                    {
-                        context = _listener.GetContext();
-                    }
-                    catch (Exception)
-                    {
-                        return;
-                    }
-                    ThreadPool.QueueUserWorkItem(_ => Handle(context));
-                }
-            }
-
-            private void Handle(HttpListenerContext context)
-            {
-                try
-                {
-                    Received received = new Received
-                    {
-                        Method = context.Request.HttpMethod,
-                        PathAndQuery = context.Request.Url.PathAndQuery,
-                        ContentType = context.Request.ContentType,
-                        Headers = context.Request.Headers
-                    };
-                    using (MemoryStream body = new MemoryStream())
-                    {
-                        byte[] buffer = new byte[64 * 1024];
-                        int readThisTenth = 0;
-                        int read;
-                        while ((read = context.Request.InputStream.Read(buffer, 0, buffer.Length)) > 0)
-                        {
-                            body.Write(buffer, 0, read);
-                            readThisTenth += read;
-                            if (ReadBytesPerTenthOfASecond > 0 && readThisTenth >= ReadBytesPerTenthOfASecond)
-                            {
-                                readThisTenth = 0;
-                                Thread.Sleep(100);
-                            }
-                        }
-                        received.Body = body.ToArray();
-                    }
-                    lock (_received)
-                        _received.Add(received);
-
-                    if (NeverAnswer)
-                    {
-                        _stopped.Wait();
-                        return;
-                    }
-                    byte[] answer = System.Text.Encoding.UTF8.GetBytes(Answer.Body ?? "");
-                    context.Response.StatusCode = Answer.Status;
-                    context.Response.ContentLength64 = answer.Length;
-                    context.Response.OutputStream.Write(answer, 0, answer.Length);
-                    context.Response.OutputStream.Close();
-                }
-                catch (Exception)
-                {
-                    // The uploader gave up or the test ended; nothing to answer.
-                }
-            }
-
-            public void Dispose()
-            {
-                _stopped.Set();
-                try
-                {
-                    _listener.Stop();
-                    _listener.Close();
-                }
-                catch (Exception)
-                {
-                }
             }
         }
     }

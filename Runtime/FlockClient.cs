@@ -55,6 +55,8 @@ namespace Flock
         // Bumped on every successful refresh so queued waiters can detect "someone already refreshed" without
         // relying on the refresh token rotating (the backend may return the same one).
         private int _refreshGeneration;
+        // Moves on every sign-in and sign-out, never on a refresh, so a reply sent for one sign-in can tell that it ended.
+        private int _signInNumber;
         private string _accessToken;
         private string _refreshToken;
         private JwtTokenClaims _tokenClaims;
@@ -286,6 +288,9 @@ namespace Flock
         public string ServerSessionId => _session != null && _session.IsActive ? _session.ServerSessionId : null;
 
         public string CurrentPlayerId => _tokenClaims?.PlayerId;
+
+        /// <summary>Which sign-in the tokens belong to: moves on every sign-in and sign-out, never on a refresh.</summary>
+        internal int SignInNumber => _signInNumber;
         public string GameId => _initConfig.GameId;
         public string GameVersionId => _initConfig.GameVersionId;
         public bool IsAuthenticated => !string.IsNullOrEmpty(_accessToken);
@@ -324,7 +329,11 @@ namespace Flock
             return success;
         }
 
-        internal async Task<bool> TryRefreshTokenAsync(CancellationToken cancellationToken)
+        internal Task<bool> TryRefreshTokenAsync(CancellationToken cancellationToken)
+            => TryRefreshTokenAsync(_signInNumber, cancellationToken);
+
+        /// <summary>Refreshes the tokens of sign-in <paramref name="signInNumber"/>; false, changing nothing, once that sign-in has ended.</summary>
+        internal async Task<bool> TryRefreshTokenAsync(int signInNumber, CancellationToken cancellationToken)
         {
             if (string.IsNullOrEmpty(_refreshToken))
                 return false;
@@ -336,7 +345,8 @@ namespace Flock
             await _refreshSemaphore.WaitAsync(cancellationToken);
             try
             {
-                if (string.IsNullOrEmpty(_refreshToken))
+                // The sign-in ended before this got its turn: the tokens now held are another sign-in's, not this one's to refresh.
+                if (string.IsNullOrEmpty(_refreshToken) || signInNumber != _signInNumber)
                     return false;
 
                 // Someone refreshed while we waited — piggyback on their result instead of POSTing again.
@@ -353,6 +363,10 @@ namespace Flock
                     refreshRequest,
                     _initConfig.GetBaseHeaders(), cancellationToken);
 
+                // Applying a reply for an ended sign-in would sign that player back in, or sign the next one out.
+                if (IsSignInOver(signInNumber))
+                    return false;
+
                 if (response == null || string.IsNullOrEmpty(response.AccessToken))
                 {
                     ClearTokens();
@@ -361,7 +375,7 @@ namespace Flock
                     return false;
                 }
 
-                SetTokens(response.AccessToken, response.RefreshToken);
+                StoreTokens(response.AccessToken, response.RefreshToken);
                 _refreshGeneration++;
                 _logger.LogInfo("Token refresh successful");
                 FlockEvents.InvokeTokenRefreshed();
@@ -369,6 +383,8 @@ namespace Flock
             }
             catch (FlockAuthException e)
             {
+                if (IsSignInOver(signInNumber))
+                    return false;
                 _logger.LogWarning("Token refresh failed: session expired");
                 _logger.LogException(e);
                 ClearTokens();
@@ -387,6 +403,15 @@ namespace Flock
             }
         }
 
+        // True, and logged, when the sign-in a refresh was sent for has ended.
+        private bool IsSignInOver(int signInNumber)
+        {
+            if (signInNumber == _signInNumber)
+                return false;
+            _logger.LogDebug("Token refresh reply ignored: the player signed out or changed while it was on its way");
+            return true;
+        }
+
         internal void ClearTokens()
         {
             _logger.LogInfo("Clearing authentication tokens");
@@ -403,6 +428,7 @@ namespace Flock
             _accessToken = null;
             _refreshToken = null;
             _tokenClaims = null;
+            _signInNumber++;
 
             ClearPersistedTokens();
         }
@@ -423,13 +449,20 @@ namespace Flock
         }
 
         /// <summary>
-        /// Sets in-memory auth state from the given tokens and persists them via
+        /// Starts a new sign-in with the given tokens (a login or a restore, never a refresh) and persists them via
         /// <see cref="FlockInitConfig.TokenStore"/>.
         /// Throws <see cref="FlockAuthException"/> if the access token cannot be parsed
         /// as a JWT — the SDK can't operate without claims, and silent fallback would
         /// leave <see cref="CurrentPlayerId"/> null with no obvious cause.
         /// </summary>
         internal void SetTokens(string accessToken, string refreshToken)
+        {
+            StoreTokens(accessToken, refreshToken);
+            _signInNumber++;
+        }
+
+        // Keeps the tokens of the current sign-in; a refresh stores through here so its sign-in number stays.
+        private void StoreTokens(string accessToken, string refreshToken)
         {
             JwtTokenClaims claims = null;
             if (!string.IsNullOrEmpty(accessToken))

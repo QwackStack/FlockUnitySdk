@@ -27,7 +27,7 @@ namespace Flock.Editor.Codegen
         // the lookup) when the enum actually exists; otherwise the config falls back to a plain-string name.
         public static EmitResult Emit(IList<GameConfigSchema> configs, string outputDir, bool achievementsGenerated)
         {
-            ResetDirectory(outputDir);
+            GeneratedFiles.ClearFolder(outputDir);
 
             HashSet<string> used = new HashSet<string>();
             Dictionary<string, string> classNamesById = new Dictionary<string, string>();
@@ -159,7 +159,7 @@ namespace Flock.Editor.Codegen
             foreach (TypedSchema field in c.Schema)
             {
                 if (field == null || string.IsNullOrEmpty(field.FieldName)) continue;
-                string typeLower = (field.Type ?? "").Trim().ToLowerInvariant();
+                string typeLower = TypedSchema.BaseTypeOf(field.Type);
                 if (typeLower != "list" && typeLower != "array") continue;
 
                 TypedSchema element = field.SchemaAsSingle();
@@ -265,13 +265,6 @@ namespace Flock.Editor.Codegen
             }
             Debug.LogWarning($"[Flock Codegen] Unknown SchemaTag '{tag}'; SourceTag omitted.");
             return null;
-        }
-
-        private static void ResetDirectory(string dir)
-        {
-            if (Directory.Exists(dir))
-                Directory.Delete(dir, recursive: true);
-            Directory.CreateDirectory(dir);
         }
     }
 }

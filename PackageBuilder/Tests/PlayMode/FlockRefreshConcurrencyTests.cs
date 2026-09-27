@@ -1,6 +1,8 @@
+using System;
 using System.Collections;
 using System.Threading.Tasks;
 using Flock;
+using Flock.Exceptions;
 using Flock.Http;
 using Flock.Tests.Support;
 using NUnit.Framework;
@@ -26,6 +28,8 @@ namespace Flock.Tests.PlayMode
         [TearDown]
         public void TearDown()
         {
+            // A test that failed while a request was held lets it go, so the run ends with that test's own failure.
+            _h?.Transport.ReleaseGate();
             _h?.Dispose();
             _h = null;
             if (FlockClient.IsInitialized)
@@ -113,6 +117,112 @@ namespace Flock.Tests.PlayMode
             string retryB = transport.AllTo("probe/b")[1].Headers["Authorization"];
             Assert.AreEqual(retryA, retryB, "Both retries use the same refreshed token.");
             Assert.AreNotEqual(loginBearer, retryA, "The refreshed token differs from the original login token.");
+        }
+
+        private static bool FailedWithAuth(Task task) => task.IsFaulted && task.Exception.GetBaseException() is FlockAuthException;
+
+        // ---- RFSH-07: a refresh answered after sign-out does not sign the player back in ----
+        [UnityTest]
+        public IEnumerator ARefreshAnsweredAfterSignOutDoesNotSignThePlayerBackIn()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.OnSequence("probe/x", FlockFakeTransport.Coded(401, "player.token_expired"), FlockFakeTransport.Ok("{\"value\":\"after\"}"));
+            transport.On(FlockEndpoints.PlayerTokenRefresh, RefreshOk("player-a"));
+            transport.GateNext(FlockEndpoints.PlayerTokenRefresh);
+            _h = FlockTestClient.Create(transport);
+            _h.LoginAs("player-a");
+            _h.SetReachable(true);
+            int refreshedRaised = 0;
+            Action countRefreshed = () => refreshedRaised++;
+            FlockEvents.OnTokenRefreshed += countRefreshed;
+            try
+            {
+                Task<SnapshotProbe> fetch = Provider(_h).FetchAsync("c", "k", "probe/x");
+                yield return FlockTestWait.Until(() => transport.CountTo(FlockEndpoints.PlayerTokenRefresh) >= 1, "The refresh is on its way");
+
+                _h.Client.Authentication.Logout();
+                transport.ReleaseGate();
+                yield return FlockTestWait.Until(() => fetch.IsCompleted, "The request ended");
+
+                Assert.IsTrue(FailedWithAuth(fetch), "The request's own refusal: " + fetch.Exception);
+                Assert.IsFalse(_h.Client.IsAuthenticated, "Still signed out");
+                Assert.IsNull(_h.Client.LoadPersistedTokens(), "Nothing saved for the next launch to sign in with");
+                Assert.AreEqual(1, transport.CountTo("probe/x"), "Not sent again");
+                Assert.AreEqual(0, refreshedRaised, "No refresh is announced");
+            }
+            finally
+            {
+                FlockEvents.OnTokenRefreshed -= countRefreshed;
+            }
+        }
+
+        // ---- RFSH-08: a refresh answered after another player signed in leaves that player signed in ----
+        [UnityTest]
+        public IEnumerator ARefreshAnsweredAfterAnotherPlayerSignedInLeavesThemSignedIn()
+        {
+            foreach (bool refreshRefused in new[] { false, true })
+            {
+                FlockFakeTransport transport = new FlockFakeTransport();
+                transport.OnSequence("probe/x", FlockFakeTransport.Coded(401, "player.token_expired"), FlockFakeTransport.Ok("{\"value\":\"after\"}"));
+                transport.On(FlockEndpoints.PlayerTokenRefresh, refreshRefused ? FlockFakeTransport.Coded(401, "player.refresh_token_invalid") : RefreshOk("player-a"));
+                transport.GateNext(FlockEndpoints.PlayerTokenRefresh);
+                _h?.Dispose();
+                _h = FlockTestClient.Create(transport);
+                _h.LoginAs("player-a");
+                _h.SetReachable(true);
+                int expiredRaised = 0;
+                Action countExpired = () => expiredRaised++;
+                FlockEvents.OnAuthExpired += countExpired;
+                try
+                {
+                    Task<SnapshotProbe> fetch = Provider(_h).FetchAsync("c", "k", "probe/x");
+                    yield return FlockTestWait.Until(() => transport.CountTo(FlockEndpoints.PlayerTokenRefresh) >= 1, "The refresh is on its way");
+
+                    _h.Client.Authentication.Logout();
+                    _h.LoginAs("player-b");
+                    string bearerB = _h.Client.GetBaseHeaders()["Authorization"];
+                    transport.ReleaseGate();
+                    yield return FlockTestWait.Until(() => fetch.IsCompleted, "The request ended");
+
+                    string when = refreshRefused ? " (refresh refused)" : " (refresh granted)";
+                    Assert.IsTrue(FailedWithAuth(fetch), "Player A's request fails as A's" + when + ": " + fetch.Exception);
+                    Assert.AreEqual("player-b", _h.Client.CurrentPlayerId, "Player B is still the one signed in" + when);
+                    Assert.AreEqual(bearerB, _h.Client.GetBaseHeaders()["Authorization"], "With B's own token" + when);
+                    Assert.AreEqual(bearerB, "Bearer " + _h.Client.LoadPersistedTokens()?.AccessToken, "And B's tokens are what is saved" + when);
+                    Assert.AreEqual(1, transport.CountTo("probe/x"), "A's request is not sent again as B" + when);
+                    Assert.AreEqual(0, expiredRaised, "B's session is not reported expired" + when);
+                }
+                finally
+                {
+                    FlockEvents.OnAuthExpired -= countExpired;
+                }
+            }
+        }
+
+        // ---- RFSH-09: a request refused after another player signed in is not refreshed and sent again as them ----
+        [UnityTest]
+        public IEnumerator ARequestRefusedAfterAnotherPlayerSignedInIsNotSentAgainAsThem()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.OnSequence("probe/x", FlockFakeTransport.Coded(401, "player.token_expired"), FlockFakeTransport.Ok("{\"value\":\"as-b\"}"));
+            transport.On(FlockEndpoints.PlayerTokenRefresh, RefreshOk("player-b"));
+            transport.GateNext("probe/x");
+            _h = FlockTestClient.Create(transport);
+            _h.LoginAs("player-a");
+            _h.SetReachable(true);
+
+            Task<SnapshotProbe> fetch = Provider(_h).FetchAsync("c", "k", "probe/x");
+            yield return FlockTestWait.Until(() => transport.CountTo("probe/x") >= 1, "Player A's request is on its way");
+
+            // Straight to another player, with no sign-out between: a sign-in on its own ends the one before it.
+            _h.LoginAs("player-b");
+            transport.ReleaseGate();
+            yield return FlockTestWait.Until(() => fetch.IsCompleted, "The request ended");
+
+            Assert.IsTrue(FailedWithAuth(fetch), "A's request fails as A's: " + fetch.Exception);
+            Assert.AreEqual(0, transport.CountTo(FlockEndpoints.PlayerTokenRefresh), "B's tokens are not refreshed for A's request");
+            Assert.AreEqual(1, transport.CountTo("probe/x"), "Nor is A's request sent again under B's sign-in");
+            Assert.AreEqual("player-b", _h.Client.CurrentPlayerId);
         }
     }
 }

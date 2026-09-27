@@ -8,6 +8,15 @@ namespace Flock.Editor.Codegen
     /// <summary>Emits the generated <c>SchemasManifest</c> — GameVersionId plus a content hash that the build guard and CI Verify compare against to detect drift.</summary>
     internal static class ManifestEmitter
     {
+        internal const string FileName = "SchemasManifest.g.cs";
+
+        /// <summary>True once a sync has written its manifest into <paramref name="outputDir"/>; a script of the game's there is not a sync.</summary>
+        internal static bool IsWrittenIn(string outputDir)
+        {
+            string path = Path.Combine(outputDir, FileName);
+            return File.Exists(path) && GeneratedFiles.IsGenerated(path);
+        }
+
         public static void Emit(FlockSchemaSnapshot snapshot, string outputDir, int achievementCount)
         {
             if (!Directory.Exists(outputDir))
@@ -33,7 +42,7 @@ namespace Flock.Editor.Codegen
             sb.AppendLine("    }");
             sb.AppendLine("}");
 
-            File.WriteAllText(Path.Combine(outputDir, "SchemasManifest.g.cs"), sb.ToString());
+            File.WriteAllText(Path.Combine(outputDir, FileName), sb.ToString());
             Debug.Log($"[Flock Codegen] Manifest written for game_version_id={snapshot.GameVersionId}.");
         }
     }
