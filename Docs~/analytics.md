@@ -50,7 +50,9 @@ FlockEvents.OnConsentChanged += granted => Debug.Log($"Consent: {granted}");
 
 ## Unexpected-termination detection
 
-If the previous run died without a clean quit (crash, hang force-kill, foreground OOM, power loss), the SDK detects it on the next launch and queues one `app_termination` analytics event automatically — nothing to call.
+If a run died without a clean quit (crash, hang force-kill, foreground OOM, power loss), the SDK detects it on a later launch and queues one `app_termination` analytics event automatically — nothing to call.
+
+Each launch keeps its crash marker, its live-session record and its event queues in a folder of its own under `Application.persistentDataPath/Flock/analytics/launches/`, locked while it runs. A launch takes over only the folders of launches that have ended, so two copies of a game running at once (or the Editor beside a player) never report each other as crashed, end each other's session or send each other's queued events. What an ended launch left is reported once, by whichever launch takes it over.
 
 | Property | Meaning |
 |---|---|
@@ -62,7 +64,8 @@ If the previous run died without a clean quit (crash, hang force-kill, foregroun
 
 - Quitting via Alt-F4 / the window close button is a **clean** exit (Unity runs its quit path) — no event.
 - Swipe-closing on mobile reports `background_kill`, because the app switcher backgrounds the app first.
-- Requires `PersistSessionOnDisk`; disabled in the Editor and on WebGL (no reliable lifecycle there).
+- Requires `PersistSessionOnDisk`; the Editor and WebGL never record a marker of their own (no reliable lifecycle there). The Editor does report a standalone player's crash, since they share the folder.
+- On macOS and Linux the lock may hold only within one process (unverified there), so two copies running at the same moment may not be told apart. A copy that has ended is taken over as usual.
 - Consent-gated like all analytics; a dirty exit found while consent is off is discarded.
 
 See also: [SDK Events](events.md) for the session lifecycle events (`OnSessionStarted`, `OnSessionEnded`, `OnSessionPaused`, `OnSessionResumed`).

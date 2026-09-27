@@ -29,6 +29,7 @@ namespace Flock.Providers
             _cache = new FlockAssetCache(
                 client.InitConfig.AssetCacheDirectory,
                 client.InitConfig.AssetCacheMaxSizeMB);
+            _cache.DeleteLeftOverFiles();
             int cap = client.InitConfig.AssetMaxConcurrentDownloads;
             _downloadSemaphore = cap > 0 ? new SemaphoreSlim(cap, cap) : null;
         }

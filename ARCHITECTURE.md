@@ -25,6 +25,8 @@ PackageBuilder/Tests/Editor/   EditMode tests (asmdef Flock.Tests.Editor)
 - **FlockEvents** — static hub for lifecycle events (authenticated, session ended, restored).
 - **FlockEventModels** — event enums/payloads: `FlockAuthMethod`, `FlockAuthInfo`, `FlockSessionEndReason`, `FlockSessionEndedArgs`.
 - **FlockSdkVersion** — SDK version string. · **FlockUtil** — on-disk token/file paths.
+- **FlockTemporaryFiles** — saves a file through a temporary file of its own per write, moved over in one step; deletes only temporary files over a minute old (a fresh one may be another copy of the game writing). Every store that saves through a temporary file uses it.
+- **FlockLaunchFolder** — a folder one launch keeps its files in, held by `in-use.lock` opened with `FileShare.None`; another launch touches it only once it can open that lock itself (`ClaimEnded`), which the OS allows however the owner ended.
 
 ## Runtime/Providers
 - **FlockAuthProvider** — login / register / token refresh + revoke / session restore / password reset / email verification / name preflight / **account linking** (link email, device and the five OAuth providers; unlink by `FlockCredentialProvider`; list linked accounts). Linking routes return the model at the **root**, never cache, never queue offline, and raise `FlockEvents.OnAccountLinked`/`OnAccountUnlinked`. A linked email opens the `ResetPasswordAsync` gate for the session (`_hasEmailCredential`, re-derived from every accounts payload, cleared on logout, never persisted).
@@ -53,9 +55,10 @@ PackageBuilder/Tests/Editor/   EditMode tests (asmdef Flock.Tests.Editor)
 - **TokenStore/** — **ITokenStore** + `StoredTokens`, with **Android/Ios/Mac/Windows/WebGl/Other** secure-storage impls.
 
 ## Runtime/Analytics
-- **FlockSession** — tracks the current play session (start/end/ids).
+- **FlockSession** — tracks the current play session (start/end/ids); its live-session record is `session_state.json` in the launch's folder.
+- **FlockAnalyticsLaunches** — each launch's analytics files in `persistentDataPath/Flock/analytics/launches/<time>-<hex>/` (crash marker, live-session record, the three queues), locked while it runs. At start it takes over every ended launch (queues moved in at once; records handed to the provider, which reports each once and deletes the folder) and, once, what a build before 1.48.0 left (the queues under `Flock/` and two PlayerPrefs records). Owned by `FlockClient`, let go at `Shutdown` and at the no-domain-reload static reset. Tests point every SDK elsewhere through `FolderForTesting`, set by each test assembly's SetUpFixture.
 - **FlockSessionSnapshot** — persisted session state for quit/crash recovery.
-- **FlockTerminationTracker** — next-launch dirty-exit detection: tombstone marker in PlayerPrefs, lifecycle-only classifier, emits `app_termination` via the event pipeline. · **FlockTerminationMarker** — the persisted tombstone model.
+- **FlockTerminationTracker** — dirty-exit detection: tombstone marker `termination_marker.json` in the launch's folder, read by whichever later launch takes that folder over; lifecycle-only classifier, emits `app_termination` via the event pipeline. · **FlockTerminationMarker** — the persisted tombstone model.
 - **FlockEventCache** / **IEventCache** — queues events for batch + offline send.
 - **FlockAnalyticsConfig** — batch/flush tunables. · **FlockDeviceInfo** — device/platform metadata.
 
