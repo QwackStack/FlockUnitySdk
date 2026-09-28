@@ -41,54 +41,56 @@ namespace Flock.Interfaces
         /// </summary>
         Task RecordTransactionAsync(AnalyticsTransactionRequest request, CancellationToken cancellationToken = default);
 
-        // /// <summary>
-        // /// Tracks a batch of analytics events. Each entry is persisted to the local
-        // /// write-ahead cache before sending; on success the batch is dropped, on
-        // /// transient failure it stays for the next flush.
-        // /// </summary>
-        // Task TrackEventsAsync(
-        //     List<AnalyticsEventRequest> events,
-        //     CancellationToken cancellationToken = default);
+        /// <summary>Records a gameplay event for the Game Metrics dashboards (surface: analytics): queued on disk, held until a player is signed in, and refused with false for no consent, an empty or reserved name, or a name or category the server cannot store.</summary>
+        bool TrackEvent(
+            string eventName,
+            Dictionary<string, object> properties = null,
+            string eventCategory = null);
 
-        
-        // Not exposed to user until log_event/analytic clean up
-        // /// <summary>
-        // /// Tracks a single analytics event. Enqueued to the on-disk cache; delivery
-        // /// happens on the flush triggers. Events tracked before authentication are
-        // /// tagged with a placeholder player id and rewritten after login.
-        // /// </summary>
-        // void TrackEvent(
-        //     string eventName,
-        //     string eventCategory = null,
-        //     Dictionary<string, object> parameters = null);
+        /// <summary>Records an exception you caught under Diagnostics → Errors (surface: log_event); unhandled ones are captured for you.</summary>
+        void LogDiagnosticException(
+            Exception exception,
+            Dictionary<string, object> errorData = null,
+            Dictionary<string, object> extraData = null);
 
-        /// <summary>
-        /// Captures an <see cref="Exception"/> as a <c>LogEventType.Exception</c>
-        /// log_event. Enqueue-only (synchronous, never blocks on network): delivery
-        /// happens later on the flush triggers (interval/pause/session end/login).
-        /// </summary>
+        /// <summary>Records an exception from its message and stack trace under Diagnostics → Errors (surface: log_event).</summary>
+        void LogDiagnosticException(
+            string message,
+            string stackTrace,
+            Dictionary<string, object> errorData = null,
+            Dictionary<string, object> extraData = null);
+
+        /// <summary>Records a recoverable logic fault under Diagnostics → Errors (surface: log_event).</summary>
+        void LogDiagnosticError(
+            string message,
+            string logicalExpression = null,
+            string errorCode = null,
+            string errorMessage = null,
+            Dictionary<string, object> errorData = null,
+            Dictionary<string, object> extraData = null);
+
+        /// <summary>Records a diagnostic message under Diagnostics → Events (surface: log_event); a gameplay event is <see cref="TrackEvent"/>.</summary>
+        void LogDiagnosticEvent(
+            string message,
+            Dictionary<string, object> extraData = null);
+
+        /// <summary>The former name of <see cref="LogDiagnosticException(Exception, Dictionary{string, object}, Dictionary{string, object})"/>, kept so existing code keeps working.</summary>
+        [Obsolete(Flock.Providers.FlockAnalyticsProvider.ObsoleteDiagnosticsMessage + "LogDiagnosticException.")]
         void LogException(
             Exception exception,
             Dictionary<string, object> errorData = null,
             Dictionary<string, object> extraData = null);
 
-        /// <summary>
-        /// Captures a raw exception payload (message + stacktrace string) as a
-        /// <c>LogEventType.Exception</c> log_event. Used by the global Unity
-        /// exception handler where a typed <see cref="Exception"/> isn't available.
-        /// Enqueue-only; delivered on the flush triggers.
-        /// </summary>
+        /// <summary>The former name of <see cref="LogDiagnosticException(string, string, Dictionary{string, object}, Dictionary{string, object})"/>, kept so existing code keeps working.</summary>
+        [Obsolete(Flock.Providers.FlockAnalyticsProvider.ObsoleteDiagnosticsMessage + "LogDiagnosticException.")]
         void LogException(
             string message,
             string stackTrace,
             Dictionary<string, object> errorData = null,
             Dictionary<string, object> extraData = null);
 
-        /// <summary>
-        /// Captures a <c>LogEventType.LogicError</c> log_event. Same shape as
-        /// <see cref="LogEvent"/> — caller supplies whichever fields are relevant.
-        /// Enqueue-only; delivered on the flush triggers.
-        /// </summary>
+        /// <summary>The former name of <see cref="LogDiagnosticError"/>, kept so existing code keeps working.</summary>
+        [Obsolete(Flock.Providers.FlockAnalyticsProvider.ObsoleteDiagnosticsMessage + "LogDiagnosticError.")]
         void LogError(
             string message,
             string logicalExpression = null,
@@ -97,10 +99,8 @@ namespace Flock.Interfaces
             Dictionary<string, object> errorData = null,
             Dictionary<string, object> extraData = null);
 
-        /// <summary>
-        /// Captures a <c>LogEventType.Debug</c> log_event with a message plus any
-        /// of the optional diagnostic fields. Enqueue-only; delivered on the flush triggers.
-        /// </summary>
+        /// <summary>The former name of <see cref="LogDiagnosticEvent"/>, kept so existing code keeps working.</summary>
+        [Obsolete(Flock.Providers.FlockAnalyticsProvider.ObsoleteDiagnosticsMessage + "LogDiagnosticEvent.")]
         void LogEvent(
             string message,
             Dictionary<string, object> extraData = null);

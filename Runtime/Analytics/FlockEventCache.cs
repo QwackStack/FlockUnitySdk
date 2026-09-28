@@ -174,7 +174,7 @@ namespace Flock.Analytics
                     if (Volatile.Read(ref _epoch) != epoch)
                         return;
 
-                    FlushOutcome outcome = await TrySendBatch(sender, batch, cancellationToken).ConfigureAwait(false);
+                    FlushOutcome outcome = await TrySendBatch(sender, batch, cancellationToken).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
                     if (outcome == FlushOutcome.Defer)
                         return;
 
@@ -197,7 +197,7 @@ namespace Flock.Analytics
             try
             {
                 List<T> list = batch.Select(b => b.Event).ToList();
-                await sender(list, cancellationToken).ConfigureAwait(false);
+                await sender(list, cancellationToken).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
 
                 _logger?.LogDebug($"Sent Pending {list.Count} events batch");
                 return FlushOutcome.Success;

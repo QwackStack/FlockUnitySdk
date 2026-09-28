@@ -6,6 +6,37 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.52.0]
+
+### Added
+- **`Analytics.TrackEvent(eventName, properties, eventCategory)`** records a gameplay event for the Game Metrics
+  dashboards. It never touches the network: the event is queued on disk and sent on the flush triggers while a player is
+  signed in, so it is safe on a hot path, offline and from any thread; one recorded while nobody is signed in is held and
+  credited to whoever signs in next. Properties keep their JSON types. It answers false, with a warning, for an empty name,
+  a name over 200 characters or a category over 100 (the server cannot store either and fails every event sent with it),
+  `session_started` (the server records it itself), properties that cannot be written as JSON, or no consent. With
+  `CacheFailedEvents` off it sends the event once, straight away, while a player is signed in.
+
+### Changed
+- **The diagnostics calls are named for the dashboard they write to**: `LogDiagnosticEvent`, `LogDiagnosticError` and
+  `LogDiagnosticException` replace `LogEvent`, `LogError` and `LogException`, which read like gameplay analytics while
+  writing under Diagnostics. The former names still work, forward to the new ones and are marked `[Obsolete]`, so the
+  compiler names the replacement. `IAnalyticProvider` gains the new members, so a class of your own implementing it needs them.
+- **The SDK records no gameplay events of its own.** The heartbeat sent an `sdk_heartbeat` event every interval, which
+  showed up on the Game Metrics dashboards among the game's own events; it no longer sends anything. The report of an
+  earlier crash, `app_termination`, is now a diagnostic (type debug, under Diagnostics → Events) with the same data.
+- **Gameplay events are sent only while a player is signed in.** `FlushAsync` called while signed out used to send events
+  still carrying the pre-sign-in placeholder, which the server refuses together with every event sent beside them.
+- The QuickStart sample's test event is a gameplay event (`TrackEvent`).
+
+### Fixed
+- **WebGL: analytics stopped after their first send, and a retry never came back.** WebGL runs everything on one thread
+  with no thread pool and no timers, and the analytics queues resumed on the thread pool after each send, so each queue
+  sent one batch per page and was then stuck; `FlushAsync` never finished; and on every visit after the first, the
+  previous visit's session end hung sign-in, so `await` on a sign-in call never returned. A request the SDK retried
+  waited on a timer that never fires. On WebGL the SDK now resumes on the main thread and waits between retries a frame
+  at a time. Other platforms are unchanged.
+
 ## [1.51.0]
 
 ### Fixed

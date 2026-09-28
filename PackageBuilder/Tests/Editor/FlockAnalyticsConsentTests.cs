@@ -194,9 +194,9 @@ namespace Flock.Tests.Editor
         {
             FlockClient client = CreateClient(requireExplicitConsent: true);
 
-            Assert.DoesNotThrow(() => client.Analytics.LogEvent("test event"));
-            Assert.DoesNotThrow(() => client.Analytics.LogException("boom", "at Foo.Bar()"));
-            Assert.DoesNotThrow(() => client.Analytics.LogError("bad state"));
+            Assert.DoesNotThrow(() => client.Analytics.LogDiagnosticEvent("test event"));
+            Assert.DoesNotThrow(() => client.Analytics.LogDiagnosticException("boom", "at Foo.Bar()"));
+            Assert.DoesNotThrow(() => client.Analytics.LogDiagnosticError("bad state"));
         }
 
         // The one deliberate exclusion: unaffected by consent regardless of state, since
@@ -215,9 +215,9 @@ namespace Flock.Tests.Editor
             FlockClient client = CreateClient(requireExplicitConsent: true);
             client.Analytics.SetConsent(true);
 
-            Assert.DoesNotThrow(() => client.Analytics.LogEvent("test event"));
-            Assert.DoesNotThrow(() => client.Analytics.LogException("boom", "at Foo.Bar()"));
-            Assert.DoesNotThrow(() => client.Analytics.LogError("bad state"));
+            Assert.DoesNotThrow(() => client.Analytics.LogDiagnosticEvent("test event"));
+            Assert.DoesNotThrow(() => client.Analytics.LogDiagnosticException("boom", "at Foo.Bar()"));
+            Assert.DoesNotThrow(() => client.Analytics.LogDiagnosticError("bad state"));
         }
 
         // Locks the never-throws contract: empty caches resolve immediately, no consent needed.

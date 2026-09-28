@@ -471,14 +471,14 @@ namespace Flock.Tests.Editor
             {
                 Initialize(sdk);
 
-                Assert.AreEqual(1, QueuedContents(sdk, FlockAnalyticsLaunches.AnalyticsEventsQueueName).Count(e => e.Contains(FlockTerminationTracker.EventName) && e.Contains("s-crashed")));
+                Assert.AreEqual(1, QueuedContents(sdk, FlockAnalyticsLaunches.LogEventsQueueName).Count(e => e.Contains(FlockTerminationTracker.EventName) && e.Contains("s-crashed")));
                 Assert.AreEqual(1, QueuedContents(sdk, FlockAnalyticsLaunches.SessionEndsQueueName).Count(e => e.Contains("s-crashed")));
                 Assert.IsFalse(Directory.Exists(ended), "Reported, so the ended launch's folder is gone.");
 
                 // A second initialization (sign-out, then sign-in) reports nothing again.
                 sdk.Client.ClearTokens();
                 Initialize(sdk);
-                Assert.AreEqual(1, QueuedContents(sdk, FlockAnalyticsLaunches.AnalyticsEventsQueueName).Count(e => e.Contains(FlockTerminationTracker.EventName)));
+                Assert.AreEqual(1, QueuedContents(sdk, FlockAnalyticsLaunches.LogEventsQueueName).Count(e => e.Contains(FlockTerminationTracker.EventName)));
                 Assert.AreEqual(1, QueuedContents(sdk, FlockAnalyticsLaunches.SessionEndsQueueName).Count(e => e.Contains("s-crashed")));
             }
         }
@@ -492,7 +492,7 @@ namespace Flock.Tests.Editor
                 File.WriteAllText(sdk.Client.AnalyticsLaunches.TerminationMarkerPath, MarkerJson("s-mine"));
                 Initialize(sdk);
 
-                Assert.AreEqual(0, QueuedContents(sdk, FlockAnalyticsLaunches.AnalyticsEventsQueueName).Count(e => e.Contains(FlockTerminationTracker.EventName)));
+                Assert.AreEqual(0, QueuedContents(sdk, FlockAnalyticsLaunches.LogEventsQueueName).Count(e => e.Contains(FlockTerminationTracker.EventName)));
                 Assert.IsTrue(File.Exists(sdk.Client.AnalyticsLaunches.TerminationMarkerPath));
             }
         }
@@ -518,7 +518,7 @@ namespace Flock.Tests.Editor
                 BlockSessionEndQueue(sdk);
                 Initialize(sdk);
 
-                Assert.AreEqual(0, QueuedContents(sdk, FlockAnalyticsLaunches.AnalyticsEventsQueueName).Count(e => e.Contains(FlockTerminationTracker.EventName)));
+                Assert.AreEqual(0, QueuedContents(sdk, FlockAnalyticsLaunches.LogEventsQueueName).Count(e => e.Contains(FlockTerminationTracker.EventName)));
                 Assert.IsTrue(Directory.Exists(ended));
                 Assert.IsFalse(File.Exists(Path.Combine(ended, FlockAnalyticsLaunches.TerminationMarkerFileName)));
             }
@@ -538,7 +538,7 @@ namespace Flock.Tests.Editor
                 Assert.IsTrue(File.Exists(Path.Combine(ended, FlockAnalyticsLaunches.SessionStateFileName)));
                 Assert.IsFalse(File.Exists(Path.Combine(ended, FlockAnalyticsLaunches.TerminationMarkerFileName)),
                     "The crash was queued, so a later launch must not report it again.");
-                Assert.AreEqual(1, QueuedContents(sdk, FlockAnalyticsLaunches.AnalyticsEventsQueueName).Count(e => e.Contains(FlockTerminationTracker.EventName)));
+                Assert.AreEqual(1, QueuedContents(sdk, FlockAnalyticsLaunches.LogEventsQueueName).Count(e => e.Contains(FlockTerminationTracker.EventName)));
 
                 // A second initialization in this launch leaves it alone: it was let go, and another launch may hold it now.
                 File.Delete(queue);
@@ -646,7 +646,7 @@ namespace Flock.Tests.Editor
 
             FlockAnalyticsLaunches later = FlockAnalyticsLaunches.Start(FlockAnalyticsLaunches.FolderForTesting, null);
             _held.Add(later);
-            CollectionAssert.AreEqual(new[] { "0001_stuck" }, QueuedNames(Path.Combine(later.Folder, FlockAnalyticsLaunches.LogEventsQueueName)),
+            CollectionAssert.Contains(QueuedNames(Path.Combine(later.Folder, FlockAnalyticsLaunches.LogEventsQueueName)), "0001_stuck",
                 "A later launch takes the entry over once it can move.");
         }
 

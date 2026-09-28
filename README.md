@@ -36,7 +36,7 @@ The Flock Unity SDK provides access to Flock's game backend services from Unity 
 - Player ban lookup
 - Notification inbox (list, unread count, mark read), server-side scheduling of dashboard-authored templates, and push device-token registration
 - Asset listing and lookup by ID
-- Analytics (session tracking, events, transactions — no-op safe when disabled)
+- Analytics (gameplay events, session tracking, transactions, diagnostics — no-op safe when disabled)
 - Automatic retry with exponential backoff
 - Offline-safe init (no network at startup) — plus disk-cached static content that keeps serving without network after one online session
 - JWT token management
@@ -172,7 +172,7 @@ Per-feature usage and examples live in their own guides:
 | [Leaderboards](Docs~/leaderboards.md) | Standings, my-rank, around-me by board name; windows, board config, score formatting |
 | [Assets](Docs~/assets.md) | Listing/lookup, typed downloads, disk cache, preloading |
 | [Notifications](Docs~/notifications.md) | Player inbox, unread badge event, scheduling a template for later, pending-schedule tracking |
-| [Analytics](Docs~/analytics.md) | Sessions, logs/events, transactions, consent, unexpected-termination detection |
+| [Analytics](Docs~/analytics.md) | Gameplay events, sessions, transactions, diagnostics, consent, unexpected-termination detection |
 | [SDK Events](Docs~/events.md) | The `FlockEvents` hub — lifecycle, auth, and session events |
 | [Codegen](Docs~/codegen.md) | Sync Schemas, generated templates/configs/shops/achievements, content catalog |
 | [Error handling](Docs~/errors.md) | The `FlockException` hierarchy, `.ErrorCode`, and the full coded-error list |

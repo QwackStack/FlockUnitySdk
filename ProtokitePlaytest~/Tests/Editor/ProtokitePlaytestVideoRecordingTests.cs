@@ -64,8 +64,7 @@ namespace Protokite.Playtest.Tests
                     recording.StopCapturing(stop.Value);
                     return stop;
                 }
-                if (pacedBy != null)
-                    SpinWait.SpinUntil(() => pacedBy.BlocksReturned >= pacedBy.Asked.Count - 1, 500);
+                pacedBy?.WaitForTheEncoderToCatchUp();
             }
             return null;
         }
@@ -282,7 +281,7 @@ namespace Protokite.Playtest.Tests
             {
                 recording.AddFrame(SixtyFps);
                 // Frames go to the encoder one at a time, as a game's frames would, so the queue in front of it never fills.
-                SpinWait.SpinUntil(() => source.BlocksReturned >= source.Asked.Count - 1, 1000);
+                source.WaitForTheEncoderToCatchUp(1000);
             }
             holdWriting.Set();
             ProtokitePlaytestVideoRecordingSummary summary = StopAndWait(recording);

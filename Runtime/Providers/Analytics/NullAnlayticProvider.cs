@@ -43,45 +43,53 @@ namespace Flock.Providers
             return Task.CompletedTask;
         }
 
-        // Not exposed to user until log_event/analytic clean up
-        // public Task TrackEventsAsync(List<AnalyticsEventRequest> events, CancellationToken cancellationToken = default)
-        // {
-        //     this.Client.Logger.LogDebug("Analytics is disabled ,trying to track events");
-        //     return Task.CompletedTask;
-        // }
+        public bool TrackEvent(string eventName, Dictionary<string, object> properties = null, string eventCategory = null)
+        {
+            this.Client.Logger.LogDebug("Analytics is disabled, trying to track an event");
+            return false;
+        }
 
-        // Not exposed to user until log_event/analytic clean up
-        // public Task TrackEventAsync(string eventName, string eventCategory = null, Dictionary<string, object> parameters = null,
-        //     CancellationToken cancellationToken = default)
-        // {
-        //     this.Client.Logger.LogDebug("Analytics is disabled ,trying to track event");
-        //     return Task.CompletedTask;
-        // }
-
-        public void LogException(Exception exception, Dictionary<string, object> errorData = null,
+        public void LogDiagnosticException(Exception exception, Dictionary<string, object> errorData = null,
             Dictionary<string, object> extraData = null)
         {
             this.Client.Logger.LogDebug("Analytics is disabled ,trying to log exception");
         }
 
-        public void LogException(string message, string stackTrace, Dictionary<string, object> errorData = null,
+        public void LogDiagnosticException(string message, string stackTrace, Dictionary<string, object> errorData = null,
             Dictionary<string, object> extraData = null)
         {
             this.Client.Logger.LogDebug("Analytics is disabled ,trying to log exception");
         }
 
-        public void LogError(string message, string logicalExpression = null, string errorCode = null,
+        public void LogDiagnosticError(string message, string logicalExpression = null, string errorCode = null,
             string errorMessage = null, Dictionary<string, object> errorData = null,
             Dictionary<string, object> extraData = null)
         {
             this.Client.Logger.LogDebug("Analytics is disabled ,trying to log error");
         }
 
-        public void LogEvent(string message,
+        public void LogDiagnosticEvent(string message,
             Dictionary<string, object> extraData = null)
         {
             this.Client.Logger.LogDebug("Analytics is disabled ,trying to log event");
         }
+
+        [Obsolete(FlockAnalyticsProvider.ObsoleteDiagnosticsMessage + "LogDiagnosticException.")]
+        public void LogException(Exception exception, Dictionary<string, object> errorData = null, Dictionary<string, object> extraData = null)
+            => LogDiagnosticException(exception, errorData, extraData);
+
+        [Obsolete(FlockAnalyticsProvider.ObsoleteDiagnosticsMessage + "LogDiagnosticException.")]
+        public void LogException(string message, string stackTrace, Dictionary<string, object> errorData = null, Dictionary<string, object> extraData = null)
+            => LogDiagnosticException(message, stackTrace, errorData, extraData);
+
+        [Obsolete(FlockAnalyticsProvider.ObsoleteDiagnosticsMessage + "LogDiagnosticError.")]
+        public void LogError(string message, string logicalExpression = null, string errorCode = null, string errorMessage = null,
+            Dictionary<string, object> errorData = null, Dictionary<string, object> extraData = null)
+            => LogDiagnosticError(message, logicalExpression, errorCode, errorMessage, errorData, extraData);
+
+        [Obsolete(FlockAnalyticsProvider.ObsoleteDiagnosticsMessage + "LogDiagnosticEvent.")]
+        public void LogEvent(string message, Dictionary<string, object> extraData = null)
+            => LogDiagnosticEvent(message, extraData);
 
         public Task FlushAsync(CancellationToken cancellationToken = default)
         {

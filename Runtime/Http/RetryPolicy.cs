@@ -81,7 +81,7 @@ namespace Flock.Http
                     TimeSpan wait = ResolveDelay(ex, delay);
                     string note = ex is FlockNetworkException ? " Can't reach the server (connectivity) — retries keep failing until it's back." : string.Empty;
                     _logger?.LogWarning($"Attempt {attempt} failed: {ex.Message}.{note} Retrying in {wait.TotalSeconds:F1}s...");
-                    await Task.Delay(wait, cancellationToken);
+                    await FlockWaiting.DelayAsync(wait, cancellationToken);
 
                     delay = TimeSpan.FromSeconds(Math.Min(
                         delay.TotalSeconds * _policy.BackoffMultiplier,
