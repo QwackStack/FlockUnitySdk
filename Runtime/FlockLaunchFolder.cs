@@ -31,14 +31,14 @@ namespace Flock
             string folder = System.IO.Path.GetFullPath(System.IO.Path.Combine(parentFolder, name));
             try
             {
-                Directory.CreateDirectory(folder);
+                FlockSavedFiles.CreateFolder(folder);
                 FileStream folderLock = OpenLock(System.IO.Path.Combine(folder, LockFileName), FileMode.OpenOrCreate);
                 return new FlockLaunchFolder(folder, folderLock);
             }
             catch (Exception)
             {
                 // A folder with no lock is never claimed, so it would stay forever.
-                try { Directory.Delete(folder, true); }
+                try { FlockSavedFiles.DeleteFolder(folder, true); }
                 catch (Exception) { }
                 return null;
             }
@@ -84,12 +84,12 @@ namespace Flock
                 {
                     if (string.Equals(System.IO.Path.GetFileName(file), LockFileName, StringComparison.OrdinalIgnoreCase))
                         continue;
-                    try { File.Delete(file); }
+                    try { FlockSavedFiles.Delete(file); }
                     catch (Exception) { everythingElseDeleted = false; }
                 }
                 foreach (string subfolder in Directory.EnumerateDirectories(Path).ToList())
                 {
-                    try { Directory.Delete(subfolder, true); }
+                    try { FlockSavedFiles.DeleteFolder(subfolder, true); }
                     catch (Exception) { everythingElseDeleted = false; }
                 }
             }
@@ -104,8 +104,8 @@ namespace Flock
 
             try
             {
-                File.Delete(System.IO.Path.Combine(Path, LockFileName));
-                Directory.Delete(Path, false);
+                FlockSavedFiles.Delete(System.IO.Path.Combine(Path, LockFileName));
+                FlockSavedFiles.DeleteFolder(Path, false);
                 return true;
             }
             catch (Exception)
@@ -124,7 +124,7 @@ namespace Flock
         // Shared with nobody: while this handle is open, no other launch can open the lock.
         private static FileStream OpenLock(string lockPath, FileMode mode)
         {
-            return new FileStream(lockPath, mode, FileAccess.ReadWrite, FileShare.None);
+            return FlockSavedFiles.OpenLock(lockPath, mode);
         }
     }
 }

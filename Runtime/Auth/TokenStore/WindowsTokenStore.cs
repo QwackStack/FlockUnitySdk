@@ -11,9 +11,9 @@ namespace Flock.Auth
     {
         public override void Save(string accessToken, string refreshToken)
         {
-            Directory.CreateDirectory(FlockUtil.FlockFilePath);
-            File.WriteAllBytes(FlockUtil.AccessTokenPath, Protect(accessToken));
-            File.WriteAllBytes(FlockUtil.RefreshTokenPath, Protect(refreshToken));
+            FlockSavedFiles.CreateFolder(FlockUtil.FlockFilePath);
+            FlockSavedFiles.WriteBytes(FlockUtil.AccessTokenPath, Protect(accessToken));
+            FlockSavedFiles.WriteBytes(FlockUtil.RefreshTokenPath, Protect(refreshToken));
         }
 
         public override StoredTokens Load()
@@ -31,11 +31,11 @@ namespace Flock.Auth
         {
             if (File.Exists(FlockUtil.AccessTokenPath))
             {
-                File.Delete(FlockUtil.AccessTokenPath);
+                FlockSavedFiles.Delete(FlockUtil.AccessTokenPath);
             }
             if (File.Exists(FlockUtil.RefreshTokenPath))
             {
-                File.Delete(FlockUtil.RefreshTokenPath);
+                FlockSavedFiles.Delete(FlockUtil.RefreshTokenPath);
             }
         }
 

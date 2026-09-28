@@ -210,8 +210,8 @@ namespace Flock.Analytics
             FileStream earlierBuildLock;
             try
             {
-                Directory.CreateDirectory(_analyticsFolder);
-                earlierBuildLock = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+                FlockSavedFiles.CreateFolder(_analyticsFolder);
+                earlierBuildLock = FlockSavedFiles.OpenLock(lockPath, FileMode.OpenOrCreate);
             }
             catch (Exception)
             {
@@ -248,7 +248,7 @@ namespace Flock.Analytics
                 TakeOverQueues(earlier.QueuesFolder);
                 _endedLaunches.Add(new FlockEndedLaunch(recordsFolder, true));
             }
-            try { File.Delete(lockPath); }
+            try { FlockSavedFiles.Delete(lockPath); }
             catch (Exception) { }
         }
 
@@ -266,7 +266,7 @@ namespace Flock.Analytics
                         continue;
 
                     string to = Path.Combine(Folder, queue);
-                    Directory.CreateDirectory(to);
+                    FlockSavedFiles.CreateFolder(to);
                     foreach (string entry in entries)
                     {
                         // Entries are named for the time they were queued, so they keep their age order among this launch's. A
@@ -275,7 +275,7 @@ namespace Flock.Analytics
                         if (File.Exists(destination))
                             destination = Path.Combine(to, Path.GetFileNameWithoutExtension(entry) + "_"
                                 + Guid.NewGuid().ToString("N").Substring(0, 8) + FlockEventCacheNames.Extension);
-                        try { File.Move(entry, destination); }
+                        try { FlockSavedFiles.Move(entry, destination); }
                         catch (Exception) { allMoved = false; }
                     }
                 }

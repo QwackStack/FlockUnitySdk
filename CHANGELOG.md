@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.53.0]
+
+### Fixed
+- **WebGL: events recorded before sign-in were sent again on every later visit, credited to whoever signed in.** A WebGL
+  player keeps its files in memory and copies them to the browser's storage only when asked, and only the sign-in save
+  asked; so what the SDK sent and deleted afterwards came back on the next visit. Every change the SDK makes to its saved
+  files now asks for that copy, so queued events, session records and the rest survive a reload as they last stood.
+  A game that turns on `autoSyncPersistentDataPath` in its WebGL template keeps Unity's own copying. Two tabs of one game
+  share the browser's storage, and the last to save wins.
+- **`FlushAsync` could return without sending.** When another flush was already sending, an awaited `FlushAsync` returned
+  at once with its events still queued. It now waits for that flush and then sends what is left. Flushes the SDK starts
+  itself still leave the queue to the one already running.
+
 ## [1.52.0]
 
 ### Added

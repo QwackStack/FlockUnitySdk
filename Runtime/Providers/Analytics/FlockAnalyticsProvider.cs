@@ -710,7 +710,7 @@ namespace Flock.Providers
             try
             {
                 CancellationToken token = _session?.SessionToken ?? CancellationToken.None;
-                await FlushAllAsync(token).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
+                await FlushAllAsync(token, false).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
             }
             catch (OperationCanceledException)
             {
@@ -724,29 +724,30 @@ namespace Flock.Providers
         /// <summary>
         /// Awaitable drain of everything queued (session ends, events, logs) to the server
         /// now, instead of waiting for the next flush trigger. The one real await in the
-        /// tracking surface — resolves when the send attempts finish. Transient failures
-        /// keep records queued for a later flush; never throws.
+        /// tracking surface — resolves when the send attempts finish, a flush already
+        /// running included. Transient failures keep records queued for a later flush; never throws.
         /// </summary>
         public Task FlushAsync(CancellationToken cancellationToken = default)
         {
-            return FlushAllAsync(cancellationToken);
+            return FlushAllAsync(cancellationToken, true);
         }
 
-        private async Task FlushAllAsync(CancellationToken token)
+        private async Task FlushAllAsync(CancellationToken token, bool waitForRunningFlushes)
         {
             // Session ends first: rare, small, and the most important record — the quit
             // time budget must not be spent draining a large event backlog before them.
-            await TryFlush(_sessionEndCache, SendSessionEndsAsync, token).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
+            await TryFlush(_sessionEndCache, SendSessionEndsAsync, token, waitForRunningFlushes).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
             // Gameplay events wait for a signed-in player: a pre-sign-in placeholder is refused (404) with its whole batch.
             if (Client.IsAuthenticated)
-                await TryFlush(_eventCache, SendEventsAsync, token).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
-            await TryFlush(_logEventCache, SendLogEventsAsync, token).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
+                await TryFlush(_eventCache, SendEventsAsync, token, waitForRunningFlushes).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
+            await TryFlush(_logEventCache, SendLogEventsAsync, token, waitForRunningFlushes).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
         }
 
         private async Task TryFlush<T>(
             IEventCache<T> cache,
             Func<IReadOnlyList<T>, CancellationToken, Task> sender,
-            CancellationToken token) where T : class
+            CancellationToken token,
+            bool waitForARunningFlush = false) where T : class
         {
             // Egress is consent-gated too - withdrawal stops transmission, not just collection. Gated here and
             // not in FlushAllAsync because session ends also flush directly. Nothing is deleted (decisions.md 5).
@@ -758,7 +759,7 @@ namespace Flock.Providers
 
             try
             {
-                await cache.FlushAsync(sender, token).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
+                await cache.FlushAsync(sender, token, waitForARunningFlush).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
             }
             catch (OperationCanceledException)
             {
@@ -988,7 +989,7 @@ namespace Flock.Providers
             {
                 using (CancellationTokenSource cts = new CancellationTokenSource(TimeSpan.FromSeconds(3)))
                 {
-                    await FlushAllAsync(cts.Token).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
+                    await FlushAllAsync(cts.Token, false).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
 
                     if (_sessionEndCache == null)
                         await TrySendSessionEndAsync(snapshot, cts.Token).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);

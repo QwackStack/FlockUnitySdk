@@ -2,7 +2,6 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -51,27 +50,13 @@ namespace Flock.Tests.Editor
             }
         }
 
-        // WebGL has no thread pool and no timers (measured in a WebGL player): a continuation or delay that needs them never finishes.
+        // WebGL has no thread pool and no timers (measured in a WebGL player): a continuation or delay that needs them never finishes,
+        // and Task.WhenAny over a RunContinuationsAsynchronously source never finished there either.
         [Test]
         public void NothingInTheRuntimeWaitsOnAThreadOrATimerWebGLDoesNotHave()
         {
-            UnityEditor.PackageManager.PackageInfo package = UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(FlockClient).Assembly);
-            if (package == null)
-                Assert.Ignore("The SDK is not installed as a package here, so its source cannot be read.");
-            string runtime = Path.Combine(package.resolvedPath, "Runtime");
-            Regex unsafeWait = new Regex(@"ConfigureAwait\(\s*(continueOnCapturedContext\s*:\s*)?false\s*\)|Task\.Delay\(|Task\.Run\(|ThreadPool\.|Threading\.Timer|new Timer\(|new Thread\(");
-            List<string> found = new List<string>();
-            foreach (string file in Directory.GetFiles(runtime, "*.cs", SearchOption.AllDirectories))
-            {
-                if (Path.GetFileName(file) == "FlockWaiting.cs")
-                    continue;
-                string[] lines = File.ReadAllLines(file);
-                for (int i = 0; i < lines.Length; i++)
-                {
-                    if (!lines[i].TrimStart().StartsWith("//") && unsafeWait.IsMatch(lines[i]))
-                        found.Add($"{file.Substring(runtime.Length + 1)}:{i + 1}: {lines[i].Trim()}");
-                }
-            }
+            Regex unsafeWait = new Regex(@"ConfigureAwait\(\s*(continueOnCapturedContext\s*:\s*)?false\s*\)|Task\.Delay\(|Task\.Run\(|ThreadPool\.|Threading\.Timer|new Timer\(|new Thread\(|RunContinuationsAsynchronously");
+            List<string> found = FlockRuntimeSource.LinesMatching(unsafeWait, "FlockWaiting.cs");
             Assert.IsEmpty(found, "Wait through FlockWaiting (ResumeOnCallersThread, DelayAsync) instead:\n" + string.Join("\n", found));
         }
     }

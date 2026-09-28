@@ -498,7 +498,7 @@ namespace Flock.Analytics
             try
             {
                 if (File.Exists(stateFilePath))
-                    File.Delete(stateFilePath);
+                    FlockSavedFiles.Delete(stateFilePath);
             }
             catch (Exception ex)
             {
