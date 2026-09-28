@@ -181,6 +181,7 @@ namespace Protokite.Playtest
             _flock = null;
             StopUploads();
             StopVideoForQuitting();
+            StopMeasuringPerformance();
         }
 
         /// <summary>Puts the playtest back as a fresh launch finds it; statics outlive a Play Mode session when domain reload is off.</summary>
@@ -191,6 +192,7 @@ namespace Protokite.Playtest
             ResetVideoForNewLaunch();
             ResetSessionForNewLaunch();
             ResetUploadsForNewLaunch();
+            ResetHeavyAnalyticsForNewLaunch();
             _statusLastReported = null;
             _stateAtLastRefresh = null;
         }

@@ -97,7 +97,7 @@ Plain serializable DTOs mirroring backend wire shapes — auth, analytics, shop,
 - **FlockFirstRunBootstrap** — opens the window on first import. · **FlockSdkGuideEditor** — inspector for the guide.
 - **FlockProviderManifest** — maps providers ↔ `FLOCK_NO_*` defines for event-subset builds.
 - **FlockPackageBuilder** — assembles the distributable package.
-- **FlockPlaytestInstaller** — the Playtesting tab's install, update and remove for the Protokite Playtest package: downloads `ProtokitePlaytest-<version>.unitypackage` from the GitHub release matching `FlockSdkVersion.Current` (a blocking, cancellable download, so a script reload cannot drop it) and imports it; an update deletes the old `Assets/` copy only once the new one has downloaded, so a dropped file cannot linger; every download result but success counts as a failure (a failed disk write answers 200). Finds an installed copy from its assembly definition, wherever it is. Reads the version through `InternalsVisibleTo("Flock.Editor")`.
+- **FlockPlaytestInstaller** — the Playtesting tab's install, update and remove for the Protokite Playtest package: downloads `ProtokitePlaytest-<version>.unitypackage` from the GitHub release matching `FlockSdkVersion.Current` (a blocking, cancellable download, so a script reload cannot drop it) and imports it; an update deletes the old `Assets/` copy only once the new one has downloaded, so a dropped file cannot linger; every download result but success counts as a failure (a failed disk write answers 200). Finds an installed copy from its assembly definition, wherever it is. Reads the version through `InternalsVisibleTo("Flock.Editor")`. Refuses to install into a Flock SDK exported without Analytics (`WhyPlaytestCannotBeInstalled`, whose refusal compiles only under `FLOCK_NO_ANALYTICS`: the playtest calls `FlockClient.Analytics`, and the define lives in Flock's own `csc.rsp`, where the playtest cannot see it).
 - **FlockPlaytestPackageBuilder** — maintainer tooling (**Qwacks Dev > Build Protokite Playtest Package**, or `-executeMethod ...BuildFromCommandLine -playtestOut <folder>`): stages the playtest under `Assets/ProtokitePlaytest/` with GUIDs made from their paths and exports it. Excluded from core's own `.unitypackage`.
 
 ## Editor/Codegen/
@@ -109,7 +109,7 @@ Writes typed accessors to `Assets/Flock/Generated/`. Each sync replaces the file
 - **ManifestEmitter** — emits `SchemasManifest` (GameVersionId + hash). · `EmitResult`/`CodegenResult` — codegen DTOs.
 
 ## PackageBuilder/Tests/Editor/
-EditMode tests (run via Unity Test Runner only): **CodeGenNamingHelpersTests**, **FlockBuildGuardTests**, **RetryHandlerTests**, **SchemaHasherTests**, **TypeMapTests**, **FlockErrorPipelineTests** (exception/`FlockErrorCode` mapping; has an `[Explicit]` live-backend test), **FlockErrorMessageTests** (composed `Message`, hints, FastAPI field errors), **FlockErrorHintCoverageTests** (every `FlockErrorCode` has a hint or is explicitly allowlisted), **FlockCodegenHintTests** (compile-error classification over real Roslyn text), **FlockConfigResolutionTests** (patch-else-config resolution), **FlockEmptySuccessTests** (a 2xx with no body on a route with nothing to read), **FlockModelPreservationTests** (the build's link.xml), **FlockPlaytestInstallerTests** (release URL, version match, which downloads are imported).
+EditMode tests (run via Unity Test Runner only): **CodeGenNamingHelpersTests**, **FlockBuildGuardTests**, **RetryHandlerTests**, **SchemaHasherTests**, **TypeMapTests**, **FlockErrorPipelineTests** (exception/`FlockErrorCode` mapping; has an `[Explicit]` live-backend test), **FlockErrorMessageTests** (composed `Message`, hints, FastAPI field errors), **FlockErrorHintCoverageTests** (every `FlockErrorCode` has a hint or is explicitly allowlisted), **FlockCodegenHintTests** (compile-error classification over real Roslyn text), **FlockConfigResolutionTests** (patch-else-config resolution), **FlockEmptySuccessTests** (a 2xx with no body on a route with nothing to read), **FlockModelPreservationTests** (the build's link.xml), **FlockPlaytestInstallerTests** (release URL, version match, which downloads are imported, a Flock SDK with Analytics takes it).
 
 ## ProtokitePlaytest~/ — the Protokite Playtest package
 
@@ -213,7 +213,18 @@ script.
 - **ProtokitePlaytestDriver** — a hidden `DontDestroyOnLoad` object started `BeforeSceneLoad` (`StartWithTheGame`) in every
   launch, playtesting on or off: with it off the status stays `TurnedOff` (no config, no session, no recording) and the
   driver only finishes and uploads what earlier launches kept, so a build with it off never strands a recording.
-  Calls `Refresh()` every frame and `Stop()` when destroyed.
+  Calls `Refresh()` every frame and `Stop()` when destroyed. Feeds heavy analytics (from `Update`) and the video (at the end
+  of the frame) the real time since its last call, never `Time.unscaledDeltaTime`: a player reports a stall there 1 to 6
+  frames late (measured), too late to leave out the frame that carries it.
+- **Heavy analytics (`Runtime/ProtokitePlaytestHeavyAnalytics.cs`, `ProtokitePlaytestPerformanceTimeline.cs`)** — measures
+  while the loaded config turns `heavy_analytics` on, the playtest is open and `FlockClient.Analytics` is not the
+  `NullAnalyticsProvider` (warned once otherwise). **ProtokitePlaytestPerformanceTimeline** is the engine-free part: ten
+  seconds of summed frame time make a window (nearest-rank median, 95th and 99th, hitches at or over a threshold read at the
+  close, memory sampled every frame for the peak), and `LeaveOutNextFrame` drops one frame. Every scene load noted
+  (`sceneLoaded`) since the last Update is carried by this Update's frame, which is left out; a Single load sends
+  `level_loaded`. The map is the active scene, followed by handle each frame. Memory is `ProfilerRecorder` "System Used
+  Memory" (`CurrentValue`). Events go through `TrackEvent` under the category `playtest`; `RecordPlaytestEvent` is the
+  game's own, any thread, the two names refused. A start makes a new timeline, so a window a stop cut short is dropped.
 - **ProtokiteClient** (internal) — `GET /game/sdk/playtest-config` through core's `FlockHttpClient` and a `RetryHandler` built
   from `FlockClient.RetryPolicy`; headers from `FlockClient.GetGameHeaders()` (key + version, never the bearer). The answer is
   enveloped; **`ProtokitePlaytestConfig` is read by hand from `JObject`** so IL2CPP stripping has no model of ours to strip.
@@ -226,7 +237,10 @@ script.
   to the same contract), **ProtokitePlaytestFrameScheduleTests**, **ProtokitePlaytestVideoRecordingTests** (fake frames and a fake encoder
   through the real file: limits, drops, failures, the bounded wait), **ProtokitePlaytestScreenFrameSourceTests** (the real
   shader and readback on known colours), **ProtokitePlaytestVideoSettingsTests**, **ProtokitePlaytestVideoTests** (when the
-  playtest records and what stops it), and in PlayMode **ProtokitePlaytestScreenRecordingTests** (the real screen, encoder
+  playtest records and what stops it), **ProtokitePlaytestPerformanceTimelineTests**, **ProtokitePlaytestHeavyAnalyticsTests**
+  (through core's real event queue, each test in a launch folder of its own), and in PlayMode
+  **ProtokitePlaytestHeavyAnalyticsPlayModeTests** (a real scene load, time away and an active scene through the real
+  driver), **ProtokitePlaytestScreenRecordingTests** (the real screen, encoder
   and file, judged against the screen; windowed editor only), **ProtokitePlaytestSessionTests** (held starts and ends for the quit and late-answer
   cases), **ProtokitePlaytestConfigTests** (EditMode, fake transport; a held-answer adapter
   for late replies), **ProtokitePlaytestDriverTests** (PlayMode, the real driver). A live `[Explicit]` check lives in

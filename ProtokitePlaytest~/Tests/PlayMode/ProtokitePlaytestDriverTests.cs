@@ -176,6 +176,40 @@ namespace Protokite.Playtest.Tests
         }
 
         [UnityTest]
+        public IEnumerator TimeAwayFromTheGameIsLeftOutOfTheVideo()
+        {
+            if (Application.isBatchMode)
+                Assert.Ignore("A batchmode editor never reaches the end of a frame, where the driver records; run the PlayMode tests in a windowed editor.");
+            ProtokitePlaytest.VideoFrameSourceForTesting = (settings, format) => new CountingFrameSource();
+            try
+            {
+                ProtokitePlaytestDriver.StartWithTheGame();
+                using (FlockTestClient.Create(new FlockFakeTransport().On(ConfigRoute, FlockFakeTransport.Ok(VideoAnswer))))
+                {
+                    yield return FlockTestWait.Until(() => ProtokitePlaytest.IsRecordingVideo, "recording, from the driver alone");
+                    double started = Time.realtimeSinceStartupAsDouble;
+                    yield return new WaitForSecondsRealtime(1f);
+                    // The game comes back from the background with its time away still to be measured, as a player's does.
+                    ProtokitePlaytest.HandleGameLeftOrCameBack();
+                    System.Threading.Thread.Sleep(1500);
+                    yield return new WaitForSecondsRealtime(1f);
+                    double played = Time.realtimeSinceStartupAsDouble - started;
+
+                    ProtokitePlaytest.HandleGameQuitting();
+                    ProtokitePlaytestVideoRecordingSummary video = ProtokitePlaytest.FinishedVideo;
+                    Assert.IsNotNull(video, "Quitting finishes the file");
+                    Assert.Less(video.VideoSeconds, played - 1.2, $"The second and a half away is not in the video ({video.VideoSeconds:0.00} s of {played:0.00} s)");
+                    Assert.Greater(video.VideoSeconds, played - 2.2, $"And nothing else is left out ({video.VideoSeconds:0.00} s of {played:0.00} s)");
+                }
+            }
+            finally
+            {
+                ProtokitePlaytest.ResetForNewLaunch();
+                ProtokitePlaytest.VideoFrameSourceForTesting = null;
+            }
+        }
+
+        [UnityTest]
         public IEnumerator TheDriverGoesThroughWhatEarlierLaunchesLeftWhenItStarts()
         {
             // A recording an earlier launch left, whose Protokite session never started.

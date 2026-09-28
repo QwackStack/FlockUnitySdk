@@ -5,6 +5,7 @@
         "Protokite.Playtest",
         "Flock.Runtime",
         "Flock.Tests.Support",
+        "Unity.Newtonsoft.Json",
         "UnityEngine.TestRunner",
         "UnityEditor.TestRunner"
     ],
@@ -13,7 +14,8 @@
     "allowUnsafeCode": false,
     "overrideReferences": true,
     "precompiledReferences": [
-        "nunit.framework.dll"
+        "nunit.framework.dll",
+        "Newtonsoft.Json.dll"
     ],
     "autoReferenced": false,
     "defineConstraints": [

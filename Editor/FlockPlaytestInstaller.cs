@@ -86,6 +86,16 @@ namespace Flock.Editor
             }
         }
 
+        /// <summary>Why this Flock SDK cannot take the playtest, whose code calls the Flock SDK's analytics; null when it can.</summary>
+        internal static string WhyPlaytestCannotBeInstalled()
+        {
+#if FLOCK_NO_ANALYTICS
+            return "Protokite Playtest needs the Flock SDK's Analytics, and this Flock SDK was exported without it, so the playtest would not compile. Install a Flock SDK that includes Analytics first.";
+#else
+            return null;
+#endif
+        }
+
         /// <summary>Whether this editor session imported the playtest; the script reload that follows the import clears it.</summary>
         internal static bool InstalledThisSession { get; private set; }
 
@@ -119,6 +129,13 @@ namespace Flock.Editor
         /// <param name="replacing">An installed copy under Assets/ to delete once the new one has downloaded, so files a newer version dropped do not linger.</param>
         internal static void Install(Action<string, MessageType> report, InstalledPlaytest replacing = null)
         {
+            string refusal = WhyPlaytestCannotBeInstalled();
+            if (refusal != null)
+            {
+                report(refusal, MessageType.Error);
+                return;
+            }
+
             string version = FlockVersion;
             // In the project's Temp folder, which the editor clears when it closes: the import may still be reading it after this returns.
             string file = Path.GetFullPath(Path.Combine("Temp", $"ProtokitePlaytest-{version}-{Guid.NewGuid():N}.unitypackage"));

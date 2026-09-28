@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 It is released with the Flock SDK, at the Flock SDK's version.
 
 
+## [1.54.0]
+
+### Added
+- **Heavy analytics.** When the playtest's config turns `heavy_analytics` on, every ten seconds of play become a
+  `performance_window` event (frame time median, 95th and 99th percentile, hitches, memory used and peak, the scene), and every
+  scene loaded in place of another a `level_loaded` event (the scene, the one before, and how long the load held the game up),
+  sent through the Flock SDK under the category `playtest`. A frame time is the real time from one frame's Update to the
+  next. Time in the background and the frame a scene load holds up are left out; a window a stop cuts short is dropped. The
+  scene is the active one, however it became active.
+- `ProtokitePlaytest.RecordPlaytestEvent` puts the game's own events on the same timeline, from any thread.
+- **Hitch Frame Time Ms** in the playtest settings (default 60, and never read as less than 1).
+
+### Fixed
+- Time the game spent in the background is left out of the recording again on a player. A player reported that time several
+  frames after the game came back, so it was recorded as a still picture; the recording now measures real time between frames.
+
 ## [1.53.0]
 
 No changes to the Protokite Playtest package: this version is released together with the Flock SDK's WebGL saved-files fix
