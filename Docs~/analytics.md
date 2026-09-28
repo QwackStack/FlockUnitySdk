@@ -55,7 +55,7 @@ to these; they are marked obsolete, so the compiler names the replacement.
 await FlockClient.Instance.Analytics.StartSessionAsync();
 await FlockClient.Instance.Analytics.EndSessionAsync();
 
-// Optional: awaitable drain of everything queued
+// Optional: awaitable drain of everything queued (waits for a flush already sending, then sends what is left)
 await FlockClient.Instance.Analytics.FlushAsync();
 
 // Transactions: immediate send, requires a signed-in player

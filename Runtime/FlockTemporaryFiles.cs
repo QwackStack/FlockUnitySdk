@@ -28,8 +28,8 @@ namespace Flock
             string temporaryPath = MakePath(destinationPath);
             try
             {
-                Directory.CreateDirectory(Path.GetDirectoryName(destinationPath));
-                File.WriteAllText(temporaryPath, text);
+                FlockSavedFiles.CreateFolder(Path.GetDirectoryName(destinationPath));
+                FlockSavedFiles.WriteText(temporaryPath, text);
                 MoveIntoPlace(temporaryPath, destinationPath);
             }
             catch
@@ -45,8 +45,8 @@ namespace Flock
             string temporaryPath = MakePath(destinationPath);
             try
             {
-                Directory.CreateDirectory(Path.GetDirectoryName(destinationPath));
-                File.WriteAllBytes(temporaryPath, bytes);
+                FlockSavedFiles.CreateFolder(Path.GetDirectoryName(destinationPath));
+                FlockSavedFiles.WriteBytes(temporaryPath, bytes);
                 MoveIntoPlace(temporaryPath, destinationPath);
             }
             catch
@@ -62,8 +62,8 @@ namespace Flock
             string temporaryPath = MakePath(destinationPath);
             try
             {
-                File.WriteAllText(temporaryPath, text);
-                File.Replace(temporaryPath, destinationPath, null);
+                FlockSavedFiles.WriteText(temporaryPath, text);
+                FlockSavedFiles.Replace(temporaryPath, destinationPath);
             }
             catch
             {
@@ -81,18 +81,18 @@ namespace Flock
 
             if (File.Exists(destinationPath))
             {
-                File.Replace(temporaryPath, destinationPath, null);
+                FlockSavedFiles.Replace(temporaryPath, destinationPath);
                 return;
             }
 
             try
             {
-                File.Move(temporaryPath, destinationPath);
+                FlockSavedFiles.Move(temporaryPath, destinationPath);
             }
             catch (IOException) when (File.Exists(destinationPath))
             {
                 // Another writer put the destination there first; the newer save still wins.
-                File.Replace(temporaryPath, destinationPath, null);
+                FlockSavedFiles.Replace(temporaryPath, destinationPath);
             }
         }
 
@@ -143,7 +143,7 @@ namespace Flock
             {
                 if (!File.Exists(path))
                     return false;
-                File.Delete(path);
+                FlockSavedFiles.Delete(path);
                 return true;
             }
             catch (Exception)

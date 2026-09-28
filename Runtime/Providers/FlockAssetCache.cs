@@ -30,7 +30,7 @@ namespace Flock.Providers
             string path = GetCachePath(assetId, updatedAt);
             if (File.Exists(path))
             {
-                try { File.SetLastWriteTimeUtc(path, DateTime.UtcNow); }
+                try { FlockSavedFiles.SetLastWriteTime(path, DateTime.UtcNow); }
                 catch { }
 
                 fileUrl = new Uri(path).AbsoluteUri;
@@ -45,7 +45,7 @@ namespace Flock.Providers
             if (bytes == null || bytes.Length == 0)
                 return;
 
-            System.IO.Directory.CreateDirectory(Directory);
+            FlockSavedFiles.CreateFolder(Directory);
 
             string finalPath = GetCachePath(assetId, updatedAt);
 
@@ -63,7 +63,7 @@ namespace Flock.Providers
         public void Clear()
         {
             if (System.IO.Directory.Exists(Directory))
-                System.IO.Directory.Delete(Directory, true);
+                FlockSavedFiles.DeleteFolder(Directory, true);
         }
 
         private void DeleteOtherVersions(string assetId, string keepPath)
@@ -73,7 +73,7 @@ namespace Flock.Providers
             {
                 if (string.Equals(file, keepPath, StringComparison.Ordinal))
                     continue;
-                try { File.Delete(file); }
+                try { FlockSavedFiles.Delete(file); }
                 catch { }
             }
         }
@@ -95,7 +95,7 @@ namespace Flock.Providers
                 long len = files[i].Length;
                 try
                 {
-                    files[i].Delete();
+                    FlockSavedFiles.Delete(files[i].FullName);
                     total -= len;
                 }
                 catch { }

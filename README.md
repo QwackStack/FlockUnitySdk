@@ -227,3 +227,6 @@ Reads are snapshotted to disk and served when the server is unreachable, after a
   (`File.WriteAllBytes` will fail). Set `FlockInitConfig.EnableAssetCache = false`
   and `FlockInitConfig.EnableOfflineCache = false` on WebGL builds — everything else
   works online, just without the disk caches. See the "Offline caching" section.
+  The SDK's own saved files (queued analytics, session records) are copied to the browser's storage after each change, so
+  they survive a reload; two tabs of one game share that storage, and the last to save wins. A game that sets
+  `autoSyncPersistentDataPath` in its WebGL template keeps Unity's own copying.

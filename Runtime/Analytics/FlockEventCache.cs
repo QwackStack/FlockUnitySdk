@@ -39,7 +39,9 @@ namespace Flock.Analytics
         private readonly int _batchSize;
         private readonly IFlockLogger _logger;
 
-        private int _flushing;
+        // The flush now sending, or null: two flushes never send the same batch.
+        private readonly object _flushLock = new object();
+        private Task _runningFlush;
         private int _pendingCount;
         // Bumped by Clear(). A flush compares it before sending, so an erase abandons the batch in flight.
         private int _epoch;
@@ -58,7 +60,7 @@ namespace Flock.Analytics
             _batchSize = Math.Max(1, batchSize);
             _logger = logger;
 
-            Directory.CreateDirectory(_dir);
+            FlockSavedFiles.CreateFolder(_dir);
             _pendingCount = SweepStaleTempFilesAndCount();
         }
 
@@ -80,15 +82,15 @@ namespace Flock.Analytics
                 // Write to tmp then rename so a crash mid-write can never expose a partial event file.
                 try
                 {
-                    File.WriteAllText(tmpPath, json);
+                    FlockSavedFiles.WriteText(tmpPath, json);
                 }
                 catch (DirectoryNotFoundException)
                 {
                     // Made again if something deleted it while this launch runs, so the events that follow are not lost.
-                    Directory.CreateDirectory(_dir);
-                    File.WriteAllText(tmpPath, json);
+                    FlockSavedFiles.CreateFolder(_dir);
+                    FlockSavedFiles.WriteText(tmpPath, json);
                 }
-                File.Move(tmpPath, finalPath);
+                FlockSavedFiles.Move(tmpPath, finalPath);
                 Interlocked.Increment(ref _pendingCount);
                 TrimOldest();
                 return finalPath;
@@ -150,15 +152,67 @@ namespace Flock.Analytics
 
         public async Task FlushAsync(
             Func<IReadOnlyList<T>, CancellationToken, Task> sender,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            bool waitForARunningFlush = false)
         {
             if (sender == null)
                 return;
 
-            //  prevents two overlapping flushes from sending the same batch twice.
-            if (Interlocked.CompareExchange(ref _flushing, 1, 0) != 0)
-                return;
+            while (true)
+            {
+                // No RunContinuationsAsynchronously: Task.WhenAny over such a source never finished in a WebGL player (measured).
+                TaskCompletionSource<bool> ours = null;
+                Task running;
+                lock (_flushLock)
+                {
+                    if (_runningFlush == null)
+                    {
+                        ours = new TaskCompletionSource<bool>();
+                        _runningFlush = ours.Task;
+                    }
+                    running = _runningFlush;
+                }
 
+                if (ours != null)
+                {
+                    try
+                    {
+                        await SendEverythingQueuedAsync(sender, cancellationToken).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
+                    }
+                    finally
+                    {
+                        lock (_flushLock)
+                            _runningFlush = null;
+                        ours.SetResult(true);
+                    }
+                    return;
+                }
+
+                // A trigger leaves the queue to the running flush; an awaited flush waits for it, then sends what is left.
+                if (!waitForARunningFlush)
+                    return;
+                await WaitForAsync(running, cancellationToken).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
+            }
+        }
+
+        // Waits for the task, or until the token is cancelled, which throws.
+        private static async Task WaitForAsync(Task task, CancellationToken cancellationToken)
+        {
+            if (cancellationToken.CanBeCanceled)
+            {
+                TaskCompletionSource<bool> cancelled = new TaskCompletionSource<bool>();
+                using (cancellationToken.Register(() => cancelled.TrySetResult(true)))
+                    await Task.WhenAny(task, cancelled.Task).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
+            }
+            else
+            {
+                await task.ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+
+        private async Task SendEverythingQueuedAsync(Func<IReadOnlyList<T>, CancellationToken, Task> sender, CancellationToken cancellationToken)
+        {
             try
             {
                 int epoch = Volatile.Read(ref _epoch);
@@ -185,7 +239,6 @@ namespace Flock.Analytics
             {
                 lock (_inFlightLock)
                     _inFlightPaths = null;
-                Interlocked.Exchange(ref _flushing, 0);
             }
         }
 
@@ -344,7 +397,7 @@ namespace Flock.Analytics
             {
                 if (File.Exists(path))
                 {
-                    File.Delete(path);
+                    FlockSavedFiles.Delete(path);
                     return true;
                 }
             }

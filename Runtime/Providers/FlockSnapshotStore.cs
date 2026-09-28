@@ -116,7 +116,7 @@ namespace Flock.Providers
             {
                 string path = Path.Combine(_root, SanitizeScope(scope));
                 if (Directory.Exists(path))
-                    Directory.Delete(path, true);
+                    FlockSavedFiles.DeleteFolder(path, true);
             }
             catch (Exception ex)
             {
@@ -223,15 +223,15 @@ namespace Flock.Providers
             int moved = 0;
             try
             {
-                Directory.CreateDirectory(to);
+                FlockSavedFiles.CreateFolder(to);
 
                 foreach (string file in Directory.EnumerateFiles(from))
                 {
                     string destination = Path.Combine(to, Path.GetFileName(file));
                     try
                     {
-                        if (File.Exists(destination)) File.Delete(file);
-                        else { File.Move(file, destination); moved++; }
+                        if (File.Exists(destination)) FlockSavedFiles.Delete(file);
+                        else { FlockSavedFiles.Move(file, destination); moved++; }
                     }
                     catch { }
                 }
@@ -241,7 +241,7 @@ namespace Flock.Providers
 
                 // Only ever removes what it has just emptied, so a file it could not move keeps its
                 // directory alive rather than being orphaned.
-                try { Directory.Delete(from); } catch { }
+                try { FlockSavedFiles.DeleteFolder(from, false); } catch { }
             }
             catch (Exception ex)
             {
@@ -269,7 +269,7 @@ namespace Flock.Providers
                         || string.Equals(name, StateScope, StringComparison.Ordinal))
                         continue;
 
-                    try { Directory.Delete(dir, true); }
+                    try { FlockSavedFiles.DeleteFolder(dir, true); }
                     catch { }
                 }
             }
@@ -326,7 +326,7 @@ namespace Flock.Providers
             try
             {
                 if (File.Exists(path))
-                    File.Delete(path);
+                    FlockSavedFiles.Delete(path);
             }
             catch
             {

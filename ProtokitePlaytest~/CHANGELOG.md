@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 It is released with the Flock SDK, at the Flock SDK's version.
 
 
+## [1.53.0]
+
+No changes to the Protokite Playtest package: this version is released together with the Flock SDK's WebGL saved-files fix
+and the awaited flush.
+
 ## [1.52.0]
 
 No changes to the Protokite Playtest package: this version is released together with the Flock SDK's public gameplay
