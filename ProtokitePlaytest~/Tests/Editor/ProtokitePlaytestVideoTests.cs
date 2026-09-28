@@ -78,10 +78,14 @@ namespace Protokite.Playtest.Tests
         private static FlockTestClient FlockWithConfig(bool video)
             => FlockTestClient.Create(new FlockFakeTransport().On(ConfigRoute, FlockFakeTransport.Ok(Config(video))));
 
-        private static void Frames(int count)
+        // Frames at 60 fps; paced, the encoder has each frame before the next, as in a game, so none is dropped for falling behind.
+        private static void Frames(int count, FakeFrameSource pacedBy = null)
         {
             for (int i = 0; i < count; i++)
+            {
                 ProtokitePlaytest.UpdateVideo(SixtyFps);
+                pacedBy?.WaitForTheEncoderToCatchUp();
+            }
         }
 
         private static void WaitUntilFinished()
@@ -199,7 +203,7 @@ namespace Protokite.Playtest.Tests
             using (FlockWithConfig(true))
             {
                 ProtokitePlaytest.Refresh();
-                Frames(60);
+                Frames(60, pacedBy: _source);
                 ProtokitePlaytest.HandleGameQuitting();
                 Assert.IsNotNull(ProtokitePlaytest.FinishedVideo, "The file was waited for");
                 Assert.AreEqual(ProtokitePlaytestVideoStopReason.GameQuitting, ProtokitePlaytest.FinishedVideo.StopReason);

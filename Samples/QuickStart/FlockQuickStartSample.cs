@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 using Flock.Interfaces;
 #if !FLOCK_NO_PLAYER
@@ -87,8 +88,11 @@ namespace Flock.Samples
         {
             try
             {
-                FlockClient.Instance.Analytics.LogEvent("Hello from the Flock quick-start sample");
-                _status = "Test event queued (delivered on the next flush).";
+                bool recorded = FlockClient.Instance.Analytics.TrackEvent("quick_start_test_event",
+                    new Dictionary<string, object> { { "source", "quick_start_sample" } });
+                _status = recorded
+                    ? "Test event queued for the Game Metrics dashboards (delivered on the next flush)."
+                    : "Test event refused (see the console).";
             }
             catch (Exception ex)
             {

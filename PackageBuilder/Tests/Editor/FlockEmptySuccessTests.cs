@@ -120,7 +120,7 @@ namespace Flock.Tests.Editor
             transport.Default(request => NoContent());
             using (FlockTestClient h = FlockTestClient.Create(transport))
             {
-                h.Client.Analytics.LogException("P-8 empty success", "at Probe.Run()");
+                h.Client.Analytics.LogDiagnosticException("P-8 empty success", "at Probe.Run()");
                 h.Run(() => h.Client.Analytics.FlushAsync());
                 FlockHttpRequest batch = transport.LastTo(FlockEndpoints.LogEvent);
                 Assert.IsNotNull(batch, "The batch was sent");
@@ -136,7 +136,7 @@ namespace Flock.Tests.Editor
             transport.Default(request => FlockFakeTransport.Status(200, "<html>captive portal</html>"));
             using (FlockTestClient h = FlockTestClient.Create(transport))
             {
-                h.Client.Analytics.LogException("kept past a captive portal", "at Probe.Run()");
+                h.Client.Analytics.LogDiagnosticException("kept past a captive portal", "at Probe.Run()");
                 h.Run(() => h.Client.Analytics.FlushAsync());
                 Assert.IsTrue(transport.AllTo(FlockEndpoints.LogEvent).Exists(r => r.JsonBody.Contains("kept past a captive portal")), "The batch was sent");
                 Assert.IsFalse(h.Logger.Warnings.Exists(line => line.Contains("dropped")), "Nothing was dropped: " + string.Join(" | ", h.Logger.Warnings));

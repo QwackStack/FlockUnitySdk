@@ -33,6 +33,10 @@ namespace Protokite.Playtest.Tests
         public int BlocksReturned => Volatile.Read(ref _blocksReturned);
         public bool IsReadyForAnotherFrame => Ready && !Stopped;
 
+        /// <summary>Waits, up to the bound, until every frame asked for but the newest has been through the encoder, as the time before a game's next frame would.</summary>
+        public void WaitForTheEncoderToCatchUp(int mostMilliseconds = 500)
+            => SpinWait.SpinUntil(() => BlocksReturned >= Asked.Count - 1, mostMilliseconds);
+
         public void CaptureFrame(long timestampMs)
         {
             Asked.Add(timestampMs);
