@@ -3,8 +3,9 @@
 Playtesting for games built with the Flock SDK: each play session, gameplay recording and in-game feedback,
 reported to your Protokite playtest.
 
-> **Early version.** This release loads your playtest's config, runs one Protokite session per launch, and records the
-> game's screen on 64-bit Windows and uploads it to that session. The feedback form arrives in a release that follows.
+> **Early version.** This release loads your playtest's config, runs one Protokite session per launch, records the game's
+> screen on 64-bit Windows and uploads it to that session, and, with heavy analytics on, sends performance and level events
+> through the Flock SDK. The feedback form arrives in a release that follows.
 
 ## Install
 
@@ -81,6 +82,45 @@ ProtokitePlaytest.SetSteamId(SteamUser.GetSteamID().ToString(), SteamFriends.Get
 ```
 
 An id that is empty, longer than 64 characters or holds whitespace is refused (not trimmed), and the device id is sent.
+
+## Heavy analytics
+
+When the playtest's config turns **heavy_analytics** on, the playtest sends events through the Flock SDK's `TrackEvent`,
+filed under the category `playtest` (`ProtokitePlaytestEvents.Category`):
+
+- **`performance_window`**, for every ten seconds of play: `window_seconds`, `frames`, `median_frame_time_ms`,
+  `frame_time_95th_percentile_ms`, `frame_time_99th_percentile_ms`, `hitches` (frames that took the hitch threshold or longer),
+  `hitch_threshold_ms`, `memory_used_mb` and `memory_peak_mb` (the process's memory now, and the most it used since measuring
+  started; left out where the platform does not report them), and `map` (the active scene, however it became active). A frame
+  time is the real time from one frame's Update to the next, so slow motion or a paused game is measured as the frames the
+  player saw.
+- **`level_loaded`**, for every scene the game loads in place of the one before: `map`, `previous_map` (the scene active before
+  it), and `load_seconds`, how long the load held the game up.
+
+A window is ten seconds of play, never of the clock: time in the background and the frame a scene load holds up (a scene added
+beside the current one included) are left out. A window a stop cuts short is dropped, not sent. Scenes loaded before the config
+turned heavy analytics on are not reported.
+
+**The game's own events** go on the same timeline, with the same category:
+
+```csharp
+ProtokitePlaytest.RecordPlaytestEvent("boss_fight_started", new Dictionary<string, object> { { "boss", "hydra" } });
+```
+
+It answers true when the event was queued, can be called from any thread, and sends only while heavy analytics runs, which
+starts once the playtest's config has loaded: an event recorded earlier in the launch answers false and is not kept. The two
+names the playtest sends itself are refused.
+
+| Setting | Default | |
+|---|---|---|
+| Hitch Frame Time Ms | 60 | A frame that takes this many milliseconds or longer is counted as a hitch |
+
+Heavy analytics needs the Flock SDK's **Analytics Enabled** (Flock > Settings): with it off, nothing is measured and the log
+says so once. The events are Flock events like any other, so they wait for a signed-in player and follow the Flock SDK's
+analytics consent. They also share its offline queue (**Analytics Max Cached Events**, 1000 by default, oldest dropped first):
+six windows a minute fill it in under three hours offline, so raise it for playtests played offline. The playtest calls the
+Flock SDK's analytics, so it cannot be used with a Flock SDK exported without Analytics, and the Playtesting tab will not
+install it there.
 
 ## Video
 

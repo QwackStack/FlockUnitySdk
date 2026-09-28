@@ -57,6 +57,9 @@ namespace Protokite.Playtest
         [Tooltip("The most every recording kept on this machine may take together, in megabytes. To make room for a new recording, those whose game has closed are deleted, the oldest first.")]
         [SerializeField, Min(1)] private int recordingsDiskBudgetMb = 4096;
 
+        [Tooltip("With heavy analytics on, a frame that takes this many milliseconds or longer is counted as a hitch.")]
+        [SerializeField, Min(1f)] private float hitchFrameTimeMs = 60f;
+
         /// <summary>Whether playtesting is switched on for this project.</summary>
         public bool PlaytestingEnabled
         {
@@ -106,6 +109,9 @@ namespace Protokite.Playtest
 
         /// <summary>Megabytes a recording's file stops before passing.</summary>
         public int MaxRecordingSizeMb { get => maxRecordingSizeMb; set => maxRecordingSizeMb = value; }
+
+        /// <summary>With heavy analytics on, a frame that takes this many milliseconds or longer is counted as a hitch.</summary>
+        public float HitchFrameTimeMs { get => hitchFrameTimeMs; set => hitchFrameTimeMs = value; }
 
         /// <summary>The project's settings, or null when the project has none (which reads as playtesting off).</summary>
         public static ProtokitePlaytestSettings Load() => Resources.Load<ProtokitePlaytestSettings>(ResourceName);

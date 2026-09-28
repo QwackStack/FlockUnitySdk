@@ -136,17 +136,23 @@ namespace Protokite.Playtest
                 ReportFinishedVideo();
         }
 
-        /// <summary>The game left for the background or came back: the frame that carries the time away is not recorded.</summary>
-        internal static void HandleGameLeftOrCameBack() => _videoRecording?.LeaveOutNextFrame();
+        /// <summary>The game left for the background or came back: the frame that carries the time away is neither recorded nor measured.</summary>
+        internal static void HandleGameLeftOrCameBack()
+        {
+            _videoRecording?.LeaveOutNextFrame();
+            _performanceTimeline?.LeaveOutNextFrame();
+        }
 
         // A config being fetched again (after a Flock restart) is no reason to end the launch's only recording; a loaded config
         // with video off, or a playtest that closed, is.
         private static bool VideoTurnedOffForGood()
             => _playtestNoLongerCollecting || (ConfigIsLoaded() && !_config.IsFeatureEnabled(ProtokitePlaytestFeatures.VideoRecording));
 
+        private static bool VideoIsOnInTheLoadedConfig() => FeatureIsOnInTheLoadedConfig(ProtokitePlaytestFeatures.VideoRecording);
+
         // Asked every frame, so read off the fetched config rather than through Status, which loads the settings asset.
-        private static bool VideoIsOnInTheLoadedConfig()
-            => !_playtestNoLongerCollecting && ConfigIsLoaded() && _config.IsFeatureEnabled(ProtokitePlaytestFeatures.VideoRecording);
+        private static bool FeatureIsOnInTheLoadedConfig(string feature)
+            => !_playtestNoLongerCollecting && ConfigIsLoaded() && _config.IsFeatureEnabled(feature);
 
         private static bool ConfigIsLoaded() => _config != null && ConfigStateForRunningFlock() == ProtokitePlaytestConfigState.Loaded;
 

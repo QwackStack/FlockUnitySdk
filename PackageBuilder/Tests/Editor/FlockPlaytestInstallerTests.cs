@@ -90,5 +90,12 @@ namespace Flock.Tests.Editor
             Assert.AreEqual(FlockPlaytestInstaller.FlockVersion, installed.Version,
                 "The playtest in this repository carries the Flock SDK's version");
         }
+
+        [Test]
+        public void AFlockSdkWithAnalyticsCanTakeThePlaytest()
+        {
+            // The refusal itself compiles only in an export without Analytics, which the stripped package check builds.
+            Assert.IsNull(FlockPlaytestInstaller.WhyPlaytestCannotBeInstalled());
+        }
     }
 }

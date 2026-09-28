@@ -37,5 +37,30 @@ namespace Flock.Tests.Support
                 // A temporary folder is cleaned up by the system in time.
             }
         }
+
+        /// <summary>A folder of this test's own, for a test that counts what its launch sends; disposing it puts the run's folder back. Dispose after the test's SDK has shut down.</summary>
+        public static IDisposable UseFolderOfItsOwn() => new FolderOfItsOwn();
+
+        private sealed class FolderOfItsOwn : IDisposable
+        {
+            private readonly string _runFolder = FlockAnalyticsLaunches.FolderForTesting;
+            private readonly string _folder = Path.Combine(Path.GetTempPath(), "flock_test_analytics_own_" + Guid.NewGuid().ToString("N"));
+
+            public FolderOfItsOwn() => FlockAnalyticsLaunches.FolderForTesting = _folder;
+
+            public void Dispose()
+            {
+                FlockAnalyticsLaunches.FolderForTesting = _runFolder;
+                try
+                {
+                    if (Directory.Exists(_folder))
+                        Directory.Delete(_folder, true);
+                }
+                catch (Exception)
+                {
+                    // A temporary folder is cleaned up by the system in time.
+                }
+            }
+        }
     }
 }

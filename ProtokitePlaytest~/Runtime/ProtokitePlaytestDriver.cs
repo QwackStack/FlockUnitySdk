@@ -30,7 +30,14 @@ namespace Protokite.Playtest
             ProtokitePlaytest.StartFinishingEarlierRecordings();
         }
 
-        private void Update() => ProtokitePlaytest.Refresh();
+        private double _lastUpdateAt = -1.0;
+        private double _lastEndOfFrameAt = -1.0;
+
+        private void Update()
+        {
+            ProtokitePlaytest.Refresh();
+            ProtokitePlaytest.UpdateHeavyAnalytics(SecondsSince(ref _lastUpdateAt));
+        }
 
         // A frame is captured after it is drawn, so the video work runs at the end of every frame.
         private IEnumerator Start()
@@ -39,8 +46,17 @@ namespace Protokite.Playtest
             while (true)
             {
                 yield return endOfFrame;
-                ProtokitePlaytest.UpdateVideo(Time.unscaledDeltaTime);
+                ProtokitePlaytest.UpdateVideo(SecondsSince(ref _lastEndOfFrameAt));
             }
+        }
+
+        // Real time since the last call (0 on the first): a player's own frame time shows a stall up to six frames late, too late to leave it out.
+        private static double SecondsSince(ref double lastAt)
+        {
+            double now = Time.realtimeSinceStartupAsDouble;
+            double seconds = lastAt < 0.0 ? 0.0 : now - lastAt;
+            lastAt = now;
+            return seconds;
         }
 
         private void OnApplicationFocus(bool hasFocus)
