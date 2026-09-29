@@ -117,6 +117,33 @@ namespace Protokite.Playtest.Tests
         }
 
         [Test]
+        public void PlayDataIsMeasuredOnlyWhileThePlayersAnswerAllowsIt()
+        {
+            _settings.Settings.AskThePlayerForPlaytestConsent = true;
+            _transport = new FlockFakeTransport().On(ConfigRoute, FlockFakeTransport.Ok(Config(true)));
+            _transport.Default(request => FlockFakeTransport.Ok("{\"ok\":true}"));
+            _h = FlockTestClient.Create(_transport);
+            _h.LoginAs("player-a");
+            ProtokitePlaytest.Refresh();
+            Assert.AreEqual(ProtokitePlaytestStatus.WaitingForPlayerConsent, ProtokitePlaytest.Status, "Precondition: the question waits");
+            Play(10);
+            Assert.IsFalse(ProtokitePlaytest.IsMeasuringPerformance, "Not while the question waits");
+            Assert.IsFalse(ProtokitePlaytest.RecordPlaytestEvent("boss_fight_started"), "Nor the game's own playtest events");
+
+            Assert.IsTrue(ProtokitePlaytest.SetPlaytestConsent(ProtokitePlaytestConsentChoice.VideoOnly));
+            Play(10);
+            Assert.IsFalse(ProtokitePlaytest.IsMeasuringPerformance, "The screen only is no play data");
+
+            Assert.IsTrue(ProtokitePlaytest.SetPlaytestConsent(ProtokitePlaytestConsentChoice.PlayDataOnly));
+            Play(1);
+            Assert.IsTrue(ProtokitePlaytest.IsMeasuringPerformance, "Play data is allowed now");
+
+            Assert.IsTrue(ProtokitePlaytest.SetPlaytestConsent(ProtokitePlaytestConsentChoice.Nothing));
+            Play(1);
+            Assert.IsFalse(ProtokitePlaytest.IsMeasuringPerformance, "Stopped once the player takes it back");
+        }
+
+        [Test]
         public void PlaytestingOffRecordsNothingWhateverThePlaytestSays()
         {
             _settings.Settings.PlaytestingEnabled = false;

@@ -29,6 +29,19 @@ namespace Protokite.Playtest.Editor
             EditorGUIUtility.PingObject(settings);
         }
 
+        /// <summary>
+        /// Protokite > Playtest > Ask The Player Again: forgets the answer this machine gave the consent question, so the next Play
+        /// asks again. An answer is kept on the machine and counts in every later Play, so a developer answering once never sees it again.
+        /// </summary>
+        [MenuItem("Protokite/Playtest/Ask The Player Again")]
+        public static void ForgetThePlayersConsentAnswer()
+        {
+            if (ProtokitePlaytest.SetPlaytestConsent(ProtokitePlaytestConsentChoice.NotAnswered))
+                Debug.Log("[Protokite Playtest] The answer this machine gave the playtest's consent question is forgotten; the question is put again the next time the playtest loads.");
+            else
+                Debug.LogWarning("[Protokite Playtest] The answer this machine gave the playtest's consent question could not be removed; see the warning before this one.");
+        }
+
         /// <summary>The project's settings asset, created at <see cref="ProtokitePlaytestSettings.AssetPath"/> with playtesting off if there is none.</summary>
         public static ProtokitePlaytestSettings FindOrCreateSettings()
         {

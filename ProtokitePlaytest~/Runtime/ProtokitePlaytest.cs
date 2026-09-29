@@ -32,7 +32,11 @@ namespace Protokite.Playtest
         /// <summary>The playtest config is loaded and the playtest can run.</summary>
         Ready,
         /// <summary>The playtest has closed and takes no more sessions, so playtesting is off until the game is launched again.</summary>
-        PlaytestNoLongerCollecting
+        PlaytestNoLongerCollecting,
+        /// <summary>The playtest is loaded, and nothing is collected until the player says what it may collect.</summary>
+        WaitingForPlayerConsent,
+        /// <summary>The player asked the playtest to collect nothing: it behaves exactly as with playtesting off.</summary>
+        PlayerRefusedPlaytest
     }
 
     /// <summary>Where fetching the playtest config has got to, for the Flock client it was fetched under.</summary>
@@ -62,20 +66,27 @@ namespace Protokite.Playtest
         private static int _timesConfigForgotten;
         private static CancellationTokenSource _configFetchCancel;
         private static ProtokitePlaytestStatus? _statusLastReported;
-        private static (ProtokitePlaytestConfigState, ProtokitePlaytestSessionState, bool)? _stateAtLastRefresh;
+        private static (ProtokitePlaytestConfigState, ProtokitePlaytestSessionState, bool, ProtokitePlaytestConsentChoice)? _stateAtLastRefresh;
 
         /// <summary>Whether the playtest can run right now, and if not, what stops it. Read it on the main thread.</summary>
         public static ProtokitePlaytestStatus Status
-            => StatusFor(ProtokitePlaytestSettings.Load(), RunningFlock() != null, ConfigStateForRunningFlock(), _playtestNoLongerCollecting);
+            => StatusFor(ProtokitePlaytestSettings.Load(), RunningFlock() != null, EffectiveConsent(), ConfigStateForRunningFlock(), _playtestNoLongerCollecting);
 
         /// <summary>This build's playtest config, or null until <see cref="Status"/> is <see cref="ProtokitePlaytestStatus.Ready"/>. Main thread only.</summary>
         public static ProtokitePlaytestConfig Config => Status == ProtokitePlaytestStatus.Ready ? _config : null;
 
-        /// <summary>True only when the playtest is ready and its config turned <paramref name="featureName"/> on. Main thread only.</summary>
-        public static bool IsFeatureEnabled(string featureName) => Config?.IsFeatureEnabled(featureName) ?? false;
+        /// <summary>
+        /// True only when the playtest is ready, the player's answer allows <paramref name="featureName"/>, and the config turned it
+        /// on. A feature this build does not know needs the answer that allows everything. Main thread only.
+        /// </summary>
+        public static bool IsFeatureEnabled(string featureName)
+        {
+            ProtokitePlaytestConfig config = Config;
+            return config != null && ProtokitePlaytestConsent.AllowsFeature(EffectiveConsent(), featureName) && config.IsFeatureEnabled(featureName);
+        }
 
-        /// <summary>The status for these settings (null means the project has none), whether Flock is running, and the config state.</summary>
-        internal static ProtokitePlaytestStatus StatusFor(ProtokitePlaytestSettings settings, bool flockIsRunning,
+        /// <summary>The status for these settings (null means the project has none), whether Flock is running, the answer in force, and the config state.</summary>
+        internal static ProtokitePlaytestStatus StatusFor(ProtokitePlaytestSettings settings, bool flockIsRunning, ProtokitePlaytestConsentChoice consent,
             ProtokitePlaytestConfigState configState = ProtokitePlaytestConfigState.NotFetched, bool playtestNoLongerCollecting = false)
         {
             if (settings == null || !settings.PlaytestingEnabled)
@@ -93,7 +104,11 @@ namespace Protokite.Playtest
 
             switch (configState)
             {
-                case ProtokitePlaytestConfigState.Loaded: return ProtokitePlaytestStatus.Ready;
+                // Decided last, so a build that is set up wrong, or that no playtest is linked to, never puts a question to a player.
+                case ProtokitePlaytestConfigState.Loaded:
+                    if (!ProtokitePlaytestConsent.IsAnswered(consent))
+                        return ProtokitePlaytestStatus.WaitingForPlayerConsent;
+                    return ProtokitePlaytestConsent.CollectsAnything(consent) ? ProtokitePlaytestStatus.Ready : ProtokitePlaytestStatus.PlayerRefusedPlaytest;
                 case ProtokitePlaytestConfigState.PlaytestNotLinked: return ProtokitePlaytestStatus.PlaytestNotLinked;
                 case ProtokitePlaytestConfigState.ApiKeyRefused: return ProtokitePlaytestStatus.ProtokiteRefusedApiKey;
                 case ProtokitePlaytestConfigState.Unavailable: return ProtokitePlaytestStatus.PlaytestConfigUnavailable;
@@ -157,28 +172,32 @@ namespace Protokite.Playtest
             }
 
             ProtokitePlaytestSettings settings = ProtokitePlaytestSettings.Load();
+            ProtokitePlaytestConsentChoice consent = EffectiveConsent();
             // A fetch already on its way never gets here: its state has not changed, so the early return above skipped it.
-            if (StatusFor(settings, running != null, _configState, _playtestNoLongerCollecting) == ProtokitePlaytestStatus.FetchingPlaytestConfig)
+            if (StatusFor(settings, running != null, consent, _configState, _playtestNoLongerCollecting) == ProtokitePlaytestStatus.FetchingPlaytestConfig)
             {
                 StartPlaytestConfigFetch(running, settings.ProtokiteApiUrl);
             }
 
             // One session per launch: whatever became of it, a later sign-in or Flock session never starts another.
-            if (StatusFor(settings, running != null, _configState, _playtestNoLongerCollecting) == ProtokitePlaytestStatus.Ready)
+            if (StatusFor(settings, running != null, consent, _configState, _playtestNoLongerCollecting) == ProtokitePlaytestStatus.Ready)
                 StartPlaytestSessionWhenAllowed(running, settings.ProtokiteApiUrl);
 
             _stateAtLastRefresh = CurrentState();
-            ReportStatus(StatusFor(settings, running != null, _configState, _playtestNoLongerCollecting));
+            ProtokitePlaytestStatus status = StatusFor(settings, running != null, consent, _configState, _playtestNoLongerCollecting);
+            ReportStatus(status);
+            UpdateConsentQuestion(status);
         }
 
-        private static (ProtokitePlaytestConfigState, ProtokitePlaytestSessionState, bool) CurrentState()
-            => (_configState, _sessionState, _playtestNoLongerCollecting);
+        private static (ProtokitePlaytestConfigState, ProtokitePlaytestSessionState, bool, ProtokitePlaytestConsentChoice) CurrentState()
+            => (_configState, _sessionState, _playtestNoLongerCollecting, EffectiveConsent());
 
         /// <summary>Stops everything the playtest has under way, for when the game is closing.</summary>
         internal static void Stop()
         {
             ForgetPlaytestConfig();
             _flock = null;
+            CloseConsentQuestion();
             StopUploads();
             StopVideoForQuitting();
             StopMeasuringPerformance();
@@ -193,6 +212,7 @@ namespace Protokite.Playtest
             ResetSessionForNewLaunch();
             ResetUploadsForNewLaunch();
             ResetHeavyAnalyticsForNewLaunch();
+            ResetConsentForNewLaunch();
             _statusLastReported = null;
             _stateAtLastRefresh = null;
         }
@@ -285,6 +305,11 @@ namespace Protokite.Playtest
                 case ProtokitePlaytestStatus.PlaytestNoLongerCollecting:
                     Debug.LogWarning(LogPrefix + Describe(status) + (string.IsNullOrEmpty(_configProblem) ? "" : " " + _configProblem));
                     break;
+                // The player's own choice or a question on its way: nothing for the studio to fix.
+                case ProtokitePlaytestStatus.WaitingForPlayerConsent:
+                case ProtokitePlaytestStatus.PlayerRefusedPlaytest:
+                    Debug.Log(LogPrefix + Describe(status));
+                    break;
             }
         }
 
@@ -315,6 +340,10 @@ namespace Protokite.Playtest
                     return "Playtesting is ready: this build's playtest is loaded.";
                 case ProtokitePlaytestStatus.PlaytestNoLongerCollecting:
                     return "This playtest has closed and takes no more sessions (Protokite answered HTTP 400), so playtesting is off until the game is launched again. Reopen the playtest in Protokite, or point the Game Version at a playtest that is still running.";
+                case ProtokitePlaytestStatus.WaitingForPlayerConsent:
+                    return "This build's playtest is loaded, and nothing is collected until the player says what it may collect. The question is put on screen; a game can put it again with ProtokitePlaytest.AskForPlaytestConsent, or answer it with ProtokitePlaytest.SetPlaytestConsent. Turn off Ask The Player For Playtest Consent in Protokite > Playtest > Settings to collect without asking.";
+                case ProtokitePlaytestStatus.PlayerRefusedPlaytest:
+                    return "The player asked this playtest to collect nothing, so nothing is recorded, nothing is sent and no session is started, exactly as with playtesting off. They can be asked again with ProtokitePlaytest.AskForPlaytestConsent.";
             }
             return "";
         }

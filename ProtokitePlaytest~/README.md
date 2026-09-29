@@ -3,9 +3,9 @@
 Playtesting for games built with the Flock SDK: each play session, gameplay recording and in-game feedback,
 reported to your Protokite playtest.
 
-> **Early version.** This release loads your playtest's config, runs one Protokite session per launch, records the game's
-> screen on 64-bit Windows and uploads it to that session, and, with heavy analytics on, sends performance and level events
-> through the Flock SDK. The feedback form arrives in a release that follows.
+> **Early version.** This release asks the player what the playtest may collect, loads your playtest's config, runs one
+> Protokite session per launch, records the game's screen on 64-bit Windows and uploads it to that session, and, with heavy
+> analytics on, sends performance and level events through the Flock SDK. The feedback form arrives in a release that follows.
 
 ## Install
 
@@ -55,19 +55,63 @@ logged once, as a warning that says what to change.
 | `PlaytestConfigForAnotherVersion` | Protokite answered with another version's playtest (a proxy dropping the version header does this) |
 | `Ready` | The playtest's config is loaded |
 | `PlaytestNoLongerCollecting` | The playtest has closed and takes no more sessions, so playtesting is off until the game is launched again |
+| `WaitingForPlayerConsent` | The playtest is loaded, and nothing is collected until the player answers the consent question |
+| `PlayerRefusedPlaytest` | The player asked the playtest to collect nothing, so it behaves as with playtesting off |
 
 A refusal (`PlaytestNotLinked`, `ProtokiteRefusedApiKey`, `PlaytestConfigForAnotherVersion`) is not asked again until the Flock SDK
 is started again (or the game relaunched), since the answer would be the same.
+
+## The player's consent
+
+Before a playtest build collects anything, it asks its player what the playtest may collect: **the screen and play data**,
+**the screen only**, **play data only**, or **nothing**. Nothing is recorded, measured or sent, and no Protokite session is
+started, until they answer, and **nothing** reads exactly like **Playtesting Enabled** off. The question says in its own words
+that it is the playtest's, separate from any privacy or analytics choice the game asks about: it does not change the Flock
+SDK's analytics consent, and exceptions the Flock SDK captures are the Flock SDK's, whatever the answer.
+
+The question is drawn over the game once this build's playtest has loaded, with UI Toolkit built from code: nothing to
+import, and no EventSystem of the game's needed; it works with the Input Manager, the Input System or both. It is answered
+with the mouse: while it is on screen the cursor is shown and free, and it goes back to how the game had it once the player
+answers. No answer is selected when it appears, so the game's own Submit key (Space, by default) presses nothing, and a
+press in its first half second is ignored. A game that locks the cursor again every frame puts each click at the screen's
+centre, so no click is taken as an answer there and a warning says so: stop locking it while `IsConsentQuestionOpen`.
+
+The answer is kept in `ProtokitePlaytest/playtest_consent.json` under the game's persistent data folder and used by every
+later launch. **An answer already given counts even in a build that stops asking.** Each session start carries it in its
+debug facts as `playtest_consent` (`video_and_play_data`, `video_only`, `play_data_only`, `nothing` or `not_answered`) and
+`playtest_consent_asked` (`true` or `false`), so a session with no recording reads as a player who asked for none.
+
+| Setting | Default | |
+|---|---|---|
+| Ask The Player For Playtest Consent | on | Put the question, and collect nothing until it is answered. Turn it off only where players were asked another way, or for a test run with nobody to answer; everything the playtest turns on is then collected, and each session says nobody was asked |
+
+```csharp
+ProtokitePlaytest.PlaytestConsent                 // the answer in force
+ProtokitePlaytest.SetPlaytestConsent(choice)      // your own menu answers it; NotAnswered asks again
+ProtokitePlaytest.AskForPlaytestConsent()         // put the question on screen again, to change the answer
+ProtokitePlaytest.IsConsentQuestionOpen
+```
+
+- **Taking the screen back deletes this launch's recording**, rather than keeping it for a later launch to send. One already
+  uploading goes on.
+- **Recordings earlier launches kept wait** while the question is on screen (and while the config that decides whether it is
+  put is on its way), and for as long as the answer is **nothing**, even with Playtesting Enabled off. They are kept, and go
+  in the same launch the player changes their mind.
+- A game that runs in batch mode or without graphics cannot show the question, so it collects nothing and says so once:
+  answer with `SetPlaytestConsent`, or turn asking off.
+- In the editor, **Protokite > Playtest > Ask The Player Again** forgets the answer, so the next Play asks again.
 
 ## What the playtest turns on
 
 `ProtokitePlaytest.Config` is the loaded config (null until `Ready`): the playtest's `TestId`, its feature switches and
 its feedback form (`Form`, null when the playtest has none). Check a feature with
-`ProtokitePlaytest.IsFeatureEnabled(ProtokitePlaytestFeatures.VideoRecording)`; a feature the config does not mention is off.
+`ProtokitePlaytest.IsFeatureEnabled(ProtokitePlaytestFeatures.VideoRecording)`; a feature the config does not mention is off,
+and so is one the player's answer does not allow (a feature this build does not know needs the answer that allows everything).
 
 ## Sessions
 
-Each launch runs **one** Protokite session. It starts once the playtest's config is loaded and a Flock session has reached
+Each launch runs **one** Protokite session. It starts once the playtest's config is loaded, the player's answer lets it collect
+something, and a Flock session has reached
 the server, which happens when a player signs in with **Analytics Enabled** and **Analytics Auto Start Session** on in
 **Flock > Settings** (or when you call `StartSessionAsync`), and consent given when **Analytics Require Explicit Consent** is
 on. The playtest never signs a player in. Signing out and in, a new Flock session or restarting Flock never start a second
@@ -142,7 +186,8 @@ Nothing is uploaded while the game quits: a recording still going then, or an up
 the next launch. When a launch starts, the recordings earlier launches kept go once the folders below are gone through and
 the Flock SDK is running, one at a time and the oldest first, with this build's API key and the Game Version ID each
 recording's session started with. **This happens with Playtesting Enabled off too**, so a release build of the game never
-strands what a playtest build recorded; with it off, nothing else is recorded or sent.
+strands what a playtest build recorded; with it off, nothing else is recorded or sent. They wait while the player's answer is
+**nothing**, or while the consent question may still be put (see [The player's consent](#the-players-consent)).
 
 Every refusal keeps the recording, including Protokite saying the session belongs to another playtest (403) or no longer
 exists (404): a later launch asks again. Such a recording goes only when a launch that records needs its room in the disk

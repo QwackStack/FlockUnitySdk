@@ -448,6 +448,162 @@ namespace Protokite.Playtest.Tests
 
         // What earlier launches left
 
+        // The player's answer
+
+        [UnityTest]
+        public IEnumerator NothingAnEarlierLaunchLeftGoesWhileTheQuestionWaitsAndItGoesOnceAnswered()
+        {
+            _settings.Settings.AskThePlayerForPlaytestConsent = true;
+            PlantWaitingRecording("20260101-000000-00000001", "pk-9", "session-gvid");
+            yield return TheEarlierRecordingsAreGoneThrough();
+            using (FlockTestClient flock = StartFlock(EarlierTransport()))
+            {
+                ProtokitePlaytest.Refresh();
+                Assert.AreEqual(ProtokitePlaytestStatus.WaitingForPlayerConsent, ProtokitePlaytest.Status, "Precondition: the question waits");
+                yield return ForAWhile(1f, ProtokitePlaytest.Refresh);
+                Assert.IsNull(ProtokitePlaytest.EarlierUploadsForTesting, "A player about to ask for nothing has nothing sent while they read");
+                Assert.AreEqual(0, flock.Transport.CountTo("/pk-9/recording-upload"));
+
+                Assert.IsTrue(ProtokitePlaytest.SetPlaytestConsent(ProtokitePlaytestConsentChoice.PlayDataOnly));
+                yield return EarlierUploads();
+                Assert.AreEqual((1, 0), ProtokitePlaytest.EarlierUploadsForTesting.Result, "An earlier launch recorded it with that launch's permission");
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator AnAnswerOfNothingHoldsEarlierRecordingsBackEvenWithPlaytestingOffUntilAChangeOfMind()
+        {
+            _settings.Settings.PlaytestingEnabled = false;
+            Assert.IsTrue(new ProtokitePlaytestConsentFile(_settings.ConsentFilePath).Save(ProtokitePlaytestConsentChoice.Nothing));
+            string run = PlantWaitingRecording("20260101-000000-00000001", "pk-9", "session-gvid");
+            yield return TheEarlierRecordingsAreGoneThrough();
+            using (FlockTestClient flock = StartFlock(EarlierTransport()))
+            {
+                LogAssert.Expect(LogType.Log, new Regex("Nothing an earlier launch recorded is being sent: the player has asked this playtest to collect nothing"));
+                yield return ForAWhile(1f, ProtokitePlaytest.Refresh);
+                Assert.IsNull(ProtokitePlaytest.EarlierUploadsForTesting, "The answer outlives a build that stops asking, or playtests at all");
+                Assert.IsTrue(Directory.Exists(run), "Kept, not given up on");
+
+                Assert.IsTrue(ProtokitePlaytest.SetPlaytestConsent(ProtokitePlaytestConsentChoice.VideoOnly));
+                yield return EarlierUploads();
+                Assert.AreEqual((1, 0), ProtokitePlaytest.EarlierUploadsForTesting.Result, "Sent in the same launch the player changed their mind");
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator ABuildWithPlaytestingOffAndNoAnswerStillSendsWhatEarlierLaunchesLeft()
+        {
+            _settings.Settings.PlaytestingEnabled = false;
+            _settings.Settings.AskThePlayerForPlaytestConsent = true;
+            PlantWaitingRecording("20260101-000000-00000001", "pk-9", "session-gvid");
+            yield return TheEarlierRecordingsAreGoneThrough();
+            using (StartFlock(EarlierTransport()))
+            {
+                yield return EarlierUploads();
+                Assert.AreEqual((1, 0), ProtokitePlaytest.EarlierUploadsForTesting.Result, "No question is ever put here, so waiting for one would strand them");
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator ABuildThatAsksButWhosePlaytestCannotLoadStillSendsWhatEarlierLaunchesLeft()
+        {
+            _settings.Settings.AskThePlayerForPlaytestConsent = true;
+            PlantWaitingRecording("20260101-000000-00000001", "pk-9", "session-gvid");
+            yield return TheEarlierRecordingsAreGoneThrough();
+            // Built here: the shared transport would answer the config route with a config.
+            FlockFakeTransport notLinked = new FlockFakeTransport()
+                .On("/playtest-session/pk-9/recording-upload", FlockFakeTransport.Ok(Link(FirstLink)))
+                .On(ConfigRoute, FlockFakeTransport.Status(404, "{\"detail\":\"No playtest for this game version\"}"));
+            using (StartFlock(notLinked))
+            {
+                yield return EarlierUploads();
+                Assert.AreEqual(ProtokitePlaytestStatus.PlaytestNotLinked, ProtokitePlaytest.Status, "Precondition: no question is ever put");
+                Assert.AreEqual((1, 0), ProtokitePlaytest.EarlierUploadsForTesting.Result, "Held only while a question may still come");
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator TakingTheScreenBackRemovesTheSessionAtOnceAndDeletesTheRecordingInsteadOfUploadingIt()
+        {
+            _settings.Settings.AskThePlayerForPlaytestConsent = true;
+            ProtokitePlaytestConsentFile answer = new ProtokitePlaytestConsentFile(_settings.ConsentFilePath);
+            Assert.IsTrue(answer.Save(ProtokitePlaytestConsentChoice.VideoAndPlayData));
+            using (FlockTestClient flock = StartFlock(Transport()))
+            {
+                ProtokitePlaytest.Refresh();
+                Frames(10);
+                Assert.IsTrue(ProtokitePlaytest.IsRecordingVideo, "Precondition: recording");
+                yield return TheSessionStarts(flock);
+                string run = ProtokitePlaytest.RecordingRunForTesting.FolderPath;
+                Assert.IsTrue(File.Exists(Path.Combine(run, "session.json")), "Precondition: the session is saved beside the recording");
+
+                Assert.IsTrue(ProtokitePlaytest.SetPlaytestConsent(ProtokitePlaytestConsentChoice.PlayDataOnly));
+                Assert.IsFalse(File.Exists(Path.Combine(run, "session.json")), "Gone before the file is even written, so no later launch can send it");
+
+                yield return Settled(() => ProtokitePlaytest.VideoRecordingForTesting == null || ProtokitePlaytest.VideoRecordingForTesting.HasFinishedWriting, 20f, "The file was written");
+                Frames(1);
+                yield return ForAWhile();
+                Assert.IsFalse(Directory.Exists(run), "Deleted instead of uploaded");
+                Assert.AreEqual(0, flock.Transport.CountTo(LinkRoute), "No link is asked for");
+                Assert.AreEqual(0, _uploader.Count);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator ASessionThatStartsAfterTheScreenIsTakenBackIsNeverSavedBesideTheRecording()
+        {
+            _settings.Settings.AskThePlayerForPlaytestConsent = true;
+            Assert.IsTrue(new ProtokitePlaytestConsentFile(_settings.ConsentFilePath).Save(ProtokitePlaytestConsentChoice.VideoOnly));
+            CloseHeldRecordingFile held = new CloseHeldRecordingFile();
+            ProtokitePlaytest.RecordingFileForTesting = () => held;
+            try
+            {
+                using (FlockTestClient flock = StartFlock(Transport()))
+                {
+                    ProtokitePlaytest.Refresh();
+                    Frames(10);
+                    Assert.IsTrue(ProtokitePlaytest.IsRecordingVideo, "Precondition: recording, before any session");
+                    string run = ProtokitePlaytest.RecordingRunForTesting.FolderPath;
+
+                    // The file cannot finish yet, so the session starts in the moment between taking the screen back and the file being written.
+                    Assert.IsTrue(ProtokitePlaytest.SetPlaytestConsent(ProtokitePlaytestConsentChoice.PlayDataOnly));
+                    yield return TheSessionStarts(flock);
+                    Assert.IsFalse(File.Exists(Path.Combine(run, "session.json")), "Never given the session, so a game quitting now leaves nothing a later launch would send");
+
+                    held.Release();
+                    yield return Settled(() => ProtokitePlaytest.VideoRecordingForTesting == null || ProtokitePlaytest.VideoRecordingForTesting.HasFinishedWriting, 20f, "The file was written");
+                    Frames(1);
+                    Assert.IsFalse(Directory.Exists(run), "Deleted once written");
+                }
+            }
+            finally
+            {
+                held.Release();
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator AFinishedRecordingWaitingForItsSessionIsDeletedWhenTheScreenIsTakenBack()
+        {
+            _settings.Settings.AskThePlayerForPlaytestConsent = true;
+            Assert.IsTrue(new ProtokitePlaytestConsentFile(_settings.ConsentFilePath).Save(ProtokitePlaytestConsentChoice.VideoOnly));
+            using (FlockTestClient flock = StartFlock(Transport()))
+            {
+                ProtokitePlaytest.Refresh();
+                yield return RecordAndStop();
+                string run = ProtokitePlaytest.RecordingRunForTesting.FolderPath;
+                Assert.IsTrue(Directory.Exists(run), "Precondition: kept, waiting for a session to upload to");
+
+                Assert.IsTrue(ProtokitePlaytest.SetPlaytestConsent(ProtokitePlaytestConsentChoice.Nothing));
+                Assert.IsFalse(Directory.Exists(run), "Deleted at once");
+
+                Assert.IsTrue(ProtokitePlaytest.SetPlaytestConsent(ProtokitePlaytestConsentChoice.VideoAndPlayData));
+                yield return TheSessionStarts(flock);
+                yield return ForAWhile();
+                Assert.AreEqual(0, flock.Transport.CountTo(LinkRoute), "Nothing is left to upload");
+            }
+        }
+
         private string PlantWaitingRecording(string name, string sessionId, string gameVersionId, string apiUrl = "http://protokite.test")
         {
             string run = ProtokitePlaytestPlantedRuns.Plant(Recordings, ProtokitePlaytestRecordingKind.Playtest, name, 1000,
@@ -768,6 +924,35 @@ namespace Protokite.Playtest.Tests
         }
 
         /// <summary>A recording written as WebM that says it is another kind, so the type on the wire can be told from the default.</summary>
+        // A WebM file whose close waits until the test lets it: the recording's writing thread holds there, as a slow disk would.
+        private sealed class CloseHeldRecordingFile : IProtokitePlaytestRecordingFile
+        {
+            private readonly ProtokitePlaytestWebmFile _inner = new ProtokitePlaytestWebmFile();
+            private readonly ManualResetEventSlim _released = new ManualResetEventSlim(false);
+
+            public void Release() => _released.Set();
+
+            public string ContentType => _inner.ContentType;
+            public string FileExtension => _inner.FileExtension;
+            public int BytesAddedToEachFrame => _inner.BytesAddedToEachFrame;
+            public long BytesWritten => _inner.BytesWritten;
+            public int FramesWritten => _inner.FramesWritten;
+            public long LastTimestampMs => _inner.LastTimestampMs;
+            public bool Open(string path, ProtokitePlaytestVideoCodec codec, int width, int height, out string error) => _inner.Open(path, codec, width, height, out error);
+            public bool WriteFrame(ProtokitePlaytestEncodedFrame frame, out string error) => _inner.WriteFrame(frame, out error);
+
+            public bool Close(out string error)
+            {
+                _released.Wait(TimeSpan.FromSeconds(30));
+                return _inner.Close(out error);
+            }
+
+            public ProtokitePlaytestInterruptedRecordingResult FinishInterruptedRecording(string unfinishedPath, string finishedPath, out int framesKept, out string error)
+                => _inner.FinishInterruptedRecording(unfinishedPath, finishedPath, out framesKept, out error);
+
+            public void Dispose() => _inner.Dispose();
+        }
+
         private sealed class AnotherKindOfRecordingFile : IProtokitePlaytestRecordingFile
         {
             private readonly ProtokitePlaytestWebmFile _inner = new ProtokitePlaytestWebmFile();

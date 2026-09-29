@@ -9,7 +9,7 @@ namespace Protokite.Playtest
     {
         private static ProtokitePlaytestDriver _running;
 
-        /// <summary>Starts the driver with every launch. With playtesting off it records nothing and starts no session, but still uploads what earlier launches kept.</summary>
+        /// <summary>Starts the driver with every launch. With playtesting off it records nothing and starts no session, but still uploads what earlier launches kept, unless the player's answer is nothing.</summary>
         // Whatever the setting, so a build with playtesting off never strands the recordings a playtest build of the game left.
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
         internal static void StartWithTheGame()
@@ -36,6 +36,7 @@ namespace Protokite.Playtest
         private void Update()
         {
             ProtokitePlaytest.Refresh();
+            ProtokitePlaytest.KeepConsentQuestionAnswerable();
             ProtokitePlaytest.UpdateHeavyAnalytics(SecondsSince(ref _lastUpdateAt));
         }
 

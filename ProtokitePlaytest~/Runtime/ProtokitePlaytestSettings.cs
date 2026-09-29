@@ -14,11 +14,15 @@ namespace Protokite.Playtest
         /// <summary>The Protokite API a new project talks to: production. Set http://localhost:8020 for a local stack.</summary>
         public const string DefaultProtokiteApiUrl = "https://api-protokite.qwacks.com";
 
-        [Tooltip("Off by default. While off, the playtest records nothing and starts no session; recordings an earlier playtest build of the game kept are still uploaded.")]
+        [Tooltip("Off by default. While off, the playtest records nothing and starts no session; recordings an earlier playtest build of the game kept are still uploaded, unless the player asked the playtest to collect nothing.")]
         [SerializeField] private bool playtestingEnabled;
 
         [Tooltip("The Protokite API this game reports to.")]
         [SerializeField] private string protokiteApiUrl = DefaultProtokiteApiUrl;
+
+        [Header("Player consent")]
+        [Tooltip("On by default: the player is asked what this playtest may collect (the screen, play data, both or nothing), and nothing is collected until they answer. The answer is kept on their machine for later launches. Turn it off only where players were asked another way, or for a test run with nobody to answer; everything the playtest turns on is then collected, and each session says nobody was asked.")]
+        [SerializeField] private bool askThePlayerForPlaytestConsent = true;
 
         [Header("Video recording (64-bit Windows)")]
         [Tooltip("VP8 costs a slow PC least. VP9 makes smaller files for more processor time.")]
@@ -72,6 +76,13 @@ namespace Protokite.Playtest
         {
             get => protokiteApiUrl;
             set => protokiteApiUrl = value;
+        }
+
+        /// <summary>Whether the player is asked what this playtest may collect before anything is. An answer already given counts either way.</summary>
+        public bool AskThePlayerForPlaytestConsent
+        {
+            get => askThePlayerForPlaytestConsent;
+            set => askThePlayerForPlaytestConsent = value;
         }
 
         /// <summary>The codec recordings use.</summary>

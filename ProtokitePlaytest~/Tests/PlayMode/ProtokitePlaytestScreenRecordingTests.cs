@@ -31,6 +31,7 @@ namespace Protokite.Playtest.Tests
         private ProtokitePlaytestSettings _settings;
         private string _settingsAsTheyWere;
         private string _folder;
+        private ProtokitePlaytestConsentForPlayModeTests _consent;
 
         [UnitySetUp]
         public IEnumerator SetUp()
@@ -50,6 +51,7 @@ namespace Protokite.Playtest.Tests
             _settings.PlaytestingEnabled = true;
             _settings.ProtokiteApiUrl = "http://protokite.test";
             _settings.VideoFramesPerSecond = 15;
+            _consent = new ProtokitePlaytestConsentForPlayModeTests(_settings);
             ProtokitePlaytest.ResetForNewLaunch();
             _folder = Path.Combine(Path.GetTempPath(), "protokite_screen_" + Guid.NewGuid().ToString("N"));
             ProtokitePlaytest.RecordingsFolderForTesting = Path.Combine(_folder, "Recordings");
@@ -70,6 +72,8 @@ namespace Protokite.Playtest.Tests
             Assert.IsTrue(ProtokitePlaytest.WaitForEarlierRecordingsForTesting(TimeSpan.FromSeconds(10)), "The finishing pass ended before its folder is deleted");
             ProtokitePlaytest.RecordingsFolderForTesting = null;
             ProtokitePlaytest.DeviceIdFilePathForTesting = null;
+            _consent?.Dispose();
+            _consent = null;
             if (_settings != null && _settingsAsTheyWere != null)
                 JsonUtility.FromJsonOverwrite(_settingsAsTheyWere, _settings);
             if (_folder != null && Directory.Exists(_folder))

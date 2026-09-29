@@ -164,6 +164,74 @@ namespace Protokite.Playtest.Tests
             }
         }
 
+        // What the player allowed
+
+        [UnityTest]
+        public IEnumerator TheStartSaysWhatThePlayerAllowedAndThatTheyWereAsked()
+        {
+            _settings.Settings.AskThePlayerForPlaytestConsent = true;
+            using (FlockTestClient flock = FlockTestClient.Create(Transport(FlockFakeTransport.Ok(StartAnswer("pk-1")))))
+            {
+                Assert.IsTrue(ProtokitePlaytest.SetPlaytestConsent(ProtokitePlaytestConsentChoice.PlayDataOnly));
+                StartAFlockSession(flock);
+                yield return TheStartSettles();
+
+                JObject facts = (JObject)StartBody(flock.Transport)["extra_debug"];
+                Assert.AreEqual(JTokenType.String, facts["playtest_consent"]?.Type);
+                Assert.AreEqual("play_data_only", (string)facts["playtest_consent"]);
+                Assert.AreEqual("true", (string)facts["playtest_consent_asked"], "Spelt as a string, as every engine sends it");
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator ABuildThatAsksNobodySaysSoBesideAnswerThatAllowsEverything()
+        {
+            using (FlockTestClient flock = FlockTestClient.Create(Transport(FlockFakeTransport.Ok(StartAnswer("pk-1")))))
+            {
+                StartAFlockSession(flock);
+                yield return TheStartSettles();
+
+                JObject facts = (JObject)StartBody(flock.Transport)["extra_debug"];
+                Assert.AreEqual("video_and_play_data", (string)facts["playtest_consent"]);
+                Assert.AreEqual("false", (string)facts["playtest_consent_asked"], "Otherwise nobody asked reads the same as a player who allowed everything");
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator NoSessionStartsWhileThePlayerIsAskedOrAfterTheyChooseNothingUntilTheyChangeTheirMind()
+        {
+            _settings.Settings.AskThePlayerForPlaytestConsent = true;
+            using (FlockTestClient flock = FlockTestClient.Create(Transport(FlockFakeTransport.Ok(StartAnswer("pk-1")))))
+            {
+                StartAFlockSession(flock);
+                Assert.IsNotNull(flock.Client.ServerSessionId, "Precondition: a Flock session reached the server");
+                Assert.AreEqual(ProtokitePlaytestStatus.WaitingForPlayerConsent, ProtokitePlaytest.Status);
+                yield return ForAWhile();
+                Assert.AreEqual(0, flock.Transport.CountTo(StartRoute), "Nothing is sent while the question waits");
+
+                Assert.IsTrue(ProtokitePlaytest.SetPlaytestConsent(ProtokitePlaytestConsentChoice.Nothing));
+                yield return ForAWhile();
+                Assert.AreEqual(0, flock.Transport.CountTo(StartRoute), "Nothing makes no session, exactly as playtesting off");
+                Assert.AreEqual(ProtokitePlaytestSessionState.NotStarted, ProtokitePlaytest.SessionState);
+
+                Assert.IsTrue(ProtokitePlaytest.SetPlaytestConsent(ProtokitePlaytestConsentChoice.VideoOnly));
+                yield return TheStartSettles();
+                Assert.AreEqual("pk-1", ProtokitePlaytest.PlaytestSessionId, "A change of mind starts the launch's one session");
+                Assert.AreEqual("video_only", (string)StartBody(flock.Transport)["extra_debug"]["playtest_consent"]);
+            }
+        }
+
+        // A check that something did not happen waits real time, and lets each frame run the playtest.
+        private static IEnumerator ForAWhile(float seconds = 1f)
+        {
+            DateTime until = DateTime.UtcNow.AddSeconds(seconds);
+            while (DateTime.UtcNow < until)
+            {
+                ProtokitePlaytest.Refresh();
+                yield return null;
+            }
+        }
+
         [UnityTest]
         public IEnumerator OneSessionPerLaunchAcrossSignOutSignInANewFlockSessionAndAFlockRestart()
         {
