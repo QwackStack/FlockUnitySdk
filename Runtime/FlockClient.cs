@@ -66,6 +66,10 @@ namespace Flock
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
         private static void ResetStaticState()
         {
+#if !FLOCK_NO_ANALYTICS
+            // Unity's log events are static, so the previous play session's capture would go on hearing this one's exceptions.
+            (_instance?._analytics as FlockAnalyticsProvider)?.StopListeningForExceptions();
+#endif
             // The previous play session's launch lets go of its folder, so this one can take it over.
             _instance?._analyticsLaunches?.Dispose();
             _instance = null;
@@ -175,7 +179,7 @@ namespace Flock
             InitializationError = null;
             if (_instance == null) return;
 #if !FLOCK_NO_ANALYTICS
-            (_instance._analytics as FlockAnalyticsProvider)?.UninstallGlobalExceptionHook();
+            (_instance._analytics as FlockAnalyticsProvider)?.StopForShutdown();
 #endif
 #if !FLOCK_NO_COMMANDS
             _instance._commands?.UnsubscribeFlushTriggers();

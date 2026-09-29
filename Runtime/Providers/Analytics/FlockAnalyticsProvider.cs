@@ -27,12 +27,23 @@ namespace Flock.Providers
         // This launch's own folder, and the launches that ended before it.
         private readonly FlockAnalyticsLaunches _launches;
         private bool _initialized;
-        private bool _exceptionHookInstalled;
+        // Exception capture: the hooks, the repeat rule, and the frame and quit handlers that take what the hooks kept.
+        private readonly FlockExceptionCapture _exceptionCapture;
+        private readonly FlockRepeatedExceptionCounter _repeatedExceptions;
+        private readonly List<FlockExceptionRepeatSummary> _repeatSummaries = new List<FlockExceptionRepeatSummary>();
+        private FlockBehaviour _lifecycle;
+        private double _heldBackReportedAt = double.MinValue;
         private string _currentPlayerId;
         private bool _heartbeatInFlight;
         private bool _registrationInFlight;
         private readonly FlockConsentStore _consentStore = new FlockConsentStore();
         private bool _hasConsent;
+
+        /// <summary>Tracks crashes in the editor too, where a stopped Play session is no crash; for tests of the launch's crash marker.</summary>
+        internal static bool TrackTerminationInTheEditorForTesting;
+
+        /// <summary>Whether this provider's exception capture is listening to Unity.</summary>
+        internal bool IsListeningForExceptions => _exceptionCapture != null && _exceptionCapture.IsListening;
 
         public FlockAnalyticsProvider(FlockClient client) : base(client)
         {
@@ -50,11 +61,29 @@ namespace Flock.Providers
             // Enabled is resolved once here so the tracker itself stays platform-agnostic and testable:
             // needs disk persistence, and Editor/WebGL are excluded (Stop isn't a death; WebGL has no reliable lifecycle).
             bool terminationTrackingEnabled = _config.PersistSessionOnDisk
-                && !Application.isEditor
+                && (!Application.isEditor || TrackTerminationInTheEditorForTesting)
                 && Application.platform != RuntimePlatform.WebGLPlayer;
-            _terminationTracker = new FlockTerminationTracker(client.Logger, terminationTrackingEnabled, _launches.TerminationMarkerPath);
+            _terminationTracker = new FlockTerminationTracker(client.Logger, terminationTrackingEnabled, _launches.TerminationMarkerPath,
+                _config.HeartbeatIntervalSeconds);
             if (_config.PersistSessionOnDisk && Application.platform == RuntimePlatform.WebGLPlayer)
                 client.Logger.LogWarning("Termination tracking is disabled on WebGL (no reliable quit/pause lifecycle)");
+
+            // From start-up, not sign-in: log events carry no player, and a crash before sign-in is a crash too.
+            _repeatedExceptions = new FlockRepeatedExceptionCounter(_config.ExceptionRepeatWindowSeconds);
+            if (_config.CaptureExceptions)
+            {
+                _exceptionCapture = new FlockExceptionCapture();
+                _exceptionCapture.Start();
+            }
+            if (_hasConsent)
+                _terminationTracker.BeginTracking();
+            _lifecycle = FlockBehaviour.Instance;
+            if (_lifecycle != null)
+            {
+                _lifecycle.OnTick += HandleLaunchTick;
+                _lifecycle.OnQuit += HandleLaunchQuit;
+                _lifecycle.OnDisabled += HandleLifecycleDisabled;
+            }
         }
 
         private IEventCache<T> TryCreateCache<T>(FlockClient client, string subfolder, bool enabled) where T : class
@@ -99,6 +128,7 @@ namespace Flock.Providers
             if (granted)
             {
                 Client.Logger.LogInfo("Analytics consent granted");
+                _terminationTracker.BeginTracking();
 
                 if (Client.IsAuthenticated && _config.AutoStartSession && (_session == null || !_session.IsActive))
                     ResumeSessionOnConsentGranted();
@@ -111,7 +141,7 @@ namespace Flock.Providers
             if (_session != null && _session.IsActive)
                 _session.Discard();
 
-            // Discard deliberately skips OnSessionEnded, so the tombstone needs its own stop.
+            // Nothing is collected without consent, a crash marker included.
             _terminationTracker.StopTracking();
 
             _initialized = false;
@@ -202,8 +232,6 @@ namespace Flock.Providers
             _session.OnSessionEnded += HandleSessionEnded;
             _session.OnQuitFlush -= HandleQuitFlush;
             _session.OnQuitFlush += HandleQuitFlush;
-            _session.OnHeartbeat -= _terminationTracker.HandleHeartbeat;
-            _session.OnHeartbeat += _terminationTracker.HandleHeartbeat;
 
             await ReportWhatEndedLaunchesLeftAsync(cancellationToken);
 
@@ -226,8 +254,7 @@ namespace Flock.Providers
                     evt => evt.PlayerId == FlockConstant.DummyUserID, evt => evt.PlayerId = newPlayerId);
             }
 
-            InstallGlobalExceptionHook();
-
+            // What was captured before sign-in waits in the log queue until now.
             FlushCacheInBackground();
         }
 
@@ -237,46 +264,114 @@ namespace Flock.Providers
             _initialized = false;
         }
 
-        // Subscribed once per provider lifetime; FlockBehaviour.OnException fires for
-        // every Unity LogType.Exception, so unhandled errors flow into log_event without
-        // any caller-side wiring. Safe to call repeatedly — re-init won't double-hook.
-        private void InstallGlobalExceptionHook()
+        /// <summary>A diagnostic saying how many different exceptions were counted rather than reported, past the launch's limit.</summary>
+        internal const string ExceptionReportsHeldBackEvent = "exception_reports_held_back";
+
+        // The held-back count goes out at most this often, and whatever is left at quit.
+        private const double HeldBackReportIntervalSeconds = 60.0;
+
+        /// <summary>The Flock SDK shuts down: capture stops, what it kept is queued, and the launch's crash marker is cleared.</summary>
+        internal void StopForShutdown()
         {
-            if (_exceptionHookInstalled)
-                return;
-
-            FlockBehaviour behaviour = FlockBehaviour.Instance;
-            if (behaviour == null)
-                return;
-
-            behaviour.OnException += HandleGlobalException;
-            _exceptionHookInstalled = true;
+            if (_lifecycle != null)
+            {
+                _lifecycle.OnTick -= HandleLaunchTick;
+                _lifecycle.OnQuit -= HandleLaunchQuit;
+                _lifecycle.OnDisabled -= HandleLifecycleDisabled;
+                _lifecycle = null;
+            }
+            StopListeningForExceptions();
+            ReportCapturedExceptions(Time.realtimeSinceStartupAsDouble, true);
+            // A clean end: a marker left behind would read as a crash to the next Create.
+            _terminationTracker.StopTracking();
         }
 
-        // Mirror of InstallGlobalExceptionHook — must run on Shutdown so a re-init
-        // doesn't leave this provider bound to the DontDestroyOnLoad FlockBehaviour
-        // (stale handler → duplicate sends + a leaked FlockClient).
-        internal void UninstallGlobalExceptionHook()
+        /// <summary>Takes the hooks off Unity's static events, which outlive a Play session when domain reload is off.</summary>
+        internal void StopListeningForExceptions() => _exceptionCapture?.Stop();
+
+        /// <summary>Every frame: what the capture hooks kept, then the crash marker's heartbeat, which saves their count.</summary>
+        internal void HandleLaunchTick()
         {
-            if (!_exceptionHookInstalled)
-                return;
-
-            if (FlockBehaviour.IsAvailable)
-                FlockBehaviour.Instance.OnException -= HandleGlobalException;
-
-            _exceptionHookInstalled = false;
+            double now = Time.realtimeSinceStartupAsDouble;
+            ReportCapturedExceptions(now, false);
+            _terminationTracker.HandleTick(now);
         }
 
-        private void HandleGlobalException(string message, string stackTrace)
+        // A clean quit: open repeat counts are queued, since no later frame will close them, and the crash marker goes.
+        private void HandleLaunchQuit()
         {
+            ReportCapturedExceptions(Time.realtimeSinceStartupAsDouble, true);
+            _terminationTracker.StopTracking();
+        }
+
+        /// <summary>Unity disables the SDK's object at quit after every script's OnApplicationQuit, whose exceptions no frame will take.</summary>
+        internal void HandleLifecycleDisabled() => ReportCapturedExceptions(Time.realtimeSinceStartupAsDouble, true);
+
+        /// <summary>Main thread: what the hooks kept goes through the repeat rule into the log queue. Nothing is made when there is nothing to do.</summary>
+        internal void ReportCapturedExceptions(double nowSeconds, bool quitting)
+        {
+            if (_exceptionCapture == null)
+                return;
+
             try
             {
-                LogDiagnosticException(message, stackTrace);
+                while (_exceptionCapture.TryTake(out FlockCapturedException captured))
+                {
+                    // Every occurrence counts toward the next launch's crash report, repeats included.
+                    _terminationTracker.NoteException();
+                    if (!_hasConsent)
+                        continue;
+                    string key = FlockRepeatedExceptionCounter.MakeSameFaultKey(captured.Source, captured.Message, captured.StackTrace);
+                    if (_repeatedExceptions.ShouldReportNow(key, captured, nowSeconds))
+                        EnqueueLog(BuildCapturedException(captured.Message, captured.StackTrace, captured.Source, null));
+                }
+                int lost = _exceptionCapture.TakeLost();
+                _terminationTracker.NoteExceptions(lost);
+                _repeatedExceptions.CountHeldBack(lost);
+
+                if (quitting)
+                    _repeatedExceptions.CollectAll(_repeatSummaries);
+                else
+                    _repeatedExceptions.CollectFinished(nowSeconds, _repeatSummaries);
+                if (_repeatSummaries.Count > 0)
+                {
+                    foreach (FlockExceptionRepeatSummary summary in _repeatSummaries)
+                        EnqueueLog(BuildCapturedException(summary.Message, summary.StackTrace, summary.Source, summary.Repeats));
+                    _repeatSummaries.Clear();
+                }
+
+                if (_repeatedExceptions.HeldBack > 0 && (quitting || nowSeconds - _heldBackReportedAt >= HeldBackReportIntervalSeconds))
+                {
+                    _heldBackReportedAt = nowSeconds;
+                    EnqueueLog(BuildLogEvent(LogEventType.Debug, ExceptionReportsHeldBackEvent, extraData: new Dictionary<string, object>
+                    {
+                        { "held_back_count", _repeatedExceptions.TakeHeldBack() },
+                        { "most_different_faults_per_launch", FlockRepeatedExceptionCounter.MostDifferentFaultsPerLaunch }
+                    }));
+                }
             }
             catch (Exception ex)
             {
-                Client.Logger.LogWarning($"Global exception capture failed: {ex.Message}");
+                Client.Logger.LogWarning($"A captured exception could not be queued: {ex.Message}");
             }
+        }
+
+        // A captured exception; a repeat summary also says how many more times it happened in its window.
+        private LogEventRequest BuildCapturedException(string message, string stackTrace, string source, int? repeats)
+        {
+            Dictionary<string, object> extraData = new Dictionary<string, object> { { "exception_source", source } };
+            if (repeats.HasValue)
+            {
+                extraData["repeat_count"] = repeats.Value;
+                extraData["repeat_window_seconds"] = _repeatedExceptions.WindowSeconds;
+            }
+            return BuildLogEvent(
+                LogEventType.Exception,
+                message: message,
+                errorMessage: message,
+                errorTraceback: stackTrace,
+                errorTracebackLines: SplitStackTrace(stackTrace),
+                extraData: extraData);
         }
 
         public async Task<string> StartSessionAsync(CancellationToken cancellationToken = default)
@@ -301,7 +396,7 @@ namespace Flock.Providers
             }
 
             string localId = _session.Start(Client.CurrentPlayerId ?? FlockConstant.DummyUserID);
-            _terminationTracker.BeginTracking(localId);
+            _terminationTracker.NoteSessionStarted(localId);
 
             string serverId = await TryRegisterSessionAsync(cancellationToken);
             return serverId ?? localId;
@@ -879,8 +974,8 @@ namespace Flock.Providers
         // is cleared. A logout end delivers on the next login's drain.
         private void HandleSessionEnded(FlockSessionSnapshot snapshot)
         {
-            // Every clean end path lands here — the tombstone must go before any early return.
-            _terminationTracker.StopTracking();
+            // The launch goes on after a session ends, and its crash marker with it; only a clean quit or shutdown clears it.
+            _terminationTracker.NoteSessionEnded();
 
             if (_sessionEndCache == null)
                 return;
@@ -955,25 +1050,26 @@ namespace Flock.Providers
             }
 
             string classification = FlockTerminationTracker.Classify(marker);
-            LogEventRequest report = BuildLogEvent(
-                LogEventType.Debug,
-                FlockTerminationTracker.EventName,
-                extraData: new Dictionary<string, object>
-                {
-                    { "previous_session_id", marker.SessionId },
-                    { "classification", classification },
-                    { "last_alive_at", marker.LastAliveUtc.ToString("o") },
-                    { "unhandled_exception_count", marker.ExceptionCount },
-                    { "app_version", Application.version },
-                    { "sdk_version", FlockSdkVersion.Current }
-                });
+            Dictionary<string, object> details = new Dictionary<string, object>
+            {
+                { "classification", classification },
+                { "last_alive_at", marker.LastAliveUtc.ToString("o") },
+                { "unhandled_exception_count", marker.ExceptionCount },
+                { "app_version", Application.version },
+                { "sdk_version", FlockSdkVersion.Current }
+            };
+            // Left out for a launch that ended with no session running: before sign-in, or after one ended.
+            if (!string.IsNullOrEmpty(marker.SessionId))
+                details["previous_session_id"] = marker.SessionId;
+            LogEventRequest report = BuildLogEvent(LogEventType.Debug, FlockTerminationTracker.EventName, extraData: details);
 
             string handle = _logEventCache.Enqueue(report);
             if (handle != null)
             {
                 // Deleted only after the durable enqueue — a failed write retries next launch.
                 FlockTerminationTracker.DeleteMarker(markerPath, Client.Logger);
-                Client.Logger.LogInfo($"Previous run terminated dirty ({classification}); app_termination queued under Diagnostics for session {marker.SessionId}");
+                string during = string.IsNullOrEmpty(marker.SessionId) ? "with no session running" : $"during session {marker.SessionId}";
+                Client.Logger.LogInfo($"Previous run terminated dirty ({classification}) {during}; app_termination queued under Diagnostics");
                 return true;
             }
 

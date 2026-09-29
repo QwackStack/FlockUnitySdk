@@ -172,7 +172,7 @@ Per-feature usage and examples live in their own guides:
 | [Leaderboards](Docs~/leaderboards.md) | Standings, my-rank, around-me by board name; windows, board config, score formatting |
 | [Assets](Docs~/assets.md) | Listing/lookup, typed downloads, disk cache, preloading |
 | [Notifications](Docs~/notifications.md) | Player inbox, unread badge event, scheduling a template for later, pending-schedule tracking |
-| [Analytics](Docs~/analytics.md) | Gameplay events, sessions, transactions, diagnostics, consent, unexpected-termination detection |
+| [Analytics](Docs~/analytics.md) | Gameplay events, sessions, transactions, diagnostics, exception capture, consent, unexpected-termination detection |
 | [SDK Events](Docs~/events.md) | The `FlockEvents` hub — lifecycle, auth, and session events |
 | [Codegen](Docs~/codegen.md) | Sync Schemas, generated templates/configs/shops/achievements, content catalog |
 | [Error handling](Docs~/errors.md) | The `FlockException` hierarchy, `.ErrorCode`, and the full coded-error list |
