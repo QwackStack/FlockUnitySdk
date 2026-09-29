@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 It is released with the Flock SDK, at the Flock SDK's version.
 
 
+## [1.56.0]
+
+No changes to the Protokite Playtest package: this version is released together with a Flock SDK fix to exception
+capture, which no longer ends an IL2CPP player when a game's exception throws from its own `Message` getter.
+
 ## [1.55.0]
 
 No changes to the Protokite Playtest package: this version is released together with the Flock SDK's wider exception

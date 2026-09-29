@@ -280,9 +280,10 @@ namespace Flock
         }
 
         // Always Debug, not IFlockLogger — subscriber bugs must surface even with SDK logging off.
+        // Read through FlockExceptionText: a ToString that throws here would escape the catch into the SDK code raising the event.
         private static void LogSubscriberException(string eventName, Exception exception)
         {
-            Debug.LogError($"[Flock] FlockEvents.{eventName} subscriber threw: {exception}");
+            Debug.LogError($"[Flock] FlockEvents.{eventName} subscriber threw: {FlockExceptionText.FullText(exception)}");
         }
     }
 }

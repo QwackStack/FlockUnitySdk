@@ -22,7 +22,7 @@ namespace Flock.Logging
         public void LogInfo(string message) { if (_verbose) UnityEngine.Debug.Log($"[Flock SDK] {message}"); }
         public void LogWarning(string message) => UnityEngine.Debug.LogWarning($"[Flock SDK] {message}");
         public void LogError(string message) => UnityEngine.Debug.LogError($"[Flock SDK] {message}");
-        public void LogError(string message, Exception exception) => UnityEngine.Debug.LogError($"[Flock SDK] {message}\nException: {exception}");
+        public void LogError(string message, Exception exception) => UnityEngine.Debug.LogError($"[Flock SDK] {message}\nException: {FlockExceptionText.FullText(exception)}");
         public void LogException(Exception exception)
         {
             _loggingAnException = true;

@@ -87,6 +87,11 @@ way.
 - A player built with **Stack Trace** set to None for exceptions hands the SDK no stack, so it sends the frames that
   logged the exception instead, from the game's call to `Debug.LogException`. An exception Unity caught itself (thrown
   from `Update`, say) then has no frame of the game's, and the same-fault rule goes by its message alone.
+- A captured exception's message is cut to 4,096 characters and its stack to 8,192, and the entry notes the full length at
+  the cut (`[cut from 70000 characters]`). What you report yourself through `LogDiagnosticException` is not cut.
+- An exception whose own `Message` getter throws (an override that reads a null field, say) is reported under its type
+  name, with `(its message could not be read: ...)` in place of its message; one whose `StackTrace` getter throws is sent
+  with no stack.
 
 ## Sessions, transactions and screen views
 

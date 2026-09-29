@@ -8,6 +8,7 @@ using Flock.Constants;
 using Flock.Exceptions;
 using Flock.Http;
 using Flock.Interfaces;
+using Flock.Logging;
 using Flock.Models;
 using Newtonsoft.Json;
 using UnityEngine;
@@ -600,7 +601,8 @@ namespace Flock.Providers
             if (exception == null)
                 return;
 
-            LogDiagnosticException(exception.Message, exception.StackTrace, errorData, extraData);
+            // A game's exception type may throw from its own getters; a report must not throw back at the game.
+            LogDiagnosticException(FlockExceptionText.MessageOf(exception), FlockExceptionText.StackTraceOf(exception), errorData, extraData);
         }
 
         public void LogDiagnosticException(
