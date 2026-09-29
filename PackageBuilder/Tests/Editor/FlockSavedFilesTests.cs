@@ -115,16 +115,21 @@ namespace Flock.Tests.Editor
             StringAssert.DoesNotContain(".evt", _seenAtEachCopy.Last(), "The last copy has no queued event left to send again");
         }
 
-        // Static File and Directory changes, streams that write, and FileInfo or DirectoryInfo changes (which take no path).
+        // Static File and Directory changes, streams that write, and FileInfo or DirectoryInfo changes (which take no path). Their Create
+        // and Replace share names with other types' calls, so they are found only on a FileInfo or DirectoryInfo made on the same line.
         private static readonly Regex FileChange = new Regex(
             @"(?<![\w.])(File\.(Delete|Move|Replace|WriteAll\w*|AppendAll\w*|AppendText|Copy|Create|CreateText|Open|OpenWrite|Set\w+)\(|Directory\.(Delete|Move|CreateDirectory|Set\w+)\()"
-            + @"|new FileStream\(|new StreamWriter\(|\.(MoveTo|CopyTo|CreateSubdirectory)\(|\.Delete\((true|false)?\)");
+            + @"|new FileStream\(|new StreamWriter\(|\.(MoveTo|CopyTo|CreateSubdirectory)\(|\.Delete\((true|false)?\)"
+            + @"|\.(CreateText|AppendText|OpenWrite)\(\)|\.Open\(FileMode|(FileInfo|DirectoryInfo)\([^;]*\)\.(Create|Replace)\(");
 
         [Test]
         public void NothingInTheRuntimeChangesASavedFileExceptThroughFlockSavedFiles()
         {
             Assert.GreaterOrEqual(FlockRuntimeSource.LinesMatchingIn("FlockSavedFiles.cs", FileChange).Count, 9, "Control: the scan finds the changes FlockSavedFiles makes");
             Assert.IsTrue(FileChange.IsMatch("new FileInfo(path).Delete();") && FileChange.IsMatch("folder.MoveTo(other);"), "Control: FileInfo changes are found");
+            Assert.IsTrue(FileChange.IsMatch("StreamWriter writer = info.CreateText();") && FileChange.IsMatch("info.Open(FileMode.Append)")
+                && FileChange.IsMatch("new DirectoryInfo(folder).Create();") && FileChange.IsMatch("new FileInfo(from).Replace(to, null);"), "Control: FileInfo writes and creates are found");
+            Assert.IsFalse(FileChange.IsMatch("using (SHA1 sha = SHA1.Create())") || FileChange.IsMatch("path.Replace('a', 'b')"), "Control: other types' Create and Replace are not");
             Assert.IsFalse(FileChange.IsMatch("FlockSavedFiles.Delete(path);") || FileChange.IsMatch("new DirectoryInfo(dir).GetFiles()"), "Control: reads and FlockSavedFiles are not");
             List<string> found = FlockRuntimeSource.LinesMatching(FileChange, "FlockSavedFiles.cs");
             Assert.IsEmpty(found, "Change saved files through FlockSavedFiles, so a WebGL player copies them to browser storage:\n" + string.Join("\n", found));

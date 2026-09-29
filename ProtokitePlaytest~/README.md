@@ -4,8 +4,8 @@ Playtesting for games built with the Flock SDK: each play session, gameplay reco
 reported to your Protokite playtest.
 
 > **Early version.** This release asks the player what the playtest may collect, loads your playtest's config, runs one
-> Protokite session per launch, records the game's screen on 64-bit Windows and uploads it to that session, and, with heavy
-> analytics on, sends performance and level events through the Flock SDK. The feedback form arrives in a release that follows.
+> Protokite session per launch, records the game's screen on 64-bit Windows and uploads it to that session, sends
+> performance and level events through the Flock SDK with heavy analytics on, and shows your playtest's feedback form.
 
 ## Install
 
@@ -56,7 +56,7 @@ logged once, as a warning that says what to change.
 | `Ready` | The playtest's config is loaded |
 | `PlaytestNoLongerCollecting` | The playtest has closed and takes no more sessions, so playtesting is off until the game is launched again |
 | `WaitingForPlayerConsent` | The playtest is loaded, and nothing is collected until the player answers the consent question |
-| `PlayerRefusedPlaytest` | The player asked the playtest to collect nothing, so it behaves as with playtesting off |
+| `PlayerRefusedPlaytest` | The player asked the playtest to collect nothing, so it behaves as with playtesting off, except that a feedback form they send still goes |
 
 A refusal (`PlaytestNotLinked`, `ProtokiteRefusedApiKey`, `PlaytestConfigForAnotherVersion`) is not asked again until the Flock SDK
 is started again (or the game relaunched), since the answer would be the same.
@@ -65,7 +65,8 @@ is started again (or the game relaunched), since the answer would be the same.
 
 Before a playtest build collects anything, it asks its player what the playtest may collect: **the screen and play data**,
 **the screen only**, **play data only**, or **nothing**. Nothing is recorded, measured or sent, and no Protokite session is
-started, until they answer, and **nothing** reads exactly like **Playtesting Enabled** off. The question says in its own words
+started, until they answer, and **nothing** reads like **Playtesting Enabled** off, except that a feedback form the player
+sends themselves still goes: it is their own message, not something the playtest collects. The question says in its own words
 that it is the playtest's, separate from any privacy or analytics choice the game asks about: it does not change the Flock
 SDK's analytics consent, and exceptions the Flock SDK captures are the Flock SDK's, whatever the answer.
 
@@ -107,6 +108,62 @@ ProtokitePlaytest.IsConsentQuestionOpen
 its feedback form (`Form`, null when the playtest has none). Check a feature with
 `ProtokitePlaytest.IsFeatureEnabled(ProtokitePlaytestFeatures.VideoRecording)`; a feature the config does not mention is off,
 and so is one the player's answer does not allow (a feature this build does not know needs the answer that allows everything).
+
+## The feedback form
+
+When your playtest publishes a feedback form in Protokite, the player opens it over the game with **F9** and fills it in.
+It is built from what you published, every question, label, help text and option, so editing the form in Protokite needs no
+new build: text, many-line text, a rating from 1 to 5, a choice of options, and a checkbox. A question of a kind this
+package does not know yet is a text box, which is how Protokite reads it. It is the player's own message, so it opens and
+sends **whatever their consent answer**, "nothing" included; it never opens over the consent question.
+
+- **Send checks the answers the way Protokite does**, and shows every problem against its question before anything is sent:
+  a required question left empty, a rating out of range, an option the question does not offer. A required checkbox counts
+  when it is left unticked, and an empty optional answer is left out rather than sent empty.
+- **A sent form is kept on the device first and sent from there**, so neither a closed game nor a lost network loses it: one
+  that could not go now is sent when the network comes back, two minutes later, or by a later launch. One Protokite refuses
+  for good is deleted, and the log names the question it refused. It names this launch's Protokite session once one has
+  started, and is sent with the Game Version ID it was filled in under.
+- A form that names no session, whose send failed after Protokite may already have stored it, is sent again: the studio may
+  see that report twice rather than lose it. One naming a session is replaced, never added.
+- Closing it without sending keeps what was typed for the rest of the launch. Escape in a text box does nothing (Unity's own
+  text box would put back what it held before), and a click puts the caret where it lands rather than selecting everything.
+- **Upload your recording**: while this launch records the screen and its session has started, the form offers to stop the
+  recording and send it now. Opening the form never stops the recording on its own.
+- While the form is open the cursor is shown and free. **The game still reads its own keys**: a game that moves on WASD, or
+  opens a menu on Escape, should ignore its input while `ProtokitePlaytest.IsFeedbackFormOpen`, or turn on **Pause The Game
+  While The Form Is Open**. A click in the form's first half second is ignored, and so is one while the game locks the cursor
+  again every frame (a warning says so).
+- With the old Input Manager, Unity's runtime UI misses the odd quick click, or takes it where the cursor has moved to (up to
+  10 in 100 measured; the Input System missed none). Nothing wrong is sent: the player sees the click did nothing, and clicks again.
+
+| Setting | Default | |
+|---|---|---|
+| Feedback Form Key | F9 | Opens the form and closes it again, also while the player types in it. Read when the playtest loads; None leaves opening it to your game |
+| Pause The Game While The Form Is Open | off | The time scale is 0 while the form is open, and put back when it closes unless the game set another one meanwhile |
+
+```csharp
+ProtokitePlaytest.CanOpenFeedbackForm            // a form to open: leave your "give feedback" button out when false
+ProtokitePlaytest.OpenFeedbackForm()             // and CloseFeedbackForm(), IsFeedbackFormOpen
+ProtokitePlaytest.CanSendTheRecording            // and StopRecordingAndSendIt(), what the form's recording button does
+```
+
+A game drawing a form of its own reads the questions from `ProtokitePlaytest.FeedbackForm` and sends the answers through the
+same checking and keeping:
+
+```csharp
+ProtokitePlaytestFormAnswers answers = new ProtokitePlaytestFormAnswers();
+answers.SetRating("rating", 4);
+answers.SetChosenOption("category", "Bug");
+answers.SetText("title", "Fell through the floor");
+answers.SetChecked("contact", false);
+foreach (ProtokitePlaytestFormProblem problem in answers.FindProblems(ProtokitePlaytest.FeedbackForm))
+    Debug.Log(problem.FieldId + ": " + problem.Message);
+ProtokitePlaytest.SendFeedbackForm(answers);   // false, with a warning, when there are problems
+```
+
+Forms waiting to be sent are kept in `ProtokitePlaytest/FeedbackForms` under the game's persistent data folder, one file each,
+with no API key in them. In the editor, **Protokite > Playtest > Open The Feedback Form** opens it in Play Mode.
 
 ## Sessions
 
@@ -253,6 +310,11 @@ are told video is for 64-bit Windows rather than that the DLL is missing. On 64-
 and 12, Vulkan and OpenGL, in the Built-in Render Pipeline and URP, in Linear and Gamma colour. It needs a graphics card
 that runs compute shaders; a game that draws nothing (a server build, or one started with `-nographics` or `-batchmode`)
 records nothing.
+
+**On WebGL** the playtest's files (the consent answer, the device id and feedback forms waiting to be sent) are copied to the
+browser's storage after every change, so they are there on the player's next visit wherever the browser keeps the site's data
+(a private window forgets it when closed, and a browser where the player blocked site data keeps none). A change made in the
+moment before the tab closes may not finish copying, and two tabs of one game share one storage, where the last to copy wins.
 
 ## Third-party software
 

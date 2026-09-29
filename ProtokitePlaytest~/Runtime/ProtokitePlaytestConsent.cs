@@ -8,7 +8,8 @@ namespace Protokite.Playtest
 {
     /// <summary>
     /// What the player let this playtest collect. The playtest's own question, separate from the Flock SDK's analytics consent,
-    /// which is the game's. Nothing is collected until it is answered, and <see cref="Nothing"/> reads exactly like playtesting off.
+    /// which is the game's. Nothing is collected until it is answered, and <see cref="Nothing"/> reads like playtesting off, except that a
+    /// feedback form the player sends themselves still goes: it is their own message, not something the playtest collects.
     /// </summary>
     public enum ProtokitePlaytestConsentChoice
     {
@@ -92,7 +93,7 @@ namespace Protokite.Playtest
                 case ProtokitePlaytestConsentChoice.VideoAndPlayData: return "The player let this playtest record the screen and collect play data.";
                 case ProtokitePlaytestConsentChoice.VideoOnly: return "The player let this playtest record the screen, and no play data is collected.";
                 case ProtokitePlaytestConsentChoice.PlayDataOnly: return "The player let this playtest collect play data, and the screen is not recorded.";
-                case ProtokitePlaytestConsentChoice.Nothing: return "The player asked this playtest to collect nothing, so it collects nothing at all.";
+                case ProtokitePlaytestConsentChoice.Nothing: return "The player asked this playtest to collect nothing, so it collects nothing; a feedback form they send themselves still goes.";
                 default: return "The player has not yet said what this playtest may collect, so nothing is collected.";
             }
         }
@@ -156,12 +157,12 @@ namespace Protokite.Playtest
             string temporary = Path + "." + Guid.NewGuid().ToString("N") + TemporarySuffix;
             try
             {
-                Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Path));
-                File.WriteAllText(temporary, saved.ToString(Formatting.None));
+                ProtokitePlaytestSavedFiles.CreateFolder(System.IO.Path.GetDirectoryName(Path));
+                ProtokitePlaytestSavedFiles.WriteText(temporary, saved.ToString(Formatting.None));
                 if (File.Exists(Path))
-                    File.Replace(temporary, Path, null);
+                    ProtokitePlaytestSavedFiles.Replace(temporary, Path);
                 else
-                    File.Move(temporary, Path);
+                    ProtokitePlaytestSavedFiles.Move(temporary, Path);
                 if (Read() == choice)
                     return true;
             }
@@ -182,8 +183,8 @@ namespace Protokite.Playtest
                 if (File.Exists(Path))
                 {
                     // Even a read-only file: nothing about the flag makes an answer the player took back worth keeping.
-                    File.SetAttributes(Path, FileAttributes.Normal);
-                    File.Delete(Path);
+                    ProtokitePlaytestSavedFiles.SetAttributes(Path, FileAttributes.Normal);
+                    ProtokitePlaytestSavedFiles.Delete(Path);
                 }
             }
             catch (Exception)
@@ -214,7 +215,7 @@ namespace Protokite.Playtest
                 try
                 {
                     if (!olderThan.HasValue || DateTime.UtcNow - File.GetLastWriteTimeUtc(file) >= olderThan.Value)
-                        File.Delete(file);
+                        ProtokitePlaytestSavedFiles.Delete(file);
                 }
                 catch (Exception)
                 {

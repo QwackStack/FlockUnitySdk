@@ -79,12 +79,12 @@ namespace Protokite.Playtest
             string temporary = Path + "." + Guid.NewGuid().ToString("N") + TemporarySuffix;
             try
             {
-                Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Path));
-                File.WriteAllText(temporary, Guid.NewGuid().ToString("D"));
+                ProtokitePlaytestSavedFiles.CreateFolder(System.IO.Path.GetDirectoryName(Path));
+                ProtokitePlaytestSavedFiles.WriteText(temporary, Guid.NewGuid().ToString("D"));
                 if (File.Exists(Path))
-                    File.Replace(temporary, Path, null);
+                    ProtokitePlaytestSavedFiles.Replace(temporary, Path);
                 else
-                    File.Move(temporary, Path);
+                    ProtokitePlaytestSavedFiles.Move(temporary, Path);
             }
             catch (Exception)
             {
@@ -137,7 +137,7 @@ namespace Protokite.Playtest
         {
             try
             {
-                File.Delete(file);
+                ProtokitePlaytestSavedFiles.Delete(file);
             }
             catch (Exception)
             {

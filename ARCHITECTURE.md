@@ -157,11 +157,39 @@ script.
   game that locks it again, gives the game's cursor back when closed (not an ended launch's), and is drawn only while playing,
   not in batch mode, with graphics. **ProtokitePlaytestConsentQuestionView**: the words and the four buttons from one options
   table the tests read too; a press in the first half second is ignored, and a mouse press while the game keeps the cursor
-  locked. **Protokite > Playtest > Ask The Player Again** (editor) forgets the saved answer.
+  locked. **Protokite > Playtest > Ask The Player Again** (editor) forgets the saved answer. **ProtokitePlaytestFormView**: the
+  feedback form built from the published form (text, many-line text, a 1-5 rating and options as buttons, a checkbox recorded
+  unticked when drawn, unknown kinds as text), text boxes styled in code (with no theme their input box has no size), Escape
+  stopped before a text field puts back its old text, select-all on click off, problems shown once Send is tried; Send, Close
+  and **Upload your recording** have the consent question's two press guards. Buttons' actions are kept by name
+  (`PressForTesting`) for tests of a view in no panel. **Protokite > Playtest > Open The Feedback Form** (editor, Play Mode).
+- **Feedback form (`ProtokitePlaytestFormAnswers.cs`, `ProtokitePlaytestFormSubmission.cs`, `ProtokitePlaytestForms.cs`)** —
+  `ProtokitePlaytestFormAnswers` is the inert half: Protokite's own validator's rules (a required checkbox answered unticked,
+  empty optional answers left out, unknown kinds as text, select trimmed and ordinal, rating 1-5), every problem in the
+  studio's order, and the answers as Protokite keeps them (`ToWire`). `ProtokitePlaytestFormSubmission` is one form as kept
+  (session, Steam or device id, URL, Game Version ID, answers; no API key; read back with date parsing off) and its body (no
+  empty `session_id`). `ProtokitePlaytestKeptForms` keeps one file per form under `persistentDataPath/ProtokitePlaytest/FeedbackForms`
+  (a temporary file per write; oldest first; `Claim` with `FileShare.Delete` so another launch skips one being sent, and
+  `ForgetClaimed` deletes it while held). `ProtokitePlaytestForms` is the public surface (`FeedbackForm`, open/close,
+  `SendFeedbackForm`, `CanSendTheRecording`, `StopRecordingAndSendIt`) and the one sender, `SendWaitingFormsWhenDue`, run each
+  frame before `Refresh`'s early return: at a new Flock client, once a form is kept, and after a failure that may pass when the
+  network comes back (read only then) or `FormRetryInterval` later. A readable `result.id` deletes the file; 422 and 404
+  delete it naming the question; 401 keeps the forms for a later launch; a failure Protokite gave for this form goes on to the
+  next, one that says nothing about the form (no answer, a portal page, 403, 408, 429, 502-504) stops the rest. Sent with the
+  launch's key and the form's own version and URL (`HeadersForTheSession`). `ProtokitePlaytestFormKeyWatcher` hears the key
+  through `Input.GetKeyDown` where the Input Manager is on and IMGUI otherwise, alive only while a form can open. Tests point
+  the folder elsewhere with `FeedbackFormsFolderForTesting` (both test assemblies' run-wide fixtures set it), with
+  `ReachabilityForTesting` and `ClockForTesting` for the retry.
 - **ProtokitePlaytestIdentity** — the device id file (a lower-case GUID under `persistentDataPath/ProtokitePlaytest/`),
   written through a temporary file of its own and moved into place, read back after, never replaced when unreadable; stray
   temporary files over a minute old are swept. `SetSteamId` refuses an id with whitespace rather than trim it. Tests point
   it elsewhere with `DeviceIdFilePathForTesting`, and a fixture checks the game's own file is untouched.
+- **ProtokitePlaytestSavedFiles** — every change the playtest makes to its saved files (the consent answer, the device id,
+  the kept forms, their temporary files and sweeps); after each, even one that fails, a WebGL player is asked to copy the
+  files to browser storage through the Flock SDK's own call (`FlockCopySavedFilesToBrowserStorage`, core's
+  `Plugins/WebGL/FlockSavedFiles.jslib`), so the page keeps one queue of copies. `CopyToBrowserStorageForTesting` sees each
+  request. A test fails any direct change outside it in `Runtime/` except `Video/` (never reached in a WebGL player); another
+  fails when the call it imports is not one core's library defines.
 - **Video encoder (`Runtime/Video/`)** — `IProtokitePlaytestVideoEncoder` (configure, encode an I420 frame, finish) is
   the one seam recording goes through; `ProtokitePlaytestLibVpx` is its only implementation and the only file that names
   libvpx (a test scans for it). It calls `Runtime/Plugins/x86_64/protokite_vpx.dll`, a flat C wrapper over a static

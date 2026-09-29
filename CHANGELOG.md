@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.58.0]
+
+No changes to the Flock SDK: this version is released together with the Protokite Playtest's feedback form, and its fix that
+keeps the playtest's own files on WebGL.
+
 ## [1.57.0]
 
 No changes to the Flock SDK: this version is released together with the Protokite Playtest's consent question.

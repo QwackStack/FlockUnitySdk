@@ -37,6 +37,7 @@ namespace Protokite.Playtest
         {
             ProtokitePlaytest.Refresh();
             ProtokitePlaytest.KeepConsentQuestionAnswerable();
+            ProtokitePlaytest.KeepFeedbackFormAnswerable();
             ProtokitePlaytest.UpdateHeavyAnalytics(SecondsSince(ref _lastUpdateAt));
         }
 

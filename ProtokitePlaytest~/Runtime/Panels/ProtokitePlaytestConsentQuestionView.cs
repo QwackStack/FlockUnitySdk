@@ -47,13 +47,8 @@ namespace Protokite.Playtest
             new Option(ProtokitePlaytestConsentChoice.PlayDataOnly, "Collect play data only",
                 "The playtest collects how the game runs for me. Nothing on my screen is recorded."),
             new Option(ProtokitePlaytestConsentChoice.Nothing, "Collect nothing",
-                "The playtest collects nothing at all: nothing is recorded, nothing is sent, and no playtest session is made. Exactly what this game does with playtesting turned off.")
+                "The playtest collects nothing: nothing is recorded, no play data is sent, and no playtest session is made. A feedback report you choose to send still reaches the studio.")
         };
-
-        private static readonly Color OptionColour = new Color(0.12f, 0.14f, 0.18f, 1f);
-        private static readonly Color OptionHighlightColour = new Color(0.19f, 0.23f, 0.30f, 1f);
-        private static readonly Color OptionBorderColour = new Color(0.25f, 0.29f, 0.36f, 1f);
-        private static readonly Color OptionFocusBorderColour = new Color(0.55f, 0.68f, 0.95f, 1f);
 
         /// <summary>The name a button is found by: its answer's wire spelling.</summary>
         internal static string ButtonName(ProtokitePlaytestConsentChoice choice) => "protokite-consent-" + ProtokitePlaytestConsent.ToWire(choice);
@@ -109,8 +104,8 @@ namespace Protokite.Playtest
             button.style.paddingRight = 14;
             button.style.paddingTop = 11;
             button.style.paddingBottom = 11;
-            button.style.backgroundColor = OptionColour;
-            ProtokitePlaytestPanel.SetBorder(button.style, 1, OptionBorderColour);
+            button.style.backgroundColor = ProtokitePlaytestPanel.OptionColour;
+            ProtokitePlaytestPanel.SetBorder(button.style, 1, ProtokitePlaytestPanel.OptionBorderColour);
             ProtokitePlaytestPanel.SetRadius(button.style, 6);
 
             Label title = ProtokitePlaytestPanel.Text(option.Title, 15, ProtokitePlaytestPanel.TextColour, bold: true);
@@ -122,10 +117,10 @@ namespace Protokite.Playtest
             button.Add(explanation);
 
             // No theme gives hover or focus a look, so the button gives itself one.
-            button.RegisterCallback<PointerEnterEvent>(_ => button.style.backgroundColor = OptionHighlightColour);
-            button.RegisterCallback<PointerLeaveEvent>(_ => button.style.backgroundColor = OptionColour);
-            button.RegisterCallback<FocusInEvent>(_ => ProtokitePlaytestPanel.SetBorder(button.style, 2, OptionFocusBorderColour));
-            button.RegisterCallback<FocusOutEvent>(_ => ProtokitePlaytestPanel.SetBorder(button.style, 1, OptionBorderColour));
+            button.RegisterCallback<PointerEnterEvent>(_ => button.style.backgroundColor = ProtokitePlaytestPanel.OptionHighlightColour);
+            button.RegisterCallback<PointerLeaveEvent>(_ => button.style.backgroundColor = ProtokitePlaytestPanel.OptionColour);
+            button.RegisterCallback<FocusInEvent>(_ => ProtokitePlaytestPanel.SetBorder(button.style, 2, ProtokitePlaytestPanel.OptionFocusBorderColour));
+            button.RegisterCallback<FocusOutEvent>(_ => ProtokitePlaytestPanel.SetBorder(button.style, 1, ProtokitePlaytestPanel.OptionBorderColour));
             return button;
         }
     }

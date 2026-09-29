@@ -183,16 +183,6 @@ namespace Protokite.Playtest.Tests
             Assert.AreEqual(ProtokitePlaytestStatus.PlayerRefusedPlaytest, ProtokitePlaytest.Status, "The last answer offered is nothing");
         }
 
-        // A game that locks its cursor again every frame, late, as many first-person controllers do.
-        private sealed class CursorLockedEveryFrame : MonoBehaviour
-        {
-            private void LateUpdate()
-            {
-                Cursor.lockState = CursorLockMode.Locked;
-                Cursor.visible = false;
-            }
-        }
-
         // A mouse press and release on the button, as the pointer would make them.
         private static void Click(Button button)
         {

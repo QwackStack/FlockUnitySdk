@@ -99,6 +99,31 @@ namespace Protokite.Playtest
             }, cancellationToken);
         }
 
+        /// <summary>The feedback-form address for a Protokite API URL.</summary>
+        internal static string FeedbackFormUrl(string protokiteApiUrl) => JoinUrl(protokiteApiUrl, "/game/sdk/feedback-form");
+
+        /// <summary>
+        /// Sends one filled-in form and answers the id Protokite stored it under; an answer naming none throws. A form naming a session
+        /// is retried like a read, as Protokite replaces the answer it holds for that session; one naming none is retried only after a
+        /// failure Protokite never processed, since every send of it adds a row.
+        /// </summary>
+        internal Task<string> SubmitFeedbackFormAsync(string protokiteApiUrl, Dictionary<string, string> headers,
+            ProtokitePlaytestFormSubmission submission, CancellationToken cancellationToken)
+        {
+            string url = FeedbackFormUrl(protokiteApiUrl);
+            JObject body = submission.ToBody();
+            return _retryHandler.ExecuteAsync(async () =>
+            {
+                // Enveloped: the route answers GenericResponse[PlaytestFormResponseSchema]. A page that is not that (a captive
+                // portal's 200) never counts as taken.
+                JObject envelope = await FlockHttpClient.PostAsync<JObject>(url, body, headers, cancellationToken);
+                JToken id = (envelope?["result"] as JObject)?["id"];
+                if (id == null || id.Type != JTokenType.String || string.IsNullOrEmpty((string)id))
+                    throw new FlockSerializationException("The feedback form answer names no id it was stored under") { Body = envelope?.ToString() };
+                return (string)id;
+            }, cancellationToken, retryAmbiguousFailures: submission.CanBeSentAgainSafely);
+        }
+
         // Only trailing slashes are removed: a URL with spaces inside is refused before it gets here.
         private static string JoinUrl(string protokiteApiUrl, string route) => protokiteApiUrl.Trim().TrimEnd('/') + route;
     }

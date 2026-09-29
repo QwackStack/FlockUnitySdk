@@ -42,6 +42,17 @@ namespace Protokite.Playtest.Editor
                 Debug.LogWarning("[Protokite Playtest] The answer this machine gave the playtest's consent question could not be removed; see the warning before this one.");
         }
 
+        /// <summary>Protokite > Playtest > Open The Feedback Form: in Play Mode, opens the form the way its key does.</summary>
+        [MenuItem("Protokite/Playtest/Open The Feedback Form")]
+        public static void OpenTheFeedbackForm()
+        {
+            if (!ProtokitePlaytest.OpenFeedbackForm())
+                Debug.Log("[Protokite Playtest] The feedback form did not open: it opens in Play Mode, once this build's playtest is loaded and publishes a form, and not while the consent question is on screen. " + ProtokitePlaytest.Status);
+        }
+
+        [MenuItem("Protokite/Playtest/Open The Feedback Form", true)]
+        private static bool CanOpenTheFeedbackForm() => Application.isPlaying;
+
         /// <summary>The project's settings asset, created at <see cref="ProtokitePlaytestSettings.AssetPath"/> with playtesting off if there is none.</summary>
         public static ProtokitePlaytestSettings FindOrCreateSettings()
         {

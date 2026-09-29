@@ -132,6 +132,9 @@ namespace Protokite.Playtest
             }
             if (_consentPanel != null)
                 return;
+            // One panel at a time: the question opens once the feedback form closes, so neither puts back a cursor the other freed.
+            if (_formPanel != null)
+                return;
             if (!ProtokitePlaytestPanel.CanBeDrawn)
             {
                 if (!_loggedNowhereToAskForConsent)
