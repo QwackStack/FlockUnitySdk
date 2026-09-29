@@ -16,6 +16,12 @@ namespace Protokite.Playtest
 
         internal static readonly Color TextColour = new Color(0.92f, 0.93f, 0.96f, 1f);
         internal static readonly Color HelpColour = new Color(0.62f, 0.65f, 0.72f, 1f);
+        internal static readonly Color ProblemColour = new Color(1f, 0.55f, 0.5f, 1f);
+        internal static readonly Color OptionColour = new Color(0.12f, 0.14f, 0.18f, 1f);
+        internal static readonly Color OptionHighlightColour = new Color(0.19f, 0.23f, 0.30f, 1f);
+        internal static readonly Color OptionChosenColour = new Color(0.22f, 0.36f, 0.62f, 1f);
+        internal static readonly Color OptionBorderColour = new Color(0.25f, 0.29f, 0.36f, 1f);
+        internal static readonly Color OptionFocusBorderColour = new Color(0.55f, 0.68f, 0.95f, 1f);
         private static readonly Color CardColour = new Color(0.04f, 0.05f, 0.07f, 0.97f);
         private static readonly Color ScreenDimColour = new Color(0f, 0f, 0f, 0.6f);
 

@@ -24,6 +24,13 @@ namespace Protokite.Playtest
         [Tooltip("On by default: the player is asked what this playtest may collect (the screen, play data, both or nothing), and nothing is collected until they answer. The answer is kept on their machine for later launches. Turn it off only where players were asked another way, or for a test run with nobody to answer; everything the playtest turns on is then collected, and each session says nobody was asked.")]
         [SerializeField] private bool askThePlayerForPlaytestConsent = true;
 
+        [Header("Feedback form")]
+        [Tooltip("The key that opens the playtest's feedback form, and closes it again, whenever the playtest has a published form; read when the playtest loads. None: only ProtokitePlaytest.OpenFeedbackForm opens it.")]
+        [SerializeField] private KeyCode feedbackFormKey = KeyCode.F9;
+
+        [Tooltip("Off by default: a playtest is about what the player was doing, and many games cannot be paused. On: the game's time scale is 0 while the form is open, and put back when it closes unless the game set another one meanwhile; a game that pauses itself too (time scale 0) while the form is open is unpaused with it.")]
+        [SerializeField] private bool pauseTheGameWhileTheFormIsOpen;
+
         [Header("Video recording (64-bit Windows)")]
         [Tooltip("VP8 costs a slow PC least. VP9 makes smaller files for more processor time.")]
         [SerializeField] private ProtokitePlaytestVideoCodec videoCodec = ProtokitePlaytestVideoCodec.Vp8;
@@ -84,6 +91,12 @@ namespace Protokite.Playtest
             get => askThePlayerForPlaytestConsent;
             set => askThePlayerForPlaytestConsent = value;
         }
+
+        /// <summary>The key that opens and closes the feedback form; <see cref="KeyCode.None"/> leaves opening it to the game.</summary>
+        public KeyCode FeedbackFormKey { get => feedbackFormKey; set => feedbackFormKey = value; }
+
+        /// <summary>Whether the game's time scale is 0 while the feedback form is open.</summary>
+        public bool PauseTheGameWhileTheFormIsOpen { get => pauseTheGameWhileTheFormIsOpen; set => pauseTheGameWhileTheFormIsOpen = value; }
 
         /// <summary>The codec recordings use.</summary>
         public ProtokitePlaytestVideoCodec VideoCodec { get => videoCodec; set => videoCodec = value; }

@@ -114,7 +114,7 @@ namespace Protokite.Playtest.Tests
                 },
                 Array.ConvertAll(ProtokitePlaytestConsentQuestionView.Options, option => option.Choice));
             StringAssert.Contains("separate from any privacy or analytics choice the game itself asks you about", ProtokitePlaytestConsentQuestionView.Introduction);
-            StringAssert.Contains("Exactly what this game does with playtesting turned off",
+            StringAssert.Contains("A feedback report you choose to send still reaches the studio",
                 Array.Find(ProtokitePlaytestConsentQuestionView.Options, option => option.Choice == ProtokitePlaytestConsentChoice.Nothing).Explanation);
         }
 

@@ -35,7 +35,7 @@ namespace Protokite.Playtest
         PlaytestNoLongerCollecting,
         /// <summary>The playtest is loaded, and nothing is collected until the player says what it may collect.</summary>
         WaitingForPlayerConsent,
-        /// <summary>The player asked the playtest to collect nothing: it behaves exactly as with playtesting off.</summary>
+        /// <summary>The player asked the playtest to collect nothing: it behaves as with playtesting off, except that a feedback form the player sends still goes.</summary>
         PlayerRefusedPlaytest
     }
 
@@ -63,6 +63,7 @@ namespace Protokite.Playtest
         private static ProtokitePlaytestConfigState _configState;
         private static ProtokitePlaytestConfig _config;
         private static string _configProblem = "";
+        private static string _configGameVersionId;
         private static int _timesConfigForgotten;
         private static CancellationTokenSource _configFetchCancel;
         private static ProtokitePlaytestStatus? _statusLastReported;
@@ -153,6 +154,7 @@ namespace Protokite.Playtest
             bool flockChanged = !ReferenceEquals(running, _flock);
             // Before the early return below: it waits on the finishing pass, which changes no state Refresh follows.
             UploadEarlierRecordingsWhenReady(running);
+            SendWaitingFormsWhenDue(running);
 
             // Nothing to do when neither the Flock client nor the playtest's state has changed since the last frame, unless a
             // session is waiting only for a Flock session to reach the server. The settings are fixed in a build, and every
@@ -187,6 +189,7 @@ namespace Protokite.Playtest
             ProtokitePlaytestStatus status = StatusFor(settings, running != null, consent, _configState, _playtestNoLongerCollecting);
             ReportStatus(status);
             UpdateConsentQuestion(status);
+            UpdateFeedbackFormKeyWatcher(status, settings);
         }
 
         private static (ProtokitePlaytestConfigState, ProtokitePlaytestSessionState, bool, ProtokitePlaytestConsentChoice) CurrentState()
@@ -198,6 +201,7 @@ namespace Protokite.Playtest
             ForgetPlaytestConfig();
             _flock = null;
             CloseConsentQuestion();
+            CloseFeedbackFormForTheLaunch();
             StopUploads();
             StopVideoForQuitting();
             StopMeasuringPerformance();
@@ -213,6 +217,7 @@ namespace Protokite.Playtest
             ResetUploadsForNewLaunch();
             ResetHeavyAnalyticsForNewLaunch();
             ResetConsentForNewLaunch();
+            ResetFormsForNewLaunch();
             _statusLastReported = null;
             _stateAtLastRefresh = null;
         }
@@ -262,6 +267,8 @@ namespace Protokite.Playtest
 
             _configState = ConfigStateFor(config, failure, sentGameVersionId);
             _config = _configState == ProtokitePlaytestConfigState.Loaded ? config : null;
+            // The version a feedback form filled in before any session is sent under, so Protokite finds this playtest.
+            _configGameVersionId = _configState == ProtokitePlaytestConfigState.Loaded ? sentGameVersionId : null;
             _configProblem = failure != null
                 ? failure.Message
                 : _configState == ProtokitePlaytestConfigState.ForAnotherVersion
@@ -277,6 +284,7 @@ namespace Protokite.Playtest
             _configState = ProtokitePlaytestConfigState.NotFetched;
             _config = null;
             _configProblem = "";
+            _configGameVersionId = null;
 
             // Its retries would otherwise keep sending an ended Flock client's key. Cancelled after the count has moved,
             // so whatever the cancelled request still answers is already stale. Not disposed: the request may still read its token.
@@ -343,7 +351,7 @@ namespace Protokite.Playtest
                 case ProtokitePlaytestStatus.WaitingForPlayerConsent:
                     return "This build's playtest is loaded, and nothing is collected until the player says what it may collect. The question is put on screen; a game can put it again with ProtokitePlaytest.AskForPlaytestConsent, or answer it with ProtokitePlaytest.SetPlaytestConsent. Turn off Ask The Player For Playtest Consent in Protokite > Playtest > Settings to collect without asking.";
                 case ProtokitePlaytestStatus.PlayerRefusedPlaytest:
-                    return "The player asked this playtest to collect nothing, so nothing is recorded, nothing is sent and no session is started, exactly as with playtesting off. They can be asked again with ProtokitePlaytest.AskForPlaytestConsent.";
+                    return "The player asked this playtest to collect nothing, so nothing is recorded, no play data is sent and no session is started, as with playtesting off; a feedback form the player sends themselves still goes. They can be asked again with ProtokitePlaytest.AskForPlaytestConsent.";
             }
             return "";
         }

@@ -110,7 +110,19 @@ else
   error "protokite_vpx.dll.meta is missing, so a git-URL install would leave the DLL out."
 fi
 
+# 6. On WebGL the playtest asks for its files to be copied to browser storage through a function of the Flock SDK's WebGL
+#    library, imported by name. A rename there passes every other check and fails only when a WebGL game links.
+calls=$(grep -rh -A1 --include='*.cs' 'DllImport("__Internal")' "$PLAYTEST/Runtime" | grep -oE 'extern [A-Za-z0-9_<>]+ [A-Za-z0-9_]+\(' | sed -E 's/.* ([A-Za-z0-9_]+)\($/\1/')
+if [ -z "$calls" ]; then
+  error "No call the playtest imports from a WebGL library was found in ProtokitePlaytest~/Runtime. ProtokitePlaytestSavedFiles asks for its copies through one; if it moved, update this script with it."
+fi
+for call in $calls; do
+  if ! grep -rqE --include='*.jslib' "^[[:space:]]*$call[[:space:]]*:[[:space:]]*function" "$ROOT/Runtime"; then
+    error "The playtest imports $call, which no WebGL library of the Flock SDK (Runtime/**/*.jslib) defines, so every WebGL build of a game with the playtest would fail to link. Keep the name, or rename the playtest's import with it."
+  fi
+done
+
 if [ "$fail" -eq 0 ]; then
-  echo "Protokite Playtest $playtest_version: same version as the Flock SDK, no package dependency on it, not named by its runtime, every file has a .meta."
+  echo "Protokite Playtest $playtest_version: same version as the Flock SDK, no package dependency on it, not named by its runtime, every file has a .meta, its WebGL calls defined by the SDK."
 fi
 exit "$fail"

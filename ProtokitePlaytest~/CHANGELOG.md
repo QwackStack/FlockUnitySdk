@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 It is released with the Flock SDK, at the Flock SDK's version.
 
 
+## [1.58.0]
+
+### Added
+- **The feedback form.** When the playtest publishes one, the player opens it over the game with **F9** (the new **Feedback
+  Form Key** setting; None leaves it to the game) and fills it in. It is built from the published form, so editing it in
+  Protokite needs no new build: text, many-line text, a 1 to 5 rating, options and a checkbox, and a question of a kind this
+  package does not know is a text box. It opens and sends whatever the player's consent answer: it is their own message.
+- Sending checks the answers the way Protokite does and shows every problem against its question first: a required checkbox
+  counts unticked, and an empty optional answer is left out.
+- **A sent form is kept on the device, then sent**: when the network comes back, two minutes later, or by a later launch.
+  One Protokite refuses for good is deleted, naming the question it refused. It names this launch's Protokite session once
+  one has started. One naming no session that may already have been stored when its send failed is sent again, so the studio
+  may see it twice rather than lose it.
+- **Upload your recording** on the form stops this launch's recording and sends it straight away, once its session has
+  started. Opening the form never stops it.
+- `ProtokitePlaytest.FeedbackForm`, `CanOpenFeedbackForm`, `OpenFeedbackForm`, `CloseFeedbackForm`, `IsFeedbackFormOpen`,
+  `SendFeedbackForm` (for a form the game draws itself), `CanSendTheRecording` and `StopRecordingAndSendIt`, with
+  `ProtokitePlaytestFormAnswers`, `ProtokitePlaytestFormProblem` and `ProtokitePlaytestRatings`. **Pause The Game While The
+  Form Is Open** (off). **Protokite > Playtest > Open The Feedback Form** in Play Mode.
+
+### Changed
+- "Collect nothing" on the consent question now says a feedback report the player chooses to send still goes; with that
+  answer the playtest otherwise behaves as with playtesting off.
+- The consent question waits while the feedback form is open, and the form does not open over it.
+
+### Fixed
+- **On WebGL, the playtest's saved files now outlive the page.** A WebGL player keeps them in memory and copies them to the
+  browser's storage only when asked, and the playtest never asked, so a change made after the page's first seconds could be
+  lost when the tab closed, unless something else had the files copied first: the player's consent answer (a player who
+  changed theirs to "nothing" could have the old one back on their next visit), the device id (a new player every visit), and
+  feedback forms waiting to be sent (one already sent could come back and be sent again). Every change now asks for the copy,
+  the way the Flock SDK asks for its own files.
+
 ## [1.57.0]
 
 ### Added

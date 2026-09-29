@@ -193,6 +193,31 @@ namespace Protokite.Playtest.Tests
         }
 
         [UnityTest]
+        public IEnumerator ThePlayerAskingStopsTheRecordingAndUploadsItStraightAway()
+        {
+            using (FlockTestClient flock = StartFlock(Transport()))
+            {
+                ProtokitePlaytest.Refresh();
+                Frames(30);
+                Assert.IsFalse(ProtokitePlaytest.CanSendTheRecording, "No session yet, so it could not be uploaded at all");
+                Assert.IsFalse(ProtokitePlaytest.StopRecordingAndSendIt());
+                Assert.IsTrue(ProtokitePlaytest.IsRecordingVideo, "Asking when it cannot go stops nothing");
+
+                yield return TheSessionStarts(flock);
+                Assert.IsTrue(ProtokitePlaytest.CanSendTheRecording);
+                LogAssert.Expect(LogType.Log, new Regex("The player asked for their recording to be sent"));
+                LogAssert.Expect(LogType.Log, new Regex("It stopped because the player asked for it to be sent"));
+                Assert.IsTrue(ProtokitePlaytest.StopRecordingAndSendIt());
+                Assert.IsFalse(ProtokitePlaytest.CanSendTheRecording, "Once asked, nothing more is recorded to send");
+                yield return Settled(() => ProtokitePlaytest.VideoRecordingForTesting == null || ProtokitePlaytest.VideoRecordingForTesting.HasFinishedWriting, 20f, "The file was written");
+                Frames(1);
+                yield return ThisLaunchsUpload();
+                Assert.IsTrue(ProtokitePlaytest.ThisLaunchsUploadForTesting.Result.Uploaded);
+                Assert.AreEqual(ProtokitePlaytestVideoStopReason.PlayerAskedToSendIt, ProtokitePlaytest.FinishedVideo.StopReason);
+            }
+        }
+
+        [UnityTest]
         public IEnumerator ALinkIsNotAnUploadAFailedFileUploadKeepsTheRecording()
         {
             _uploader.Answers.Enqueue(FakeUploader.Status(500, "<Error><Code>InternalError</Code></Error>"));
