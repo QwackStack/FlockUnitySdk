@@ -13,6 +13,12 @@ namespace Flock.Analytics
         /// <summary>Beyond this many exceptions waiting for the main thread, new ones are counted as lost rather than kept.</summary>
         internal const int MostWaiting = 256;
 
+        /// <summary>A kept message is cut to this many characters, so what waits is bounded in memory as well as in number.</summary>
+        internal const int MostMessageCharacters = 4096;
+
+        /// <summary>A kept stack is cut to this many characters, about 60 frames.</summary>
+        internal const int MostStackTraceCharacters = 8192;
+
         private readonly ConcurrentQueue<FlockCapturedException> _waiting = new ConcurrentQueue<FlockCapturedException>();
         private int _waitingCount;
         private int _lost;
@@ -66,24 +72,23 @@ namespace Flock.Analytics
         }
 
         // A faulted task nobody awaited leaves no line in Unity's log; this is raised when its finalizer runs.
+        // Read through FlockExceptionText: a getter that threw here lost the task's fault on the finalizer thread.
         internal void HandleUnobservedTask(object sender, UnobservedTaskExceptionEventArgs args)
         {
             if (args.Exception == null)
                 return;
-            foreach (Exception inner in args.Exception.Flatten().InnerExceptions)
-                Keep(Describe(inner), inner.StackTrace ?? string.Empty, FlockRepeatedExceptionCounter.SourceUnobservedTask);
+            foreach (Exception inner in FlockExceptionText.FaultsInside(args.Exception))
+                Keep(FlockExceptionText.Describe(inner), FlockExceptionText.StackTraceOf(inner), FlockRepeatedExceptionCounter.SourceUnobservedTask);
         }
 
         // Unity's log also hands over an exception no thread caught, so this keeps it only while that log is switched off.
+        // Read through FlockExceptionText: a getter that threw here ended an IL2CPP player.
         internal void HandleUnhandledException(object sender, UnhandledExceptionEventArgs args)
         {
             if (Debug.unityLogger.logEnabled || !(args.ExceptionObject is Exception exception))
                 return;
-            Keep(Describe(exception), exception.StackTrace ?? string.Empty, FlockRepeatedExceptionCounter.SourceUnhandled);
+            Keep(FlockExceptionText.Describe(exception), FlockExceptionText.StackTraceOf(exception), FlockRepeatedExceptionCounter.SourceUnhandled);
         }
-
-        // As Unity's log names an exception: its type, then its message.
-        private static string Describe(Exception exception) => $"{exception.GetType().Name}: {exception.Message}";
 
         private void Keep(string message, string stackTrace, string source)
         {
@@ -101,7 +106,12 @@ namespace Flock.Analytics
                 // A player set to log exceptions with no stack still has the frames that logged this one, the game's from its call.
                 if (string.IsNullOrEmpty(stackTrace) && source == FlockRepeatedExceptionCounter.SourceLog)
                     stackTrace = FlockRepeatedExceptionCounter.FromTheFirstFrameOfTheGame(StackTraceUtility.ExtractStackTrace());
-                _waiting.Enqueue(new FlockCapturedException { Message = message, StackTrace = stackTrace, Source = source });
+                _waiting.Enqueue(new FlockCapturedException
+                {
+                    Message = FlockExceptionText.Cut(message, MostMessageCharacters),
+                    StackTrace = FlockExceptionText.Cut(stackTrace, MostStackTraceCharacters),
+                    Source = source
+                });
             }
             catch (Exception)
             {

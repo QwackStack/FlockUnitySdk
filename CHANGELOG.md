@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.56.0]
+
+### Fixed
+- **An exception whose own `Message` getter throws no longer escapes exception capture.** A game's exception type can
+  throw from its getters, for example one whose `Message` reads a field that is null. With Unity's logging off, such an
+  exception left uncaught on a thread ended an IL2CPP player through the capture's hook, where without capture the player
+  kept running. From a faulted task nobody awaited, the capture threw on the finalizer thread, and that fault was lost. Such
+  an exception is now reported under its type name, with `(its message could not be read: ...)` in place of its message.
+  `LogDiagnosticException(Exception)` records it the same way instead of throwing back at the caller. A `FlockEvents`
+  subscriber that throws one is logged instead of throwing out of the SDK code that raised the event.
+
+### Changed
+- **A captured exception's message is cut to 4,096 characters and its stack to 8,192**, with the text's full length noted
+  at the cut. Up to 256 exceptions wait between frames. Before this change they were limited in number only, so a thread
+  logging exceptions with 64 KB messages while the main thread was busy held 18 MB until the next frame. Captured
+  exceptions are sent as cut; what a game reports itself through `LogDiagnosticException` is not cut.
+
 ## [1.55.0]
 
 ### Added

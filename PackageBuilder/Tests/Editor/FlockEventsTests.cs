@@ -1,8 +1,11 @@
 using System;
 using System.Reflection;
+using System.Text.RegularExpressions;
 using Flock;
 using Flock.Models;
 using NUnit.Framework;
+using UnityEngine;
+using UnityEngine.TestTools;
 
 namespace Flock.Tests.Editor
 {
@@ -21,6 +24,21 @@ namespace Flock.Tests.Editor
         public void TearDown()
         {
             FlockEvents.ClearAll();
+        }
+
+        // A game's exception type whose Message getter throws, so its ToString throws too.
+        private sealed class MessageThrowsException : Exception
+        {
+            public override string Message => throw new FormatException("the Message getter threw");
+        }
+
+        [Test]
+        public void ASubscriberThrowingAnExceptionThatCannotBeReadIsStillLogged()
+        {
+            FlockEvents.OnTokenRefreshed += () => throw new MessageThrowsException();
+            LogAssert.Expect(LogType.Error, new Regex(@"OnTokenRefreshed subscriber threw: MessageThrowsException: \(its message could not be read: FormatException\)"));
+
+            Assert.DoesNotThrow(FlockEvents.InvokeTokenRefreshed, "Thrown from the catch, it would reach the SDK code raising the event");
         }
 
         private static FieldInfo[] DelegateFields()

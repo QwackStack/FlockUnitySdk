@@ -166,6 +166,159 @@ namespace Flock.Tests.Editor
             Assert.AreEqual(string.Empty, fromATask.StackTrace, "A finalizer's frames say nothing about a task's fault");
         }
 
+        // A game's own exception type whose Message getter throws, as one reading a null field does.
+        private sealed class MessageThrowsException : Exception
+        {
+            public override string Message => throw new FormatException("the Message getter threw");
+        }
+
+        private sealed class StackTraceThrowsException : Exception
+        {
+            public StackTraceThrowsException(string message) : base(message) { }
+
+            public override string StackTrace => throw new FormatException("the StackTrace getter threw");
+        }
+
+        // An aggregate's own Message is read by its Flatten, so this one makes Flatten throw on every runtime.
+        private sealed class MessageThrowsAggregateException : AggregateException
+        {
+            public MessageThrowsAggregateException(params Exception[] inner) : base(inner) { }
+
+            public override string Message => throw new FormatException("the aggregate's Message getter threw");
+        }
+
+        private const string UnreadableMessage = "MessageThrowsException: (its message could not be read: FormatException)";
+
+        [Test]
+        public void AnExceptionWhoseMessageThrowsIsKeptUnderItsTypeNameByEveryHook()
+        {
+            FlockExceptionCapture capture = new FlockExceptionCapture();
+
+            Debug.unityLogger.logEnabled = false;
+            Assert.DoesNotThrow(() => capture.HandleUnhandledException(null, new UnhandledExceptionEventArgs(new MessageThrowsException(), true)),
+                "Thrown from the domain's hook, it ends an IL2CPP player");
+            Debug.unityLogger.logEnabled = true;
+            Assert.IsTrue(capture.TryTake(out FlockCapturedException unhandled));
+            Assert.AreEqual(UnreadableMessage, unhandled.Message);
+
+            UnobservedTaskExceptionEventArgs faulted = new UnobservedTaskExceptionEventArgs(new MessageThrowsAggregateException(new MessageThrowsException()));
+            Assert.DoesNotThrow(() => capture.HandleUnobservedTask(null, faulted), "Thrown on the finalizer thread, the task's fault is lost");
+            Assert.IsTrue(capture.TryTake(out FlockCapturedException fromATask));
+            Assert.AreEqual(UnreadableMessage, fromATask.Message);
+            Assert.AreEqual(FlockRepeatedExceptionCounter.SourceUnobservedTask, fromATask.Source);
+        }
+
+        [Test]
+        public void AnExceptionWhoseStackTraceThrowsIsKeptWithNoStack()
+        {
+            FlockExceptionCapture capture = new FlockExceptionCapture();
+
+            Debug.unityLogger.logEnabled = false;
+            Assert.DoesNotThrow(() => capture.HandleUnhandledException(null, new UnhandledExceptionEventArgs(new StackTraceThrowsException(Named("unreadable stack")), true)));
+            Debug.unityLogger.logEnabled = true;
+            Assert.IsTrue(capture.TryTake(out FlockCapturedException unhandled));
+            Assert.AreEqual("StackTraceThrowsException: " + Named("unreadable stack"), unhandled.Message);
+            Assert.AreEqual(string.Empty, unhandled.StackTrace);
+
+            Assert.DoesNotThrow(() => capture.HandleUnobservedTask(null,
+                new UnobservedTaskExceptionEventArgs(new AggregateException(new StackTraceThrowsException(Named("unreadable stack in a task"))))));
+            Assert.IsTrue(capture.TryTake(out FlockCapturedException fromATask));
+            Assert.AreEqual("StackTraceThrowsException: " + Named("unreadable stack in a task"), fromATask.Message);
+            Assert.AreEqual(string.Empty, fromATask.StackTrace);
+        }
+
+        [Test]
+        public void EveryFaultInsideNestedAggregatesIsKeptInFlattensOrder()
+        {
+            FlockExceptionCapture capture = new FlockExceptionCapture();
+            AggregateException nested = new AggregateException(
+                new InvalidOperationException(Named("first")),
+                new AggregateException(new InvalidOperationException(Named("third")), new AggregateException(new InvalidOperationException(Named("fourth")))),
+                new InvalidOperationException(Named("second")));
+
+            capture.HandleUnobservedTask(null, new UnobservedTaskExceptionEventArgs(nested));
+            List<string> kept = new List<string>();
+            while (capture.TryTake(out FlockCapturedException captured))
+                kept.Add(captured.Message);
+
+            List<string> flattened = nested.Flatten().InnerExceptions.Select(inner => "InvalidOperationException: " + inner.Message).ToList();
+            CollectionAssert.AreEqual(flattened, kept, "Each fault once, no aggregate kept as itself, in the order Flatten gives");
+            Assert.AreEqual(4, kept.Count);
+        }
+
+        [Test]
+        public void ALongMessageAndStackAreCutWithTheirLengthNoted()
+        {
+            FlockExceptionCapture capture = new FlockExceptionCapture();
+            string longMessage = new string('m', FlockExceptionCapture.MostMessageCharacters + 1);
+            string longStack = new string('s', FlockExceptionCapture.MostStackTraceCharacters + 1);
+            capture.HandleLog(longMessage, longStack, LogType.Exception);
+            Assert.IsTrue(capture.TryTake(out FlockCapturedException cut));
+            Assert.AreEqual(new string('m', FlockExceptionCapture.MostMessageCharacters) + $" [cut from {longMessage.Length} characters]", cut.Message);
+            Assert.AreEqual(new string('s', FlockExceptionCapture.MostStackTraceCharacters) + $" [cut from {longStack.Length} characters]", cut.StackTrace);
+
+            string fullMessage = new string('m', FlockExceptionCapture.MostMessageCharacters);
+            string fullStack = new string('s', FlockExceptionCapture.MostStackTraceCharacters);
+            capture.HandleLog(fullMessage, fullStack, LogType.Exception);
+            Assert.IsTrue(capture.TryTake(out FlockCapturedException whole));
+            Assert.AreEqual(fullMessage, whole.Message, "Text at the limit is kept whole");
+            Assert.AreEqual(fullStack, whole.StackTrace, "Text at the limit is kept whole");
+        }
+
+        [Test]
+        public void ACutNeverSplitsACharacterInTwo()
+        {
+            FlockExceptionCapture capture = new FlockExceptionCapture();
+            // The emoji's two halves sit either side of the limit.
+            string message = new string('a', FlockExceptionCapture.MostMessageCharacters - 1) + "\U0001F600" + "after";
+            capture.HandleLog(message, "a frame", LogType.Exception);
+            Assert.IsTrue(capture.TryTake(out FlockCapturedException cut));
+
+            string kept = cut.Message.Substring(0, cut.Message.IndexOf(" [cut from", StringComparison.Ordinal));
+            Assert.AreEqual(new string('a', FlockExceptionCapture.MostMessageCharacters - 1), kept, "The whole character goes, not its first half");
+        }
+
+        [Test]
+        public void AFaultedTaskWhoseMessageThrowsIsCapturedUnderItsTypeName()
+        {
+            using (FlockTestClient sdk = Create())
+            {
+                LogAssert.ignoreFailingMessages = true;
+                FaultATaskWithAnUnreadableMessage();
+                for (int attempt = 0; attempt < 5 && QueuedExceptions(sdk).Count == 0; attempt++)
+                {
+                    GC.Collect();
+                    GC.WaitForPendingFinalizers();
+                    Provider(sdk).HandleLaunchTick();
+                }
+
+                JObject queued = QueuedExceptions(sdk).Single();
+                Assert.AreEqual(UnreadableMessage, (string)queued["message"]);
+                Assert.AreEqual(FlockRepeatedExceptionCounter.SourceUnobservedTask, (string)Extra(queued)["exception_source"]);
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void FaultATaskWithAnUnreadableMessage()
+        {
+            Task faulted = Task.Run(() => throw new MessageThrowsException());
+            while (!faulted.IsCompleted)
+                Thread.Sleep(1);
+        }
+
+        [Test]
+        public void AManualReportOfAnExceptionWhoseMessageThrowsIsStillRecorded()
+        {
+            using (FlockTestClient sdk = Create())
+            {
+                Assert.DoesNotThrow(() => sdk.Client.Analytics.LogDiagnosticException(new MessageThrowsException()),
+                    "A report must not throw back at the game that made it");
+
+                JObject queued = QueuedExceptions(sdk).Single();
+                StringAssert.EndsWith("(its message could not be read: FormatException)", (string)queued["message"]);
+            }
+        }
+
         [Test]
         public void AnUnhandledExceptionOnAThreadIsCapturedWhileUnitysLoggingIsOff()
         {
