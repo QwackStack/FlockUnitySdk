@@ -115,6 +115,8 @@ namespace Protokite.Playtest.Tests
                 for (int frame = 0; frame < 90; frame++)
                     yield return null;
                 Assert.IsTrue(ProtokitePlaytest.IsRecordingVideo, "Recording the screen, with nothing standing in");
+                // Real time, not frames: a fast editor draws 100 frames in under the two thirds of a second eleven video frames take.
+                yield return new WaitForSecondsRealtime(1f);
 
                 yield return new WaitForEndOfFrame();
                 screen = ScreenCapture.CaptureScreenshotAsTexture();

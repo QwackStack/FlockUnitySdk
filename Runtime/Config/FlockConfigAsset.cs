@@ -67,6 +67,14 @@ namespace Flock.Config
         [Tooltip("Require the game to explicitly call Analytics.SetConsent(true) before any analytics collection starts (no session, no events, no device/FPS/screen-view capture). When OFF (default), analytics behaves as it does today - collecting once authenticated - until the game calls SetConsent(false). Turn ON for a real GDPR-style opt-in flow.")]
         public bool analyticsRequireExplicitConsent = false;
 
+        [Header("Analytics — Exceptions")]
+        [Tooltip("Report the game's exceptions on their own: from every thread, faulted tasks nobody awaits, and from start-up, before sign-in. Debug.LogError lines are not exceptions and are not reported. A manual LogDiagnosticException call records with this off.")]
+        public bool analyticsCaptureExceptions = true;
+
+        [Tooltip("Repeats of the same exception within this many seconds are counted and sent as one summary with the count. 0 reports every occurrence.")]
+        [Min(0f)]
+        public float analyticsExceptionRepeatWindow = 60f;
+
         [Header("Analytics — Caching")]
         [Tooltip("Cache failed analytics events (including log_event) on disk and retry on the next session.")]
         public bool analyticsCacheFailedEvents = true;
@@ -154,6 +162,8 @@ namespace Flock.Config
                 TrackFps = analyticsTrackFps,
                 FpsSampleIntervalSeconds = analyticsFpsSampleInterval,
                 RequireExplicitConsent = analyticsRequireExplicitConsent,
+                CaptureExceptions = analyticsCaptureExceptions,
+                ExceptionRepeatWindowSeconds = analyticsExceptionRepeatWindow,
                 CacheFailedEvents = analyticsCacheFailedEvents,
                 MaxCachedEvents = analyticsMaxCachedEvents,
                 CacheFlushBatchSize = analyticsCacheFlushBatchSize,

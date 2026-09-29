@@ -532,6 +532,14 @@ namespace Flock.Editor
                     DrawProperty("analyticsFpsSampleInterval");
 
                     GUILayout.Space(4);
+                    GUILayout.Label("Exceptions", EditorStyles.miniBoldLabel);
+                    DrawProperty("analyticsCaptureExceptions");
+                    using (new EditorGUI.DisabledScope(!configSerialized.FindProperty("analyticsCaptureExceptions").boolValue))
+                    {
+                        DrawProperty("analyticsExceptionRepeatWindow");
+                    }
+
+                    GUILayout.Space(4);
                     GUILayout.Label("Caching", EditorStyles.miniBoldLabel);
                     DrawProperty("analyticsCacheFailedEvents");
                     using (new EditorGUI.DisabledScope(!configSerialized.FindProperty("analyticsCacheFailedEvents").boolValue))

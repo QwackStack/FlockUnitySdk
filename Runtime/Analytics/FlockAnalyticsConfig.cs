@@ -18,6 +18,12 @@ namespace Flock.Analytics
         public bool TrackFps { get; set; } = true;
         public float FpsSampleIntervalSeconds { get; set; } = 1f;
 
+        /// <summary>Reports the game's exceptions on their own, from every thread and from start-up; a manual LogDiagnosticException records either way.</summary>
+        public bool CaptureExceptions { get; set; } = true;
+
+        /// <summary>Repeats of one exception within this many seconds are counted and sent as one summary; 0 or less reports every occurrence.</summary>
+        public float ExceptionRepeatWindowSeconds { get; set; } = 60f;
+
         public bool CacheFailedEvents { get; set; } = true;
         public int MaxCachedEvents { get; set; } = 1000;
         public int CacheFlushBatchSize { get; set; } = 50;

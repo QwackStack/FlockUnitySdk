@@ -3,9 +3,10 @@ using Newtonsoft.Json;
 
 namespace Flock.Analytics
 {
-    // Tombstone persisted while a session runs; a survivor at next launch means dirty exit.
+    // Tombstone persisted while the launch runs; a survivor at next launch means dirty exit.
     internal class FlockTerminationMarker
     {
+        // Null while no session runs: before sign-in, or after one ended.
         [JsonProperty("session_id")]
         public string SessionId { get; set; }
 

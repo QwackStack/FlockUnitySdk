@@ -45,8 +45,48 @@ FlockClient.Instance.Analytics.LogDiagnosticError("inventory desync", errorCode:
 FlockClient.Instance.Analytics.LogDiagnosticEvent("checkpoint reached");
 ```
 
-Unhandled exceptions are captured for you. `LogEvent`, `LogError` and `LogException`, the former names, still work and forward
-to these; they are marked obsolete, so the compiler names the replacement.
+The game's exceptions are captured for you (below). `LogEvent`, `LogError` and `LogException`, the former names, still work
+and forward to these; they are marked obsolete, so the compiler names the replacement.
+
+## Exceptions
+
+From the moment the SDK is created, before anyone signs in too, it reports the game's exceptions under Diagnostics →
+Errors, with nothing to call:
+
+- an exception thrown on the main thread (`Update`, coroutines, event handlers) or passed to `Debug.LogException` on any
+  thread;
+- an exception no thread caught, and one thrown from an `async void` method;
+- a faulted task nobody awaited, reported when the garbage collector finalizes it, so it can arrive late.
+
+`Debug.LogError` lines are not exceptions and are not reported; call `LogDiagnosticError` for an error you want on the
+dashboard. The SDK's own exceptions are not the game's and are not reported either. Each entry's extra data names where it
+came from in `exception_source`: `log`, `unobserved_task` or `unhandled`.
+
+**Repeats are counted, not sent one by one.** The first occurrence of a fault is sent at once. Its repeats within
+**Analytics Exception Repeat Window** (60 s by default) are counted, and when the window closes one more entry is sent with
+`repeat_count` (how many more times it happened) and `repeat_window_seconds`. An exception thrown every frame therefore
+costs about two entries a minute, not one per frame. A window of 0 (or less, set from code) sends every occurrence. Two occurrences are the same
+fault when their message matches, numbers and `0x` addresses in it aside, and so do the first two stack frames below
+Unity's own logging. Summaries still open when the game quits are queued then, and sent like any other entry.
+
+**A launch reports at most 100 different faults.** Past that, a new fault is only counted, and an
+`exception_reports_held_back` entry (Diagnostics → Events) says how many reports were held back, at most once a minute. Faults
+already reported keep sending their summaries. A burst of more than 256 exceptions between two frames is counted the same
+way.
+
+| Setting (Flock > Settings, Analytics — Exceptions) | Code | Default |
+|---|---|---|
+| Analytics Capture Exceptions | `FlockAnalyticsConfig.CaptureExceptions` | on |
+| Analytics Exception Repeat Window | `FlockAnalyticsConfig.ExceptionRepeatWindowSeconds` | 60 s |
+
+- With capture off, `LogDiagnosticException` still records; nothing is captured on its own.
+- Consent-gated like all diagnostics: an exception seen without consent is dropped, and its fault is reported in full
+  the first time it happens with consent.
+- With Unity's logging switched off (`Debug.unityLogger.logEnabled = false`), Unity hands over no exceptions, so only an
+  exception no thread caught and a faulted task nobody awaited are reported.
+- A player built with **Stack Trace** set to None for exceptions hands the SDK no stack, so it sends the frames that
+  logged the exception instead, from the game's call to `Debug.LogException`. An exception Unity caught itself (thrown
+  from `Update`, say) then has no frame of the game's, and the same-fault rule goes by its message alone.
 
 ## Sessions, transactions and screen views
 
@@ -92,10 +132,13 @@ Each launch keeps its crash marker, its live-session record and its event queues
 
 | Extra data | Meaning |
 |---|---|
-| `previous_session_id` | The session that died |
+| `previous_session_id` | The session that was running; left out when none was (a crash before sign-in, or after a session ended) |
 | `classification` | `background_kill` (died while backgrounded — OS eviction / swipe-close) or `abnormal` (died foregrounded without the quit path) |
 | `last_alive_at` | Approximate death time (last persisted heartbeat) |
-| `unhandled_exception_count` | Unhandled exceptions seen during that run — context only, not proof of a crash |
+| `unhandled_exception_count` | Exceptions captured during that run, repeats included (none with capture off) — context only, not proof of a crash |
+
+The marker is kept from start-up to a clean quit, not only while a session runs, so a crash before sign-in or after
+sign-out is reported too.
 | `app_version` / `sdk_version` | Versions of the run that died |
 
 - Quitting via Alt-F4 / the window close button is a **clean** exit (Unity runs its quit path) — no event.

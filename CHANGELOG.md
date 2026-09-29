@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.55.0]
+
+### Added
+- **The game's exceptions are captured from start-up and from every thread.** Capture used to start at sign-in and hear
+  only what Unity logged on the main thread. It now also hears exceptions logged or left uncaught on other threads and faulted
+  tasks nobody awaited; one raised before sign-in is kept and sent once a player signs in. `Debug.LogError` lines are still not reported, and neither are the SDK's own exceptions. Each entry names where
+  it came from in its extra data's `exception_source`.
+- **Repeats of an exception are counted rather than sent one by one.** The first occurrence is sent at once; its repeats
+  within 60 s are sent as one entry with `repeat_count` when the window closes. An exception thrown every frame used to
+  queue an entry per frame, 216,000 an hour at 60 frames a second, and now costs about two a minute.
+- **A launch reports at most 100 different faults.** Past that, a new fault is counted, and an
+  `exception_reports_held_back` entry says how many reports were held back, at most once a minute.
+- **Analytics Capture Exceptions** (on) and **Analytics Exception Repeat Window** (60 s) in Flock > Settings, and
+  `FlockAnalyticsConfig.CaptureExceptions` and `ExceptionRepeatWindowSeconds` in code. With capture off,
+  `LogDiagnosticException` still records.
+
+### Changed
+- **The crash marker is kept from start-up to a clean quit**, not only while a session runs, so a crash before sign-in or
+  after sign-out is reported on the next launch. Its `app_termination` entry leaves out `previous_session_id` when no
+  session was running, and `unhandled_exception_count` counts every captured exception, repeats and other threads included (none with
+  capture off).
+
 ## [1.54.0]
 
 ### Changed
