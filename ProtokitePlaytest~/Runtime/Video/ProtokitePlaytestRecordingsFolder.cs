@@ -140,6 +140,18 @@ namespace Protokite.Playtest
             return SaveThroughTemporaryFile(SessionFileName, saved.ToString(Formatting.None), out error);
         }
 
+        /// <summary>Removes the run's saved session, and saves of it in progress, so no later launch uploads its recording: a run without one is deleted.</summary>
+        internal bool ForgetSession(out string error)
+        {
+            error = null;
+            DeleteTemporaryFiles();
+            string path = Path.Combine(FolderPath, SessionFileName);
+            if (TryDelete(path))
+                return true;
+            error = "could not delete " + path;
+            return false;
+        }
+
         /// <summary>The room a run reserved, or null when it saved none that can be read.</summary>
         internal static long? ReadReservedBytes(string runFolder)
         {

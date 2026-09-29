@@ -150,9 +150,11 @@ namespace Protokite.Playtest
 
         private static bool VideoIsOnInTheLoadedConfig() => FeatureIsOnInTheLoadedConfig(ProtokitePlaytestFeatures.VideoRecording);
 
-        // Asked every frame, so read off the fetched config rather than through Status, which loads the settings asset.
+        // Asked every frame, so read off the fetched config rather than through Status, which loads the settings asset. The player's
+        // answer is the one place video and heavy analytics learn what they may do.
         private static bool FeatureIsOnInTheLoadedConfig(string feature)
-            => !_playtestNoLongerCollecting && ConfigIsLoaded() && _config.IsFeatureEnabled(feature);
+            => !_playtestNoLongerCollecting && ConfigIsLoaded() && _config.IsFeatureEnabled(feature)
+               && ProtokitePlaytestConsent.AllowsFeature(EffectiveConsent(), feature);
 
         private static bool ConfigIsLoaded() => _config != null && ConfigStateForRunningFlock() == ProtokitePlaytestConfigState.Loaded;
 
@@ -258,7 +260,9 @@ namespace Protokite.Playtest
         /// <summary>Saves this launch's Protokite session beside its recording, so a later launch uploads the recording to it rather than delete it.</summary>
         private static void SaveSessionBesideRecording()
         {
-            if (_recordingRun == null || _sessionState != ProtokitePlaytestSessionState.Started)
+            // A recording the player took the screen back from is never given a session, or a later launch would send it.
+            if (_recordingRun == null || _sessionState != ProtokitePlaytestSessionState.Started
+                || !ProtokitePlaytestConsent.AllowsVideoRecording(EffectiveConsent()))
                 return;
             string gameVersionId = null;
             _sessionHeaders?.TryGetValue(GameVersionHeader, out gameVersionId);

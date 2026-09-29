@@ -60,8 +60,15 @@ namespace Protokite.Playtest
         // the session is no longer Started, so a recording finished then is kept for the next launch.
         private static void UploadThisLaunchsRecordingWhenReady()
         {
-            if (_thisLaunchsUploadStarted || _recordingRun == null || FinishedVideo?.FilePath == null
-                || _sessionState != ProtokitePlaytestSessionState.Started)
+            if (_thisLaunchsUploadStarted || _recordingRun == null || FinishedVideo == null)
+                return;
+            // Before the session check: a recording kept through quitting is one a later launch sends, so only deleting it honours the answer.
+            if (!ProtokitePlaytestConsent.AllowsVideoRecording(EffectiveConsent()))
+            {
+                DeleteWithdrawnRecording();
+                return;
+            }
+            if (FinishedVideo.FilePath == null || _sessionState != ProtokitePlaytestSessionState.Started)
                 return;
             _thisLaunchsUploadStarted = true;
 
@@ -92,6 +99,9 @@ namespace Protokite.Playtest
         private static void UploadEarlierRecordingsWhenReady(FlockClient running)
         {
             if (_earlierUploadsStarted || running == null || _uploadsCancel.IsCancellationRequested || _earlierRecordings == null || !_earlierRecordings.IsCompleted)
+                return;
+            // Waits rather than giving up for the launch, so a change of mind sends them in the same launch.
+            if (HoldingBackEarlierRecordings())
                 return;
             _earlierUploadsStarted = true;
             EarlierUploadsForTesting = UploadEarlierRecordingsAsync(RecordingsFolder, running.GetGameHeaders(), running.RetryPolicy, _uploadsCancel.Token);

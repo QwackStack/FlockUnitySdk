@@ -32,6 +32,7 @@ namespace Protokite.Playtest.Tests
         private string _oldUrl;
         private string _folder;
         private IDisposable _analyticsFolder;
+        private ProtokitePlaytestConsentForPlayModeTests _consent;
 
         // An empty scene of the test's own, in the build list while the tests run, so SceneManager can load it by path.
         public void Setup()
@@ -100,6 +101,7 @@ namespace Protokite.Playtest.Tests
             _oldUrl = _settings.ProtokiteApiUrl;
             _settings.PlaytestingEnabled = true;
             _settings.ProtokiteApiUrl = "http://protokite.test";
+            _consent = new ProtokitePlaytestConsentForPlayModeTests(_settings);
             ProtokitePlaytest.ResetForNewLaunch();
             _folder = Path.Combine(Path.GetTempPath(), "protokite_heavy_play_" + Guid.NewGuid().ToString("N"));
             ProtokitePlaytest.DeviceIdFilePathForTesting = Path.Combine(_folder, "device_id.txt");
@@ -120,6 +122,8 @@ namespace Protokite.Playtest.Tests
             ProtokitePlaytest.DeviceIdFilePathForTesting = null;
             ProtokitePlaytest.RecordingsFolderForTesting = null;
             _analyticsFolder?.Dispose();
+            _consent?.Dispose();
+            _consent = null;
             if (_settings != null)
             {
                 _settings.PlaytestingEnabled = _wasEnabled;

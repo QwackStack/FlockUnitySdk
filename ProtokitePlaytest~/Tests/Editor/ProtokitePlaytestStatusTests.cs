@@ -23,13 +23,14 @@ namespace Protokite.Playtest.Tests
             ProtokitePlaytestSettings settings = ScriptableObject.CreateInstance<ProtokitePlaytestSettings>();
             Assert.IsFalse(settings.PlaytestingEnabled, "Off until a studio switches it on");
             Assert.AreEqual("https://api-protokite.qwacks.com", settings.ProtokiteApiUrl, "Production, so a studio never types it");
+            Assert.IsTrue(settings.AskThePlayerForPlaytestConsent, "The player is asked what the playtest may collect unless a studio turns it off");
             Object.DestroyImmediate(settings);
         }
 
         [Test]
         public void NoSettingsReadsAsTurnedOff()
         {
-            Assert.AreEqual(ProtokitePlaytestStatus.TurnedOff, ProtokitePlaytest.StatusFor(null, true));
+            Assert.AreEqual(ProtokitePlaytestStatus.TurnedOff, ProtokitePlaytest.StatusFor(null, true, ProtokitePlaytestConsentChoice.VideoAndPlayData));
         }
 
         [TestCase(false, "http://localhost:8020", true, ProtokitePlaytestStatus.TurnedOff)]
@@ -46,7 +47,7 @@ namespace Protokite.Playtest.Tests
         public void StatusFollowsTheSettingsAndFlock(bool enabled, string url, bool flockIsRunning, ProtokitePlaytestStatus expected)
         {
             ProtokitePlaytestSettings settings = Settings(enabled, url);
-            Assert.AreEqual(expected, ProtokitePlaytest.StatusFor(settings, flockIsRunning));
+            Assert.AreEqual(expected, ProtokitePlaytest.StatusFor(settings, flockIsRunning, ProtokitePlaytestConsentChoice.VideoAndPlayData));
             Object.DestroyImmediate(settings);
         }
 

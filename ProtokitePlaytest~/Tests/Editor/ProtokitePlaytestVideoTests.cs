@@ -126,6 +126,54 @@ namespace Protokite.Playtest.Tests
         }
 
         [Test]
+        public void NothingIsRecordedUntilThePlayerAllowsTheScreen()
+        {
+            _settings.Settings.AskThePlayerForPlaytestConsent = true;
+            using (FlockWithConfig(true))
+            {
+                ProtokitePlaytest.Refresh();
+                Assert.AreEqual(ProtokitePlaytestStatus.WaitingForPlayerConsent, ProtokitePlaytest.Status, "Precondition: the question waits");
+                Frames(60);
+                Assert.AreEqual(0, _sourcesMade, "Not while the question waits");
+
+                Assert.IsTrue(ProtokitePlaytest.SetPlaytestConsent(ProtokitePlaytestConsentChoice.PlayDataOnly));
+                Frames(60);
+                Assert.AreEqual(0, _sourcesMade, "Not for play data only");
+
+                Assert.IsTrue(ProtokitePlaytest.SetPlaytestConsent(ProtokitePlaytestConsentChoice.VideoOnly));
+                Frames(1);
+                Assert.IsTrue(ProtokitePlaytest.IsRecordingVideo, "The screen is allowed now");
+            }
+        }
+
+        [Test]
+        public void TakingTheScreenBackStopsTheRecordingAndDeletesItOnceWritten()
+        {
+            _settings.Settings.AskThePlayerForPlaytestConsent = true;
+            using (FlockWithConfig(true))
+            {
+                ProtokitePlaytest.Refresh();
+                Assert.IsTrue(ProtokitePlaytest.SetPlaytestConsent(ProtokitePlaytestConsentChoice.VideoAndPlayData));
+                Frames(30, _source);
+                Assert.IsTrue(ProtokitePlaytest.IsRecordingVideo, "Precondition: recording");
+                string run = ProtokitePlaytest.RecordingRunForTesting.FolderPath;
+
+                LogAssert.Expect(LogType.Log, new Regex("deleted instead of uploaded"));
+                Assert.IsTrue(ProtokitePlaytest.SetPlaytestConsent(ProtokitePlaytestConsentChoice.PlayDataOnly));
+                Assert.IsFalse(ProtokitePlaytest.IsRecordingVideo, "Stopped the moment the screen is taken back");
+                WaitUntilFinished();
+
+                Assert.IsFalse(Directory.Exists(run), "Deleted, not kept for a later launch to send");
+                Assert.AreEqual(ProtokitePlaytestVideoStopReason.PlayerTookTheScreenBack, ProtokitePlaytest.FinishedVideo.StopReason);
+                Assert.IsNull(ProtokitePlaytest.RecordingRunForTesting);
+
+                Assert.IsTrue(ProtokitePlaytest.SetPlaytestConsent(ProtokitePlaytestConsentChoice.VideoAndPlayData));
+                Frames(30);
+                Assert.IsFalse(ProtokitePlaytest.IsRecordingVideo, "One recording a launch, whatever became of it");
+            }
+        }
+
+        [Test]
         public void TheConfigLeavingVideoOffRecordsNothing()
         {
             using (FlockWithConfig(false))

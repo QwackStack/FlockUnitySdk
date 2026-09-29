@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 It is released with the Flock SDK, at the Flock SDK's version.
 
 
+## [1.57.0]
+
+### Added
+- **The player is asked what the playtest may collect**, and nothing is collected until they answer: the screen and play
+  data, the screen only, play data only, or nothing. **Nothing** reads exactly like Playtesting Enabled off: no recording, no
+  play data, no Protokite session. The question says in its own words that it is the playtest's own, separate from any
+  privacy or analytics choice the game asks about, and it changes neither the Flock SDK's analytics consent nor its exception
+  capture.
+- The question is drawn over the game with UI Toolkit built from code, needs no EventSystem of the game's, and works with the
+  Input Manager, the Input System or both. While it is on screen the cursor is shown and free; the game's own cursor state
+  comes back once it is answered. It is answered with the mouse, and no answer is selected when it appears, so a game's own
+  Submit key (Space, by default) presses nothing. A press in its first half second is ignored, so a player still clicking
+  at the game does not answer a question they never read, and a click is never taken as an answer while the game keeps
+  locking the cursor (each click would land at the screen's centre); a warning then says to stop locking it while
+  `ProtokitePlaytest.IsConsentQuestionOpen` is true.
+- The answer is kept in `ProtokitePlaytest/playtest_consent.json` under the game's persistent data folder and counts in
+  every later launch, even in a build that stops asking. Each session start sends it as `playtest_consent` and
+  `playtest_consent_asked` in its debug facts.
+- **Ask The Player For Playtest Consent** (on) in the playtest settings. `ProtokitePlaytest.PlaytestConsent`,
+  `SetPlaytestConsent`, `AskForPlaytestConsent` and `IsConsentQuestionOpen`. Two statuses: `WaitingForPlayerConsent` and
+  `PlayerRefusedPlaytest`. **Protokite > Playtest > Ask The Player Again** forgets the answer the editor's machine gave.
+
+### Changed
+- `ProtokitePlaytest.IsFeatureEnabled` also needs the player's answer; a feature this build does not know needs the answer
+  that allows everything.
+- Taking the screen back deletes this launch's recording rather than keeping it for a later launch to send, and removes the
+  session saved beside it at once.
+- Recordings earlier launches kept wait while the question is on screen, while the config that decides whether it is put is
+  on its way, and for as long as the answer is nothing, even with Playtesting Enabled off; they go in the same launch the
+  player changes their mind.
+- A run in batch mode or without graphics cannot show the question, so it collects nothing, and says so once.
+
 ## [1.56.0]
 
 No changes to the Protokite Playtest package: this version is released together with a Flock SDK fix to exception

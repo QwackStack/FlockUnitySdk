@@ -123,7 +123,7 @@ beside every file outside `~` folders, the version constant sessions report, and
 **Unity cannot link a script to its class when the path contains a `~`**, so a ScriptableObject created there is saved with no
 script.
 - **ProtokitePlaytestSettings** — the `ScriptableObject` at `Assets/Resources/ProtokitePlaytestSettings.asset`: playtesting off,
-  Protokite API URL `https://api-protokite.qwacks.com` (production) by default.
+  Protokite API URL `https://api-protokite.qwacks.com` (production) and Ask The Player For Playtest Consent on by default.
 - **ProtokitePlaytest** — the entry point. `Status` is worked out on every read from the settings, the running `FlockClient`
   and the config fetched **under that client** (a config fetched under a client that has since shut down reads as none,
   before any refresh). `Refresh()` follows Flock by comparing the running client instance (Flock clears event subscriptions
@@ -139,6 +139,25 @@ script.
   the start, so the end goes out after Flock has shut down. A start answered after its launch ended (quit, or a new Play
   with domain reload off) is ended at once, unless quitting already ended it. A 400 is a closed playtest:
   `PlaytestNoLongerCollecting` for the launch.
+- **Player consent (`ProtokitePlaytestConsent.cs`, `ProtokitePlaytestConsentQuestion.cs`)** — the playtest's own question:
+  `ProtokitePlaytestConsentChoice` and the inert rules (what each answer allows, the wire spellings read letter for letter, a
+  feature this build does not know allowed only by the answer that allows everything); `ProtokitePlaytestConsentFile`
+  (`persistentDataPath/ProtokitePlaytest/playtest_consent.json`, a temporary file per save, a failed save forgets the answer
+  before). `EffectiveConsent()` is the one answer every part reads: the saved one, or with none `NotAnswered` in a build that
+  asks and `VideoAndPlayData` in one that does not; `StatusFor` takes it (`WaitingForPlayerConsent`, `PlayerRefusedPlaytest`),
+  `FeatureIsOnInTheLoadedConfig` gates video and heavy analytics on it, and the session start sends it in `extra_debug`.
+  Taking the screen back forgets the run's saved session at once and deletes the recording (now, or once written, before the
+  session check in `UploadThisLaunchsRecordingWhenReady`); `SaveSessionBesideRecording` never gives one a session. Earlier
+  launches' uploads wait for an answer of nothing, and while nobody has answered in a build whose config is on its way or
+  loaded. Tests point the file elsewhere with `ConsentFilePathForTesting` (the settings fixtures set it, asking off unless a
+  test turns it on).
+- **Panels (`Runtime/Panels/`)** — **ProtokitePlaytestPanel**: a full-screen UI Toolkit panel built from code (a `UIDocument`
+  and a runtime `PanelSettings` with an empty theme, the built-in font given at the root, sorting order 30000), one view at a
+  time so a second question can follow, the view itself focused so no button is; it keeps the cursor free while open, notes a
+  game that locks it again, gives the game's cursor back when closed (not an ended launch's), and is drawn only while playing,
+  not in batch mode, with graphics. **ProtokitePlaytestConsentQuestionView**: the words and the four buttons from one options
+  table the tests read too; a press in the first half second is ignored, and a mouse press while the game keeps the cursor
+  locked. **Protokite > Playtest > Ask The Player Again** (editor) forgets the saved answer.
 - **ProtokitePlaytestIdentity** — the device id file (a lower-case GUID under `persistentDataPath/ProtokitePlaytest/`),
   written through a temporary file of its own and moved into place, read back after, never replaced when unreadable; stray
   temporary files over a minute old are swept. `SetSteamId` refuses an id with whitespace rather than trim it. Tests point

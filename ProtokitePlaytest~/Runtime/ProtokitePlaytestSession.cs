@@ -82,10 +82,10 @@ namespace Protokite.Playtest
             return true;
         }
 
-        // A session can start once the playtest is ready and a Flock session has reached the server.
+        // A session can start once the playtest is ready, the player's answer lets it collect something, and a Flock session has reached the server.
         private static bool SessionCanStart(FlockClient running)
             => _sessionState == ProtokitePlaytestSessionState.NotStarted && _configState == ProtokitePlaytestConfigState.Loaded
-               && running != null && running.ServerSessionId != null;
+               && running != null && running.ServerSessionId != null && ProtokitePlaytestConsent.CollectsAnything(EffectiveConsent());
 
         private static void StartPlaytestSessionWhenAllowed(FlockClient running, string protokiteApiUrl)
         {
@@ -336,6 +336,10 @@ namespace Protokite.Playtest
         {
             JObject facts = new JObject
             {
+                // First, as it says whether the rest of the session was allowed to hold anything. Without the second, a build that
+                // asks nobody and a player who allowed everything look the same.
+                ["playtest_consent"] = ProtokitePlaytestConsent.ToWire(EffectiveConsent()),
+                ["playtest_consent_asked"] = AsksThePlayer(ProtokitePlaytestSettings.Load()) ? "true" : "false",
                 ["engine_version"] = Application.unityVersion,
                 ["build_configuration"] = Application.isEditor ? "Editor" : Debug.isDebugBuild ? "Development" : "Release",
                 ["sdk_version"] = ProtokitePlaytestVersion.Current

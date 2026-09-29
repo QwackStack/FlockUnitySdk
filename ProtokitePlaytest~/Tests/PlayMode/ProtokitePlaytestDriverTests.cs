@@ -21,13 +21,15 @@ namespace Protokite.Playtest.Tests
         private bool _wasEnabled;
         private string _oldUrl;
         private string _recordings;
+        private ProtokitePlaytestConsentForPlayModeTests _consent;
 
         // What Unity's own start-up left, read once before any test tidies it away.
         private static bool _playtestingWasOnAtStartUp;
         private static int _driversStartedByUnity = -1;
 
-        [OneTimeSetUp]
-        public void ReadWhatStartUpLeft()
+        // As Play Mode starts, after the driver (BeforeSceneLoad) and before any test: another fixture may tidy the driver away first.
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
+        private static void ReadWhatStartUpLeft()
         {
             if (_driversStartedByUnity >= 0)
                 return;
@@ -61,6 +63,7 @@ namespace Protokite.Playtest.Tests
             _oldUrl = _settings.ProtokiteApiUrl;
             _settings.PlaytestingEnabled = true;
             _settings.ProtokiteApiUrl = "http://protokite.test";
+            _consent = new ProtokitePlaytestConsentForPlayModeTests(_settings);
             ProtokitePlaytest.ResetForNewLaunch();
             // A session started here must never read or write the game's own device id, and the driver goes through recordings
             // earlier launches left, which must never be the game's own.
@@ -93,6 +96,8 @@ namespace Protokite.Playtest.Tests
                 _settings.PlaytestingEnabled = _wasEnabled;
                 _settings.ProtokiteApiUrl = _oldUrl;
             }
+            _consent?.Dispose();
+            _consent = null;
         }
 
         [Test]
