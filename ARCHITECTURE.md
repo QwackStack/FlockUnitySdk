@@ -308,6 +308,20 @@ script.
   records test videos in Play Mode; under **While testing** it forgets this machine's consent answer and opens the feedback
   form (the menu holds only Settings and this window). A button that changes what is drawn below it ends the event
   (`GUIUtility.ExitGUI`), so no event draws what its Layout did not count; nothing in it waits across a script reload.
+- **Live self-test (`Runtime/ProtokitePlaytestSelfTest.cs`, `ProtokitePlaytestSelfTestReport.cs`)** — the public front is
+  `ProtokitePlaytestSelfTest.RunAsync(closedPlaytestGameVersionId)` and `IsRunning`; the steps are private members of the
+  `ProtokitePlaytest` partial class, so they read the session's own URL and headers and the game's identity. Refused in a
+  release player (`Debug.isDebugBuild`), without a running Flock, and while one runs. Its probes go through a `ProtokiteClient`
+  of its own with `MaxRetries = 0` and header copies swapped by name whatever their letter case (`WithHeader`), so no refusal
+  touches the game; a session a probe is wrongly given is ended with the headers it was started with. A refusal counts only
+  with its own status, and for a form only naming its own question letter for letter (`WhyNotTheRefusal`). It waits frame by
+  frame on the main thread (`Task.Yield` against real time: no timer, so WebGL waits too). A skip says its real reason. A Flock
+  shutdown fails the next step once and skips the rest. Quitting logs how far it got (`StopSelfTestForQuitting`, from
+  `HandleGameQuitting`). The last line is a warning when anything failed or nothing passed. The recording step stops the
+  launch's recording and waits for `ThisLaunchsUpload` (renamed from `...ForTesting`, which it now serves), and passes on the
+  storage's 2xx with the files deleted. The video's `_videoNotStartedBecause` / `_videoNotStartedIsExpected` say whether a
+  missing recording is the build's nature (no encoder, nothing drawn) or a fault. The session is left for quitting to end.
+  The setup window's **Run Live Self-Test** (Play Mode) runs it.
 - **The C# surface** — every public member of `ProtokitePlaytest` has a one-line doc and a call in
   `ProtokitePlaytestPublicSurfaceTests`, whose reflection test fails on a public member with no call. **Sample**:
   `Samples/PlaytestSample` (asmdef `Protokite.Playtest.Samples`), one IMGUI script making every call, shipped in the
@@ -327,8 +341,11 @@ script.
   for late replies), **ProtokitePlaytestDriverTests** (PlayMode, the real driver), **ProtokitePlaytestSetupChecksTests** (each
   check failing and passing from real settings objects, the project's own read, core's menu paths),
   **ProtokitePlaytestGameVersionLookupTests** (a fake Flock answering by name and by the ID header, held answers) and
-  **ProtokitePlaytestTestVideoTests**; the windowed PlayMode pass records a real test video. A live `[Explicit]` check lives in
-  FlockUnityProject: `ProtokitePlaytestLiveConfigTests`.
+  **ProtokitePlaytestTestVideoTests**, and **ProtokitePlaytestSelfTestTests** (a fake Protokite that refuses for the server's
+  reasons, reading the key, version, body and session, with each probe read back); the windowed PlayMode pass records a real test
+  video. Live `[Explicit]` checks live in FlockUnityProject: `ProtokitePlaytestLiveConfigTests`, and
+  `ProtokitePlaytestLiveSelfTest` (PlayMode, windowed), which `Libraries/Unity/playtest-self-test/run_p15_live.py` runs and
+  judges on the backends' rows.
 
 ## Offline caching
 

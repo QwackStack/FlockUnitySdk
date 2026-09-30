@@ -734,6 +734,16 @@ namespace Protokite.Playtest
         /// <summary>A new file, not yet open.</summary>
         public static IProtokitePlaytestRecordingFile Create() => new ProtokitePlaytestWebmFile();
 
+        /// <summary>The content type this build's recordings are written and uploaded as.</summary>
+        public static string ContentTypeWritten
+        {
+            get
+            {
+                using (IProtokitePlaytestRecordingFile file = Create())
+                    return file.ContentType;
+            }
+        }
+
         /// <summary>The content type a finished recording is uploaded as, read from its file's ending; null for a kind Protokite does not take.</summary>
         // By ending rather than by what this build writes, so a recording a phone build made (MP4, which Protokite accepts) still goes.
         public static string ContentTypeFor(string videoPath)

@@ -16,6 +16,9 @@ namespace Protokite.Playtest
 
         private static ProtokitePlaytestVideoRecording _videoRecording;
         private static bool _videoStartedThisLaunch;
+        // Why this launch's recording did not start, and whether that is the build's nature (no encoder, nothing drawn) rather than a fault.
+        private static string _videoNotStartedBecause;
+        private static bool _videoNotStartedIsExpected;
 
         // This launch's run folder, held for the launch's whole life so no other launch touches its recording.
         private static ProtokitePlaytestRecordingRun _recordingRun;
@@ -175,12 +178,16 @@ namespace Protokite.Playtest
             if (!TryStartRecording(ProtokitePlaytestRecordingKind.Playtest, settings, out ProtokitePlaytestVideoRecording recording, out ProtokitePlaytestRecordingRun run,
                     out string contentType, out RecordingNotStarted notStarted, out string whyNot))
             {
+                bool expected = notStarted == RecordingNotStarted.NoEncoder
+                                || (notStarted == RecordingNotStarted.NoCapture && SystemInfo.graphicsDeviceType == GraphicsDeviceType.Null);
+                _videoNotStartedBecause = whyNot;
+                _videoNotStartedIsExpected = expected;
                 // The encoder has said why it is missing, once.
                 if (notStarted == RecordingNotStarted.NoEncoder)
                     return;
                 string line = LogPrefix + "This launch records no playtest video: " + whyNot + " Everything else in the playtest still runs.";
                 // No capture is expected in a build that draws nothing; loud where a studio's players should have been recorded.
-                if (notStarted == RecordingNotStarted.NoCapture && SystemInfo.graphicsDeviceType == GraphicsDeviceType.Null)
+                if (expected)
                     Debug.Log(line);
                 else
                     Debug.LogWarning(line);
@@ -415,6 +422,8 @@ namespace Protokite.Playtest
             _earlierRecordings?.Wait(TimeSpan.FromSeconds(5));
             _earlierRecordings = null;
             _videoStartedThisLaunch = false;
+            _videoNotStartedBecause = null;
+            _videoNotStartedIsExpected = false;
             FinishedVideo = null;
         }
     }

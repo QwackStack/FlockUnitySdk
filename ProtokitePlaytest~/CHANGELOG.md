@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 It is released with the Flock SDK, at the Flock SDK's version.
 
 
+## [1.61.0]
+
+### Added
+- **A live self-test**, `ProtokitePlaytestSelfTest.RunAsync`, and **Run Live Self-Test** in **Protokite > Playtest > Setup Checks
+  And Test Video**. It checks this build's playtest end to end against the live Protokite:
+  - the config loads, and the session starts
+  - an exception and a playtest event reach the Flock SDK
+  - a filled-in form is taken, and the recording is uploaded
+  Each check is paired with a request Protokite must refuse, judged by its own status. It sends each refused request once, through
+  a client of its own, so the game is left as it was. The report lists every step with what it found, and a run id carried by
+  what it sends: the exception's message, the event's properties and the form's text answers. It runs in the editor and in
+  development builds, and a release build refuses it.
+
+### Fixed
+- The log line after an upload no longer says the recording is gone from disk when its files could not all be deleted.
+
 ## [1.60.0]
 
 ### Added

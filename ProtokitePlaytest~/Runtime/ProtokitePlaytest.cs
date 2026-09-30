@@ -215,6 +215,7 @@ namespace Protokite.Playtest
             ResetHeavyAnalyticsForNewLaunch();
             ResetConsentForNewLaunch();
             ResetFormsForNewLaunch();
+            _selfTest = null;
             _statusLastReported = null;
             _stateAtLastRefresh = null;
         }

@@ -1,12 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading.Tasks;
 using UnityEditor;
 using UnityEngine;
 
 namespace Protokite.Playtest.Editor
 {
-    /// <summary>Protokite > Playtest > Setup Checks And Test Video: what in this project stands in a playtest's way, a test video, and the consent answer and form while testing.</summary>
+    /// <summary>Protokite > Playtest > Setup Checks And Test Video: what in this project stands in a playtest's way, a test video, the consent answer and form while testing, and the live self-test.</summary>
     internal sealed class ProtokitePlaytestWindow : EditorWindow
     {
         /// <summary>The menu path, also used by the Flock settings window's Playtesting tab.</summary>
@@ -18,6 +19,10 @@ namespace Protokite.Playtest.Editor
         internal const float StartingHeight = 720f;
 
         [SerializeField] private int testVideoSeconds = 10;
+        [SerializeField] private string closedPlaytestGameVersionId = "";
+
+        // The last self-test started here, for the line under its button.
+        [NonSerialized] private Task<ProtokitePlaytestSelfTestReport> _selfTest;
 
         // Not kept through a script reload: a question on its way then is dropped, and asked again on the next draw.
         [NonSerialized] private ProtokitePlaytestGameVersionQuestions _flock;
@@ -96,7 +101,44 @@ namespace Protokite.Playtest.Editor
             DrawTestVideo();
             EditorGUILayout.Space();
             DrawWhileTesting();
+            EditorGUILayout.Space();
+            DrawSelfTest();
             EditorGUILayout.EndScrollView();
+        }
+
+        private void DrawSelfTest()
+        {
+            EditorGUILayout.LabelField("Live self-test", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(
+                "Checks this build's playtest against Protokite, each check paired with a request Protokite must refuse. It signs nobody in, so sign a " +
+                "player in first, and it uploads this Play's recording, so run it in a Play of its own.", EditorStyles.wordWrappedMiniLabel);
+            closedPlaytestGameVersionId = EditorGUILayout.TextField(
+                new GUIContent("Closed Playtest Version ID", "Optional: the Game Version ID of a closed playtest of this game, to check that it takes no session."),
+                closedPlaytestGameVersionId);
+            using (new EditorGUI.DisabledScope(!Application.isPlaying || ProtokitePlaytestSelfTest.IsRunning))
+            {
+                if (GUILayout.Button("Run Live Self-Test"))
+                {
+                    _selfTest = ProtokitePlaytestSelfTest.RunAsync(string.IsNullOrEmpty(closedPlaytestGameVersionId) ? null : closedPlaytestGameVersionId);
+                    GUIUtility.ExitGUI();
+                }
+            }
+            EditorGUILayout.LabelField(SelfTestNote(Application.isPlaying, ProtokitePlaytestSelfTest.IsRunning, _selfTest), EditorStyles.wordWrappedMiniLabel);
+        }
+
+        /// <summary>The line under Run Live Self-Test: when it can run, that it is running, or how the last run came out.</summary>
+        internal static string SelfTestNote(bool playing, bool running, Task<ProtokitePlaytestSelfTestReport> last)
+        {
+            if (running)
+                return "Running; each step is logged to the Console as it ends.";
+            if (last != null && last.Status == TaskStatus.RanToCompletion)
+            {
+                ProtokitePlaytestSelfTestReport report = last.Result;
+                return report.NotRunBecause != null
+                    ? "The last self-test did not run: " + report.NotRunBecause
+                    : $"Last run {report.RunId}: {report.Passed} passed, {report.Failed} failed, {report.Skipped} skipped. Each step is in the Console.";
+            }
+            return playing ? "Sign a player in, then run it." : "Enter Play Mode and sign a player in to run it.";
         }
 
         // The same controls every event, enabled or not, so a layout and what it draws agree.

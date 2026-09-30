@@ -200,6 +200,7 @@ namespace Protokite.Playtest
         /// </summary>
         internal static void HandleGameQuitting()
         {
+            StopSelfTestForQuitting();
             // An upload still going stops here and its recording is kept: the next launch sends it.
             StopUploads();
             StopVideoForQuitting();

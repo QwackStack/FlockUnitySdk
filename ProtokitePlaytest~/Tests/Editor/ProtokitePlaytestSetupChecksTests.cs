@@ -593,6 +593,21 @@ namespace Protokite.Playtest.Tests
         }
 
         [Test]
+        public void TheSelfTestNoteSaysWhenItCanRunAndHowTheLastRunWent()
+        {
+            StringAssert.Contains("Enter Play Mode", ProtokitePlaytestWindow.SelfTestNote(false, false, null));
+            StringAssert.Contains("Sign a player in", ProtokitePlaytestWindow.SelfTestNote(true, false, null));
+            StringAssert.Contains("Running", ProtokitePlaytestWindow.SelfTestNote(true, true, null));
+
+            ProtokitePlaytestSelfTestReport ran = new ProtokitePlaytestSelfTestReport("run1", null);
+            ran.Add(new ProtokitePlaytestSelfTestStep("a", ProtokitePlaytestSelfTestOutcome.Passed, ""));
+            ran.Add(new ProtokitePlaytestSelfTestStep("b", ProtokitePlaytestSelfTestOutcome.Failed, ""));
+            StringAssert.Contains("Last run run1: 1 passed, 1 failed, 0 skipped", ProtokitePlaytestWindow.SelfTestNote(true, false, System.Threading.Tasks.Task.FromResult(ran)));
+            StringAssert.Contains("did not run: no Flock", ProtokitePlaytestWindow.SelfTestNote(true, false,
+                System.Threading.Tasks.Task.FromResult(new ProtokitePlaytestSelfTestReport("", "no Flock"))));
+        }
+
+        [Test]
         public void TheWindowsIconsAreTheEditorsOwn()
         {
             Assert.IsNotNull(EditorGUIUtility.IconContent("TestPassed").image);
