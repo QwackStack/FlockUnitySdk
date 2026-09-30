@@ -25,8 +25,8 @@ namespace Protokite.Playtest
         [SerializeField] private bool askThePlayerForPlaytestConsent = true;
 
         [Header("Feedback form")]
-        [Tooltip("The key that opens the playtest's feedback form, and closes it again, whenever the playtest has a published form; read when the playtest loads. None: only ProtokitePlaytest.OpenFeedbackForm opens it.")]
-        [SerializeField] private KeyCode feedbackFormKey = KeyCode.F9;
+        [Tooltip("The key that opens the playtest's feedback form, and closes it again, whenever the playtest has a published form; read when the playtest loads. Click Detect Key and press the key, or choose it from the list. None: only ProtokitePlaytest.OpenFeedbackForm opens it.")]
+        [SerializeField, ProtokitePlaytestKeyField] private KeyCode feedbackFormKey = KeyCode.F9;
 
         [Tooltip("Off by default: a playtest is about what the player was doing, and many games cannot be paused. On: the game's time scale is 0 while the form is open, and put back when it closes unless the game set another one meanwhile; a game that pauses itself too (time scale 0) while the form is open is unpaused with it.")]
         [SerializeField] private bool pauseTheGameWhileTheFormIsOpen;
@@ -139,5 +139,10 @@ namespace Protokite.Playtest
 
         /// <summary>The project's settings, or null when the project has none (which reads as playtesting off).</summary>
         public static ProtokitePlaytestSettings Load() => Resources.Load<ProtokitePlaytestSettings>(ResourceName);
+    }
+
+    /// <summary>Draws a key setting with a Detect Key button that sets it from the next key pressed, beside the list of every key.</summary>
+    internal sealed class ProtokitePlaytestKeyFieldAttribute : PropertyAttribute
+    {
     }
 }

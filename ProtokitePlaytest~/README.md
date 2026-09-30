@@ -5,7 +5,8 @@ reported to your Protokite playtest.
 
 > **Early version.** This release asks the player what the playtest may collect, loads your playtest's config, runs one
 > Protokite session per launch, records the game's screen on 64-bit Windows and uploads it to that session, sends
-> performance and level events through the Flock SDK with heavy analytics on, and shows your playtest's feedback form.
+> performance and level events through the Flock SDK with heavy analytics on, and shows your playtest's feedback form. In the
+> editor it checks your setup and records test videos.
 
 ## Install
 
@@ -27,14 +28,39 @@ Use the same `<version>` as your Flock SDK. This route needs Git installed on yo
 
 ## Switch it on
 
-1. **Protokite > Playtest > Settings** (or **Open settings** on Flock's Playtesting tab). The settings are created the
-   first time, at `Assets/Resources/ProtokitePlaytestSettings.asset`, with playtesting **off**.
+1. **Protokite > Playtest > Settings** (or **Open Playtest Settings** on Flock's Playtesting tab). The settings are created
+   the first time, at `Assets/Resources/ProtokitePlaytestSettings.asset`, with playtesting **off**.
 2. Tick **Playtesting Enabled**.
 3. Set your Flock **Game Version** to your playtest's version name (it starts with `pt-`).
 
 The Protokite API URL is filled in for you (`https://api-protokite.qwacks.com`); change it only to point at a local
 Protokite, such as `http://localhost:8020`. Your Flock API key and Game Version are used as they are; there is
 nothing else to enter.
+
+## Check your setup
+
+**Protokite > Playtest > Setup Checks And Test Video** (or **Check Playtest Setup** on Flock's Playtesting tab) checks what
+a build of this project needs for a playtest, and says what to change for each check that fails, with a button that opens
+the place to change it:
+
+| Check | Passes when |
+|---|---|
+| Playtesting | the playtest settings exist and **Playtesting Enabled** is on |
+| Protokite API URL | it is an http or https address with a host and no spaces, by the same rule the game uses |
+| Game Version | Flock's **Game Version** is a playtest's name, `pt-<test id>`, resolved to the ID a build sends |
+| Video | the build target is 64-bit Windows, x64 |
+
+- **Set Game Version by its name, never by pasting an ID.** Protokite's test page shows the playtest version's ID, but Flock
+  resolves Game Version by name: an ID pasted into Game Version resolves to nothing, so a build keeps sending the ID resolved
+  before, and an ID pasted over the resolved ID is replaced the next time Game Version is resolved. The window asks Flock,
+  with your API key, which version the ID is, and when that version is a playtest's whose name resolves back to it in your
+  game, offers **Set Game Version To pt-...**, which sets the name and the ID it resolves to. Only a playtest's name is ever
+  offered.
+- The Game Version is checked with Flock when the window opens and when the Flock settings change; **Check Again** asks again.
+  When Flock cannot be asked, the check goes by what the settings hold and says so.
+- The Video check reads the active build target: players built for another platform, or for 32-bit or ARM64 Windows, record
+  no video, and everything else in the playtest still runs there.
+- Game Version is read from the `FlockConfig` asset in a Resources folder, where the Flock SDK's own start-up reads it.
 
 ## Is it running?
 
@@ -139,7 +165,7 @@ sends **whatever their consent answer**, "nothing" included; it never opens over
 
 | Setting | Default | |
 |---|---|---|
-| Feedback Form Key | F9 | Opens the form and closes it again, also while the player types in it. Read when the playtest loads; None leaves opening it to your game |
+| Feedback Form Key | F9 | Opens the form and closes it again, also while the player types in it. Click **Detect Key** and press the key (Escape or **Cancel** keeps the old one), or choose it from the list. Read when the playtest loads; None leaves opening it to your game |
 | Pause The Game While The Form Is Open | off | The time scale is 0 while the form is open, and put back when it closes unless the game set another one meanwhile |
 
 ```csharp
@@ -231,6 +257,25 @@ It stops for good at the length or size limit, or when the game quits; quitting 
 seconds as the session end, and a file not finished by then stays as its `.part` file. Time the game spends in the
 background is left out.
 
+### Test videos
+
+In Play Mode, **Record Test Video** in **Protokite > Playtest > Setup Checks And Test Video** records the Game view for the
+number of seconds you set, with the video settings below and no playtest needed: playtesting off, nobody signed in, whatever
+the player answered the consent question, since a test video is never sent. It is written to
+`ProtokitePlaytest/Recordings/TestVideos/` under the game's persistent data folder, is never uploaded, and is kept until making
+room for a later recording deletes it; the window shows where it went.
+
+- It makes room for what its own length records at its bitrate (at least 1 MB), never more, and never grows past that. Room is
+  made by deleting older test videos only, never a recording waiting to upload; with too little left, it is not recorded and
+  the window says why.
+- One at a time, and never beside the playtest's own recording: it is refused while the playtest records or is about to, and
+  one recording when the playtest's config turns video on stops there, keeping what it recorded, so the playtest's recording
+  starts as it would have.
+- It starts at the end of a frame, once the recordings earlier launches left are gone through. Quitting finishes it, as it does
+  the playtest's.
+- A playtest collecting play data in the same Play session measures the test video's cost with the game's.
+- 64-bit Windows editors only, as video recording is.
+
 ### Uploading
 
 A recording is uploaded to its Protokite session once its file is finished (it reached its length or size limit, or the game
@@ -253,7 +298,7 @@ budget, so a build that never records keeps asking for it, and says so in the lo
 ### Where recordings are kept
 
 Each recording has a folder of its own under the game's persistent data folder,
-`ProtokitePlaytest/Recordings/Playtest/<UTC time>-<8 hex digits>/`, holding the video, `session.json` (the Protokite session
+`ProtokitePlaytest/Recordings/Playtest/<UTC time>-<8 hex digits>/` (a test video's under `TestVideos/`, with no session), holding the video, `session.json` (the Protokite session
 it belongs to: the session id, the Protokite API URL and the Game Version ID the session started with, never the API key),
 `reserved-bytes.txt` (the most it may take) and `in-use.lock`, which the game keeps open, shared with nobody, until it
 closes (in the Editor, until Play Mode ends). The session is saved whenever it starts, before or after the recording, and
@@ -272,7 +317,8 @@ This runs in every launch, Playtesting Enabled or not. Files an earlier version 
 are left where they are and not counted below.
 
 **Recordings Disk Budget Mb** is the most every recording kept on the machine may take together. Before a recording starts,
-recordings whose game has closed are deleted, the oldest first, until it fits. A recording starts once the folders above have
+recordings whose game has closed are deleted until it fits: test videos first, then recordings waiting to upload, the oldest
+first. A recording starts once the folders above have
 been gone through (usually milliseconds, at most 10 seconds), so nothing is deleted for room a cut-off file only seems to
 take. A recording makes room only for what its length limit records at its bitrate, with a quarter to spare (about 845 MB
 at the defaults), so a short recording never deletes one waiting to be uploaded that it would fit beside; it may then grow

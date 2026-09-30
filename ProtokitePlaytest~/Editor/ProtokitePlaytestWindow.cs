@@ -1,0 +1,212 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using UnityEditor;
+using UnityEngine;
+
+namespace Protokite.Playtest.Editor
+{
+    /// <summary>Protokite > Playtest > Setup Checks And Test Video: what in this project stands in a playtest's way, and a test video recorded in Play Mode.</summary>
+    internal sealed class ProtokitePlaytestWindow : EditorWindow
+    {
+        /// <summary>The menu path, also used by the Flock settings window's Playtesting tab.</summary>
+        public const string MenuPath = "Protokite/Playtest/Setup Checks And Test Video";
+
+        private const string FlockSettingsMenuPath = "Flock/Settings";
+        private const int LongestTestVideoSeconds = 3600;
+        internal const float StartingWidth = 540f;
+        internal const float StartingHeight = 720f;
+
+        [SerializeField] private int testVideoSeconds = 10;
+
+        // Not kept through a script reload: a question on its way then is dropped, and asked again on the next draw.
+        [NonSerialized] private ProtokitePlaytestGameVersionQuestions _flock;
+        [NonSerialized] private string _testVideoRefused;
+        // Read at each Layout event and kept for the events after it, so a layout and what it draws agree.
+        [NonSerialized] private ProtokitePlaytestSetupInput _input;
+        private Vector2 _scroll;
+
+        [MenuItem(MenuPath)]
+        public static void Open()
+        {
+            bool alreadyOpen = HasOpenInstances<ProtokitePlaytestWindow>();
+            ProtokitePlaytestWindow window = GetWindow<ProtokitePlaytestWindow>("Protokite Playtest");
+            // A new window opens centred on the editor, big enough to read every check without scrolling.
+            if (!alreadyOpen)
+                window.position = StartingPosition(EditorGUIUtility.GetMainWindowPosition());
+        }
+
+        internal static Rect StartingPosition(Rect editor)
+        {
+            float width = Mathf.Min(StartingWidth, editor.width);
+            float height = Mathf.Min(StartingHeight, editor.height);
+            return new Rect(editor.x + (editor.width - width) / 2f, editor.y + (editor.height - height) / 2f, width, height);
+        }
+
+        private void OnEnable()
+        {
+            _flock = new ProtokitePlaytestGameVersionQuestions();
+            _flock.Answered += RepaintIfOpen;
+        }
+
+        private void OnDisable()
+        {
+            if (_flock == null)
+                return;
+            _flock.Answered -= RepaintIfOpen;
+            _flock.Stop();
+        }
+
+        // A test video's progress is shown while the game runs.
+        private void OnInspectorUpdate()
+        {
+            if (Application.isPlaying)
+                Repaint();
+        }
+
+        private void RepaintIfOpen()
+        {
+            if (this != null)
+                Repaint();
+        }
+
+        private void OnGUI()
+        {
+            if (_input == null || Event.current.type == EventType.Layout)
+                _input = ProtokitePlaytestSetupInput.FromProject();
+            ProtokitePlaytestSetupInput input = _input;
+            // Asked once a typed value is committed, not for every letter.
+            if (!EditorGUIUtility.editingTextField)
+                _flock.AskIfChanged(input);
+            List<ProtokitePlaytestSetupCheck> checks = ProtokitePlaytestSetupChecks.Evaluate(input, _flock.Answer);
+
+            _scroll = EditorGUILayout.BeginScrollView(_scroll);
+            EditorGUILayout.LabelField("Setup checks", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("What a build of this project needs for a playtest. Each failed check says what to change.", EditorStyles.wordWrappedMiniLabel);
+            EditorGUILayout.Space();
+            foreach (ProtokitePlaytestSetupCheck check in checks)
+            {
+                DrawCheck(check);
+                if (check.Id == ProtokitePlaytestSetupChecks.GameVersionCheck)
+                    DrawFlockQuestion(input);
+                EditorGUILayout.Space();
+            }
+
+            EditorGUILayout.Space();
+            DrawTestVideo();
+            EditorGUILayout.EndScrollView();
+        }
+
+        private static void DrawCheck(ProtokitePlaytestSetupCheck check)
+        {
+            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+            GUIContent icon = EditorGUIUtility.IconContent(check.Passed ? "TestPassed" : "TestFailed");
+            EditorGUILayout.LabelField(new GUIContent(" " + check.Title, icon.image), EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(check.Detail, EditorStyles.wordWrappedLabel);
+            switch (check.Fix)
+            {
+                case ProtokitePlaytestSetupFix.OpenPlaytestSettings:
+                    if (GUILayout.Button("Open Playtest Settings"))
+                        ProtokitePlaytestSettingsMenu.OpenSettings();
+                    break;
+                case ProtokitePlaytestSetupFix.OpenFlockSettings:
+                    if (GUILayout.Button("Open Flock Settings"))
+                        EditorApplication.ExecuteMenuItem(FlockSettingsMenuPath);
+                    break;
+                case ProtokitePlaytestSetupFix.UseTheSuggestedGameVersion:
+                    if (GUILayout.Button($"Set Game Version To {check.SuggestedGameVersion}"))
+                        ProtokitePlaytestSetupChecks.UseTheSuggestedGameVersion(ProtokitePlaytestSetupInput.LoadFlockSettings(), check);
+                    break;
+                case ProtokitePlaytestSetupFix.OpenBuildProfiles:
+                    if (GUILayout.Button("Open Build Settings"))
+                        BuildPlayerWindow.ShowBuildPlayerWindow();
+                    break;
+            }
+            EditorGUILayout.EndVertical();
+        }
+
+        private void DrawFlockQuestion(ProtokitePlaytestSetupInput input)
+        {
+            string said;
+            if (!ProtokitePlaytestGameVersionLookup.CanAsk(input))
+                said = "Not checked with Flock: set the API URL, API key and Game Version in Flock > Settings.";
+            else if (_flock.IsAsking)
+                said = "Checking with Flock...";
+            else if (_flock.Answer == null || _flock.Answer.AskedFor != ProtokitePlaytestGameVersionLookup.KeyFor(input))
+                said = "Not checked with Flock yet.";
+            else if (_flock.Answer.Problem != null)
+                said = "Could not check with Flock: " + _flock.Answer.Problem;
+            else
+                said = "Checked with Flock.";
+
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField(said, EditorStyles.wordWrappedMiniLabel);
+            using (new EditorGUI.DisabledScope(_flock.IsAsking || !ProtokitePlaytestGameVersionLookup.CanAsk(input)))
+            {
+                if (GUILayout.Button("Check Again", GUILayout.Width(100)))
+                    _flock.AskIfChanged(input, askAgain: true);
+            }
+            EditorGUILayout.EndHorizontal();
+        }
+
+        private void DrawTestVideo()
+        {
+            EditorGUILayout.LabelField("Test video", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(
+                "Records the Game view with the playtest's video settings, with no playtest needed. It is never uploaded, and is kept on this machine " +
+                "until making room for a later recording deletes it. 64-bit Windows editors only.", EditorStyles.wordWrappedMiniLabel);
+
+            ProtokitePlaytestTestVideoState state = ProtokitePlaytest.TestVideoState;
+            bool busy = state == ProtokitePlaytestTestVideoState.WaitingToStart || state == ProtokitePlaytestTestVideoState.Recording
+                        || state == ProtokitePlaytestTestVideoState.Finishing;
+            testVideoSeconds = Mathf.Clamp(EditorGUILayout.IntField("Length (seconds)", testVideoSeconds), 1, LongestTestVideoSeconds);
+            using (new EditorGUI.DisabledScope(!Application.isPlaying || busy))
+            {
+                if (GUILayout.Button("Record Test Video"))
+                    _testVideoRefused = ProtokitePlaytest.RecordTestVideo(testVideoSeconds, out string whyNot) ? null : whyNot;
+            }
+
+            if (!Application.isPlaying)
+                EditorGUILayout.HelpBox("Enter Play Mode to record a test video.", MessageType.None);
+            else if (_testVideoRefused != null && !busy)
+                EditorGUILayout.HelpBox("No test video is recorded: " + _testVideoRefused, MessageType.Warning);
+            DrawTestVideoState(state);
+
+            string folder = ProtokitePlaytest.TestVideosFolder;
+            if (Directory.Exists(folder) && GUILayout.Button("Show Test Videos Folder"))
+                EditorUtility.RevealInFinder(folder);
+        }
+
+        private static void DrawTestVideoState(ProtokitePlaytestTestVideoState state)
+        {
+            switch (state)
+            {
+                case ProtokitePlaytestTestVideoState.WaitingToStart:
+                    EditorGUILayout.HelpBox("Starting at the end of this frame, once the recordings earlier launches left are gone through.", MessageType.Info);
+                    break;
+                case ProtokitePlaytestTestVideoState.Recording:
+                    EditorGUILayout.HelpBox("Recording to " + ProtokitePlaytest.TestVideoPartPath, MessageType.Info);
+                    break;
+                case ProtokitePlaytestTestVideoState.Finishing:
+                    EditorGUILayout.HelpBox("Finishing the file.", MessageType.Info);
+                    break;
+                case ProtokitePlaytestTestVideoState.NotRecorded:
+                    EditorGUILayout.HelpBox("No test video is recorded: " + ProtokitePlaytest.TestVideoProblem, MessageType.Warning);
+                    break;
+                case ProtokitePlaytestTestVideoState.Finished:
+                    ProtokitePlaytestVideoRecordingSummary summary = ProtokitePlaytest.FinishedTestVideo;
+                    if (summary.FilePath == null)
+                    {
+                        EditorGUILayout.HelpBox(summary.Error != null ? "The test video could not be written: " + summary.Error : "The test video stopped before any frame was captured.",
+                            summary.Error != null ? MessageType.Warning : MessageType.Info);
+                        break;
+                    }
+                    EditorGUILayout.HelpBox($"Saved {summary.VideoSeconds:0.0} seconds, {summary.FramesWritten} frames, to {summary.FilePath}" +
+                        (summary.Error != null ? ". It could not be written to the end: " + summary.Error : "."), summary.Error != null ? MessageType.Warning : MessageType.Info);
+                    if (GUILayout.Button("Show Test Video"))
+                        EditorUtility.RevealInFinder(summary.FilePath);
+                    break;
+            }
+        }
+    }
+}

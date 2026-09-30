@@ -98,7 +98,8 @@ Plain serializable DTOs mirroring backend wire shapes — auth, analytics, shop,
 - **FlockFirstRunBootstrap** — opens the window on first import. · **FlockSdkGuideEditor** — inspector for the guide.
 - **FlockProviderManifest** — maps providers ↔ `FLOCK_NO_*` defines for event-subset builds.
 - **FlockPackageBuilder** — assembles the distributable package.
-- **FlockPlaytestInstaller** — the Playtesting tab's install, update and remove for the Protokite Playtest package: downloads `ProtokitePlaytest-<version>.unitypackage` from the GitHub release matching `FlockSdkVersion.Current` (a blocking, cancellable download, so a script reload cannot drop it) and imports it; an update deletes the old `Assets/` copy only once the new one has downloaded, so a dropped file cannot linger; every download result but success counts as a failure (a failed disk write answers 200). Finds an installed copy from its assembly definition, wherever it is. Reads the version through `InternalsVisibleTo("Flock.Editor")`. Refuses to install into a Flock SDK exported without Analytics (`WhyPlaytestCannotBeInstalled`, whose refusal compiles only under `FLOCK_NO_ANALYTICS`: the playtest calls `FlockClient.Analytics`, and the define lives in Flock's own `csc.rsp`, where the playtest cannot see it).
+- **FlockPlaytestInstaller** — the Playtesting tab's install, update and remove for the Protokite Playtest package: downloads `ProtokitePlaytest-<version>.unitypackage` from the GitHub release matching `FlockSdkVersion.Current` (a blocking, cancellable download, so a script reload cannot drop it) and imports it; an update deletes the old `Assets/` copy only once the new one has downloaded, so a dropped file cannot linger; every download result but success counts as a failure (a failed disk write answers 200). Finds an installed copy from its assembly definition, wherever it is. Reads the version through `InternalsVisibleTo("Flock.Editor")`. Refuses to install into a Flock SDK exported without Analytics (`WhyPlaytestCannotBeInstalled`, whose refusal compiles only under `FLOCK_NO_ANALYTICS`: the playtest calls `FlockClient.Analytics`, and the define lives in Flock's own `csc.rsp`, where the playtest cannot see it). Names the two playtest menu items the tab
+  opens (`SettingsMenuPath`, `SetupWindowMenuPath`); the playtest's own tests read both and check its menu has them.
 - **FlockPlaytestPackageBuilder** — maintainer tooling (**Qwacks Dev > Build Protokite Playtest Package**, or `-executeMethod ...BuildFromCommandLine -playtestOut <folder>`): stages the playtest under `Assets/ProtokitePlaytest/` with GUIDs made from their paths and exports it. Excluded from core's own `.unitypackage`.
 
 ## Editor/Codegen/
@@ -241,7 +242,17 @@ script.
   ended runs go test videos first, then waiting uploads, oldest first; under 1 MB left, no recording. The size limit is cut
   to the room left and the reservation raised to match. The session is saved into the run when it starts
   (`FinishPlaytestSessionStartAsync`, and quitting's wait for a start on its way) and when a recording starts after it.
-  Unity has no test-video entry point yet, so that kind is tested with runs planted by hand.
+  One start path, `TryStartRecording(kind, ...)` → `StartRecordingRun`, serves both kinds; `RoomToReserve` and the kind decide
+  the rest: a test video reserves `max(BytesToMakeRoomFor, 1 MB)` and its size limit is never raised past that, and
+  `MakeRoom` reads the new run's kind, so room for a test video deletes older test videos only, never a waiting upload.
+- **Test videos (`Runtime/ProtokitePlaytestTestVideo.cs`)** — `RecordTestVideo(seconds, out whyNot)` (internal; the editor
+  window is its caller) asks the running game for one; `UpdateVideo` starts it at the end of a frame once the finishing pass
+  is done. Its own fields (`_testVideo`, `_testVideoRun`), never the launch's recording slot, so no session is saved beside
+  it and nothing uploads it; its run is let go as soon as its file is written. The launch's recording belongs to the
+  playtest: a test video is refused while the playtest records or is due to, and when the config turns video on,
+  `MakeTheTestVideoGiveWay` drops one waiting and stops one recording (`PlaytestRecordingStarts`), and the playtest's starts
+  once its file is written. The player's consent answer does not touch it (it is never sent). Stopped and waited for at quit
+  and on a new launch; `TestVideoState`, `FinishedTestVideo` and `TestVideoProblem` are what the window shows.
 - **Uploads (`Runtime/ProtokitePlaytestUploads.cs`)** — this launch's recording goes when its file is finished and its session
   has started, whichever is second (`ReportFinishedVideo` and `FinishPlaytestSessionStartAsync` both ask), with the session's
   own URL and headers; never at quit (the session is no longer Started). Earlier launches' go from `Refresh` once the finishing
@@ -279,6 +290,20 @@ script.
   A missing or non-boolean feature is off; a null form or a form without an id is none; a question without an id is dropped.
 - **ProtokitePlaytestSettingsMenu** — **Protokite > Playtest > Settings**; creates the asset, and refuses to save one Unity
   cannot link to its script.
+- **Setup checks (Editor)** — **ProtokitePlaytestSetupChecks** decides four checks with no editor and no network, from a
+  **ProtokitePlaytestSetupInput** read once (`FromProject`: `ProtokitePlaytestSettings.Load()`, `Resources/FlockConfig`, the
+  active build target and `GetPlatformSettings("Win64", "Architecture")`, measured to read `x64`/`ARM64`): the switch, the URL
+  (the runtime's `IsUsableApiUrl` and `Describe` words, made internal for it), the Game Version (a `pt-` name, resolved;
+  an ID-shaped value is a pasted ID) and video on the target (Win64 on x64 only, as the runtime). A Flock answer counts only
+  for the settings it was asked with (`AskedFor`, one owner). **ProtokitePlaytestGameVersionLookup** asks Flock through core's
+  `FlockHttpClient`: `by-name` for the name, then for a pasted ID `GET /v1/game_version` with it as `X-Game-Version-ID` (the
+  route names an ID of any game), then that name `by-name` again, so only a name that resolves back to the ID in this game,
+  and only a playtest's, is suggested. Only the routes' own coded 404s mean "no such version". **ProtokitePlaytestGameVersionQuestions**
+  asks once per change of settings and keeps only the latest question's answer (a cancelled one is dropped when it lands).
+  `UseTheSuggestedGameVersion` writes the name and the ID Flock resolved it to into core's `FlockConfigAsset`.
+  **ProtokitePlaytestWindow** (**Protokite > Playtest > Setup Checks And Test Video**, and core's **Check Playtest Setup**
+  button through `FlockPlaytestInstaller.SetupWindowMenuPath`) draws them, reading the project once per Layout event, and
+  records test videos in Play Mode; nothing in it waits across a script reload.
 - Tests: **ProtokitePlaytestStatusTests**, **ProtokitePlaytestVideoEncoderTests** (encode and decode frame for frame
   with each codec, a fake encoder held to the same contract), **ProtokitePlaytestWebmFileTests** (real VP8 and VP9
   recordings read back by a reader of their own, decoded frame for frame, cut off and finished; a fake recording file held
@@ -291,7 +316,10 @@ script.
   driver), **ProtokitePlaytestScreenRecordingTests** (the real screen, encoder
   and file, judged against the screen; windowed editor only), **ProtokitePlaytestSessionTests** (held starts and ends for the quit and late-answer
   cases), **ProtokitePlaytestConfigTests** (EditMode, fake transport; a held-answer adapter
-  for late replies), **ProtokitePlaytestDriverTests** (PlayMode, the real driver). A live `[Explicit]` check lives in
+  for late replies), **ProtokitePlaytestDriverTests** (PlayMode, the real driver), **ProtokitePlaytestSetupChecksTests** (each
+  check failing and passing from real settings objects, the project's own read, core's menu paths),
+  **ProtokitePlaytestGameVersionLookupTests** (a fake Flock answering by name and by the ID header, held answers) and
+  **ProtokitePlaytestTestVideoTests**; the windowed PlayMode pass records a real test video. A live `[Explicit]` check lives in
   FlockUnityProject: `ProtokitePlaytestLiveConfigTests`.
 
 ## Offline caching

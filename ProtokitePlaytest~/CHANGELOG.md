@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 It is released with the Flock SDK, at the Flock SDK's version.
 
 
+## [1.59.0]
+
+### Added
+- **Protokite > Playtest > Setup Checks And Test Video**, a window that checks what a build of the project needs for a
+  playtest: **Playtesting Enabled**, a usable **Protokite API URL** (the game's own rule), Flock's **Game Version** set to a
+  playtest's name (`pt-<test id>`) and resolved, and a build target that records video (64-bit Windows, x64). Each failed
+  check says what to change and opens the place to change it. It opens centred on the editor, big enough to read every
+  check without scrolling.
+- **A Game Version ID pasted where a name belongs is flagged**, in Game Version or over the resolved ID, and the window asks
+  Flock which version it is: when that is a playtest's whose name resolves back to it in the game, it offers **Set Game
+  Version To pt-...**, which sets the name and its ID. A pasted ID is replaced whenever Game Version is resolved again, so a
+  build would otherwise send another version.
+- **Detect Key** beside the **Feedback Form Key** setting: click it and press the key the form should open with. Escape or
+  **Cancel** keeps the key it had, and Shift, Control, Alt and Command are skipped, so a key pressed with one held is the key
+  set. The list beside it still offers every key, and the setting is stored as before.
+- **Record Test Video**, in the same window in Play Mode: the Game view for the seconds chosen, with the playtest's video
+  settings and no playtest needed, into `Recordings/TestVideos/`. It is never uploaded, makes room for its own length at its
+  bitrate by deleting older test videos only (never a recording waiting to upload), and gives way to the playtest's own
+  recording.
+
 ## [1.58.0]
 
 ### Added

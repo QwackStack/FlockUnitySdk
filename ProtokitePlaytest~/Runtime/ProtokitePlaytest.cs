@@ -376,8 +376,8 @@ namespace Protokite.Playtest
             => ReferenceEquals(RunningFlock(), _flock) ? _configState : ProtokitePlaytestConfigState.NotFetched;
 
         // An absolute http or https address with a host and no spaces inside; spaces around it are allowed, as the Flock SDK
-        // allows them in its own URL.
-        private static bool IsUsableApiUrl(string url)
+        // allows them in its own URL. The editor's setup check uses this rule too, so the two never disagree.
+        internal static bool IsUsableApiUrl(string url)
         {
             foreach (char c in url)
             {

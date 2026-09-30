@@ -330,10 +330,25 @@ namespace Protokite.Playtest.Tests
         public void NoEncoderMeansNoVideoAndTheRestCarriesOn()
         {
             ProtokitePlaytest.VideoEncoderForTesting = () => null;
+            int saidAgain = 0;
+            Application.LogCallback count = (message, stack, type) =>
+            {
+                if (message.Contains("This launch records no playtest video"))
+                    saidAgain++;
+            };
             using (FlockWithConfig(true))
             {
                 ProtokitePlaytest.Refresh();
-                Frames(60);
+                Application.logMessageReceived += count;
+                try
+                {
+                    Frames(60);
+                }
+                finally
+                {
+                    Application.logMessageReceived -= count;
+                }
+                Assert.AreEqual(0, saidAgain, "The encoder says why it is missing, once a launch; the playtest does not say it again");
                 Assert.IsFalse(ProtokitePlaytest.IsRecordingVideo);
                 Assert.AreEqual(0, _sourcesMade, "No capture is set up without an encoder");
                 Assert.AreEqual(ProtokitePlaytestStatus.Ready, ProtokitePlaytest.Status, "The playtest still runs");
