@@ -17,7 +17,8 @@ namespace Protokite.Playtest
         GameQuitting,
         CouldNotWrite,
         PlayerTookTheScreenBack,
-        PlayerAskedToSendIt
+        PlayerAskedToSendIt,
+        PlaytestRecordingStarts
     }
 
     /// <summary>What became of a recording, once its file is written.</summary>
@@ -53,6 +54,7 @@ namespace Protokite.Playtest
                 case ProtokitePlaytestVideoStopReason.CouldNotWrite: return "its file could not be written";
                 case ProtokitePlaytestVideoStopReason.PlayerTookTheScreenBack: return "the player asked for the screen not to be recorded";
                 case ProtokitePlaytestVideoStopReason.PlayerAskedToSendIt: return "the player asked for it to be sent";
+                case ProtokitePlaytestVideoStopReason.PlaytestRecordingStarts: return "the playtest's own recording was starting";
             }
             return "it stopped";
         }

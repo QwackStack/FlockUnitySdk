@@ -552,6 +552,7 @@ namespace Protokite.Playtest
         }
 
         /// <summary>Deletes ended runs, test videos first and oldest first, until every other run and the wanted room fit the budget.</summary>
+        // Room for a test video comes from other test videos only: a recording waiting to upload is never deleted for one.
         // The new run is made, with its reservation, before this is called, so a game starting at the same moment counts it. A run
         // in use, or holding an unfinished video, is never deleted and counts at its reservation (runInUseWithNoReservation if none).
         internal static ProtokitePlaytestRoomMade MakeRoom(string recordingsFolder, ProtokitePlaytestRecordingRun newRun, long budgetBytes, long wantedBytes,
@@ -602,9 +603,12 @@ namespace Protokite.Playtest
             deletable.Sort((a, b) => a.Kind != b.Kind
                 ? (a.Kind == ProtokitePlaytestRecordingKind.TestVideo ? -1 : 1)
                 : string.CompareOrdinal(Path.GetFileName(a.Folder), Path.GetFileName(b.Folder)));
+            bool forATestVideo = newRun != null && newRun.Kind == ProtokitePlaytestRecordingKind.TestVideo;
             foreach ((string folder, ProtokitePlaytestRecordingKind kind, long bytes) in deletable)
             {
                 if (used + wantedBytes <= budgetBytes)
+                    break;
+                if (forATestVideo && kind == ProtokitePlaytestRecordingKind.Playtest)
                     break;
                 // Claimed again only now: holding every run while deciding would stop other launches finishing theirs.
                 using (ProtokitePlaytestRecordingRun run = ProtokitePlaytestRecordingRun.ClaimEnded(folder, kind))

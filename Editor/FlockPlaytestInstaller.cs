@@ -32,6 +32,7 @@ namespace Flock.Editor
         internal const string PackageName = "com.protokite.playtest";
         internal const string AssemblyName = "Protokite.Playtest";
         internal const string SettingsMenuPath = "Protokite/Playtest/Settings";
+        internal const string SetupWindowMenuPath = "Protokite/Playtest/Setup Checks And Test Video";
         private const string ReleaseDownloadRoot = "https://github.com/QwackStack/FlockUnitySDK/releases/download";
 
         private const int DownloadTimeoutSeconds = 120;

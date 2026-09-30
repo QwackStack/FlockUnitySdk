@@ -178,6 +178,38 @@ namespace Protokite.Playtest.Tests
             AssertColour(ColourOnScreen(Background), MeanOfScreen(screen, 0.10f, 0.40f), MeanOfVideo(last, width, height, 0.60f, 0.90f), "The bottom, the background: " + context);
         }
 
+        [UnityTest]
+        public IEnumerator ATestVideoRecordsTheScreenWithNoPlaytest()
+        {
+            _settings.PlaytestingEnabled = false;
+            BuildTheScene();
+            ProtokitePlaytestDriver.StartWithTheGame();
+            for (int frame = 0; frame < 10; frame++)
+                yield return null;
+            Assert.AreEqual(ProtokitePlaytestStatus.TurnedOff, ProtokitePlaytest.Status, "Precondition: no playtest runs");
+
+            Assert.IsTrue(ProtokitePlaytest.RecordTestVideo(2.0, out string whyNot), whyNot);
+            DateTime until = DateTime.UtcNow.AddSeconds(20);
+            while (ProtokitePlaytest.TestVideoState != ProtokitePlaytestTestVideoState.Finished && DateTime.UtcNow < until)
+                yield return null;
+            Assert.AreEqual(ProtokitePlaytestTestVideoState.Finished, ProtokitePlaytest.TestVideoState, ProtokitePlaytest.TestVideoProblem);
+
+            ProtokitePlaytestVideoRecordingSummary summary = ProtokitePlaytest.FinishedTestVideo;
+            Assert.IsNull(summary.Error);
+            Assert.AreEqual(ProtokitePlaytestVideoStopReason.ReachedLengthLimit, summary.StopReason, "Two seconds, as asked");
+            StringAssert.StartsWith(Path.Combine(_folder, "Recordings", "TestVideos"), summary.FilePath);
+            List<byte[]> frames = ReadFrames(File.ReadAllBytes(summary.FilePath));
+            Assert.AreEqual(summary.FramesWritten, frames.Count, "Every frame is in the file");
+            Assert.GreaterOrEqual(frames.Count, 20, "Two seconds at 15 frames a second, give or take a frame the screen was not ready for");
+            ProtokitePlaytestVideoSettings video = ProtokitePlaytestVideoSettings.From(_settings);
+            Assert.IsTrue(ProtokitePlaytestVideoSettings.FitVideoSize(Screen.width, Screen.height, video.MaxVideoWidth, video.MaxVideoHeight, out int width, out int height));
+            using (ProtokitePlaytestLibVpx.Decoder decoder = new ProtokitePlaytestLibVpx.Decoder(video.Codec))
+            {
+                foreach (byte[] frame in frames)
+                    Assert.IsNotNull(decoder.Decode(frame, width, height, out string error), error);
+            }
+        }
+
         // What a camera clearing to this colour, or an unlit shader drawing it, puts on the screen: its sRGB bytes.
         private static Vector3 ColourOnScreen(Color colour) => new Vector3(Mathf.Round(colour.r * 255f), Mathf.Round(colour.g * 255f), Mathf.Round(colour.b * 255f));
 

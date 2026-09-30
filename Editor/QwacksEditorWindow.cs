@@ -230,6 +230,8 @@ namespace Flock.Editor
                         EditorGUILayout.LabelField($"Installed: version {installed.Version}, in {installed.RootFolder}.", EditorStyles.wordWrappedMiniLabel);
                         if (GUILayout.Button("Open Playtest Settings", GUILayout.Height(24)))
                             EditorApplication.ExecuteMenuItem(FlockPlaytestInstaller.SettingsMenuPath);
+                        if (GUILayout.Button("Check Playtest Setup", GUILayout.Height(24)))
+                            EditorApplication.ExecuteMenuItem(FlockPlaytestInstaller.SetupWindowMenuPath);
                         DrawRemovePlaytestButton(installed);
                         break;
 
@@ -437,6 +439,10 @@ namespace Flock.Editor
                         "Baked from your Game Version at edit time. Runtime init uses this directly — no server call."),
                     config.gameVersionId);
 
+            // Only at Layout and before the button and status it changes, so the repaint draws what was laid out.
+            if (Event.current.type == EventType.Layout)
+                MaybeAutoResolveVersion();
+
             using (new EditorGUI.DisabledScope(
                 _resolvingVersion || config == null ||
                 string.IsNullOrWhiteSpace(config.apiUrl) || string.IsNullOrWhiteSpace(config.apiKey) ||
@@ -448,8 +454,6 @@ namespace Flock.Editor
 
             if (!string.IsNullOrEmpty(_versionResolveStatus))
                 EditorGUILayout.HelpBox(_versionResolveStatus, _versionResolveOk ? MessageType.Info : MessageType.Error);
-
-            MaybeAutoResolveVersion();
 
             if (!config.IsValid(out string validationError))
                 EditorGUILayout.HelpBox(validationError, MessageType.Warning);

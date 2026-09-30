@@ -120,9 +120,16 @@ namespace Protokite.Playtest
         /// </summary>
         internal static void UpdateVideo(double frameSeconds)
         {
+            // The launch's recording belongs to the playtest: a test video gives way on the frame the playtest's could start, and the
+            // playtest's starts once the test video's file is written.
+            bool playtestRecordingDue = _videoRecording == null && !_videoStartedThisLaunch && VideoIsOnInTheLoadedConfig() && EarlierRecordingsGoneThrough();
+            if (playtestRecordingDue)
+                MakeTheTestVideoGiveWay();
+            UpdateTestVideo(frameSeconds);
+
             if (_videoRecording == null)
             {
-                if (!_videoStartedThisLaunch && VideoIsOnInTheLoadedConfig() && EarlierRecordingsGoneThrough())
+                if (playtestRecordingDue && _testVideo == null)
                     StartVideoRecording();
                 return;
             }
@@ -140,6 +147,7 @@ namespace Protokite.Playtest
         internal static void HandleGameLeftOrCameBack()
         {
             _videoRecording?.LeaveOutNextFrame();
+            _testVideo?.LeaveOutNextFrame();
             _performanceTimeline?.LeaveOutNextFrame();
         }
 
@@ -163,52 +171,26 @@ namespace Protokite.Playtest
             // One attempt a launch, whatever becomes of it.
             _videoStartedThisLaunch = true;
             ProtokitePlaytestVideoSettings settings = ProtokitePlaytestVideoSettings.From(ProtokitePlaytestSettings.Load());
-
-            string whyNot = null;
-            IProtokitePlaytestVideoEncoder encoder = VideoEncoderForTesting != null ? VideoEncoderForTesting() : ProtokitePlaytestVideoEncoders.Create(out whyNot);
-            // The encoder has said why it is missing, once.
-            if (encoder == null)
-                return;
-
-            IProtokitePlaytestFrameSource source = VideoFrameSourceForTesting != null
-                ? VideoFrameSourceForTesting(settings, encoder.InputPixelFormat)
-                : ProtokitePlaytestScreenFrameSource.Create(settings, encoder.InputPixelFormat, VideoFrameBlocks, out whyNot);
-            if (source == null)
+            long sizeLimit = settings.MaxBytes;
+            if (!TryStartRecording(ProtokitePlaytestRecordingKind.Playtest, settings, out ProtokitePlaytestVideoRecording recording, out ProtokitePlaytestRecordingRun run,
+                    out string contentType, out RecordingNotStarted notStarted, out string whyNot))
             {
-                encoder.Dispose();
-                string line = LogPrefix + "This launch records no playtest video: " + (whyNot ?? "no frames can be captured.") + " Everything else in the playtest still runs.";
-                // Expected in a build that draws nothing; loud where a studio's players should have been recorded.
-                if (SystemInfo.graphicsDeviceType == GraphicsDeviceType.Null)
+                // The encoder has said why it is missing, once.
+                if (notStarted == RecordingNotStarted.NoEncoder)
+                    return;
+                string line = LogPrefix + "This launch records no playtest video: " + whyNot + " Everything else in the playtest still runs.";
+                // No capture is expected in a build that draws nothing; loud where a studio's players should have been recorded.
+                if (notStarted == RecordingNotStarted.NoCapture && SystemInfo.graphicsDeviceType == GraphicsDeviceType.Null)
                     Debug.Log(line);
                 else
                     Debug.LogWarning(line);
                 return;
             }
 
-            IProtokitePlaytestRecordingFile file = RecordingFileForTesting != null ? RecordingFileForTesting() : ProtokitePlaytestRecordingFiles.Create();
-            long sizeLimit = settings.MaxBytes;
-            string error;
-            if (!StartRecordingRun(settings, file, out error))
-            {
-                file.Dispose();
-                source.Dispose();
-                encoder.Dispose();
-                Debug.LogWarning(LogPrefix + "This launch records no playtest video: " + error + " Everything else in the playtest still runs.");
-                return;
-            }
-
-            _videoRecording = ProtokitePlaytestVideoRecording.Start(source, encoder, file, settings, _recordingRun.VideoPath(file.FileExtension), out error);
-            if (_videoRecording == null)
-            {
-                _recordingRun.DeleteEverything();
-                _recordingRun = null;
-                source.Dispose();
-                encoder.Dispose();
-                Debug.LogWarning(LogPrefix + "This launch records no playtest video: " + error + " Everything else in the playtest still runs.");
-                return;
-            }
+            _videoRecording = recording;
+            _recordingRun = run;
             // Uploaded as the kind of file it is written as, so a platform writing another kind sends its own.
-            _recordingContentType = file.ContentType;
+            _recordingContentType = contentType;
             SaveSessionBesideRecording();
             string cutShort = settings.MaxBytes < sizeLimit
                 ? $" (Max Recording Size Mb is {sizeLimit / BytesPerMegabyte:0.#} MB, but Recordings Disk Budget Mb has only this much left)"
@@ -218,42 +200,119 @@ namespace Protokite.Playtest
                 $"before the file passes {settings.MaxBytes / BytesPerMegabyte:0.#} MB{cutShort}, or when the game stops it.");
         }
 
-        /// <summary>Makes this launch's run and room for it in the budget, and cuts the size limit to the room left; false, with why, under a megabyte.</summary>
-        private static bool StartRecordingRun(ProtokitePlaytestVideoSettings settings, IProtokitePlaytestRecordingFile file, out string error)
+        /// <summary>What stopped a recording from starting.</summary>
+        private enum RecordingNotStarted
         {
-            string folder = RecordingsFolder;
+            NoEncoder,
+            NoCapture,
+            NoRunOrRoom,
+            CouldNotStart
+        }
+
+        /// <summary>Sets up a recording of this kind, its run and room included; false, with why and at which step, leaving nothing behind.</summary>
+        private static bool TryStartRecording(ProtokitePlaytestRecordingKind kind, ProtokitePlaytestVideoSettings settings, out ProtokitePlaytestVideoRecording recording,
+            out ProtokitePlaytestRecordingRun run, out string contentType, out RecordingNotStarted notStarted, out string whyNot)
+        {
+            recording = null;
+            run = null;
+            contentType = null;
+            notStarted = RecordingNotStarted.NoEncoder;
+            whyNot = null;
+            IProtokitePlaytestVideoEncoder encoder = VideoEncoderForTesting != null ? VideoEncoderForTesting() : ProtokitePlaytestVideoEncoders.Create(out whyNot);
+            if (encoder == null)
+            {
+                whyNot = whyNot ?? "this build has no video encoder.";
+                return false;
+            }
+
+            IProtokitePlaytestFrameSource source = VideoFrameSourceForTesting != null
+                ? VideoFrameSourceForTesting(settings, encoder.InputPixelFormat)
+                : ProtokitePlaytestScreenFrameSource.Create(settings, encoder.InputPixelFormat, VideoFrameBlocks, out whyNot);
+            if (source == null)
+            {
+                encoder.Dispose();
+                notStarted = RecordingNotStarted.NoCapture;
+                whyNot = whyNot ?? "no frames can be captured.";
+                return false;
+            }
+
+            IProtokitePlaytestRecordingFile file = RecordingFileForTesting != null ? RecordingFileForTesting() : ProtokitePlaytestRecordingFiles.Create();
+            if (!StartRecordingRun(kind, settings, file, out run, out whyNot))
+            {
+                file.Dispose();
+                source.Dispose();
+                encoder.Dispose();
+                notStarted = RecordingNotStarted.NoRunOrRoom;
+                return false;
+            }
+
+            recording = ProtokitePlaytestVideoRecording.Start(source, encoder, file, settings, run.VideoPath(file.FileExtension), out whyNot);
+            if (recording == null)
+            {
+                run.DeleteEverything();
+                run = null;
+                source.Dispose();
+                encoder.Dispose();
+                notStarted = RecordingNotStarted.CouldNotStart;
+                return false;
+            }
+            contentType = file.ContentType;
+            return true;
+        }
+
+        /// <summary>The room a recording of this kind reserves when it starts.</summary>
+        // A test video's first frame alone can pass what a second at the bitrate comes to, so it reserves at least what any recording starts with.
+        private static long RoomToReserve(ProtokitePlaytestRecordingKind kind, ProtokitePlaytestVideoSettings settings, IProtokitePlaytestRecordingFile file)
+        {
             long wanted = settings.BytesToMakeRoomFor(file.BytesAddedToEachFrame);
+            return kind == ProtokitePlaytestRecordingKind.TestVideo
+                ? Math.Min(settings.MaxBytes, Math.Max(wanted, ProtokitePlaytestRecordingsFolder.SmallestRoomForARecording))
+                : wanted;
+        }
+
+        /// <summary>Makes a run of this kind and room for it in the budget, and cuts the size limit to the room left; false, with why, under a megabyte.</summary>
+        private static bool StartRecordingRun(ProtokitePlaytestRecordingKind kind, ProtokitePlaytestVideoSettings settings, IProtokitePlaytestRecordingFile file,
+            out ProtokitePlaytestRecordingRun startedRun, out string error)
+        {
+            startedRun = null;
+            string folder = RecordingsFolder;
+            bool testVideo = kind == ProtokitePlaytestRecordingKind.TestVideo;
+            long wanted = RoomToReserve(kind, settings, file);
             // The run and its reservation come first, so a game starting at the same moment counts this one before making room of its own.
-            ProtokitePlaytestRecordingRun run = ProtokitePlaytestRecordingRun.Start(folder, ProtokitePlaytestRecordingKind.Playtest, wanted, out error);
+            ProtokitePlaytestRecordingRun run = ProtokitePlaytestRecordingRun.Start(folder, kind, wanted, out error);
             if (run == null)
                 return false;
 
             ProtokitePlaytestRoomMade room = ProtokitePlaytestRecordingsFolder.MakeRoom(folder, run, settings.DiskBudgetBytes, wanted, settings.MaxBytes);
             string budget = $"Recordings Disk Budget Mb ({settings.DiskBudgetBytes / BytesPerMegabyte:0.#} MB)";
+            string forWhat = testVideo ? "a test video" : "this launch's recording";
             if (room.WaitingRecordingsDeleted > 0)
-                Debug.LogWarning(LogPrefix + $"Deleted {room.WaitingRecordingsDeleted} recording(s) earlier launches kept to be uploaded, the oldest first, to make room in {budget} for this launch's recording.");
+                Debug.LogWarning(LogPrefix + $"Deleted {room.WaitingRecordingsDeleted} recording(s) earlier launches kept to be uploaded, the oldest first, to make room in {budget} for {forWhat}.");
             if (room.TestVideosDeleted > 0)
-                Debug.Log(LogPrefix + $"Deleted {room.TestVideosDeleted} test video(s), the oldest first, to make room in {budget} for this launch's recording.");
+                Debug.Log(LogPrefix + $"Deleted {room.TestVideosDeleted} test video(s), the oldest first, to make room in {budget} for {forWhat}.");
             foreach (string notDeleted in room.CouldNotDelete)
                 Debug.LogWarning(LogPrefix + $"{notDeleted} could not all be deleted to make room; the next launch tries again.");
 
             if (room.BytesLeft < ProtokitePlaytestRecordingsFolder.SmallestRoomForARecording)
             {
                 run.DeleteEverything();
-                error = $"the recordings in {folder} take {room.BytesUsedByOtherRuns / BytesPerMegabyte:0.#} MB of {budget}, and none of them can be deleted now, " +
-                        "because their games are still running or another program is using them. Raise Recordings Disk Budget Mb in Protokite > Playtest > Settings.";
+                error = $"the recordings in {folder} take {room.BytesUsedByOtherRuns / BytesPerMegabyte:0.#} MB of {budget}, and " +
+                        (testVideo
+                            ? "a test video makes room by deleting older test videos only, never a recording waiting to upload."
+                            : "none of them can be deleted now, because their games are still running or another program is using them.") +
+                        " Raise Recordings Disk Budget Mb in Protokite > Playtest > Settings.";
                 return false;
             }
 
-            // It may grow into all the room left; others count it at what it saved, so it never grows past that.
-            long maxBytes = Math.Min(settings.MaxBytes, room.BytesLeft);
+            // A recording may grow into all the room left, a test video only into what it reserved; others count either at what it saved.
+            long maxBytes = Math.Min(testVideo ? wanted : settings.MaxBytes, room.BytesLeft);
             if (maxBytes != wanted && !run.SaveReservedBytes(maxBytes, out string saveError))
             {
                 maxBytes = Math.Min(maxBytes, wanted);
-                Debug.LogWarning(LogPrefix + $"The room this launch's recording may take could not be saved, so it stops at the {maxBytes / BytesPerMegabyte:0.#} MB saved before: {saveError}");
+                Debug.LogWarning(LogPrefix + $"The room {forWhat} may take could not be saved, so it stops at the {maxBytes / BytesPerMegabyte:0.#} MB saved before: {saveError}");
             }
             settings.MaxBytes = maxBytes;
-            _recordingRun = run;
+            startedRun = run;
             return true;
         }
 
@@ -307,22 +366,26 @@ namespace Protokite.Playtest
             UploadThisLaunchsRecordingWhenReady();
         }
 
-        /// <summary>Stops capturing, so the recording's threads finish the file while the rest of quitting goes on.</summary>
+        /// <summary>Stops capturing, so the recordings' threads finish their files while the rest of quitting goes on.</summary>
         private static void StopVideoForQuitting()
         {
             if (IsRecordingVideo)
                 _videoRecording.StopCapturing(ProtokitePlaytestVideoStopReason.GameQuitting);
+            StopTestVideoForQuitting();
         }
 
-        /// <summary>Waits what is left of the quit's time for the file; one not finished by then stays as its ".part" file.</summary>
+        /// <summary>Waits what is left of the quit's time for the files; one not finished by then stays as its ".part" file.</summary>
         private static void WaitForVideoAtQuit(TimeSpan timeLeft)
         {
-            if (_videoRecording == null)
-                return;
-            if (_videoRecording.WaitUntilWritten(timeLeft))
-                ReportFinishedVideo();
-            else
-                Debug.LogWarning(LogPrefix + $"The playtest video could not be finished before the game closed; what was recorded stays in {_videoRecording.PartPath}.");
+            DateTime until = DateTime.UtcNow + timeLeft;
+            if (_videoRecording != null)
+            {
+                if (_videoRecording.WaitUntilWritten(timeLeft))
+                    ReportFinishedVideo();
+                else
+                    Debug.LogWarning(LogPrefix + $"The playtest video could not be finished before the game closed; what was recorded stays in {_videoRecording.PartPath}.");
+            }
+            WaitForTestVideoAtQuit(Remaining(until));
         }
 
         // At quit nothing more is saved into the run, so a written one is let go now: the Editor stays open after Play Mode ends.
@@ -347,6 +410,7 @@ namespace Protokite.Playtest
             // Let go once the last launch's recording has been waited for, so this launch's pass may finish or keep it.
             _recordingRun?.Dispose();
             _recordingRun = null;
+            ResetTestVideoForNewLaunch();
             // The last launch's pass is let finish (5 s at most) before this launch's driver starts its own, then forgotten.
             _earlierRecordings?.Wait(TimeSpan.FromSeconds(5));
             _earlierRecordings = null;

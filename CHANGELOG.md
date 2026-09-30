@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.59.0]
+
+### Added
+- **Check Playtest Setup** on the **Playtesting** tab of **Flock > Settings**, once the Protokite Playtest is installed:
+  opens its setup checks. Released together with the Protokite Playtest's setup checks and test videos.
+
+### Fixed
+- **Flock > Settings no longer logs "Invalid GUILayout state" when it opens after Game Version was changed elsewhere.** The
+  automatic Game Version resolve started while the window was laying itself out, after its status line had been laid out,
+  so the window drew a line its layout had no room for. It now starts before the status line is laid out.
+
 ## [1.58.0]
 
 No changes to the Flock SDK: this version is released together with the Protokite Playtest's feedback form, and its fix that

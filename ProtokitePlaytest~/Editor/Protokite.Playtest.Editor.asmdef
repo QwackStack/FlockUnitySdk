@@ -2,7 +2,8 @@
     "name": "Protokite.Playtest.Editor",
     "rootNamespace": "Protokite.Playtest.Editor",
     "references": [
-        "Protokite.Playtest"
+        "Protokite.Playtest",
+        "Flock.Runtime"
     ],
     "includePlatforms": [
         "Editor"
