@@ -6,11 +6,7 @@ using UnityEngine;
 
 namespace Protokite.Playtest
 {
-    /// <summary>
-    /// What the player let this playtest collect. The playtest's own question, separate from the Flock SDK's analytics consent,
-    /// which is the game's. Nothing is collected until it is answered, and <see cref="Nothing"/> reads like playtesting off, except that a
-    /// feedback form the player sends themselves still goes: it is their own message, not something the playtest collects.
-    /// </summary>
+    /// <summary>What the player let this playtest collect: the playtest's own question, separate from the Flock SDK's analytics consent, which is the game's.</summary>
     public enum ProtokitePlaytestConsentChoice
     {
         /// <summary>The player has not answered yet; nothing is collected meanwhile.</summary>
@@ -21,7 +17,7 @@ namespace Protokite.Playtest
         VideoOnly,
         /// <summary>Play data is collected; the screen is not recorded.</summary>
         PlayDataOnly,
-        /// <summary>Nothing is collected: no recording, no play data, and no Protokite session for the launch.</summary>
+        /// <summary>Nothing is collected (no recording, no play data, no Protokite session), though a feedback form the player sends themselves still goes.</summary>
         Nothing
     }
 

@@ -6,7 +6,7 @@ reported to your Protokite playtest.
 > **Early version.** This release asks the player what the playtest may collect, loads your playtest's config, runs one
 > Protokite session per launch, records the game's screen on 64-bit Windows and uploads it to that session, sends
 > performance and level events through the Flock SDK with heavy analytics on, and shows your playtest's feedback form. In the
-> editor it checks your setup and records test videos.
+> editor it checks your setup and records test videos. A sample shows every call a game can make.
 
 ## Install
 
@@ -58,6 +58,8 @@ the place to change it:
   offered.
 - The Game Version is checked with Flock when the window opens and when the Flock settings change; **Check Again** asks again.
   When Flock cannot be asked, the check goes by what the settings hold and says so.
+- Under **While testing**, **Forget This Machine's Answer** makes the next Play ask the consent question again, and in Play Mode
+  **Open Feedback Form** opens the form the way its key does.
 - The Video check reads the active build target: players built for another platform, or for 32-bit or ARM64 Windows, record
   no video, and everything else in the playtest still runs there.
 - Game Version is read from the `FlockConfig` asset in a Resources folder, where the Flock SDK's own start-up reads it.
@@ -66,7 +68,7 @@ the place to change it:
 
 Once the Flock SDK is running, the playtest asks Protokite for this build's playtest, using your Flock API key and Game
 Version ID. `ProtokitePlaytest.Status` says whether the playtest can run, and if not, why. Each status that stops it is
-logged once, as a warning that says what to change.
+logged once, as a warning that says what to change, and `ProtokitePlaytest.Describe(status)` gives the same words.
 
 | Status | Meaning |
 |---|---|
@@ -114,6 +116,8 @@ debug facts as `playtest_consent` (`video_and_play_data`, `video_only`, `play_da
 
 ```csharp
 ProtokitePlaytest.PlaytestConsent                 // the answer in force
+ProtokitePlaytest.PlayersConsentAnswer            // what the player answered on this machine, NotAnswered until they do
+ProtokitePlaytest.Describe(answer)                // one sentence saying what an answer lets the playtest collect
 ProtokitePlaytest.SetPlaytestConsent(choice)      // your own menu answers it; NotAnswered asks again
 ProtokitePlaytest.AskForPlaytestConsent()         // put the question on screen again, to change the answer
 ProtokitePlaytest.IsConsentQuestionOpen
@@ -126,7 +130,8 @@ ProtokitePlaytest.IsConsentQuestionOpen
   in the same launch the player changes their mind.
 - A game that runs in batch mode or without graphics cannot show the question, so it collects nothing and says so once:
   answer with `SetPlaytestConsent`, or turn asking off.
-- In the editor, **Protokite > Playtest > Ask The Player Again** forgets the answer, so the next Play asks again.
+- In the editor, **Forget This Machine's Answer** in **Protokite > Playtest > Setup Checks And Test Video** forgets the answer,
+  so the next Play asks again.
 
 ## What the playtest turns on
 
@@ -189,7 +194,8 @@ ProtokitePlaytest.SendFeedbackForm(answers);   // false, with a warning, when th
 ```
 
 Forms waiting to be sent are kept in `ProtokitePlaytest/FeedbackForms` under the game's persistent data folder, one file each,
-with no API key in them. In the editor, **Protokite > Playtest > Open The Feedback Form** opens it in Play Mode.
+with no API key in them. In the editor, **Open Feedback Form** in **Protokite > Playtest > Setup Checks And Test Video** opens it
+in Play Mode.
 
 ## Sessions
 
@@ -257,6 +263,11 @@ It stops for good at the length or size limit, or when the game quits; quitting 
 seconds as the session end, and a file not finished by then stays as its `.part` file. Time the game spends in the
 background is left out.
 
+```csharp
+ProtokitePlaytest.IsRecordingVideo       // this launch's recording is capturing (a test video does not count)
+ProtokitePlaytest.StopVideoRecording()   // stop it for good, for a game ending play on its own schedule; it uploads as any finished recording
+```
+
 ### Test videos
 
 In Play Mode, **Record Test Video** in **Protokite > Playtest > Setup Checks And Test Video** records the Game view for the
@@ -274,7 +285,18 @@ room for a later recording deletes it; the window shows where it went.
 - It starts at the end of a frame, once the recordings earlier launches left are gone through. Quitting finishes it, as it does
   the playtest's.
 - A playtest collecting play data in the same Play session measures the test video's cost with the game's.
-- 64-bit Windows editors only, as video recording is.
+- 64-bit Windows only, as video recording is.
+
+A game can record one itself, a debug menu's "record a clip" button for instance. It records in Play Mode or a player; in the editor
+outside Play Mode it is refused, with the reason:
+
+```csharp
+if (!ProtokitePlaytest.RecordTestVideo(30.0, out string whyNot))
+    Debug.Log("No test video: " + whyNot);
+ProtokitePlaytest.TestVideoState         // WaitingToStart, Recording, Finishing, Finished or NotRecorded
+ProtokitePlaytest.FinishedTestVideoPath  // the finished file, once written
+ProtokitePlaytest.TestVideoProblem       // why it was not recorded
+```
 
 ### Uploading
 
@@ -346,6 +368,11 @@ The settings are in **Protokite > Playtest > Settings**, under **Video recording
 | Max Recording Minutes | 60 | |
 | Max Recording Size Mb | 1536 | |
 | Recordings Disk Budget Mb | 4096 | The most every recording kept on the machine may take together (above) |
+
+## The sample
+
+`Samples/PlaytestSample/ProtokitePlaytestSample.cs` puts every call above on one screen: add it to a GameObject and press Play.
+Its README lists which button makes which call.
 
 ## Platforms
 

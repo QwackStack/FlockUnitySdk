@@ -258,7 +258,8 @@ namespace Protokite.Playtest.Editor
             flock.gameVersion = check.SuggestedGameVersion;
             flock.gameVersionId = check.SuggestedGameVersionId;
             EditorUtility.SetDirty(flock);
-            AssetDatabase.SaveAssets();
+            // This asset only: saving every asset would write the developer's other unsaved edits too.
+            AssetDatabase.SaveAssetIfDirty(flock);
             return true;
         }
     }

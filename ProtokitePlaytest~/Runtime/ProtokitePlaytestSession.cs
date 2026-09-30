@@ -49,10 +49,7 @@ namespace Protokite.Playtest
         /// <summary>This launch's Protokite session id, or null until Protokite has started one.</summary>
         public static string PlaytestSessionId => _sessionState == ProtokitePlaytestSessionState.Started ? _playtestSessionId : null;
 
-        /// <summary>
-        /// Sends this Steam id (and the player's Steam name) instead of the device id; call it before the session starts. An id
-        /// that is empty, over 64 characters or holds whitespace is refused, not trimmed. Null goes back to the device id.
-        /// </summary>
+        /// <summary>Sends this Steam id and name instead of the device id, when called before the session starts; an id empty, over 64 characters or holding whitespace is refused, and null goes back to the device id.</summary>
         public static bool SetSteamId(string steamId, string playerName = null)
         {
             if (_sessionState != ProtokitePlaytestSessionState.NotStarted)

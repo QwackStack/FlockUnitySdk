@@ -53,10 +53,7 @@ namespace Protokite.Playtest
 
         internal static string FeedbackFormsFolder => FeedbackFormsFolderForTesting ?? Path.Combine(Application.persistentDataPath, "ProtokitePlaytest", "FeedbackForms");
 
-        /// <summary>
-        /// This build's published feedback form, or null when its playtest is not loaded or publishes none. Whatever the player's consent
-        /// answer: a report is the player's own message. Main thread only.
-        /// </summary>
+        /// <summary>This build's published feedback form whatever the consent answer (a report is the player's own message), or null when its playtest is not loaded or publishes none. Main thread only.</summary>
         public static ProtokitePlaytestForm FeedbackForm => PlaytestIsLoaded(Status) ? _config?.Form : null;
 
         /// <summary>Whether there is a feedback form to open; a game reads it to leave its own "give feedback" entry out when there is none. Main thread only.</summary>
@@ -128,10 +125,7 @@ namespace Protokite.Playtest
             return true;
         }
 
-        /// <summary>
-        /// Sends a game's own filled-in form the way the playtest's form does: kept on this device, then sent, by a later launch if need be.
-        /// False, with a warning, when there is no form, the answers have problems (<see cref="ProtokitePlaytestFormAnswers.FindProblems"/>), or nobody can be named. Main thread only.
-        /// </summary>
+        /// <summary>Sends a game's own filled-in form as the playtest's form does, kept on this device until sent; false, with a warning, when there is no form, the answers have problems (<see cref="ProtokitePlaytestFormAnswers.FindProblems"/>), nobody can be named as the sender, or the answers cannot be kept on this device. Main thread only.</summary>
         public static bool SendFeedbackForm(ProtokitePlaytestFormAnswers answers)
         {
             ProtokitePlaytestForm form = FeedbackForm;
@@ -164,11 +158,7 @@ namespace Protokite.Playtest
         public static bool CanSendTheRecording
             => IsRecordingVideo && _sessionState == ProtokitePlaytestSessionState.Started && ProtokitePlaytestConsent.AllowsVideoRecording(EffectiveConsent());
 
-        /// <summary>
-        /// Stops this launch's recording for good and uploads it once its file is finished, while the player is still in the game: what
-        /// the form's "Upload your recording" button does. Opening the form never does this on its own. False, changing nothing, when
-        /// <see cref="CanSendTheRecording"/> is false. Main thread only.
-        /// </summary>
+        /// <summary>Stops this launch's recording for good and uploads it once finished, as the form's "Upload your recording" button does; false, changing nothing, when <see cref="CanSendTheRecording"/> is false. Main thread only.</summary>
         public static bool StopRecordingAndSendIt()
         {
             if (!CanSendTheRecording)

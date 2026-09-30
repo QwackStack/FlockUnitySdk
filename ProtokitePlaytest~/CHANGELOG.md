@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 It is released with the Flock SDK, at the Flock SDK's version.
 
 
+## [1.60.0]
+
+### Added
+- **More of the playtest for your own code**: `Describe(status)` and `Describe(answer)` in the words the playtest logs,
+  `PlayersConsentAnswer` (what the player answered on this machine, never what a build that does not ask assumes),
+  `IsRecordingVideo` and `StopVideoRecording()` for a game ending play on its own schedule, and `RecordTestVideo` with
+  `TestVideoState`, `FinishedTestVideoPath` and `TestVideoProblem`, for a game's own "record a clip" button.
+- **A sample**, `Samples/PlaytestSample`: one script putting every call on one screen, with sign-in, consent, a Steam id, a playtest
+  event, the recording, the feedback form (opened, or answered from code) and a test video.
+
+### Changed
+- **Protokite > Playtest holds Settings and Setup Checks And Test Video only.** Ask The Player Again and Open The Feedback Form are
+  now buttons under **While testing** in that window, **Forget This Machine's Answer** and **Open Feedback Form**, each saying what it
+  does. The methods behind them are kept.
+- Every public member has a one-line description.
+
+### Fixed
+- The setup window no longer draws a line its layout did not count when **Record Test Video** is refused, and each of its
+  buttons that changes what is drawn below it ends the event there.
+- **Set Game Version To pt-...** and creating the playtest settings save only that asset. Before, they saved every unsaved
+  asset in the project, so an edit you had not saved yet was written to disk with them.
+- `RecordTestVideo` refuses in the editor outside Play Mode, saying why. Before, it answered true and recorded nothing, as the
+  next Play cleared the request.
+- The note under **Open Feedback Form** says when the consent question is holding the form back, instead of saying it opens.
+- The descriptions of `ProtokitePlaytestFeatures.ExceptionCapturing` and `SendFeedbackForm` say what the package does: the switch
+  is read by nothing here (the Flock SDK captures exceptions whatever it says), and a send is also refused when nobody can be
+  named as the sender or the answers cannot be kept on the device.
+
 ## [1.59.0]
 
 ### Added

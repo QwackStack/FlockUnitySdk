@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.60.0]
+
+### Changed
+- **The SDK adds no Qwacks Dev menu to your project.** The Package Builder and the Protokite Playtest release builder are the
+  SDK maintainers' tools; a project installing the SDK from its git URL used to show them under **Qwacks Dev**. Nothing in a
+  studio's use of the SDK changes. Released together with the Protokite Playtest's C# surface and sample.
+
 ## [1.59.0]
 
 ### Added

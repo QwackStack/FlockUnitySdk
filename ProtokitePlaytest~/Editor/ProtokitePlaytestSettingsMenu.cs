@@ -29,11 +29,7 @@ namespace Protokite.Playtest.Editor
             EditorGUIUtility.PingObject(settings);
         }
 
-        /// <summary>
-        /// Protokite > Playtest > Ask The Player Again: forgets the answer this machine gave the consent question, so the next Play
-        /// asks again. An answer is kept on the machine and counts in every later Play, so a developer answering once never sees it again.
-        /// </summary>
-        [MenuItem("Protokite/Playtest/Ask The Player Again")]
+        /// <summary>Forgets the answer this machine gave the consent question, so the next Play asks again; the setup window's Forget This Machine's Answer button.</summary>
         public static void ForgetThePlayersConsentAnswer()
         {
             if (ProtokitePlaytest.SetPlaytestConsent(ProtokitePlaytestConsentChoice.NotAnswered))
@@ -42,16 +38,12 @@ namespace Protokite.Playtest.Editor
                 Debug.LogWarning("[Protokite Playtest] The answer this machine gave the playtest's consent question could not be removed; see the warning before this one.");
         }
 
-        /// <summary>Protokite > Playtest > Open The Feedback Form: in Play Mode, opens the form the way its key does.</summary>
-        [MenuItem("Protokite/Playtest/Open The Feedback Form")]
+        /// <summary>In Play Mode, opens the feedback form the way its key does; the setup window's Open Feedback Form button.</summary>
         public static void OpenTheFeedbackForm()
         {
             if (!ProtokitePlaytest.OpenFeedbackForm())
                 Debug.Log("[Protokite Playtest] The feedback form did not open: it opens in Play Mode, once this build's playtest is loaded and publishes a form, and not while the consent question is on screen. " + ProtokitePlaytest.Status);
         }
-
-        [MenuItem("Protokite/Playtest/Open The Feedback Form", true)]
-        private static bool CanOpenTheFeedbackForm() => Application.isPlaying;
 
         /// <summary>The project's settings asset, created at <see cref="ProtokitePlaytestSettings.AssetPath"/> with playtesting off if there is none.</summary>
         public static ProtokitePlaytestSettings FindOrCreateSettings()
@@ -81,7 +73,8 @@ namespace Protokite.Playtest.Editor
             }
             Directory.CreateDirectory(Path.GetDirectoryName(ProtokitePlaytestSettings.AssetPath));
             AssetDatabase.CreateAsset(created, ProtokitePlaytestSettings.AssetPath);
-            AssetDatabase.SaveAssets();
+            // This asset only: saving every asset would write the developer's other unsaved edits too.
+            AssetDatabase.SaveAssetIfDirty(created);
             return created;
         }
     }

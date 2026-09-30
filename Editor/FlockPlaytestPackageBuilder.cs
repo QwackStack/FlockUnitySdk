@@ -18,11 +18,11 @@ namespace Flock.Editor
         private const string PackagePath = "Packages/" + FlockPlaytestInstaller.PackageName;
 
         // Only what a studio needs: the tests stay in the repository.
-        private static readonly string[] ShippedFolders = { "Runtime", "Editor" };
+        private static readonly string[] ShippedFolders = { "Runtime", "Editor", "Samples" };
         private static readonly string[] ShippedRootFiles = { "package.json", "README.md", "CHANGELOG.md", "LICENSE.md" };
 
-        [MenuItem("Qwacks Dev/Build Protokite Playtest Package")]
-        private static void BuildFromMenu()
+        /// <summary>Asks for a folder and builds there; the maintainers' own project calls it from Qwacks Dev > Build Protokite Playtest Package.</summary>
+        internal static void BuildFromMenu()
         {
             string folder = EditorUtility.SaveFolderPanel("Save ProtokitePlaytest .unitypackage to", "", "");
             if (string.IsNullOrEmpty(folder))
@@ -77,7 +77,8 @@ namespace Flock.Editor
             }
         }
 
-        private static string[] ShippedFiles(string source)
+        /// <summary>Every file the release carries, relative to the package folder.</summary>
+        internal static string[] ShippedFiles(string source)
         {
             int prefix = source.Length + 1;
             return ShippedRootFiles.SelectMany(file => new[] { file, file + ".meta" })

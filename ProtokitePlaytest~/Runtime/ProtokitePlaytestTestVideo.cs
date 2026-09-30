@@ -5,16 +5,17 @@ using UnityEngine;
 namespace Protokite.Playtest
 {
     /// <summary>Where the test video asked for last has got to.</summary>
-    internal enum ProtokitePlaytestTestVideoState
+    public enum ProtokitePlaytestTestVideoState
     {
         /// <summary>None was asked for since the launch began.</summary>
         None,
         /// <summary>Asked for, and starting at the end of a frame once earlier launches' recordings are gone through.</summary>
         WaitingToStart,
+        /// <summary>Capturing the screen.</summary>
         Recording,
         /// <summary>Stopped, and its file being finished.</summary>
         Finishing,
-        /// <summary>Its file is written, or it stopped before a frame was captured: see <see cref="ProtokitePlaytest.FinishedTestVideo"/>.</summary>
+        /// <summary>Its file is written (<see cref="ProtokitePlaytest.FinishedTestVideoPath"/>), or it stopped before a frame was captured.</summary>
         Finished,
         /// <summary>It was never recorded: see <see cref="ProtokitePlaytest.TestVideoProblem"/>.</summary>
         NotRecorded
@@ -30,8 +31,11 @@ namespace Protokite.Playtest
         /// <summary>What became of the last test video once its file is written, or null.</summary>
         internal static ProtokitePlaytestVideoRecordingSummary FinishedTestVideo { get; private set; }
 
-        /// <summary>Why the last test video asked for was never recorded, or null.</summary>
-        internal static string TestVideoProblem { get; private set; }
+        /// <summary>Why the last test video asked for was never recorded, or null. Main thread only.</summary>
+        public static string TestVideoProblem { get; private set; }
+
+        /// <summary>The last test video's finished file, or null until one is written. Main thread only.</summary>
+        public static string FinishedTestVideoPath => FinishedTestVideo?.FilePath;
 
         /// <summary>The test video while it runs, for tests.</summary>
         internal static ProtokitePlaytestVideoRecording TestVideoForTesting => _testVideo;
@@ -42,8 +46,8 @@ namespace Protokite.Playtest
         /// <summary>The file the test video is being written to, or null when none is recording.</summary>
         internal static string TestVideoPartPath => _testVideo?.PartPath;
 
-        /// <summary>Where the test video asked for last has got to.</summary>
-        internal static ProtokitePlaytestTestVideoState TestVideoState
+        /// <summary>Where the test video asked for last has got to. Main thread only.</summary>
+        public static ProtokitePlaytestTestVideoState TestVideoState
         {
             get
             {
@@ -57,13 +61,15 @@ namespace Protokite.Playtest
             }
         }
 
-        /// <summary>Asks the running game for a test video of this many seconds, needing no playtest and never uploaded; false, with why, when it cannot be asked for now.</summary>
+        /// <summary>Records the screen for this many seconds with the playtest's video settings, needing no playtest and never uploaded; false, with why, when it cannot start now. Main thread only.</summary>
         // It starts at the end of a frame once earlier launches' recordings are gone through, and gives way to the playtest's own recording.
-        internal static bool RecordTestVideo(double seconds, out string whyNot)
+        public static bool RecordTestVideo(double seconds, out string whyNot)
         {
             whyNot = null;
             if (double.IsNaN(seconds) || double.IsInfinity(seconds) || seconds <= 0.0)
                 whyNot = $"a test video needs a length above 0 seconds, and {seconds.ToString(CultureInfo.InvariantCulture)} was asked for.";
+            else if (!Application.isPlaying && VideoFrameSourceForTesting == null)
+                whyNot = "a test video records in Play Mode or a player, and the editor is not playing.";
             else if (_testVideo != null || _testVideoSecondsAskedFor > 0.0)
                 whyNot = "a test video is already being recorded.";
             else if (_videoRecording != null || (!_videoStartedThisLaunch && VideoIsOnInTheLoadedConfig()))
