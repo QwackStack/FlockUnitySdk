@@ -7,18 +7,26 @@ namespace Protokite.Playtest
     /// <summary>The feature switches a playtest's config can carry. The server may add more, so compare against these names.</summary>
     public static class ProtokitePlaytestFeatures
     {
+        /// <summary>The screen is recorded and uploaded to the playtest session.</summary>
         public const string VideoRecording = "video_recording";
+        /// <summary>The playtest asks for the game's exceptions; nothing in this package acts on it, as the Flock SDK captures exceptions whatever it says.</summary>
         public const string ExceptionCapturing = "exception_capturing";
+        /// <summary>Frame times, hitches, memory and scene loads are measured and sent as play data.</summary>
         public const string HeavyAnalytics = "heavy_analytics";
     }
 
     /// <summary>The kinds of question a feedback form can ask. A server newer than this package may send a kind not listed here.</summary>
     public static class ProtokitePlaytestFormFieldTypes
     {
+        /// <summary>A one-line text answer.</summary>
         public const string Text = "text";
+        /// <summary>A text answer of several lines.</summary>
         public const string TextArea = "textarea";
+        /// <summary>A score from <see cref="ProtokitePlaytestRatings.Lowest"/> to <see cref="ProtokitePlaytestRatings.Highest"/>.</summary>
         public const string Rating = "rating";
+        /// <summary>One of the question's options.</summary>
         public const string Select = "select";
+        /// <summary>Ticked or not; unticked is an answer too.</summary>
         public const string Checkbox = "checkbox";
     }
 
@@ -31,6 +39,7 @@ namespace Protokite.Playtest
         /// <summary>One of <see cref="ProtokitePlaytestFormFieldTypes"/>, or a kind this package does not know, kept as sent.</summary>
         public string Type { get; internal set; }
 
+        /// <summary>The question as the player reads it.</summary>
         public string Label { get; internal set; }
 
         /// <summary>Whether an answer is needed. True when the server does not say, as the server itself assumes.</summary>
@@ -46,14 +55,19 @@ namespace Protokite.Playtest
     /// <summary>A playtest's published feedback form.</summary>
     public sealed class ProtokitePlaytestForm
     {
+        /// <summary>The form's id, which a sent form names.</summary>
         public string Id { get; internal set; }
+        /// <summary>The playtest the form belongs to.</summary>
         public string TestId { get; internal set; }
+        /// <summary>The game the playtest belongs to.</summary>
         public string GameId { get; internal set; }
+        /// <summary>The form's heading.</summary>
         public string Title { get; internal set; }
 
         /// <summary>Shown under the title; empty when there is none.</summary>
         public string Description { get; internal set; } = "";
 
+        /// <summary>Whether the studio published the form; the playtest only ever holds a published one.</summary>
         public bool IsPublished { get; internal set; } = true;
 
         /// <summary>The questions, in the order the studio arranged them.</summary>

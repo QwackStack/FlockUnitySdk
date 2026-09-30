@@ -76,10 +76,7 @@ namespace Protokite.Playtest
         /// <summary>This build's playtest config, or null until <see cref="Status"/> is <see cref="ProtokitePlaytestStatus.Ready"/>. Main thread only.</summary>
         public static ProtokitePlaytestConfig Config => Status == ProtokitePlaytestStatus.Ready ? _config : null;
 
-        /// <summary>
-        /// True only when the playtest is ready, the player's answer allows <paramref name="featureName"/>, and the config turned it
-        /// on. A feature this build does not know needs the answer that allows everything. Main thread only.
-        /// </summary>
+        /// <summary>True only when the playtest is ready, the player's answer allows the feature (one this build does not know needs the answer allowing everything) and the config turns it on. Main thread only.</summary>
         public static bool IsFeatureEnabled(string featureName)
         {
             ProtokitePlaytestConfig config = Config;
@@ -321,8 +318,8 @@ namespace Protokite.Playtest
             }
         }
 
-        /// <summary>What a status means for the studio, and what to change.</summary>
-        internal static string Describe(ProtokitePlaytestStatus status)
+        /// <summary>One or two sentences saying what a status means and what to change, in the words the playtest logs.</summary>
+        public static string Describe(ProtokitePlaytestStatus status)
         {
             switch (status)
             {

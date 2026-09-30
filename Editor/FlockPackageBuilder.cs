@@ -52,8 +52,7 @@ namespace Flock.Editor
             "Editor/FlockProviderManifest.cs",
         };
 
-        // Maintainer tooling lives under Qwacks Dev; the consumer-facing SDK stays under Qwacks.
-        [MenuItem("Qwacks Dev/Package Builder")]
+        // No menu item here: a git install ships this file, so the maintainers' own project adds Qwacks Dev > Package Builder.
         public static void ShowWindow()
         {
             FlockPackageBuilder window = GetWindow<FlockPackageBuilder>("Flock Package Builder");

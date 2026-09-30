@@ -501,6 +501,43 @@ namespace Protokite.Playtest.Tests
         }
 
         [Test]
+        public void TheSuggestionSavesTheFlockSettingsAndNoOtherAsset()
+        {
+            const string folder = "Assets/ProtokitePlaytestSaveTest";
+            System.IO.Directory.CreateDirectory(folder);
+            try
+            {
+                FlockConfigAsset made = ScriptableObject.CreateInstance<FlockConfigAsset>();
+                made.gameVersion = PlaytestVersionId;
+                made.gameVersionId = ReleaseVersionId;
+                AssetDatabase.CreateAsset(made, folder + "/Flock.asset");
+                AssetDatabase.CreateAsset(ScriptableObject.CreateInstance<FlockConfigAsset>(), folder + "/Other.asset");
+                // Both imported before anything is edited, so no import still to come reloads an edit from disk.
+                AssetDatabase.ImportAsset(folder + "/Flock.asset", ImportAssetOptions.ForceSynchronousImport);
+                AssetDatabase.ImportAsset(folder + "/Other.asset", ImportAssetOptions.ForceSynchronousImport);
+                FlockConfigAsset flock = AssetDatabase.LoadAssetAtPath<FlockConfigAsset>(folder + "/Flock.asset");
+                FlockConfigAsset other = AssetDatabase.LoadAssetAtPath<FlockConfigAsset>(folder + "/Other.asset");
+                byte[] otherBefore = System.IO.File.ReadAllBytes(folder + "/Other.asset");
+                // A developer's edit to another asset, not saved yet.
+                other.gameVersion = "unsaved-edit";
+                EditorUtility.SetDirty(other);
+
+                ProtokitePlaytestSetupInput input = ProtokitePlaytestSetupInput.From(Playtest(), flock, BuildTarget.StandaloneWindows64, "x64");
+                ProtokitePlaytestSetupCheck check = Check(input, ProtokitePlaytestSetupChecks.GameVersionCheck,
+                    AnswerFor(input, false, null, PlaytestVersionId, PlaytestVersionName, resolvesBack: true));
+                Assert.IsTrue(ProtokitePlaytestSetupChecks.UseTheSuggestedGameVersion(flock, check));
+
+                StringAssert.Contains(PlaytestVersionName, System.IO.File.ReadAllText(folder + "/Flock.asset"), "The Flock settings are saved");
+                CollectionAssert.AreEqual(otherBefore, System.IO.File.ReadAllBytes(folder + "/Other.asset"), "Another asset's unsaved edit is not");
+                Assert.IsTrue(EditorUtility.IsDirty(other), "It is still the developer's to save or not");
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(folder);
+            }
+        }
+
+        [Test]
         public void ACheckWithNoSuggestionChangesNothing()
         {
             FlockConfigAsset flock = Flock("1.0.0", ReleaseVersionId);
@@ -528,6 +565,31 @@ namespace Protokite.Playtest.Tests
                 Assert.IsNotNull(path, field);
                 CollectionAssert.Contains(menuItems, path, $"The Playtesting tab's {field} opens a menu item of this package");
             }
+        }
+
+        [Test]
+        public void ThePlaytestMenuHoldsTheSettingsAndTheSetupWindowOnly()
+        {
+            List<string> menuItems = typeof(ProtokitePlaytestWindow).Assembly.GetTypes()
+                .SelectMany(type => type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static))
+                .SelectMany(method => method.GetCustomAttributes<MenuItem>())
+                .Where(item => !item.validate)
+                .Select(item => item.menuItem)
+                .ToList();
+
+            // Forgetting the consent answer and opening the form are buttons in the setup window, each saying what it does.
+            CollectionAssert.AreEquivalent(new[] { ProtokitePlaytestSettingsMenu.MenuPath, ProtokitePlaytestWindow.MenuPath }, menuItems);
+        }
+
+        [Test]
+        public void TheFormButtonsNoteSaysWhenItCanOpen()
+        {
+            StringAssert.Contains("Enter Play Mode", ProtokitePlaytestWindow.FeedbackFormNote(false, false, false, false));
+            StringAssert.Contains("is open", ProtokitePlaytestWindow.FeedbackFormNote(true, true, true, false));
+            StringAssert.Contains("Opens the form", ProtokitePlaytestWindow.FeedbackFormNote(true, true, false, false));
+            StringAssert.Contains("publishes no form", ProtokitePlaytestWindow.FeedbackFormNote(true, false, false, false), "Saying why it cannot open");
+            // The form does not open over the consent question, so the note says what it waits for.
+            StringAssert.Contains("once it is answered", ProtokitePlaytestWindow.FeedbackFormNote(true, true, false, true));
         }
 
         [Test]

@@ -6,7 +6,7 @@ using UnityEngine;
 
 namespace Protokite.Playtest.Editor
 {
-    /// <summary>Protokite > Playtest > Setup Checks And Test Video: what in this project stands in a playtest's way, and a test video recorded in Play Mode.</summary>
+    /// <summary>Protokite > Playtest > Setup Checks And Test Video: what in this project stands in a playtest's way, a test video, and the consent answer and form while testing.</summary>
     internal sealed class ProtokitePlaytestWindow : EditorWindow
     {
         /// <summary>The menu path, also used by the Flock settings window's Playtesting tab.</summary>
@@ -94,7 +94,47 @@ namespace Protokite.Playtest.Editor
 
             EditorGUILayout.Space();
             DrawTestVideo();
+            EditorGUILayout.Space();
+            DrawWhileTesting();
             EditorGUILayout.EndScrollView();
+        }
+
+        // The same controls every event, enabled or not, so a layout and what it draws agree.
+        private static void DrawWhileTesting()
+        {
+            EditorGUILayout.LabelField("While testing", EditorStyles.boldLabel);
+
+            EditorGUILayout.LabelField("This machine's answer to the consent question: " + ObjectNames.NicifyVariableName(ProtokitePlaytest.PlayersConsentAnswer.ToString()) + ".",
+                EditorStyles.wordWrappedMiniLabel);
+            if (GUILayout.Button(new GUIContent("Forget This Machine's Answer", "The answer is kept on this machine and counts in every later Play; forgetting it makes the next Play ask again.")))
+            {
+                ProtokitePlaytestSettingsMenu.ForgetThePlayersConsentAnswer();
+                GUIUtility.ExitGUI();
+            }
+
+            EditorGUILayout.Space();
+            using (new EditorGUI.DisabledScope(!Application.isPlaying))
+            {
+                if (GUILayout.Button(new GUIContent("Open Feedback Form", "Opens the form over the game the way its key does.")))
+                {
+                    ProtokitePlaytestSettingsMenu.OpenTheFeedbackForm();
+                    GUIUtility.ExitGUI();
+                }
+            }
+            EditorGUILayout.LabelField(FeedbackFormNote(Application.isPlaying, ProtokitePlaytest.CanOpenFeedbackForm, ProtokitePlaytest.IsFeedbackFormOpen, ProtokitePlaytest.IsConsentQuestionOpen),
+                EditorStyles.wordWrappedMiniLabel);
+        }
+
+        /// <summary>The line under Open Feedback Form, saying when it can open.</summary>
+        internal static string FeedbackFormNote(bool playing, bool canOpen, bool isOpen, bool consentQuestionOpen)
+        {
+            if (!playing)
+                return "Enter Play Mode to open the feedback form.";
+            if (isOpen)
+                return "The feedback form is open.";
+            if (consentQuestionOpen)
+                return "The consent question is on screen; the form opens once it is answered.";
+            return canOpen ? "Opens the form the playtest published, over the game." : "This build's playtest is not loaded, or publishes no form. " + ProtokitePlaytest.Describe(ProtokitePlaytest.Status);
         }
 
         private static void DrawCheck(ProtokitePlaytestSetupCheck check)
@@ -163,7 +203,11 @@ namespace Protokite.Playtest.Editor
             using (new EditorGUI.DisabledScope(!Application.isPlaying || busy))
             {
                 if (GUILayout.Button("Record Test Video"))
+                {
                     _testVideoRefused = ProtokitePlaytest.RecordTestVideo(testVideoSeconds, out string whyNot) ? null : whyNot;
+                    // What is drawn below changed after this event was laid out: the next Layout draws it.
+                    GUIUtility.ExitGUI();
+                }
             }
 
             if (!Application.isPlaying)

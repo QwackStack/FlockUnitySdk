@@ -56,17 +56,12 @@ namespace Protokite.Playtest.Tests
         [Test]
         public void StatusReadsTheProjectSettingsAndFollowsFlockStartingAndStopping()
         {
-            bool assetExisted = AssetDatabase.LoadAssetAtPath<ProtokitePlaytestSettings>(ProtokitePlaytestSettings.AssetPath) != null;
-            ProtokitePlaytestSettings settings = ProtokitePlaytestSettingsMenu.FindOrCreateSettings();
-            bool wasEnabled = settings.PlaytestingEnabled;
-            string oldUrl = settings.ProtokiteApiUrl;
-            try
+            using (ProtokitePlaytestSettingsForTests project = new ProtokitePlaytestSettingsForTests(playtestingEnabled: false, protokiteApiUrl: "http://localhost:8020"))
             {
-                settings.PlaytestingEnabled = false;
+                ProtokitePlaytestSettings settings = project.Settings;
                 Assert.AreEqual(ProtokitePlaytestStatus.TurnedOff, ProtokitePlaytest.Status, "The project's switch is read");
 
                 settings.PlaytestingEnabled = true;
-                settings.ProtokiteApiUrl = "http://localhost:8020";
                 Assert.IsFalse(FlockClient.IsInitialized, "Precondition: no Flock client left running by another test");
                 Assert.AreEqual(ProtokitePlaytestStatus.WaitingForFlock, ProtokitePlaytest.Status);
 
@@ -76,19 +71,6 @@ namespace Protokite.Playtest.Tests
 
                 using (FlockTestClient.Create(new FlockFakeTransport()))
                     Assert.AreEqual(ProtokitePlaytestStatus.FetchingPlaytestConfig, ProtokitePlaytest.Status, "After Flock starts again");
-            }
-            finally
-            {
-                if (assetExisted)
-                {
-                    settings.PlaytestingEnabled = wasEnabled;
-                    settings.ProtokiteApiUrl = oldUrl;
-                    AssetDatabase.SaveAssets();
-                }
-                else
-                {
-                    AssetDatabase.DeleteAsset(ProtokitePlaytestSettings.AssetPath);
-                }
             }
         }
 
@@ -102,6 +84,7 @@ namespace Protokite.Playtest.Tests
             {
                 ProtokitePlaytestSettings created = ProtokitePlaytestSettingsMenu.FindOrCreateSettings();
                 Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<ProtokitePlaytestSettings>(ProtokitePlaytestSettings.AssetPath), "Created where Resources finds it");
+                Assert.IsTrue(System.IO.File.Exists(ProtokitePlaytestSettings.AssetPath), "And written to disk");
                 Assert.AreSame(created, ProtokitePlaytestSettings.Load(), "Found by the game at runtime");
                 Assert.IsFalse(created.PlaytestingEnabled);
                 // Without its script the saved asset shows as "missing script" and loads as nothing on the next launch.

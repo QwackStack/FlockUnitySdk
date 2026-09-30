@@ -97,10 +97,12 @@ Plain serializable DTOs mirroring backend wire shapes — auth, analytics, shop,
 - **FlockSetupChecklist** / **FlockSetupClassifier** (+ `FlockSetupItem`/`FlockSetupState`/`FlockSetupFacts`/verdict enums) — pure, testable setup-readiness logic.
 - **FlockFirstRunBootstrap** — opens the window on first import. · **FlockSdkGuideEditor** — inspector for the guide.
 - **FlockProviderManifest** — maps providers ↔ `FLOCK_NO_*` defines for event-subset builds.
-- **FlockPackageBuilder** — assembles the distributable package.
+- **FlockPackageBuilder** — assembles the distributable package (`ShowWindow`). No menu item in the SDK: a git install ships
+  this file, so the maintainers' project (FlockUnityProject's `Assets/FlockTestRun/QwacksDevMenus.cs`) adds **Qwacks Dev >
+  Package Builder**, and `FlockMaintainerToolingTests` fails if the SDK itself names a Qwacks Dev menu.
 - **FlockPlaytestInstaller** — the Playtesting tab's install, update and remove for the Protokite Playtest package: downloads `ProtokitePlaytest-<version>.unitypackage` from the GitHub release matching `FlockSdkVersion.Current` (a blocking, cancellable download, so a script reload cannot drop it) and imports it; an update deletes the old `Assets/` copy only once the new one has downloaded, so a dropped file cannot linger; every download result but success counts as a failure (a failed disk write answers 200). Finds an installed copy from its assembly definition, wherever it is. Reads the version through `InternalsVisibleTo("Flock.Editor")`. Refuses to install into a Flock SDK exported without Analytics (`WhyPlaytestCannotBeInstalled`, whose refusal compiles only under `FLOCK_NO_ANALYTICS`: the playtest calls `FlockClient.Analytics`, and the define lives in Flock's own `csc.rsp`, where the playtest cannot see it). Names the two playtest menu items the tab
   opens (`SettingsMenuPath`, `SetupWindowMenuPath`); the playtest's own tests read both and check its menu has them.
-- **FlockPlaytestPackageBuilder** — maintainer tooling (**Qwacks Dev > Build Protokite Playtest Package**, or `-executeMethod ...BuildFromCommandLine -playtestOut <folder>`): stages the playtest under `Assets/ProtokitePlaytest/` with GUIDs made from their paths and exports it. Excluded from core's own `.unitypackage`.
+- **FlockPlaytestPackageBuilder** — maintainer tooling (`BuildFromMenu`, called by the maintainers' project from **Qwacks Dev > Build Protokite Playtest Package** through `InternalsVisibleTo("FlockTestRun.Editor")`, or `-executeMethod ...BuildFromCommandLine -playtestOut <folder>`): stages the playtest's `Runtime`, `Editor` and `Samples` under `Assets/ProtokitePlaytest/` with GUIDs made from their paths and exports it. Excluded from core's own `.unitypackage`.
 
 ## Editor/Codegen/
 Writes typed accessors to `Assets/Flock/Generated/`. Each sync replaces the files it generated and nothing else: `GeneratedFiles` is the one owner of what codegen may delete (a `.g.cs` with codegen's header, its `.meta`, and a folder that leaves empty).
@@ -158,12 +160,12 @@ script.
   game that locks it again, gives the game's cursor back when closed (not an ended launch's), and is drawn only while playing,
   not in batch mode, with graphics. **ProtokitePlaytestConsentQuestionView**: the words and the four buttons from one options
   table the tests read too; a press in the first half second is ignored, and a mouse press while the game keeps the cursor
-  locked. **Protokite > Playtest > Ask The Player Again** (editor) forgets the saved answer. **ProtokitePlaytestFormView**: the
+  locked. **Forget This Machine's Answer** in the setup window (editor) forgets the saved answer. **ProtokitePlaytestFormView**: the
   feedback form built from the published form (text, many-line text, a 1-5 rating and options as buttons, a checkbox recorded
   unticked when drawn, unknown kinds as text), text boxes styled in code (with no theme their input box has no size), Escape
   stopped before a text field puts back its old text, select-all on click off, problems shown once Send is tried; Send, Close
   and **Upload your recording** have the consent question's two press guards. Buttons' actions are kept by name
-  (`PressForTesting`) for tests of a view in no panel. **Protokite > Playtest > Open The Feedback Form** (editor, Play Mode).
+  (`PressForTesting`) for tests of a view in no panel. **Open Feedback Form** in the setup window (editor, Play Mode).
 - **Feedback form (`ProtokitePlaytestFormAnswers.cs`, `ProtokitePlaytestFormSubmission.cs`, `ProtokitePlaytestForms.cs`)** —
   `ProtokitePlaytestFormAnswers` is the inert half: Protokite's own validator's rules (a required checkbox answered unticked,
   empty optional answers left out, unknown kinds as text, select trimmed and ordinal, rating 1-5), every problem in the
@@ -245,8 +247,8 @@ script.
   One start path, `TryStartRecording(kind, ...)` → `StartRecordingRun`, serves both kinds; `RoomToReserve` and the kind decide
   the rest: a test video reserves `max(BytesToMakeRoomFor, 1 MB)` and its size limit is never raised past that, and
   `MakeRoom` reads the new run's kind, so room for a test video deletes older test videos only, never a waiting upload.
-- **Test videos (`Runtime/ProtokitePlaytestTestVideo.cs`)** — `RecordTestVideo(seconds, out whyNot)` (internal; the editor
-  window is its caller) asks the running game for one; `UpdateVideo` starts it at the end of a frame once the finishing pass
+- **Test videos (`Runtime/ProtokitePlaytestTestVideo.cs`)** — `RecordTestVideo(seconds, out whyNot)` (public since 1.60.0, with
+  `TestVideoState`, `FinishedTestVideoPath` and `TestVideoProblem`; the editor window calls it too) asks the running game for one; `UpdateVideo` starts it at the end of a frame once the finishing pass
   is done. Its own fields (`_testVideo`, `_testVideoRun`), never the launch's recording slot, so no session is saved beside
   it and nothing uploads it; its run is let go as soon as its file is written. The launch's recording belongs to the
   playtest: a test video is refused while the playtest records or is due to, and when the config turns video on,
@@ -303,7 +305,13 @@ script.
   `UseTheSuggestedGameVersion` writes the name and the ID Flock resolved it to into core's `FlockConfigAsset`.
   **ProtokitePlaytestWindow** (**Protokite > Playtest > Setup Checks And Test Video**, and core's **Check Playtest Setup**
   button through `FlockPlaytestInstaller.SetupWindowMenuPath`) draws them, reading the project once per Layout event, and
-  records test videos in Play Mode; nothing in it waits across a script reload.
+  records test videos in Play Mode; under **While testing** it forgets this machine's consent answer and opens the feedback
+  form (the menu holds only Settings and this window). A button that changes what is drawn below it ends the event
+  (`GUIUtility.ExitGUI`), so no event draws what its Layout did not count; nothing in it waits across a script reload.
+- **The C# surface** — every public member of `ProtokitePlaytest` has a one-line doc and a call in
+  `ProtokitePlaytestPublicSurfaceTests`, whose reflection test fails on a public member with no call. **Sample**:
+  `Samples/PlaytestSample` (asmdef `Protokite.Playtest.Samples`), one IMGUI script making every call, shipped in the
+  `.unitypackage` and compiled by a git install as core's quick start is.
 - Tests: **ProtokitePlaytestStatusTests**, **ProtokitePlaytestVideoEncoderTests** (encode and decode frame for frame
   with each codec, a fake encoder held to the same contract), **ProtokitePlaytestWebmFileTests** (real VP8 and VP9
   recordings read back by a reader of their own, decoded frame for frame, cut off and finished; a fake recording file held

@@ -14,11 +14,14 @@ namespace Protokite.Playtest
         /// <summary>Where the player's answer is kept, when a test sets it; the game's persistent data folder otherwise.</summary>
         internal static string ConsentFilePathForTesting;
 
-        /// <summary>
-        /// The answer in force: the player's saved answer or, with none, NotAnswered in a build that asks and VideoAndPlayData in
-        /// one that does not. An answer already given counts whether this build asks or not. Main thread only.
-        /// </summary>
+        /// <summary>The answer in force: the player's saved answer, or with none NotAnswered in a build that asks and VideoAndPlayData in one that does not. Main thread only.</summary>
         public static ProtokitePlaytestConsentChoice PlaytestConsent => EffectiveConsent();
+
+        /// <summary>What the player answered on this machine, or NotAnswered when they have not; unlike <see cref="PlaytestConsent"/>, never what a build that does not ask assumes. Main thread only.</summary>
+        public static ProtokitePlaytestConsentChoice PlayersConsentAnswer => SavedConsent();
+
+        /// <summary>One sentence saying what an answer lets the playtest collect.</summary>
+        public static string Describe(ProtokitePlaytestConsentChoice choice) => ProtokitePlaytestConsent.Describe(choice);
 
         /// <summary>Whether the consent question is on screen now.</summary>
         public static bool IsConsentQuestionOpen => _consentPanel != null;
@@ -26,11 +29,7 @@ namespace Protokite.Playtest
         /// <summary>The question as drawn, for tests; null while it is not on screen.</summary>
         internal static UnityEngine.UIElements.VisualElement ConsentQuestionForTesting => _consentPanel?.View;
 
-        /// <summary>
-        /// Saves the player's answer and applies it at once, for a game asking in its own menu or a run nobody can answer on
-        /// screen. NotAnswered forgets the answer, so the player is asked again. False, and nothing collected until an answer is
-        /// saved, when the answer could not be saved. Main thread only.
-        /// </summary>
+        /// <summary>Saves the player's answer and applies it at once (NotAnswered forgets it, so they are asked again); false, collecting nothing, when it could not be saved. Main thread only.</summary>
         public static bool SetPlaytestConsent(ProtokitePlaytestConsentChoice choice)
         {
             ProtokitePlaytestConsentFile file = new ProtokitePlaytestConsentFile(ConsentFilePath);
@@ -54,10 +53,7 @@ namespace Protokite.Playtest
             return saved;
         }
 
-        /// <summary>
-        /// Puts the consent question on screen again, so the player can change their answer; the answer in force stays until they
-        /// choose. True when the question is on screen. Only while this build's playtest is loaded. Main thread only.
-        /// </summary>
+        /// <summary>Puts the consent question on screen again so the player can change their answer, which stays in force until they choose; true when it is on screen. Main thread only.</summary>
         public static bool AskForPlaytestConsent()
         {
             if (!PlaytestIsLoaded(Status))

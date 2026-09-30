@@ -375,6 +375,17 @@ namespace Protokite.Playtest.Tests
         }
 
         [Test]
+        public void OutsidePlayModeATestVideoIsRefused()
+        {
+            // The screen is read only in Play Mode, and nothing moves a test video along outside it.
+            ProtokitePlaytest.VideoFrameSourceForTesting = null;
+            Assert.IsFalse(Application.isPlaying, "Precondition: an edit-mode test");
+            Assert.IsFalse(ProtokitePlaytest.RecordTestVideo(5, out string whyNot));
+            StringAssert.Contains("Play Mode", whyNot);
+            Assert.AreEqual(ProtokitePlaytestTestVideoState.None, ProtokitePlaytest.TestVideoState, "Nothing waits for a Play that would clear it");
+        }
+
+        [Test]
         public void ALengthPastTheLengthLimitIsCutToIt()
         {
             _settings.Settings.MaxRecordingMinutes = 0.1f;

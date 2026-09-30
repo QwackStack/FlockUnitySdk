@@ -43,8 +43,8 @@ namespace Protokite.Playtest
         /// <summary>What became of this launch's recording once its file is written, or null until then.</summary>
         internal static ProtokitePlaytestVideoRecordingSummary FinishedVideo { get; private set; }
 
-        /// <summary>Whether this launch's recording is capturing frames right now.</summary>
-        internal static bool IsRecordingVideo => _videoRecording != null && _videoRecording.IsCapturing;
+        /// <summary>Whether this launch's playtest recording is capturing frames now; a test video does not count. Main thread only.</summary>
+        public static bool IsRecordingVideo => _videoRecording != null && _videoRecording.IsCapturing;
 
         /// <summary>The recording while it runs, for tests.</summary>
         internal static ProtokitePlaytestVideoRecording VideoRecordingForTesting => _videoRecording;
@@ -105,8 +105,8 @@ namespace Protokite.Playtest
             return parts.Count == 0 ? null : "Recordings earlier launches left, " + string.Join("; ", parts) + ".";
         }
 
-        /// <summary>Stops this launch's recording for good and has its file finished. False when none is capturing.</summary>
-        internal static bool StopVideoRecording()
+        /// <summary>Stops this launch's playtest recording for good, for a game that ends play on its own schedule; its file is uploaded like any finished recording. False when none is capturing. Main thread only.</summary>
+        public static bool StopVideoRecording()
         {
             if (!IsRecordingVideo)
                 return false;

@@ -7,7 +7,9 @@ namespace Protokite.Playtest
     /// <summary>The scores a rating question takes.</summary>
     public static class ProtokitePlaytestRatings
     {
+        /// <summary>The lowest score.</summary>
         public const int Lowest = 1;
+        /// <summary>The highest score.</summary>
         public const int Highest = 5;
     }
 
@@ -27,12 +29,8 @@ namespace Protokite.Playtest
         }
     }
 
-    /// <summary>
-    /// What a player has filled in on a feedback form, and whether Protokite would take it. No panel, no network: the
-    /// playtest's form writes into it, and a game drawing a form of its own fills one in and hands it to
-    /// <see cref="ProtokitePlaytest.SendFeedbackForm"/>. The rules are Protokite's own: a required checkbox is answered unticked,
-    /// an empty optional answer is left out, and a question of a kind this package does not know is answered as text.
-    /// </summary>
+    /// <summary>What a player filled in on a feedback form, by Protokite's own rules, for <see cref="ProtokitePlaytest.SendFeedbackForm"/>; a game drawing its own form fills one in.</summary>
+    // Protokite's rules: a required checkbox is answered unticked, an empty optional answer is left out, and an unknown kind is answered as text.
     public sealed class ProtokitePlaytestFormAnswers
     {
         private sealed class Answer
@@ -67,19 +65,19 @@ namespace Protokite.Playtest
         /// <summary>Forgets every answer.</summary>
         public void Clear() => _answers.Clear();
 
+        /// <summary>The text or chosen option recorded for a question, or empty.</summary>
         public string GetText(string fieldId) => Find(fieldId)?.Text ?? "";
 
+        /// <summary>The rating recorded for a question, or 0.</summary>
         public int GetRating(string fieldId) => Find(fieldId)?.Rating ?? 0;
 
+        /// <summary>Whether a question's checkbox was recorded ticked.</summary>
         public bool IsChecked(string fieldId) => Find(fieldId)?.Checked ?? false;
 
         /// <summary>Whether anything was recorded for this question, which is not the same as it holding something.</summary>
         public bool IsAnswered(string fieldId) => Find(fieldId) != null;
 
-        /// <summary>
-        /// Every question Protokite would turn this form away over, in the studio's order; empty means it would be taken. All are
-        /// reported where Protokite names only the first, so a player fixing one question is not sent back for the next.
-        /// </summary>
+        /// <summary>Every question Protokite would turn this form away over, all at once and in the studio's order; empty means it would be taken.</summary>
         public IReadOnlyList<ProtokitePlaytestFormProblem> FindProblems(ProtokitePlaytestForm form)
         {
             List<ProtokitePlaytestFormProblem> problems = new List<ProtokitePlaytestFormProblem>();
