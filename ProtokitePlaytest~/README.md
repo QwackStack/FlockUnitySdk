@@ -3,10 +3,13 @@
 Playtesting for games built with the Flock SDK: each play session, gameplay recording and in-game feedback,
 reported to your Protokite playtest.
 
-> **Early version.** This release asks the player what the playtest may collect, loads your playtest's config, runs one
-> Protokite session per launch, records the game's screen on 64-bit Windows and uploads it to that session, sends
-> performance and level events through the Flock SDK with heavy analytics on, and shows your playtest's feedback form. In the
-> editor it checks your setup and records test videos. A sample shows every call a game can make.
+It asks the player what the playtest may collect, runs one Protokite session per launch, records the game's screen on 64-bit
+Windows and uploads it to that session, sends performance and scene events through the Flock SDK, and shows your playtest's
+feedback form. In the editor it checks your setup, records test videos and runs a live self-test. A sample shows every call a
+game can make.
+
+> **Setting it up for the first time?** The step-by-step guide, with screenshots, is at
+> [docs.qwacks.com/protokite/unity-package](https://docs.qwacks.com/protokite/unity-package). This README is the full reference.
 
 ## Install
 

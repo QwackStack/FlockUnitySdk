@@ -184,7 +184,8 @@ is a separate package, released with each Flock SDK version; the SDK itself neve
 
 To add it, open **Flock > Settings > Playtesting** and press **Install Protokite Playtest**. It downloads the version
 that matches your Flock SDK and imports it, with no Git needed. The same tab opens its settings, updates it when you
-update Flock, and removes it. Other ways to install it, and how to switch it on, are in
+update Flock, and removes it. The [step-by-step guide](https://docs.qwacks.com/protokite/unity-package) takes you
+from installing it to a first playtest session, with screenshots; every setting and call is in
 [its README](ProtokitePlaytest~/README.md).
 
 ## Error handling

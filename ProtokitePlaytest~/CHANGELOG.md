@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 It is released with the Flock SDK, at the Flock SDK's version.
 
 
+## [1.62.0]
+
+### Documentation
+- **A step-by-step guide with screenshots** at [docs.qwacks.com/protokite/unity-package](https://docs.qwacks.com/protokite/unity-package),
+  in English and Arabic: install from the Playtesting tab, point the build at the playtest, check the setup, sign a player in and
+  press Play, with every status that stops a playtest and what fixes it. A second page covers what a playtest collects, the
+  recording limits, what "no video on this platform" means, the feedback form, every call a game can make, and testing in the
+  editor.
+- The README no longer calls this an early version, and links the guide.
+
+No code changes.
+
 ## [1.61.0]
 
 ### Added
