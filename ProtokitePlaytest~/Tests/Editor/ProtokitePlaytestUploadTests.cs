@@ -151,7 +151,7 @@ namespace Protokite.Playtest.Tests
 
         private static IEnumerator ThisLaunchsUpload()
         {
-            yield return Settled(() => ProtokitePlaytest.ThisLaunchsUploadForTesting != null && ProtokitePlaytest.ThisLaunchsUploadForTesting.IsCompleted, 10f,
+            yield return Settled(() => ProtokitePlaytest.ThisLaunchsUpload != null && ProtokitePlaytest.ThisLaunchsUpload.IsCompleted, 10f,
                 "This launch's upload ended");
         }
 
@@ -174,7 +174,7 @@ namespace Protokite.Playtest.Tests
                 string video = ProtokitePlaytest.FinishedVideo.FilePath;
                 yield return ThisLaunchsUpload();
 
-                Assert.IsTrue(ProtokitePlaytest.ThisLaunchsUploadForTesting.Result.Uploaded);
+                Assert.IsTrue(ProtokitePlaytest.ThisLaunchsUpload.Result.Uploaded);
                 FlockHttpRequest asked = flock.Transport.LastTo(LinkRoute);
                 Assert.AreEqual("http://protokite.test/game/sdk/playtest-session/pk-1/recording-upload", asked.Url);
                 Assert.AreEqual("POST", asked.Method);
@@ -212,7 +212,7 @@ namespace Protokite.Playtest.Tests
                 yield return Settled(() => ProtokitePlaytest.VideoRecordingForTesting == null || ProtokitePlaytest.VideoRecordingForTesting.HasFinishedWriting, 20f, "The file was written");
                 Frames(1);
                 yield return ThisLaunchsUpload();
-                Assert.IsTrue(ProtokitePlaytest.ThisLaunchsUploadForTesting.Result.Uploaded);
+                Assert.IsTrue(ProtokitePlaytest.ThisLaunchsUpload.Result.Uploaded);
                 Assert.AreEqual(ProtokitePlaytestVideoStopReason.PlayerAskedToSendIt, ProtokitePlaytest.FinishedVideo.StopReason);
             }
         }
@@ -232,7 +232,7 @@ namespace Protokite.Playtest.Tests
                 yield return RecordAndStop();
                 yield return ThisLaunchsUpload();
 
-                ProtokitePlaytestRecordingUploadOutcome outcome = ProtokitePlaytest.ThisLaunchsUploadForTesting.Result;
+                ProtokitePlaytestRecordingUploadOutcome outcome = ProtokitePlaytest.ThisLaunchsUpload.Result;
                 Assert.IsFalse(outcome.Uploaded, "A link was given, which Protokite counts; the file never arrived, which is what counts here");
                 Assert.AreEqual(1, Directory.GetFiles(runFolder, "*.webm").Length, "The video is kept");
                 Assert.IsTrue(File.Exists(Path.Combine(runFolder, "session.json")), "With the session a later launch uploads it to");
@@ -254,7 +254,7 @@ namespace Protokite.Playtest.Tests
                 yield return RecordAndStop();
                 yield return ThisLaunchsUpload();
 
-                Assert.IsTrue(ProtokitePlaytest.ThisLaunchsUploadForTesting.Result.Uploaded);
+                Assert.IsTrue(ProtokitePlaytest.ThisLaunchsUpload.Result.Uploaded);
                 Assert.AreEqual(2, flock.Transport.CountTo(LinkRoute), "A fresh link for the second try");
                 Assert.AreEqual(new[] { FirstLink, SecondLink }, _uploader.Urls(), "The second try used the fresh link");
             }
@@ -308,7 +308,7 @@ namespace Protokite.Playtest.Tests
                 yield return RecordAndStop();
                 yield return ThisLaunchsUpload();
                 Assert.AreEqual(0, _uploader.Count, "No link, no upload");
-                StringAssert.DoesNotContain("refused the Flock API key", ProtokitePlaytest.ThisLaunchsUploadForTesting.Result.WhyNot);
+                StringAssert.DoesNotContain("refused the Flock API key", ProtokitePlaytest.ThisLaunchsUpload.Result.WhyNot);
                 // A definite refusal is kept like any other, for a later launch to ask again, until a launch that records needs its room.
                 Assert.IsTrue(File.Exists(ProtokitePlaytest.FinishedVideo.FilePath), "The recording is kept");
                 Assert.IsTrue(File.Exists(Path.Combine(runFolder, "session.json")), "With its session");
@@ -379,7 +379,7 @@ namespace Protokite.Playtest.Tests
 
                 yield return TheSessionStarts(flock);
                 yield return ThisLaunchsUpload();
-                Assert.IsTrue(ProtokitePlaytest.ThisLaunchsUploadForTesting.Result.Uploaded, "Sent the moment its session started");
+                Assert.IsTrue(ProtokitePlaytest.ThisLaunchsUpload.Result.Uploaded, "Sent the moment its session started");
             }
         }
 
@@ -396,7 +396,7 @@ namespace Protokite.Playtest.Tests
                 ProtokitePlaytest.HandleGameQuitting();
                 Assert.IsNotNull(ProtokitePlaytest.FinishedVideo?.FilePath, "Precondition: quitting finished the file");
                 yield return ForAWhile();
-                Assert.IsNull(ProtokitePlaytest.ThisLaunchsUploadForTesting, "No upload even began: the game is closing, and the next launch sends it");
+                Assert.IsNull(ProtokitePlaytest.ThisLaunchsUpload, "No upload even began: the game is closing, and the next launch sends it");
                 Assert.AreEqual(0, flock.Transport.CountTo(LinkRoute));
                 Assert.IsTrue(File.Exists(Path.Combine(runFolder, "session.json")));
             }
@@ -441,7 +441,7 @@ namespace Protokite.Playtest.Tests
                 ProtokitePlaytest.HandleGameQuitting();
                 yield return ThisLaunchsUpload();
                 Assert.IsTrue(_uploader.WasCancelled, "The upload was told to stop");
-                Assert.IsFalse(ProtokitePlaytest.ThisLaunchsUploadForTesting.Result.Uploaded);
+                Assert.IsFalse(ProtokitePlaytest.ThisLaunchsUpload.Result.Uploaded);
                 Assert.IsTrue(File.Exists(Path.Combine(runFolder, "session.json")), "Kept, with its session, for the next launch");
                 Assert.AreEqual(1, Directory.GetFiles(runFolder, "*.webm").Length);
             }
@@ -460,7 +460,7 @@ namespace Protokite.Playtest.Tests
                 string runFolder = ProtokitePlaytest.RecordingRunForTesting.FolderPath;
                 yield return RecordAndStop();
                 yield return ThisLaunchsUpload();
-                Assert.IsTrue(ProtokitePlaytest.ThisLaunchsUploadForTesting.Result.Uploaded);
+                Assert.IsTrue(ProtokitePlaytest.ThisLaunchsUpload.Result.Uploaded);
                 Assert.IsTrue(Directory.Exists(runFolder), "Precondition: the video could not be deleted");
                 Assert.IsFalse(File.Exists(Path.Combine(runFolder, "session.json")), "Its session is gone, so nothing uploads it again");
 

@@ -374,6 +374,48 @@ The settings are in **Protokite > Playtest > Settings**, under **Video recording
 `Samples/PlaytestSample/ProtokitePlaytestSample.cs` puts every call above on one screen: add it to a GameObject and press Play.
 Its README lists which button makes which call.
 
+## Live self-test
+
+The self-test checks this build's playtest end to end against the live Protokite. Each check is paired with a request Protokite
+must refuse, and a refusal only counts when Protokite gave the status that check expects. It runs in the editor and in
+development builds; a release build refuses it. It sends each refused request once, through a client of its own with no
+retries, so the refusals it provokes change nothing in the running game.
+
+Run it in Play Mode from **Run Live Self-Test** in **Protokite > Playtest > Setup Checks And Test Video**, or from code:
+
+```csharp
+ProtokitePlaytestSelfTestReport report = await ProtokitePlaytestSelfTest.RunAsync();
+Debug.Log($"{report.Passed} passed, {report.Failed} failed, {report.Skipped} skipped");
+```
+
+- **Sign a player in first.** It signs nobody in, and the playtest's session starts only once the game's own sign-in has.
+- **Run it in a Play or launch of its own.** It stops this launch's recording to upload it. It sends a filled-in form for this
+  launch's session, which replaces a form the player sent this launch, as Protokite keeps one per session. And it raises two
+  exceptions on purpose to check that exceptions reach the Flock SDK, so with **Error Pause** on in the Console, Play pauses there
+  until you resume it.
+- Every step is logged as `[Protokite Playtest] Self-test: PASS|FAIL|SKIPPED <what it checks> - <what it found>`, a failure as a
+  warning, and the run ends with its counts. The last line is a warning when anything failed or nothing passed.
+- A step is **skipped** when this build or playtest leaves nothing for it to check, and it says why: no feedback form, no video on
+  this platform, heavy analytics off, or no answer yet to the consent question.
+- Pass a closed playtest's Game Version ID (`RunAsync("<id>")`, or the window's field) to also check that a closed playtest takes
+  no session.
+
+It checks, in order:
+- The playtest config loads.
+- A wrong API key, a missing one and a version no playtest is linked to are refused.
+- This launch's session starts.
+- A session start naming no player, and one for a closed playtest, are refused.
+- An exception reaches the Flock SDK once, with its repeat counted.
+- A playtest event is recorded, and the playtest's own event name is refused.
+- A form missing a needed answer, choosing an option not on the list, or naming a session that does not exist is refused, and a
+  filled-in form is taken.
+- An upload link and an end for a session that does not exist are refused.
+- This launch's recording is uploaded, and is no longer kept on disk.
+
+The game itself cannot see whether the exception and the event arrived. The run's id (`report.RunId`) is in the exception's
+message, in the event's properties, in the text answers of the form it sends, and in the extra data of every session start it
+sends, so you can find them in Flock and Protokite. The session's end is sent when the game quits.
+
 ## Platforms
 
 Everything above runs wherever the Flock SDK runs. **Video is recorded on 64-bit Windows only** (the Editor and players,

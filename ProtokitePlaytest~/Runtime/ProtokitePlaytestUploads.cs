@@ -50,8 +50,8 @@ namespace Protokite.Playtest
         private static bool _earlierUploadsStarted;
         private static string _recordingContentType;
 
-        /// <summary>This launch's recording's upload, for tests; null until one starts.</summary>
-        internal static Task<ProtokitePlaytestRecordingUploadOutcome> ThisLaunchsUploadForTesting { get; private set; }
+        /// <summary>This launch's recording's upload, which the self-test waits for; null until one starts.</summary>
+        internal static Task<ProtokitePlaytestRecordingUploadOutcome> ThisLaunchsUpload { get; private set; }
 
         /// <summary>The upload of what earlier launches left, for tests; null until it starts. Answers how many went and how many are kept.</summary>
         internal static Task<(int Uploaded, int Kept)> EarlierUploadsForTesting { get; private set; }
@@ -75,7 +75,7 @@ namespace Protokite.Playtest
             // The address, key and version the session started with, as its end uses: a Flock restart since changes none of them.
             Dictionary<string, string> headers = new Dictionary<string, string>(_sessionHeaders);
             Debug.Log(LogPrefix + $"Uploading this launch's playtest recording to Protokite session {_playtestSessionId}.");
-            ThisLaunchsUploadForTesting = UploadThisLaunchsRecordingAsync(_recordingRun, FinishedVideo.FilePath, _recordingContentType, _sessionApiUrl,
+            ThisLaunchsUpload = UploadThisLaunchsRecordingAsync(_recordingRun, FinishedVideo.FilePath, _recordingContentType, _sessionApiUrl,
                 headers, _playtestSessionId, _sessionRetryPolicy, _uploadsCancel.Token);
         }
 
@@ -88,7 +88,8 @@ namespace Protokite.Playtest
             if (outcome.Uploaded && outcome.Deleted && ReferenceEquals(_recordingRun, run))
                 _recordingRun = null;
             if (outcome.Uploaded)
-                Debug.Log(LogPrefix + $"Playtest recording uploaded to Protokite session {sessionId} ({outcome.BytesSent / BytesPerMegabyte:0.#} MB); it is no longer kept on disk.");
+                Debug.Log(LogPrefix + $"Playtest recording uploaded to Protokite session {sessionId} ({outcome.BytesSent / BytesPerMegabyte:0.#} MB); " +
+                          (outcome.Deleted ? "it is no longer kept on disk." : "its files could not all be deleted now."));
             else
                 Debug.LogWarning(LogPrefix + "The playtest recording was not uploaded, so it is kept for a later launch to upload: " + outcome.WhyNot);
             return outcome;
@@ -286,7 +287,7 @@ namespace Protokite.Playtest
             _thisLaunchsUploadStarted = false;
             _earlierUploadsStarted = false;
             _recordingContentType = null;
-            ThisLaunchsUploadForTesting = null;
+            ThisLaunchsUpload = null;
             EarlierUploadsForTesting = null;
         }
     }
