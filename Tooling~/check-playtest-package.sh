@@ -67,7 +67,7 @@ if [ -n "$named" ]; then
 fi
 
 # 4. Package Manager treats a git package as read-only and ignores any file or folder without a .meta beside it. Folders
-#    ending in ~ (the native source in Native~) are never imported, so they carry none.
+#    ending in ~ are never imported, so they carry none.
 missing=0
 while IFS= read -r path; do
   if [ ! -f "$path.meta" ]; then
@@ -79,35 +79,12 @@ if [ "$missing" -ne 0 ]; then
   error "Files in ProtokitePlaytest~ have no .meta, so a git-URL install would leave them out. Open the package in a Unity project (Libraries/Unity/packages/com.protokite.playtest links to it) so Unity writes them, then commit them."
 fi
 
-# 5. The Windows video encoder ships with its licences, and its .meta keeps it to the 64-bit Windows editor and players:
-#    a .meta fallen back to Unity's defaults would hand every other platform's build a Windows DLL.
-PLUGINS="$PLAYTEST/Runtime/Plugins/x86_64"
-for file in protokite_vpx.dll libvpx-LICENSE.txt libvpx-PATENTS.txt; do
-  [ -f "$PLUGINS/$file" ] || error "$file is missing from Runtime/Plugins/x86_64. Rebuild it with Native~/build-protokite-vpx.sh."
-done
-# Prints whether a platform is enabled in the DLL's .meta: 1, 0, or "absent".
-platform_enabled() {
-  awk -v platform="$1" '
-    $0 ~ "^    " platform ":[[:space:]]*$" { inside = 1; next }
-    inside && /^      enabled:/ { gsub(/[^0-9]/, "", $2); print $2; found = 1; exit }
-    inside && /^    [A-Za-z0-9]+:/ { exit }
-    END { if (!found) print "absent" }
-  ' "$PLUGINS/protokite_vpx.dll.meta" | tr -d '\r'
-}
-if [ -f "$PLUGINS/protokite_vpx.dll.meta" ]; then
-  for expected in "Any 0" "Editor 1" "Win64 1"; do
-    set -- $expected
-    [ "$(platform_enabled "$1")" = "$2" ] || error "protokite_vpx.dll.meta has $1 enabled '$(platform_enabled "$1")', expected $2. Open the package in Unity so ProtokitePlaytestNativePluginImport sets the platforms, then commit the .meta."
-  done
-  for other in Win OSXUniversal Linux64 Android iPhone WebGL; do
-    case "$(platform_enabled "$other")" in
-      0|absent) ;;
-      *) error "protokite_vpx.dll.meta enables $other; the DLL is for the 64-bit Windows editor and players only." ;;
-    esac
-  done
-  grep -q "OS: Windows" "$PLUGINS/protokite_vpx.dll.meta" || error "protokite_vpx.dll.meta does not keep the DLL to the Windows editor (OS: Windows)."
-else
-  error "protokite_vpx.dll.meta is missing, so a git-URL install would leave the DLL out."
+# 5. The package ships no native binary: video is encoded by the platform's own encoders, which the platform and the graphics
+#    drivers sign. A DLL of the package's own was turned away by Windows 11's Smart App Control on players' PCs.
+natives=$(find "$PLAYTEST" -type f \( -iname "*.dll" -o -iname "*.so" -o -iname "*.dylib" -o -iname "*.a" -o -iname "*.lib" -o -iname "*.bundle" -o -iname "*.exe" \) | sed "s|^$ROOT/||")
+if [ -n "$natives" ]; then
+  error "ProtokitePlaytest~ holds a native binary; the package records through the platform's own encoders and ships none:"
+  echo "$natives"
 fi
 
 # 6. On WebGL the playtest asks for its files to be copied to browser storage through a function of the Flock SDK's WebGL

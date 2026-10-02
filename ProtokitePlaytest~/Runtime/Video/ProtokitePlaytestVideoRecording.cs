@@ -38,6 +38,8 @@ namespace Protokite.Playtest
         public double AverageEncodeMs;
         public double LongestEncodeMs;
         public double LongestWriteMs;
+        /// <summary>What encoded the video, or null when no frame was encoded.</summary>
+        public string EncodedBy;
         /// <summary>Why the recording could not be written to the end, or null. The frames written before can still be kept in <see cref="FilePath"/>.</summary>
         public string Error;
 
@@ -100,9 +102,11 @@ namespace Protokite.Playtest
         private volatile bool _sizeLimitReached;
         private volatile bool _couldNotWrite;
         private volatile bool _written;
+        private volatile bool _encoderStarted;
 
         // The main thread's.
         private bool _capturing = true;
+        private int _framesAskedFor;
         private ProtokitePlaytestVideoStopReason _stopReason;
         private int _framesDroppedBecauseEncodingFellBehind;
         private int _framesNotReadyInTime;
@@ -143,7 +147,7 @@ namespace Protokite.Playtest
                 error = $"the folder for {finishedPath} could not be made: {ex.Message}";
                 return null;
             }
-            if (!file.Open(partPath, settings.Codec, source.Width, source.Height, out error))
+            if (!file.Open(partPath, source.Width, source.Height, settings.FrameDurationMs, out error))
                 return null;
             return new ProtokitePlaytestVideoRecording(source, encoder, file, settings, finishedPath, partPath, beforeEachEncodeForTesting, beforeEachWriteForTesting);
         }
@@ -162,12 +166,8 @@ namespace Protokite.Playtest
             _beforeEachWriteForTesting = beforeEachWriteForTesting;
             _bytesHandedToFile = file.BytesWritten;
             _writingThread = new Thread(WriteLoop) { IsBackground = true, Name = "Protokite Playtest video writer" };
-            _encodingThread = new Thread(EncodeLoop)
-            {
-                IsBackground = true,
-                Name = "Protokite Playtest video encoder",
-                Priority = settings.EncoderBelowGamePriority ? ThreadPriority.BelowNormal : ThreadPriority.Normal
-            };
+            // Below the game's priority, so a busy processor runs the game first; the encoder itself works on the graphics card.
+            _encodingThread = new Thread(EncodeLoop) { IsBackground = true, Name = "Protokite Playtest video encoder", Priority = ThreadPriority.BelowNormal };
             _writingThread.Start();
             _encodingThread.Start();
         }
@@ -177,14 +177,20 @@ namespace Protokite.Playtest
         /// <summary>True once the file is finished, after <see cref="StopCapturing"/>.</summary>
         public bool HasFinishedWriting => _written;
 
+        /// <summary>Whether the encoder has started, so frames are captured; until then nothing is captured and no time counts.</summary>
+        internal bool EncoderHasStarted => _encoderStarted;
+
+        /// <summary>Frames asked of the source so far, so a caller can tell a recording that holds something from one that cannot yet. Main thread.</summary>
+        internal int FramesAskedFor => _framesAskedFor;
+
+        /// <summary>Waits up to the timeout for the encoder to start, as a test that counts frames must; true once it has.</summary>
+        internal bool WaitUntilTheEncoderHasStartedForTesting(TimeSpan timeout) => SpinWait.SpinUntil(() => _encoderStarted || _couldNotWrite, timeout) && _encoderStarted;
+
         /// <summary>The file the recording is written to while it runs.</summary>
         public string PartPath => _partPath;
 
         /// <summary>The size the file stops before passing.</summary>
         public long MaxBytes => _settings.MaxBytes;
-
-        /// <summary>The encoding thread's priority, which the settings can set below the game's.</summary>
-        internal ThreadPriority EncoderThreadPriority => _encodingThread.Priority;
 
         public int Width => _source.Width;
         public int Height => _source.Height;
@@ -205,6 +211,9 @@ namespace Protokite.Playtest
                 return ProtokitePlaytestVideoStopReason.CouldNotWrite;
             if (_sizeLimitReached)
                 return ProtokitePlaytestVideoStopReason.ReachedSizeLimit;
+            // A graphics card's encoder takes 0.1 to 2.2 s to start (measured): the video begins once it has, rather than drop its first frames.
+            if (!_encoderStarted)
+                return null;
 
             switch (_schedule.AddFrame(frameSeconds, out long timestampMs))
             {
@@ -212,7 +221,10 @@ namespace Protokite.Playtest
                     return ProtokitePlaytestVideoStopReason.ReachedLengthLimit;
                 case ProtokitePlaytestFrameDecision.Capture:
                     if (_source.IsReadyForAnotherFrame)
+                    {
                         _source.CaptureFrame(timestampMs);
+                        _framesAskedFor++;
+                    }
                     else
                         _framesNotReadyInTime++;
                     break;
@@ -263,6 +275,7 @@ namespace Protokite.Playtest
                 summary.AverageEncodeMs = _encodeMsTotal / _framesEncoded;
             summary.LongestEncodeMs = _longestEncodeMs;
             summary.LongestWriteMs = _longestWriteMs;
+            summary.EncodedBy = _encoder.Description;
             return summary;
         }
 
@@ -286,6 +299,10 @@ namespace Protokite.Playtest
         {
             try
             {
+                if (_encoder.Start(out string startError))
+                    _encoderStarted = true;
+                else
+                    CouldNotEncode(startError);
                 List<ProtokitePlaytestEncodedFrame> encoded = new List<ProtokitePlaytestEncodedFrame>();
                 foreach (ProtokitePlaytestCapturedFrame frame in _toEncode.GetConsumingEnumerable())
                 {
@@ -329,7 +346,7 @@ namespace Protokite.Playtest
             }
             Stopwatch clock = Stopwatch.StartNew();
             encoded.Clear();
-            if (!_encoder.Encode(frame.Pixels, frame.TimestampMs, _settings.FrameDurationMs, false, encoded, out string error))
+            if (!_encoder.Encode(frame.Pixels, frame.TimestampMs, _settings.FrameDurationMs, encoded, out string error))
             {
                 CouldNotEncode(error);
                 return;
@@ -346,7 +363,7 @@ namespace Protokite.Playtest
         {
             foreach (ProtokitePlaytestEncodedFrame frame in encoded)
             {
-                long bytes = _file.BytesAddedToEachFrame + frame.Data.Length;
+                long bytes = _file.BytesFor(frame);
                 if (_sizeLimitReached || _bytesHandedToFile + bytes > _settings.MaxBytes)
                 {
                     _sizeLimitReached = true;

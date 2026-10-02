@@ -34,12 +34,12 @@ namespace Protokite.Playtest.Tests
         public const long FrameMs = 33;
 
         // One frame's bytes, starting the way the codec's frames start, then bytes different for each frame and never zero.
-        public static byte[] MakeFrame(ProtokitePlaytestVideoCodec codec, int frameIndex, int frameBytes, bool keyframe)
+        public static byte[] MakeFrame(ProtokitePlaytestWebmFinisher.Codec codec, int frameIndex, int frameBytes, bool keyframe)
         {
             byte[] bytes = new byte[frameBytes];
             for (int index = 0; index < frameBytes; index++)
                 bytes[index] = (byte)(((frameIndex * 31 + index) & 0xFF) | 1);
-            if (codec == ProtokitePlaytestVideoCodec.Vp9)
+            if (codec == ProtokitePlaytestWebmFinisher.Codec.Vp9)
             {
                 bytes[0] = 0x82;
                 return bytes;
@@ -59,26 +59,18 @@ namespace Protokite.Playtest.Tests
             return bytes;
         }
 
-        public static ProtokitePlaytestEncodedFrame MakeEncodedFrame(ProtokitePlaytestVideoCodec codec, int frameIndex, int frameBytes) =>
-            new ProtokitePlaytestEncodedFrame(MakeFrame(codec, frameIndex, frameBytes, frameIndex == 0), frameIndex * FrameMs, frameIndex == 0);
-
-        // A file laid out the way a recording writes it, made by the writer itself so the fixture cannot drift from the format.
-        public static byte[] MakeVideoBytes(string folder, ProtokitePlaytestVideoCodec codec, int frames, int frameBytes, bool closed,
-            string writtenBy = ProtokitePlaytestWebmFile.WrittenBy)
+        // A file laid out the way earlier versions of the package wrote recordings, closed or left as a crash leaves it.
+        public static byte[] MakeVideoBytes(string folder, ProtokitePlaytestWebmFinisher.Codec codec, int frames, int frameBytes, bool closed,
+            string writtenBy = WebmTestFileWriter.WrittenBy)
         {
             string scratch = Path.Combine(folder, "fixture-" + Guid.NewGuid().ToString("N") + ".webm");
-            ProtokitePlaytestWebmFile file = new ProtokitePlaytestWebmFile(writtenBy, null);
-            if (!file.Open(scratch, codec, Width, Height, out string error))
-                throw new InvalidOperationException(error);
+            WebmTestFileWriter file = new WebmTestFileWriter(scratch, codec, Width, Height, writtenBy);
             for (int index = 0; index < frames; index++)
-            {
-                if (!file.WriteFrame(MakeEncodedFrame(codec, index, frameBytes), out error))
-                    throw new InvalidOperationException(error);
-            }
+                file.WriteFrame(MakeFrame(codec, index, frameBytes, index == 0), index * FrameMs, index == 0);
             if (closed)
-                file.Close(out _);
+                file.Close();
             else
-                file.AbandonForTesting();
+                file.Abandon();
             byte[] bytes = File.ReadAllBytes(scratch);
             File.Delete(scratch);
             return bytes;
@@ -244,6 +236,145 @@ namespace Protokite.Playtest.Tests
         }
     }
 
+    /// <summary>Writes WebM recordings laid out the way earlier versions of the package wrote them, for the finisher's tests to cut off and finish.</summary>
+    internal sealed class WebmTestFileWriter
+    {
+        public const string WrittenBy = "ProtokitePlaytest";
+
+        private readonly FileStream _stream;
+        private readonly long _segmentSizeOffset;
+        private readonly long _durationValueOffset;
+        private long _lastTimestampMs;
+
+        public long HeaderBytes { get; }
+        public long BytesWritten { get; private set; }
+
+        public WebmTestFileWriter(string path, ProtokitePlaytestWebmFinisher.Codec codec, int width, int height, string writtenBy = WrittenBy)
+        {
+            byte[] header = BuildHeader(width, height, codec == ProtokitePlaytestWebmFinisher.Codec.Vp9 ? "V_VP9" : "V_VP8", writtenBy,
+                out _segmentSizeOffset, out _durationValueOffset);
+            _stream = new FileStream(path, FileMode.Create, FileAccess.ReadWrite, FileShare.Read);
+            _stream.Write(header, 0, header.Length);
+            HeaderBytes = header.Length;
+            BytesWritten = header.Length;
+        }
+
+        // Each frame a cluster of its own: the cluster's size, its time, then a block on track 1 holding the frame.
+        public void WriteFrame(byte[] frame, long timestampMs, bool keyframe)
+        {
+            List<byte> cluster = new List<byte> { 0x1F, 0x43, 0xB6, 0x75 };
+            cluster.AddRange(ProtokitePlaytestWebmFinisher.SizeBytes((ulong)(ProtokitePlaytestWebmFinisher.FrameHeaderBytes - 8 + frame.Length), 4));
+            cluster.Add(0xE7);
+            cluster.Add(0x84);
+            AppendBigEndian(cluster, (ulong)timestampMs, 4);
+            cluster.Add(0xA3);
+            cluster.AddRange(ProtokitePlaytestWebmFinisher.SizeBytes((ulong)(4 + frame.Length), 4));
+            cluster.AddRange(new byte[] { 0x81, 0x00, 0x00, keyframe ? (byte)0x80 : (byte)0x00 });
+            cluster.AddRange(frame);
+            _stream.Write(cluster.ToArray(), 0, cluster.Count);
+            _stream.Flush();
+            BytesWritten += cluster.Count;
+            _lastTimestampMs = timestampMs;
+        }
+
+        // What closing a recording stamped in: the segment's length and the last frame's time as the duration.
+        public void Close()
+        {
+            _stream.Seek(_segmentSizeOffset, SeekOrigin.Begin);
+            byte[] segmentSize = ProtokitePlaytestWebmFinisher.SizeBytes((ulong)(BytesWritten - (_segmentSizeOffset + 8)), 8);
+            _stream.Write(segmentSize, 0, segmentSize.Length);
+            _stream.Seek(_durationValueOffset, SeekOrigin.Begin);
+            byte[] duration = ProtokitePlaytestWebmFinisher.DurationBytes(_lastTimestampMs);
+            _stream.Write(duration, 0, duration.Length);
+            _stream.Dispose();
+        }
+
+        // What a process that died part-way through leaves: nothing stamped.
+        public void Abandon() => _stream.Dispose();
+
+        private static byte[] BuildHeader(int width, int height, string codecName, string writtenBy, out long segmentSizeOffset, out long durationValueOffset)
+        {
+            List<byte> ebml = new List<byte>();
+            AppendUnsigned(ebml, 0x4286, 1, 1);
+            AppendUnsigned(ebml, 0x42F7, 1, 1);
+            AppendUnsigned(ebml, 0x42F2, 4, 1);
+            AppendUnsigned(ebml, 0x42F3, 8, 1);
+            AppendText(ebml, 0x4282, "webm");
+            AppendUnsigned(ebml, 0x4287, 2, 1);
+            AppendUnsigned(ebml, 0x4285, 2, 1);
+
+            List<byte> info = new List<byte>();
+            AppendUnsigned(info, 0x2AD7B1, 1000000, 4);
+            AppendText(info, 0x4D80, writtenBy);
+            AppendText(info, 0x5741, writtenBy);
+            AppendId(info, 0x4489);
+            info.AddRange(ProtokitePlaytestWebmFinisher.SizeBytes(8, 1));
+            int durationInInfo = info.Count;
+            info.AddRange(ProtokitePlaytestWebmFinisher.DurationBytes(0));
+
+            List<byte> video = new List<byte>();
+            AppendUnsigned(video, 0xB0, (ulong)width, 4);
+            AppendUnsigned(video, 0xBA, (ulong)height, 4);
+
+            List<byte> track = new List<byte>();
+            AppendUnsigned(track, 0xD7, 1, 1);
+            AppendUnsigned(track, 0x73C5, 1, 1);
+            AppendUnsigned(track, 0x83, 1, 1);
+            AppendText(track, 0x86, codecName);
+            AppendId(track, 0xE0);
+            track.AddRange(ProtokitePlaytestWebmFinisher.SizeBytes((ulong)video.Count, 1));
+            track.AddRange(video);
+
+            List<byte> header = new List<byte>();
+            AppendId(header, 0x1A45DFA3);
+            header.AddRange(ProtokitePlaytestWebmFinisher.SizeBytes((ulong)ebml.Count, 1));
+            header.AddRange(ebml);
+            AppendId(header, 0x18538067);
+            segmentSizeOffset = header.Count;
+            // "Size unknown", eight bytes wide so the real size fits later.
+            header.AddRange(ProtokitePlaytestWebmFinisher.SizeBytes(0x00FFFFFFFFFFFFFFUL, 8));
+            AppendId(header, 0x1549A966);
+            header.AddRange(ProtokitePlaytestWebmFinisher.SizeBytes((ulong)info.Count, 4));
+            durationValueOffset = header.Count + durationInInfo;
+            header.AddRange(info);
+            AppendId(header, 0x1654AE6B);
+            header.AddRange(ProtokitePlaytestWebmFinisher.SizeBytes((ulong)(track.Count + 5), 4));
+            AppendId(header, 0xAE);
+            header.AddRange(ProtokitePlaytestWebmFinisher.SizeBytes((ulong)track.Count, 4));
+            header.AddRange(track);
+            return header.ToArray();
+        }
+
+        private static void AppendId(List<byte> bytes, uint id)
+        {
+            if (id > 0x00FFFFFF) bytes.Add((byte)(id >> 24));
+            if (id > 0x0000FFFF) bytes.Add((byte)(id >> 16));
+            if (id > 0x000000FF) bytes.Add((byte)(id >> 8));
+            bytes.Add((byte)id);
+        }
+
+        private static void AppendUnsigned(List<byte> bytes, uint id, ulong value, int width)
+        {
+            AppendId(bytes, id);
+            bytes.AddRange(ProtokitePlaytestWebmFinisher.SizeBytes((ulong)width, 1));
+            AppendBigEndian(bytes, value, width);
+        }
+
+        private static void AppendText(List<byte> bytes, uint id, string text)
+        {
+            byte[] ascii = Encoding.ASCII.GetBytes(text);
+            AppendId(bytes, id);
+            bytes.AddRange(ProtokitePlaytestWebmFinisher.SizeBytes((ulong)ascii.Length, 1));
+            bytes.AddRange(ascii);
+        }
+
+        private static void AppendBigEndian(List<byte> bytes, ulong value, int width)
+        {
+            for (int index = 0; index < width; index++)
+                bytes.Add((byte)(value >> (8 * (width - 1 - index))));
+        }
+    }
+
     /// <summary>A recording file that keeps the contract and writes a plain list, for code that records without a real container.</summary>
     internal sealed class FakeRecordingFile : IProtokitePlaytestRecordingFile
     {
@@ -253,11 +384,12 @@ namespace Protokite.Playtest.Tests
         public string ContentType => "application/x-protokite-test";
         public string FileExtension => ".frames";
         public int BytesAddedToEachFrame => 0;
+        public long BytesFor(ProtokitePlaytestEncodedFrame frame) => frame.Data?.Length ?? 0;
         public long BytesWritten { get; private set; }
         public int FramesWritten { get; private set; }
         public long LastTimestampMs { get; private set; } = -1;
 
-        public bool Open(string path, ProtokitePlaytestVideoCodec codec, int width, int height, out string error)
+        public bool Open(string path, int width, int height, long frameDurationMs, out string error)
         {
             _path = path;
             _lines.Clear();

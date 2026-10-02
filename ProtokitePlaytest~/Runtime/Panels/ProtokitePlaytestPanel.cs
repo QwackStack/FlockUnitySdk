@@ -6,13 +6,15 @@ using Cursor = UnityEngine.Cursor;
 namespace Protokite.Playtest
 {
     /// <summary>
-    /// A full-screen UI Toolkit panel the playtest draws over the game, built from code: nothing to import, no theme, and no
-    /// EventSystem of the game's needed. It holds one view at a time, so a second question can follow the first.
+    /// A full-screen UI Toolkit panel the playtest draws over the game, built from code with the package's empty theme: nothing
+    /// to import, and no EventSystem of the game's needed. It holds one view at a time, so a second question can follow the first.
     /// </summary>
     internal sealed class ProtokitePlaytestPanel
     {
         // Above the game's own UI Toolkit panels and canvases.
         private const float SortingOrder = 30000f;
+        // Runtime/Resources/ProtokitePlaytestPanelSettings.asset, which holds Runtime/Resources/ProtokitePlaytestPanelTheme.tss.
+        internal const string PanelSettingsResource = "ProtokitePlaytestPanelSettings";
 
         internal static readonly Color TextColour = new Color(0.92f, 0.93f, 0.96f, 1f);
         internal static readonly Color HelpColour = new Color(0.62f, 0.65f, 0.72f, 1f);
@@ -63,10 +65,8 @@ namespace Protokite.Playtest
             // The document reads its panel settings as it is enabled, so they are given before it is.
             host.SetActive(false);
             UIDocument document = host.AddComponent<UIDocument>();
-            PanelSettings panelSettings = ScriptableObject.CreateInstance<PanelSettings>();
+            PanelSettings panelSettings = NewPanelSettings();
             panelSettings.name = name;
-            // Styled inline below; an empty theme stops Unity logging that a panel with none "will not render properly".
-            panelSettings.themeStyleSheet = ScriptableObject.CreateInstance<ThemeStyleSheet>();
             panelSettings.scaleMode = PanelScaleMode.ScaleWithScreenSize;
             panelSettings.referenceResolution = new Vector2Int(1280, 720);
             panelSettings.screenMatchMode = PanelScreenMatchMode.MatchWidthOrHeight;
@@ -142,12 +142,9 @@ namespace Protokite.Playtest
             bool wasOnScreen = _host != null;
             if (wasOnScreen)
                 Object.Destroy(_host);
+            // The clone only: its theme is the package's own asset, which every panel shares.
             if (_panelSettings != null)
-            {
-                if (_panelSettings.themeStyleSheet != null)
-                    Object.Destroy(_panelSettings.themeStyleSheet);
                 Object.Destroy(_panelSettings);
-            }
             if (!wasOnScreen)
                 return;
             Cursor.lockState = _cursorLockBefore;
@@ -186,6 +183,16 @@ namespace Protokite.Playtest
             style.borderRightColor = colour;
             style.borderTopColor = colour;
             style.borderBottomColor = colour;
+        }
+
+        // A copy of the package's asset with its empty theme: on Unity 2021.3 settings made in code warn the moment they exist, and an empty theme made in code throws (measured).
+        private static PanelSettings NewPanelSettings()
+        {
+            PanelSettings asset = Resources.Load<PanelSettings>(PanelSettingsResource);
+            if (asset != null)
+                return Object.Instantiate(asset);
+            // Only if the package's asset was deleted: no theme, which logs the warning, never the exception.
+            return ScriptableObject.CreateInstance<PanelSettings>();
         }
 
         // The font every player has: Unity renamed it in 2022.2.

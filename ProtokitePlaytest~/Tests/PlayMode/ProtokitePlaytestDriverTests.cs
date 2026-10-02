@@ -164,6 +164,9 @@ namespace Protokite.Playtest.Tests
                 ProtokitePlaytestDriver.StartWithTheGame();
                 using (FlockTestClient.Create(new FlockFakeTransport().On(ConfigRoute, FlockFakeTransport.Ok(VideoAnswer))))
                 {
+                    // The graphics card's encoder takes 0.1 to 2.2 s to start (measured); frames are captured once it has.
+                    yield return FlockTestWait.Until(() => ProtokitePlaytest.VideoRecordingForTesting != null && ProtokitePlaytest.VideoRecordingForTesting.EncoderHasStarted,
+                        "the encoder started, from the driver alone");
                     yield return new WaitForSecondsRealtime(1.5f);
                     Assert.IsTrue(ProtokitePlaytest.IsRecordingVideo, "Recording, with nothing but the driver calling the playtest");
                     Assert.GreaterOrEqual(source.Captures, 15, "A second and a half of play at 15 frames a second");
@@ -191,7 +194,8 @@ namespace Protokite.Playtest.Tests
                 ProtokitePlaytestDriver.StartWithTheGame();
                 using (FlockTestClient.Create(new FlockFakeTransport().On(ConfigRoute, FlockFakeTransport.Ok(VideoAnswer))))
                 {
-                    yield return FlockTestWait.Until(() => ProtokitePlaytest.IsRecordingVideo, "recording, from the driver alone");
+                    yield return FlockTestWait.Until(() => ProtokitePlaytest.VideoRecordingForTesting != null && ProtokitePlaytest.VideoRecordingForTesting.EncoderHasStarted,
+                        "recording, from the driver alone, its encoder started");
                     double started = Time.realtimeSinceStartupAsDouble;
                     yield return new WaitForSecondsRealtime(1f);
                     // The game comes back from the background with its time away still to be measured, as a player's does.
@@ -288,8 +292,9 @@ namespace Protokite.Playtest.Tests
         private sealed class CountingFrameSource : IProtokitePlaytestFrameSource
         {
             private readonly System.Collections.Generic.List<ProtokitePlaytestCapturedFrame> _arrived = new System.Collections.Generic.List<ProtokitePlaytestCapturedFrame>();
-            public int Width => 64;
-            public int Height => 48;
+            // The real encoder records these frames: graphics card encoders measured here refuse anything smaller than about 256x144.
+            public int Width => 256;
+            public int Height => 144;
             public bool IsReadyForAnotherFrame => true;
             public int Captures;
             public int FramesLostOnTheGraphicsCard => 0;
@@ -298,7 +303,7 @@ namespace Protokite.Playtest.Tests
             public void CaptureFrame(long timestampMs)
             {
                 Captures++;
-                byte[] pixels = new byte[ProtokitePlaytestI420.FrameLength(Width, Height)];
+                byte[] pixels = new byte[ProtokitePlaytestNv12.FrameLength(Width, Height)];
                 for (int i = 0; i < pixels.Length; i++)
                     pixels[i] = (byte)(timestampMs / 7 + i);
                 _arrived.Add(new ProtokitePlaytestCapturedFrame(pixels, timestampMs));

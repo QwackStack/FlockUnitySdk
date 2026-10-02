@@ -58,7 +58,7 @@ namespace Protokite.Playtest.Tests
             ProtokitePlaytest.DeviceIdFilePathForTesting = Path.Combine(_folder, "device_id.txt");
             ProtokitePlaytest.RecordingsFolderForTesting = Recordings;
             ProtokitePlaytest.FeedbackFormsFolderForTesting = KeptForms;
-            ProtokitePlaytest.VideoEncoderForTesting = () => new FakeVp8Encoder();
+            ProtokitePlaytest.VideoEncoderForTesting = () => new FakeH264Encoder();
             ProtokitePlaytest.VideoFrameSourceForTesting = (settings, format) => new FakeFrameSource();
             ProtokitePlaytest.SelfTestWaitSecondsForTesting = 5.0;
             _storage = new StorageForTests();
@@ -472,6 +472,25 @@ namespace Protokite.Playtest.Tests
                 ProtokitePlaytestSelfTestStep upload = StepNamed(run.Result, "This launch's recording");
                 Assert.AreEqual(ProtokitePlaytestSelfTestOutcome.Failed, upload.Outcome);
                 StringAssert.Contains("could not all be deleted", upload.Detail);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator AnEncoderThatCannotStartFailsTheUploadStepWithItsReason()
+        {
+            ProtokitePlaytest.VideoEncoderForTesting = () => new FakeH264Encoder { RefuseToStart = "the graphics card's encoder is busy" };
+            FakeProtokite protokite = new FakeProtokite(Config(video: true, heavyAnalytics: false, form: false));
+            using (FlockTestClient flock = StartFlock(protokite))
+            {
+                yield return AReadyPlaytestWithASession(flock);
+                AFrame();
+                ExpectTheRaisedExceptions();
+                Task<ProtokitePlaytestSelfTestReport> run = ProtokitePlaytestSelfTest.RunAsync();
+                yield return TheRunEnds(run);
+                ProtokitePlaytestSelfTestStep upload = StepNamed(run.Result, "This launch's recording");
+                Assert.AreEqual(ProtokitePlaytestSelfTestOutcome.Failed, upload.Outcome);
+                StringAssert.Contains("kept no file to upload", upload.Detail);
+                StringAssert.Contains("the graphics card's encoder is busy", upload.Detail, "The recording's own reason, not a wait running out");
             }
         }
 

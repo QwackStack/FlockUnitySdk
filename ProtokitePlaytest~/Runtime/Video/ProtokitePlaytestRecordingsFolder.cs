@@ -529,25 +529,23 @@ namespace Protokite.Playtest
                 }
             }
 
-            using (IProtokitePlaytestRecordingFile file = ProtokitePlaytestRecordingFiles.ForFinishing(finishedPath))
+            IProtokitePlaytestRecordingFinisher finisher = ProtokitePlaytestRecordingFiles.ForFinishing(finishedPath);
+            if (finisher == null)
             {
-                if (file == null)
-                {
-                    found.LeftForTheNextLaunch.Add($"{unfinishedPath} is a kind of recording this build does not write, so it is left as it was.");
+                found.LeftForTheNextLaunch.Add($"{unfinishedPath} is a kind of recording this package never wrote, so it is left as it was.");
+                return false;
+            }
+            switch (finisher.FinishInterruptedRecording(unfinishedPath, finishedPath, out int framesKept, out string error))
+            {
+                case ProtokitePlaytestInterruptedRecordingResult.Finished:
+                    found.CutOffVideosFinished++;
+                    found.FramesKeptInFinishedVideos += framesKept;
+                    return true;
+                case ProtokitePlaytestInterruptedRecordingResult.HeldNoFrame:
+                    return true;
+                default:
+                    found.LeftForTheNextLaunch.Add(error);
                     return false;
-                }
-                switch (file.FinishInterruptedRecording(unfinishedPath, finishedPath, out int framesKept, out string error))
-                {
-                    case ProtokitePlaytestInterruptedRecordingResult.Finished:
-                        found.CutOffVideosFinished++;
-                        found.FramesKeptInFinishedVideos += framesKept;
-                        return true;
-                    case ProtokitePlaytestInterruptedRecordingResult.HeldNoFrame:
-                        return true;
-                    default:
-                        found.LeftForTheNextLaunch.Add(error);
-                        return false;
-                }
             }
         }
 

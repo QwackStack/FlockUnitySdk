@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Threading;
 
@@ -40,7 +41,7 @@ namespace Protokite.Playtest.Tests
         public void CaptureFrame(long timestampMs)
         {
             Asked.Add(timestampMs);
-            byte[] pixels = new byte[ProtokitePlaytestI420.FrameLength(Width, Height)];
+            byte[] pixels = new byte[ProtokitePlaytestNv12.FrameLength(Width, Height)];
             for (int i = 0; i < pixels.Length; i++)
                 pixels[i] = (byte)(timestampMs + i);
             (HoldFrames ? _onTheirWay : _arrived).Add(new ProtokitePlaytestCapturedFrame(pixels, timestampMs));
@@ -70,12 +71,83 @@ namespace Protokite.Playtest.Tests
         public void Dispose() => Disposed = true;
     }
 
-    /// <summary>An encoder that makes a VP8-shaped frame of each frame at once, so the real file writer takes what it hands over.</summary>
-    internal sealed class FakeVp8Encoder : IProtokitePlaytestVideoEncoder
+    /// <summary>What tests of the real encoder share: the thread it works on, and a picture worth encoding.</summary>
+    internal static class RealEncoding
+    {
+        /// <summary>The smallest size measured to start a graphics card encoder here: NVIDIA's refused 128x72 and took 256x144.</summary>
+        public const int Width = 256;
+        public const int Height = 144;
+
+        /// <summary>Whether Windows offers an H.264 encoder on this PC's graphics card, which a recording uses by default.</summary>
+        public static bool GraphicsCardEncoderOffered(out string whatIsOffered)
+        {
+            List<ProtokitePlaytestEncoderFound> found = ProtokitePlaytestVideoEncoders.EncodersOnThisPc(out string whyNone);
+            whatIsOffered = found == null ? whyNone : "Windows offers " + (found.Count == 0 ? "no H.264 encoder" : string.Join(", ", found));
+            return found != null && found.Exists(encoder => encoder.OnGraphicsCard);
+        }
+
+        /// <summary>Leaves a test inconclusive on a PC whose graphics card has no H.264 encoder: what it checks is the encoder, not this PC.</summary>
+        public static void AssumeAGraphicsCardEncoder()
+        {
+            bool offered = GraphicsCardEncoderOffered(out string whatIsOffered);
+            NUnit.Framework.Assume.That(offered, "This test drives a graphics card's H.264 encoder, and this PC has none: " + whatIsOffered);
+        }
+
+        /// <summary>Runs the work on a thread of its own, as a recording's encoding thread does, and throws here what it threw there.</summary>
+        public static void OnItsOwnThread(Action work)
+        {
+            Exception thrown = null;
+            Thread thread = new Thread(() =>
+            {
+                try
+                {
+                    work();
+                }
+                catch (Exception ex)
+                {
+                    thrown = ex;
+                }
+            }) { IsBackground = true, Name = "Test encoding thread" };
+            thread.Start();
+            if (!thread.Join(TimeSpan.FromSeconds(60)))
+                throw new TimeoutException("The encoding thread did not finish within a minute");
+            if (thrown != null)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(thrown).Throw();
+        }
+
+        /// <summary>An NV12 picture that moves every frame, so a lost, repeated or reordered frame shows when it is decoded.</summary>
+        public static byte[] MovingPicture(int index, int width = Width, int height = Height)
+        {
+            byte[] nv12 = new byte[ProtokitePlaytestNv12.FrameLength(width, height)];
+            for (int y = 0; y < height; y++)
+            for (int x = 0; x < width; x++)
+                nv12[y * width + x] = (byte)(((x + index * 7) / 16 % 2 == 0 ? 60 : 190) + (y * 40 / height));
+            for (int i = width * height; i < nv12.Length; i++)
+                nv12[i] = (byte)(128 + (index * 3 + i) % 16);
+            return nv12;
+        }
+
+        /// <summary>How close a decoded picture's brightness is to the one sent, in decibels; above 28 is the same picture.</summary>
+        public static double LumaPsnr(byte[] expected, byte[] actual, int width = Width, int height = Height)
+        {
+            double squared = 0;
+            for (int i = 0; i < width * height; i++)
+            {
+                double difference = expected[i] - actual[i];
+                squared += difference * difference;
+            }
+            double mean = squared / (width * height);
+            return mean == 0 ? 99 : 10 * Math.Log10(255.0 * 255.0 / mean);
+        }
+    }
+
+    /// <summary>An encoder that makes an H.264-shaped frame of each frame at once, so the real file writer takes what it hands over.</summary>
+    internal sealed class FakeH264Encoder : IProtokitePlaytestVideoEncoder
     {
         private int _encoded;
 
-        public ProtokitePlaytestPixelFormat InputPixelFormat { get; set; } = ProtokitePlaytestPixelFormat.I420;
+        public ProtokitePlaytestPixelFormat InputPixelFormat { get; set; } = ProtokitePlaytestPixelFormat.Nv12;
+        public string Description => _encoded > 0 ? "the test's own encoder" : null;
         public ProtokitePlaytestVideoEncoderSettings Configured;
         public int FrameBytes = 40;
 
@@ -93,19 +165,32 @@ namespace Protokite.Playtest.Tests
             return true;
         }
 
-        public bool Encode(byte[] i420, long timestampMs, long durationMs, bool forceKeyframe, List<ProtokitePlaytestEncodedFrame> output, out string error)
+        /// <summary>Set to make the encoder fail to start, the way a graphics card's that is busy elsewhere does.</summary>
+        public string RefuseToStart;
+        public bool Started;
+
+        public bool Start(out string error)
+        {
+            error = RefuseToStart;
+            Started = error == null;
+            return Started;
+        }
+
+        public bool Encode(byte[] pixels, long timestampMs, long durationMs, List<ProtokitePlaytestEncodedFrame> output, out string error)
         {
             if (_encoded == FailAtFrame)
             {
                 error = "the encoder refused the frame";
                 return false;
             }
-            error = i420.LongLength == ProtokitePlaytestI420.FrameLength(Configured.Width, Configured.Height) ? null : "the frame is the wrong size";
+            error = Finished ? "the encoder has finished."
+                : pixels == null || pixels.LongLength != ProtokitePlaytestNv12.FrameLength(Configured.Width, Configured.Height) ? "the frame is the wrong size"
+                : null;
             if (error != null)
                 return false;
             DurationsMs.Add(durationMs);
-            output.Add(new ProtokitePlaytestEncodedFrame(ProtokitePlaytestWebmTestFiles.MakeFrame(ProtokitePlaytestVideoCodec.Vp8, _encoded, FrameBytes, _encoded == 0),
-                timestampMs, _encoded == 0));
+            output.Add(new ProtokitePlaytestEncodedFrame(ProtokitePlaytestMp4TestFiles.MakeFrame(_encoded, FrameBytes, _encoded == 0), timestampMs, _encoded == 0,
+                _encoded == 0 ? ProtokitePlaytestMp4TestFiles.DecoderSettings : null));
             _encoded++;
             return true;
         }

@@ -248,6 +248,8 @@ namespace Protokite.Playtest.Tests
 
             // The control: a field on the same panel but outside the form, where Escape does what Unity makes it do.
             TextField outside = new TextField { name = "control" };
+            // Above the panel's root, so it takes no font from it; on Unity 2021.3 a field with none throws as it draws its cursor (measured).
+            outside.style.unityFontDefinition = Form().resolvedStyle.unityFontDefinition;
             Form().panel.visualTree.Add(outside);
             yield return TypeThenEscape(outside, "abc");
             if (outside.value != "")

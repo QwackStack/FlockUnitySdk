@@ -1,5 +1,6 @@
 using Flock.Logging;
 using System;
+using System.Collections;
 using System.Threading;
 using System.Threading.Tasks;
 using Flock.Analytics;
@@ -7,6 +8,7 @@ using Flock.Config;
 using Flock.Http;
 using NUnit.Framework;
 using UnityEngine;
+using UnityEngine.TestTools;
 
 namespace Flock.Tests.Editor
 {
@@ -201,12 +203,12 @@ namespace Flock.Tests.Editor
 
         // The one deliberate exclusion: unaffected by consent regardless of state, since
         // purchase records need financial/tax retention independent of tracking consent.
-        [Test]
-        public void RecordTransactionAsync_NoConsent_StillSucceeds()
+        [UnityTest]
+        public IEnumerator RecordTransactionAsync_NoConsent_StillSucceeds()
         {
             FlockClient client = CreateClient(requireExplicitConsent: true);
 
-            Assert.DoesNotThrowAsync(() => client.Analytics.RecordTransactionAsync(1.0));
+            yield return Finished(client.Analytics.RecordTransactionAsync(1.0));
         }
 
         [Test]
@@ -221,12 +223,23 @@ namespace Flock.Tests.Editor
         }
 
         // Locks the never-throws contract: empty caches resolve immediately, no consent needed.
-        [Test]
-        public void FlushAsync_NoConsent_DoesNotThrow()
+        [UnityTest]
+        public IEnumerator FlushAsync_NoConsent_DoesNotThrow()
         {
             FlockClient client = CreateClient(requireExplicitConsent: true);
 
-            Assert.DoesNotThrowAsync(() => client.Analytics.FlushAsync());
+            yield return Finished(client.Analytics.FlushAsync());
+        }
+
+        // Waits frame by frame rather than blocking, which could stall a task that finishes on the main thread; Unity 2021.3's NUnit has no DoesNotThrowAsync.
+        private static IEnumerator Finished(Task task)
+        {
+            DateTime giveUp = DateTime.UtcNow.AddSeconds(10);
+            while (!task.IsCompleted && DateTime.UtcNow < giveUp)
+                yield return null;
+            Assert.IsTrue(task.IsCompleted, "Finished within 10 s");
+            Assert.IsFalse(task.IsFaulted, "Did not throw: " + task.Exception?.GetBaseException().Message);
+            Assert.IsFalse(task.IsCanceled, "Was not cancelled");
         }
 
         [Test]

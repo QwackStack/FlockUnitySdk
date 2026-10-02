@@ -1,5 +1,6 @@
-// Converts a colour frame to tightly packed I420 (BT.601, limited range), four bytes packed in each uint.
-// The width must be a multiple of 8 and the height a multiple of 2; the recording rounds both sides to multiples of 16.
+// Converts a colour frame to tightly packed NV12 (BT.709, limited range), four bytes packed in each uint: the Y plane, then
+// one plane of U and V interleaved. The width must be a multiple of 8 and the height a multiple of 2; the recording rounds
+// both sides to multiples of 16. BT.709 because a player that ignores the colour the stream states assumes it for HD video.
 #pragma kernel LumaKernel
 #pragma kernel ChromaKernel
 
@@ -24,9 +25,9 @@ float3 Pixel(uint x, uint y)
     return saturate(SourceIsLinear != 0 ? LinearToSrgb(c) : c);
 }
 
-uint Luma(float3 c) { return (uint)round(16.0 + 65.481 * c.r + 128.553 * c.g + 24.966 * c.b); }
-uint Blue(float3 c) { return (uint)round(128.0 - 37.797 * c.r - 74.203 * c.g + 112.0 * c.b); }
-uint Red(float3 c) { return (uint)round(128.0 + 112.0 * c.r - 93.786 * c.g - 18.214 * c.b); }
+uint Luma(float3 c) { return (uint)round(16.0 + 46.559 * c.r + 156.629 * c.g + 15.812 * c.b); }
+uint Blue(float3 c) { return (uint)round(128.0 - 25.664 * c.r - 86.336 * c.g + 112.0 * c.b); }
+uint Red(float3 c) { return (uint)round(128.0 + 112.0 * c.r - 101.730 * c.g - 10.270 * c.b); }
 
 // One thread per four pixels of a row: one uint of the Y plane.
 [numthreads(64, 1, 1)]
@@ -44,28 +45,23 @@ void LumaKernel(uint3 id : SV_DispatchThreadID)
     Output[id.x] = word;
 }
 
-// One thread per four chroma samples (an 8x2 block of pixels): one uint of U and one of V.
+// One thread per two chroma samples (a 4x2 block of pixels): one uint of the interleaved plane, U V U V.
 [numthreads(64, 1, 1)]
 void ChromaKernel(uint3 id : SV_DispatchThreadID)
 {
-    uint chromaWidth = Width / 2;
     uint chromaHeight = Height / 2;
-    uint wordsPerRow = chromaWidth / 4;
+    uint wordsPerRow = Width / 4;
     if (id.x >= wordsPerRow * chromaHeight) return;
     uint cy = id.x / wordsPerRow;
-    uint cx = (id.x % wordsPerRow) * 4;
-    uint u = 0;
-    uint v = 0;
-    for (uint i = 0; i < 4; i++)
+    uint cx = (id.x % wordsPerRow) * 2;
+    uint word = 0;
+    for (uint i = 0; i < 2; i++)
     {
         uint px = (cx + i) * 2;
         uint py = cy * 2;
         float3 c = (Pixel(px, py) + Pixel(px + 1, py) + Pixel(px, py + 1) + Pixel(px + 1, py + 1)) * 0.25;
-        u |= (Blue(c) & 0xFF) << (8 * i);
-        v |= (Red(c) & 0xFF) << (8 * i);
+        word |= (Blue(c) & 0xFF) << (16 * i);
+        word |= (Red(c) & 0xFF) << (16 * i + 8);
     }
-    uint lumaWords = (Width * Height) / 4;
-    uint chromaWords = (chromaWidth * chromaHeight) / 4;
-    Output[lumaWords + id.x] = u;
-    Output[lumaWords + chromaWords + id.x] = v;
+    Output[(Width * Height) / 4 + id.x] = word;
 }

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -20,7 +21,7 @@ namespace Protokite.Playtest.Tests
         private ProtokitePlaytestSettingsForTests _settings;
         private string _folder;
         private FakeFrameSource _source;
-        private FakeVp8Encoder _encoder;
+        private FakeH264Encoder _encoder;
         private int _sourcesMade;
         private ProtokitePlaytestPixelFormat? _formatAskedFor;
 
@@ -38,7 +39,7 @@ namespace Protokite.Playtest.Tests
             ProtokitePlaytest.DeviceIdFilePathForTesting = Path.Combine(_folder, "device_id.txt");
             ProtokitePlaytest.RecordingsFolderForTesting = Path.Combine(_folder, "Recordings");
             _source = new FakeFrameSource();
-            _encoder = new FakeVp8Encoder();
+            _encoder = new FakeH264Encoder();
             _sourcesMade = 0;
             _formatAskedFor = null;
             ProtokitePlaytest.VideoEncoderForTesting = () => _encoder;
@@ -102,10 +103,10 @@ namespace Protokite.Playtest.Tests
             {
                 ProtokitePlaytest.Refresh();
                 Assert.AreEqual(ProtokitePlaytestStatus.Ready, ProtokitePlaytest.Status, "Precondition: the config is loaded, and nobody has signed in");
-                LogAssert.Expect(LogType.Log, new Regex(@"Recording video for the playtest to .*recording-.*\.part, at 64x48 and 15 frames a second \(Vp8\)\. It stops for good after 60 minutes of play, before the file passes 1536 MB"));
+                LogAssert.Expect(LogType.Log, new Regex(@"Recording video for the playtest to .*recording-.*\.mp4\.part, at 64x48 and 15 frames a second, as H\.264\. It stops for good after 60 minutes of play, before the file passes 1536 MB"));
                 Frames(1);
                 Assert.IsTrue(ProtokitePlaytest.IsRecordingVideo);
-                Assert.AreEqual(ProtokitePlaytestPixelFormat.I420, _formatAskedFor, "The capture is asked for the encoder's pixel layout");
+                Assert.AreEqual(ProtokitePlaytestPixelFormat.Nv12, _formatAskedFor, "The capture is asked for the encoder's pixel layout");
                 Frames(119);
                 Assert.Greater(_source.Asked.Count, 25, "Frames are captured each end of frame");
                 StringAssert.StartsWith(Path.Combine(_folder, "Recordings"), ProtokitePlaytest.VideoRecordingForTesting.PartPath, "In the recordings folder");
@@ -124,6 +125,109 @@ namespace Protokite.Playtest.Tests
                 Assert.AreEqual(another, _formatAskedFor, "Whatever the encoder takes, the capture is told, never assumed");
             }
         }
+
+#if UNITY_EDITOR_WIN
+        [Test]
+        public void TheRecordingWaitsForWindowsToNameAnEncoderWithoutTheGameWaiting()
+        {
+            ProtokitePlaytest.VideoEncoderForTesting = null;
+            ProtokitePlaytestVideoEncoders.ResetForNewLaunch();
+            using (ManualResetEventSlim answer = new ManualResetEventSlim())
+            {
+                ProtokitePlaytestVideoEncoders.LookForEncodersForTesting = () =>
+                {
+                    answer.Wait(TimeSpan.FromSeconds(10));
+                    return new KeyValuePair<List<ProtokitePlaytestEncoderFound>, string>(null, ProtokitePlaytestVideoEncoders.MediaFoundationMissing);
+                };
+                try
+                {
+                    using (FlockWithConfig(true))
+                    {
+                        ProtokitePlaytest.Refresh();
+                        System.Diagnostics.Stopwatch playing = System.Diagnostics.Stopwatch.StartNew();
+                        Frames(30);
+                        Assert.Less(playing.ElapsedMilliseconds, 5000, "No frame waits for Windows to answer");
+                        Assert.IsFalse(ProtokitePlaytest.IsRecordingVideo);
+                        Assert.AreEqual(0, _sourcesMade, "Nothing is set up before Windows has answered");
+
+                        answer.Set();
+                        Thread looking = ProtokitePlaytestVideoEncoders.StartLookingForEncoders();
+                        Assert.IsTrue(looking == null || looking.Join(TimeSpan.FromSeconds(10)), "Precondition: Windows has answered");
+                        LogAssert.Expect(LogType.Warning, new Regex("This launch records no playtest video: Windows' Media Foundation"));
+                        Frames(1);
+                        Assert.AreEqual(0, _sourcesMade, "Answered with no encoder: the recording says why and captures nothing");
+                    }
+                }
+                finally
+                {
+                    answer.Set();
+                    ProtokitePlaytestVideoEncoders.LookForEncodersForTesting = null;
+                    ProtokitePlaytestVideoEncoders.ResetForNewLaunch();
+                }
+            }
+        }
+
+        [Test]
+        public void ATestVideoWaitsForWindowsToNameAnEncoderWithoutTheGameWaiting()
+        {
+            ProtokitePlaytest.VideoEncoderForTesting = null;
+            ProtokitePlaytestVideoEncoders.ResetForNewLaunch();
+            using (ManualResetEventSlim answer = new ManualResetEventSlim())
+            {
+                ProtokitePlaytestVideoEncoders.LookForEncodersForTesting = () =>
+                {
+                    answer.Wait(TimeSpan.FromSeconds(10));
+                    return new KeyValuePair<List<ProtokitePlaytestEncoderFound>, string>(null, ProtokitePlaytestVideoEncoders.MediaFoundationMissing);
+                };
+                try
+                {
+                    Assert.IsTrue(ProtokitePlaytest.RecordTestVideo(2.0, out string whyNot), whyNot);
+                    System.Diagnostics.Stopwatch playing = System.Diagnostics.Stopwatch.StartNew();
+                    Frames(30);
+                    Assert.Less(playing.ElapsedMilliseconds, 5000, "No frame waits for Windows to answer");
+                    Assert.AreEqual(0, _sourcesMade, "Nothing is set up before Windows has answered");
+
+                    answer.Set();
+                    Thread looking = ProtokitePlaytestVideoEncoders.StartLookingForEncoders();
+                    Assert.IsTrue(looking == null || looking.Join(TimeSpan.FromSeconds(10)), "Precondition: Windows has answered");
+                    LogAssert.Expect(LogType.Warning, new Regex("This launch records no playtest video: Windows' Media Foundation"));
+                    LogAssert.Expect(LogType.Warning, new Regex("No test video is recorded: Windows' Media Foundation"));
+                    Frames(1);
+                    Assert.AreEqual(0, _sourcesMade);
+                }
+                finally
+                {
+                    answer.Set();
+                    ProtokitePlaytestVideoEncoders.LookForEncodersForTesting = null;
+                    ProtokitePlaytestVideoEncoders.ResetForNewLaunch();
+                }
+            }
+        }
+
+        [Test]
+        public void ALaunchAsksWindowsForAnEncoderEarlyOnlyWithPlaytestingOn()
+        {
+            ProtokitePlaytestVideoEncoders.ResetForNewLaunch();
+            ProtokitePlaytestVideoEncoders.LookForEncodersForTesting = () =>
+                new KeyValuePair<List<ProtokitePlaytestEncoderFound>, string>(new List<ProtokitePlaytestEncoderFound>(), null);
+            try
+            {
+                _settings.Settings.PlaytestingEnabled = false;
+                ProtokitePlaytest.StartFinishingEarlierRecordings();
+                Assert.IsFalse(ProtokitePlaytestVideoEncoders.AskedThisLaunchForTesting, "A build with playtesting off never asks Windows");
+
+                ProtokitePlaytest.ResetForNewLaunch();
+                _settings.Settings.PlaytestingEnabled = true;
+                ProtokitePlaytest.StartFinishingEarlierRecordings();
+                Assert.IsTrue(ProtokitePlaytestVideoEncoders.AskedThisLaunchForTesting, "Asked with the launch, so no recording waits for it later");
+            }
+            finally
+            {
+                ProtokitePlaytestVideoEncoders.LookForEncodersForTesting = null;
+                ProtokitePlaytestVideoEncoders.ResetForNewLaunch();
+            }
+        }
+#endif
 
         [Test]
         public void NothingIsRecordedUntilThePlayerAllowsTheScreen()
@@ -300,7 +404,7 @@ namespace Protokite.Playtest.Tests
                 Assert.IsNull(ProtokitePlaytest.VideoRecordingForTesting);
 
                 _source = new FakeFrameSource();
-                _encoder = new FakeVp8Encoder();
+                _encoder = new FakeH264Encoder();
                 ProtokitePlaytest.Refresh();
                 Frames(1);
                 Assert.IsTrue(ProtokitePlaytest.IsRecordingVideo, "A new launch records again");
@@ -401,10 +505,15 @@ namespace Protokite.Playtest.Tests
                 using (FlockWithConfig(true))
                 {
                     ProtokitePlaytest.Refresh();
+                    // A game's launch asks Windows for an encoder before its recording is due; here it is asked and waited for first.
+                    Thread looking = ProtokitePlaytestVideoEncoders.StartLookingForEncoders();
+                    Assert.IsTrue(looking == null || looking.Join(TimeSpan.FromSeconds(10)), "Precondition: Windows has answered");
                     Frames(1);
                     bool recording = ProtokitePlaytest.IsRecordingVideo;
                     bool screenHasSize = Screen.width > 0 && Screen.height > 0;
-                    Assert.AreEqual(screenHasSize, recording, $"Records exactly when this editor's screen ({Screen.width}x{Screen.height}) has a size");
+                    bool encoderOffered = RealEncoding.GraphicsCardEncoderOffered(out string whatIsOffered);
+                    Assert.AreEqual(screenHasSize && encoderOffered, recording,
+                        $"Records exactly when this editor's screen ({Screen.width}x{Screen.height}) has a size and its graphics card an encoder ({whatIsOffered})");
                     ProtokitePlaytest.ResetForNewLaunch();
                 }
             }
@@ -432,14 +541,14 @@ namespace Protokite.Playtest.Tests
                 string runFolder = run.FolderPath;
                 string name = Path.GetFileName(runFolder);
                 Assert.AreEqual(Path.GetFullPath(Path.Combine(Recordings, "Playtest")), Path.GetDirectoryName(runFolder), "A playtest recording's run");
-                Assert.AreEqual(Path.Combine(runFolder, "recording-" + name + ".webm.part"), ProtokitePlaytest.VideoRecordingForTesting.PartPath);
+                Assert.AreEqual(Path.Combine(runFolder, "recording-" + name + ".mp4.part"), ProtokitePlaytest.VideoRecordingForTesting.PartPath);
                 Assert.AreEqual(ProtokitePlaytest.VideoRecordingForTesting.MaxBytes.ToString(), File.ReadAllText(Path.Combine(runFolder, "reserved-bytes.txt")),
                     "Other launches count it at the most it may grow to");
 
                 Frames(30);
                 Assert.IsTrue(ProtokitePlaytest.StopVideoRecording());
                 WaitUntilFinished();
-                Assert.AreEqual(Path.Combine(runFolder, "recording-" + name + ".webm"), ProtokitePlaytest.FinishedVideo.FilePath);
+                Assert.AreEqual(Path.Combine(runFolder, "recording-" + name + ".mp4"), ProtokitePlaytest.FinishedVideo.FilePath);
                 Assert.IsNull(ProtokitePlaytestRecordingRun.ClaimEnded(runFolder, ProtokitePlaytestRecordingKind.Playtest),
                     "Still held once written: its Protokite session may yet start and be saved beside it");
 
@@ -628,7 +737,7 @@ namespace Protokite.Playtest.Tests
             _settings.Settings.RecordingsDiskBudgetMb = 4;
             _settings.Settings.MaxRecordingMinutes = 0.1f;
             ProtokitePlaytestVideoSettings other = ProtokitePlaytestVideoSettings.From(_settings.Settings);
-            long wanted = other.BytesToMakeRoomFor(ProtokitePlaytestWebmFile.FrameHeaderBytes);
+            long wanted = other.BytesToMakeRoomFor(ProtokitePlaytestMp4File.FrameHeaderBytes);
             long otherMaxBytes = 0;
             ProtokitePlaytestRecordingRun otherRun = null;
             // Another game starts just as this one makes room, and does as this one does: its run and reservation, then room.
@@ -701,12 +810,14 @@ namespace Protokite.Playtest.Tests
             }
 
             public ProtokitePlaytestPixelFormat InputPixelFormat => _inner.InputPixelFormat;
+            public string Description => _inner.Description;
             public bool Configure(ProtokitePlaytestVideoEncoderSettings settings, out string error) => _inner.Configure(settings, out error);
+            public bool Start(out string error) => _inner.Start(out error);
 
-            public bool Encode(byte[] i420, long timestampMs, long durationMs, bool forceKeyframe, System.Collections.Generic.List<ProtokitePlaytestEncodedFrame> output, out string error)
+            public bool Encode(byte[] pixels, long timestampMs, long durationMs, System.Collections.Generic.List<ProtokitePlaytestEncodedFrame> output, out string error)
             {
                 _hold.Wait(TimeSpan.FromSeconds(20));
-                return _inner.Encode(i420, timestampMs, durationMs, forceKeyframe, output, out error);
+                return _inner.Encode(pixels, timestampMs, durationMs, output, out error);
             }
 
             public bool Finish(System.Collections.Generic.List<ProtokitePlaytestEncodedFrame> output, out string error) => _inner.Finish(output, out error);

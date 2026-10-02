@@ -26,8 +26,11 @@ namespace Flock.Tests.Editor
         [SetUp]
         public void SetUp()
         {
+#if UNITY_2022_1_OR_NEWER
+            // Unity refuses plain http only from 2022.1.
             if (PlayerSettings.insecureHttpOption == InsecureHttpOption.NotAllowed)
                 Assert.Ignore("This project refuses plain http, which the storage stand-in on this machine answers on.");
+#endif
             _storage = new FlockLocalStorage();
             _storage.AnswerFor("stale", 403, Expired);
             _storage.AnswerFor("fresh", 200, "the asset");

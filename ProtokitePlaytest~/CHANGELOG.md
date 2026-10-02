@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 It is released with the Flock SDK, at the Flock SDK's version.
 
 
+## [1.63.0]
+
+### Changed (breaking)
+- **Video is recorded through Windows' own H.264 encoder on the graphics card, into MP4, and the package ships no native file.**
+  The package used to carry its own encoder, `protokite_vpx.dll` (libvpx, VP8 into WebM). On a Windows 11 laptop with Smart App
+  Control on, Windows refused new copies of that unsigned DLL (error 4551, measured), so those players recorded no video; and
+  encoding on the processor cost a slow laptop 10 to 42% of its frame rate, depending on what else the PC was doing. Now each frame
+  is encoded by the graphics card's own video engine through Windows' Media Foundation, called from C#, and written straight into a
+  fragmented MP4 file a browser plays with nothing installed, uploaded as `video/mp4`. There is no DLL of the package's for Windows
+  to refuse, and on a desktop encoding costs 3% of a processor core over the capture where the DLL cost 8% (measured).
+  - Colour is converted as BT.709 and the stream says so, so a player that ignores what the stream says still shows it right.
+  - Each frame is a fragment of its own, written whole, so a recording a crash cut off keeps every frame before the cut, and the
+    next launch finishes it as before.
+  - A recording starts capturing once the graphics card's encoder has started, which takes 0.1 to 2.2 s (measured), so a slow
+    start delays the video by that moment rather than losing its first frames. An encoder that cannot start ends the recording,
+    and the log says why.
+  - **A PC whose graphics card has no H.264 encoder records no video**, and the log says why once; everything else in the playtest
+    runs. The new setting **Allow Software Encoder** (off) has such a PC record with Windows' own encoder on the processor instead,
+    which costs the game frame rate (measured at the defaults: 11% of a processor core on a desktop, about 30% on a slow laptop,
+    where the game still kept its 60 frames a second).
+  - A Windows N edition without its Media Feature Pack has no Media Foundation, records no video and says so.
+  - The setup window's video check names the encoder Windows offers first on the PC you work on, or why it records none; a test
+    video shows whether that encoder records.
+  - Recordings an earlier version kept as WebM files are still finished after a crash and uploaded as `video/webm`.
+
+### Removed (breaking)
+- The settings that only the old encoder used: **Video Codec**, **Encoder Threads**, **Use Codec Default Speed**, **Encoder Speed**
+  and **Encoder Below Game Priority**, their properties on `ProtokitePlaytestSettings` (`VideoCodec`, `EncoderThreads`,
+  `UseCodecDefaultSpeed`, `EncoderSpeed`, `EncoderBelowGamePriority`) and the `ProtokitePlaytestVideoCodec` enum. A settings asset
+  that still holds them loads as before; Unity drops the old values the next time it saves the asset.
+- `Runtime/Plugins/x86_64/protokite_vpx.dll`, libvpx's licence and patent files, and the encoder's source in `Native~`.
+
+### Fixed
+- **On Unity 2021.3, the consent question and the feedback form logged a warning and threw an exception.** Each panel made its
+  settings in code, which 2021.3 checks for a theme the moment they exist ("No Theme Style Sheet set to PanelSettings, UI will not
+  render properly"), and its empty theme, also made in code, threw a `NullReferenceException` inside UI Toolkit as the panel styled
+  itself, which the Flock SDK then reported as one of the game's exceptions. Each panel now draws with a copy of
+  `Runtime/Resources/ProtokitePlaytestPanelSettings.asset`, which holds an empty imported theme. Unity 6000.3 logged neither,
+  before or after.
+
+### Verified
+- In 64-bit Windows players built with Unity 2021.3 and 6000.3, Mono and IL2CPP (High stripping), against a running playtest:
+  each recorded on the graphics card, uploaded its recording, which is stored as `video/mp4` and plays in Chrome, and carried no
+  native file of the package's.
+- Recording on Direct3D 11 and 12, Vulkan and OpenGL in players: every frame decoded back by Windows in the screen's own colours,
+  and no stall of the game's main thread.
+- The package's tests pass in the Unity 6000.3 Editor with the real encoder, a recording read back frame for frame by Windows'
+  own decoder.
+- On a slow laptop with Intel graphics and Smart App Control on, Windows' software encoder recorded every frame, read back by
+  Windows. Recording through Intel's own graphics card encoder is not yet confirmed on that laptop: a build before this release
+  had it refuse to hand back the first frame, most likely because it changes its output format first and was asked again too
+  soon. This release asks only when the encoder says a frame is ready, as Windows' rules require, and takes the buffer size the
+  new format asks for; both are tested with a stand-in that keeps those rules.
+- Not yet measured: AMD's graphics card encoder, and how many bits a busy picture takes at the default bitrate.
+
 ## [1.62.0]
 
 ### Documentation

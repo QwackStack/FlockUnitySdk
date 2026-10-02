@@ -32,7 +32,7 @@ namespace Protokite.Playtest.Tests
             }
         }
 
-        private string FinishedPath => Path.Combine(_folder, "recording.webm");
+        private string FinishedPath => Path.Combine(_folder, "recording.mp4");
 
         private static ProtokitePlaytestVideoSettings Settings(Action<ProtokitePlaytestVideoSettings> change = null)
         {
@@ -44,9 +44,11 @@ namespace Protokite.Playtest.Tests
         private ProtokitePlaytestVideoRecording Start(FakeFrameSource source, IProtokitePlaytestVideoEncoder encoder, ProtokitePlaytestVideoSettings settings,
             Action beforeEachEncode = null, Func<bool> beforeEachWrite = null)
         {
-            ProtokitePlaytestVideoRecording recording = ProtokitePlaytestVideoRecording.Start(source, encoder, new ProtokitePlaytestWebmFile(), settings,
+            ProtokitePlaytestVideoRecording recording = ProtokitePlaytestVideoRecording.Start(source, encoder, new ProtokitePlaytestMp4File(), settings,
                 FinishedPath, out string error, beforeEachEncode, beforeEachWrite);
             Assert.IsNotNull(recording, error);
+            // Frames are captured once the encoder has started, on the recording's own thread; a test counting them waits for it.
+            Assert.IsTrue(recording.WaitUntilTheEncoderHasStartedForTesting(TimeSpan.FromSeconds(20)), "The encoder started");
             return recording;
         }
 
@@ -83,7 +85,7 @@ namespace Protokite.Playtest.Tests
         public void FramesAreCapturedAtTheRecordingsRateAndWrittenInOrder()
         {
             FakeFrameSource source = new FakeFrameSource();
-            FakeVp8Encoder encoder = new FakeVp8Encoder();
+            FakeH264Encoder encoder = new FakeH264Encoder();
             ProtokitePlaytestVideoRecording recording = Start(source, encoder, Settings());
             Assert.IsTrue(File.Exists(FinishedPath + ".part"), "Written as a .part file while it runs");
             Assert.IsNull(Play(recording, 120, pacedBy: source), "Two seconds of a 60 fps game");
@@ -105,17 +107,19 @@ namespace Protokite.Playtest.Tests
             Assert.AreEqual(ProtokitePlaytestVideoStopReason.StoppedByGame, summary.StopReason);
             Assert.AreEqual(30, summary.FramesWritten);
             Assert.AreEqual((source.Asked.Last() + 67) / 1000.0, summary.VideoSeconds, 1e-9);
-            Assert.IsTrue(ProtokitePlaytestWebmTestFiles.Read(FinishedPath, out WebmFileRead read));
+            Assert.AreEqual("the test's own encoder", summary.EncodedBy, "The summary names what encoded the video");
+            Assert.IsTrue(ProtokitePlaytestMp4TestFiles.Read(FinishedPath, out Mp4FileRead read));
             Assert.AreEqual(30, read.Frames.Count);
             CollectionAssert.AreEqual(source.Asked, read.Frames.Select(frame => frame.TimestampMs), "Shown at the times they were captured");
-            Assert.AreEqual("V_VP8", read.Codec);
+            Assert.AreEqual(source.Asked.Last() + 67, read.DurationMs, "Its length stamped in on close");
+            Assert.AreEqual("avc1", read.SampleEntry);
         }
 
         [Test]
         public void EveryFramesBlockGoesBackOnceItIsEncoded()
         {
             FakeFrameSource source = new FakeFrameSource();
-            ProtokitePlaytestVideoRecording recording = Start(source, new FakeVp8Encoder(), Settings());
+            ProtokitePlaytestVideoRecording recording = Start(source, new FakeH264Encoder(), Settings());
             Play(recording, 20);
             Assert.AreEqual(5, source.Asked.Count, "Precondition: fewer frames than may wait, so none is dropped");
             StopAndWait(recording);
@@ -126,7 +130,7 @@ namespace Protokite.Playtest.Tests
         public void AFileThatThrowsWhenClosedStillFinishesTheRecording()
         {
             FakeFrameSource source = new FakeFrameSource();
-            ProtokitePlaytestVideoRecording recording = ProtokitePlaytestVideoRecording.Start(source, new FakeVp8Encoder(), new FileThatThrowsWhenClosed(),
+            ProtokitePlaytestVideoRecording recording = ProtokitePlaytestVideoRecording.Start(source, new FakeH264Encoder(), new FileThatThrowsWhenClosed(),
                 Settings(), FinishedPath, out string error);
             Assert.IsNotNull(recording, error);
             Play(recording, 20);
@@ -140,10 +144,11 @@ namespace Protokite.Playtest.Tests
             public string ContentType => _inner.ContentType;
             public string FileExtension => _inner.FileExtension;
             public int BytesAddedToEachFrame => 0;
+            public long BytesFor(ProtokitePlaytestEncodedFrame frame) => _inner.BytesFor(frame);
             public long BytesWritten => _inner.BytesWritten;
             public int FramesWritten => _inner.FramesWritten;
             public long LastTimestampMs => _inner.LastTimestampMs;
-            public bool Open(string path, ProtokitePlaytestVideoCodec codec, int width, int height, out string error) => _inner.Open(path, codec, width, height, out error);
+            public bool Open(string path, int width, int height, long frameDurationMs, out string error) => _inner.Open(path, width, height, frameDurationMs, out error);
             public bool WriteFrame(ProtokitePlaytestEncodedFrame frame, out string error) => _inner.WriteFrame(frame, out error);
             public bool Close(out string error) => throw new IOException("the disk went away");
             public ProtokitePlaytestInterruptedRecordingResult FinishInterruptedRecording(string unfinishedPath, string finishedPath, out int framesKept, out string error)
@@ -155,7 +160,7 @@ namespace Protokite.Playtest.Tests
         public void FramesStillOnTheirWayWhenItStopsAreWritten()
         {
             FakeFrameSource source = new FakeFrameSource { HoldFrames = true };
-            ProtokitePlaytestVideoRecording recording = Start(source, new FakeVp8Encoder(), Settings());
+            ProtokitePlaytestVideoRecording recording = Start(source, new FakeH264Encoder(), Settings());
             Play(recording, 20);
             Assert.AreEqual(5, source.Asked.Count, "Precondition: frames were asked for and none has arrived");
             ProtokitePlaytestVideoRecordingSummary summary = StopAndWait(recording);
@@ -166,7 +171,7 @@ namespace Protokite.Playtest.Tests
         public void ACaptureTimeThatFindsTheSourceFullIsCounted()
         {
             FakeFrameSource source = new FakeFrameSource { Ready = false };
-            ProtokitePlaytestVideoRecording recording = Start(source, new FakeVp8Encoder(), Settings());
+            ProtokitePlaytestVideoRecording recording = Start(source, new FakeH264Encoder(), Settings());
             Play(recording, 60, pacedBy: source);
             source.Ready = true;
             Play(recording, 60, pacedBy: source);
@@ -179,7 +184,7 @@ namespace Protokite.Playtest.Tests
         public void TheFrameCarryingTimeAwayIsLeftOut()
         {
             FakeFrameSource source = new FakeFrameSource();
-            ProtokitePlaytestVideoRecording recording = Start(source, new FakeVp8Encoder(), Settings());
+            ProtokitePlaytestVideoRecording recording = Start(source, new FakeH264Encoder(), Settings());
             Play(recording, 60);
             recording.LeaveOutNextFrame();
             recording.AddFrame(300.0);
@@ -192,19 +197,21 @@ namespace Protokite.Playtest.Tests
         public void TheSourcesLossesAreReported()
         {
             FakeFrameSource source = new FakeFrameSource { FramesLostOnTheGraphicsCard = 2, FramesDroppedForWantOfABlock = 3 };
-            ProtokitePlaytestVideoRecording recording = Start(source, new FakeVp8Encoder(), Settings());
+            ProtokitePlaytestVideoRecording recording = Start(source, new FakeH264Encoder(), Settings());
             ProtokitePlaytestVideoRecordingSummary summary = StopAndWait(recording);
             Assert.AreEqual(2, summary.FramesLostOnTheGraphicsCard);
             Assert.AreEqual(3, summary.FramesDroppedForWantOfABlock);
         }
 
-        [TestCase(true, System.Threading.ThreadPriority.BelowNormal)]
-        [TestCase(false, System.Threading.ThreadPriority.Normal)]
-        public void TheEncoderGivesWayToTheGameWhenTheSettingSaysSo(bool belowTheGame, System.Threading.ThreadPriority expected)
+        [Test]
+        public void TheEncodingThreadGivesWayToTheGame()
         {
-            ProtokitePlaytestVideoRecording recording = Start(new FakeFrameSource(), new FakeVp8Encoder(), Settings(s => s.EncoderBelowGamePriority = belowTheGame));
-            Assert.AreEqual(expected, recording.EncoderThreadPriority);
+            FakeFrameSource source = new FakeFrameSource();
+            ThreadPriority? encodingPriority = null;
+            ProtokitePlaytestVideoRecording recording = Start(source, new FakeH264Encoder(), Settings(), () => encodingPriority = Thread.CurrentThread.Priority);
+            Play(recording, 4, pacedBy: source);
             StopAndWait(recording);
+            Assert.AreEqual(ThreadPriority.BelowNormal, encodingPriority, "A busy processor runs the game first");
         }
 
         // Limits
@@ -213,7 +220,7 @@ namespace Protokite.Playtest.Tests
         public void TheLengthLimitStopsItForGood()
         {
             FakeFrameSource source = new FakeFrameSource();
-            ProtokitePlaytestVideoRecording recording = Start(source, new FakeVp8Encoder(), Settings(s => s.MaxSeconds = 1.0));
+            ProtokitePlaytestVideoRecording recording = Start(source, new FakeH264Encoder(), Settings(s => s.MaxSeconds = 1.0));
             // Paced like a game's frames: unpaced, a loaded machine drops some and the count below is short (12 of 15, measured).
             Assert.AreEqual(ProtokitePlaytestVideoStopReason.ReachedLengthLimit, Play(recording, 600, pacedBy: source));
             Assert.IsFalse(recording.IsCapturing);
@@ -229,10 +236,11 @@ namespace Protokite.Playtest.Tests
         public void TheSizeLimitIsNeverPassed()
         {
             FakeFrameSource source = new FakeFrameSource();
-            // The header, then room for ten frames of 40 bytes and their cluster headers, and a little more.
-            long header = ProtokitePlaytestWebmTestFiles.MakeVideoBytes(Path.GetTempPath(), ProtokitePlaytestVideoCodec.Vp8, 0, 0, false).Length;
-            long limit = header + 10 * (ProtokitePlaytestWebmFile.FrameHeaderBytes + 40) + 30;
-            ProtokitePlaytestVideoRecording recording = Start(source, new FakeVp8Encoder(), Settings(s => s.MaxBytes = limit));
+            // The file's type, the movie's header the first frame carries, then room for ten frames of 40 bytes and their fragment headers, and a little more.
+            long fileType = ProtokitePlaytestMp4TestFiles.MakeVideoBytes(Path.GetTempPath(), 0, 0, false).Length;
+            long movieHeader = new ProtokitePlaytestMp4File().BytesFor(ProtokitePlaytestMp4TestFiles.MakeEncodedFrame(0, 40)) - ProtokitePlaytestMp4File.FrameHeaderBytes - 40;
+            long limit = fileType + movieHeader + 10 * (ProtokitePlaytestMp4File.FrameHeaderBytes + 40) + 30;
+            ProtokitePlaytestVideoRecording recording = Start(source, new FakeH264Encoder(), Settings(s => s.MaxBytes = limit));
             ProtokitePlaytestVideoStopReason? stop = null;
             for (int i = 0; i < 600 && stop == null; i++)
             {
@@ -246,7 +254,8 @@ namespace Protokite.Playtest.Tests
             ProtokitePlaytestVideoRecordingSummary summary = recording.Summary();
             Assert.AreEqual(10, summary.FramesWritten, "Every frame that fits, and none after the first that does not");
             Assert.LessOrEqual(new FileInfo(FinishedPath).Length, limit);
-            Assert.IsTrue(ProtokitePlaytestWebmTestFiles.Read(FinishedPath, out WebmFileRead read));
+            Assert.Greater(new FileInfo(FinishedPath).Length, limit - ProtokitePlaytestMp4File.FrameHeaderBytes - 40, "And no frame that fitted was left out");
+            Assert.IsTrue(ProtokitePlaytestMp4TestFiles.Read(FinishedPath, out Mp4FileRead read));
             Assert.AreEqual(10, read.Frames.Count);
         }
 
@@ -257,7 +266,7 @@ namespace Protokite.Playtest.Tests
         {
             FakeFrameSource source = new FakeFrameSource();
             ManualResetEventSlim holdEncoding = new ManualResetEventSlim(false);
-            ProtokitePlaytestVideoRecording recording = Start(source, new FakeVp8Encoder(), Settings(), () => holdEncoding.Wait(Plenty));
+            ProtokitePlaytestVideoRecording recording = Start(source, new FakeH264Encoder(), Settings(), () => holdEncoding.Wait(Plenty));
             Play(recording, 4 * 30);
             Assert.AreEqual(30, source.Asked.Count, "Precondition: 30 frames captured while the encoder is held");
             holdEncoding.Set();
@@ -266,7 +275,7 @@ namespace Protokite.Playtest.Tests
             Assert.AreEqual(ProtokitePlaytestVideoRecording.MostFramesWaitingToEncode, summary.FramesWritten, "As many as may wait, and no more");
             Assert.AreEqual(30 - ProtokitePlaytestVideoRecording.MostFramesWaitingToEncode, summary.FramesDroppedBecauseEncodingFellBehind);
             Assert.AreEqual(30, source.BlocksReturned, "A dropped frame's block goes back too");
-            Assert.IsTrue(ProtokitePlaytestWebmTestFiles.Read(FinishedPath, out WebmFileRead read), "What was written still reads");
+            Assert.IsTrue(ProtokitePlaytestMp4TestFiles.Read(FinishedPath, out Mp4FileRead read), "What was written still reads");
         }
 
         [Test]
@@ -275,7 +284,7 @@ namespace Protokite.Playtest.Tests
             FakeFrameSource source = new FakeFrameSource();
             ManualResetEventSlim holdWriting = new ManualResetEventSlim(false);
             int frames = ProtokitePlaytestVideoRecording.MostFramesWaitingToWrite + 20;
-            ProtokitePlaytestVideoRecording recording = Start(source, new FakeVp8Encoder(), Settings(s => s.FramesPerSecond = 60),
+            ProtokitePlaytestVideoRecording recording = Start(source, new FakeH264Encoder(), Settings(s => s.FramesPerSecond = 60),
                 beforeEachWrite: () => holdWriting.Wait(Plenty));
             for (int i = 0; i < frames; i++)
             {
@@ -299,7 +308,7 @@ namespace Protokite.Playtest.Tests
         {
             FakeFrameSource source = new FakeFrameSource();
             int writes = 0;
-            ProtokitePlaytestVideoRecording recording = Start(source, new FakeVp8Encoder(), Settings(), beforeEachWrite: () => Interlocked.Increment(ref writes) <= 5);
+            ProtokitePlaytestVideoRecording recording = Start(source, new FakeH264Encoder(), Settings(), beforeEachWrite: () => Interlocked.Increment(ref writes) <= 5);
             ProtokitePlaytestVideoStopReason? stop = null;
             for (int i = 0; i < 600 && stop == null; i++)
             {
@@ -313,7 +322,7 @@ namespace Protokite.Playtest.Tests
             StringAssert.Contains("is the disk full", summary.Error);
             Assert.AreEqual(FinishedPath, summary.FilePath, "The frames before are kept");
             Assert.AreEqual(5, summary.FramesWritten);
-            Assert.IsTrue(ProtokitePlaytestWebmTestFiles.Read(FinishedPath, out WebmFileRead read));
+            Assert.IsTrue(ProtokitePlaytestMp4TestFiles.Read(FinishedPath, out Mp4FileRead read));
             Assert.AreEqual(5, read.Frames.Count);
             Assert.IsFalse(File.Exists(FinishedPath + ".part"));
         }
@@ -322,7 +331,7 @@ namespace Protokite.Playtest.Tests
         public void AFailedEncodeStopsItAndKeepsTheFramesEncodedBefore()
         {
             FakeFrameSource source = new FakeFrameSource();
-            ProtokitePlaytestVideoRecording recording = Start(source, new FakeVp8Encoder { FailAtFrame = 3 }, Settings());
+            ProtokitePlaytestVideoRecording recording = Start(source, new FakeH264Encoder { FailAtFrame = 3 }, Settings());
             ProtokitePlaytestVideoStopReason? stop = null;
             for (int i = 0; i < 600 && stop == null; i++)
             {
@@ -339,37 +348,107 @@ namespace Protokite.Playtest.Tests
         }
 
         [Test]
+        public void NothingIsCapturedUntilTheEncoderHasStartedAndTheVideoStartsThen()
+        {
+            FakeFrameSource source = new FakeFrameSource();
+            ManualResetEventSlim holdTheStart = new ManualResetEventSlim(false);
+            ProtokitePlaytestVideoRecording recording = ProtokitePlaytestVideoRecording.Start(source, new SlowToStartEncoder(holdTheStart), new ProtokitePlaytestMp4File(),
+                Settings(), FinishedPath, out string error);
+            Assert.IsNotNull(recording, error);
+            Play(recording, 60);
+            Assert.IsFalse(recording.EncoderHasStarted, "Precondition: the encoder is still starting");
+            CollectionAssert.IsEmpty(source.Asked, "No frame is captured while the encoder starts, so none is dropped for want of room");
+            Assert.IsTrue(recording.IsCapturing, "Still recording: a game can stop it");
+
+            holdTheStart.Set();
+            Assert.IsTrue(recording.WaitUntilTheEncoderHasStartedForTesting(Plenty));
+            Play(recording, 60, pacedBy: source);
+            ProtokitePlaytestVideoRecordingSummary summary = StopAndWait(recording);
+            Assert.AreEqual(0, source.Asked[0], "The video starts at the first frame after the encoder started");
+            Assert.AreEqual(15, summary.FramesWritten, "A second of play once started, none dropped");
+            Assert.AreEqual(0, summary.FramesDroppedBecauseEncodingFellBehind);
+        }
+
+        [Test]
+        public void AnEncoderThatCannotStartEndsTheRecordingWithWhy()
+        {
+            FakeFrameSource source = new FakeFrameSource();
+            ProtokitePlaytestVideoRecording recording = ProtokitePlaytestVideoRecording.Start(source, new FakeH264Encoder { RefuseToStart = "the graphics card's encoder is busy" },
+                new ProtokitePlaytestMp4File(), Settings(), FinishedPath, out string error);
+            Assert.IsNotNull(recording, error);
+            ProtokitePlaytestVideoStopReason? stop = null;
+            for (int i = 0; i < 600 && stop == null; i++)
+            {
+                stop = recording.AddFrame(SixtyFps);
+                Thread.Sleep(2);
+            }
+            Assert.AreEqual(ProtokitePlaytestVideoStopReason.CouldNotWrite, stop);
+            recording.StopCapturing(stop.Value);
+            Assert.IsTrue(recording.WaitUntilWritten(Plenty));
+            ProtokitePlaytestVideoRecordingSummary summary = recording.Summary();
+            StringAssert.Contains("the graphics card's encoder is busy", summary.Error);
+            Assert.IsNull(summary.FilePath, "Nothing was recorded, so nothing is kept");
+            Assert.IsFalse(File.Exists(FinishedPath + ".part"));
+            CollectionAssert.IsEmpty(source.Asked);
+        }
+
+        /// <summary>An encoder whose start waits for the test, as a graphics card's can take seconds.</summary>
+        private sealed class SlowToStartEncoder : IProtokitePlaytestVideoEncoder
+        {
+            private readonly FakeH264Encoder _inner = new FakeH264Encoder();
+            private readonly ManualResetEventSlim _hold;
+
+            public SlowToStartEncoder(ManualResetEventSlim hold) => _hold = hold;
+
+            public ProtokitePlaytestPixelFormat InputPixelFormat => _inner.InputPixelFormat;
+            public string Description => _inner.Description;
+            public bool Configure(ProtokitePlaytestVideoEncoderSettings settings, out string error) => _inner.Configure(settings, out error);
+
+            public bool Start(out string error)
+            {
+                _hold.Wait(TimeSpan.FromSeconds(20));
+                return _inner.Start(out error);
+            }
+
+            public bool Encode(byte[] pixels, long timestampMs, long durationMs, List<ProtokitePlaytestEncodedFrame> output, out string error)
+                => _inner.Encode(pixels, timestampMs, durationMs, output, out error);
+
+            public bool Finish(List<ProtokitePlaytestEncodedFrame> output, out string error) => _inner.Finish(output, out error);
+            public void Dispose() => _inner.Dispose();
+        }
+
+        [Test]
         public void ARecordingThatCapturedNothingLeavesNoFile()
         {
-            ProtokitePlaytestVideoRecording recording = Start(new FakeFrameSource(), new FakeVp8Encoder(), Settings());
+            ProtokitePlaytestVideoRecording recording = Start(new FakeFrameSource(), new FakeH264Encoder(), Settings());
             ProtokitePlaytestVideoRecordingSummary summary = StopAndWait(recording);
             Assert.IsNull(summary.FilePath);
             Assert.IsNull(summary.Error);
             Assert.IsFalse(File.Exists(FinishedPath) || File.Exists(FinishedPath + ".part"), "Nothing is left on disk");
         }
 
+#if UNITY_EDITOR_WIN
         [Test]
         public void AnEncoderThatCannotBeConfiguredStartsNothing()
         {
-            FakeFrameSource source = new FakeFrameSource();
-            IProtokitePlaytestVideoEncoder encoder = ProtokitePlaytestVideoEncoders.Create(out string whyNot);
-            Assert.IsNotNull(encoder, "Precondition: this editor carries the encoder. " + whyNot);
-            using (encoder)
+            // H.264 codes even sizes only.
+            FakeFrameSource source = new FakeFrameSource(63, 48);
+            using (ProtokitePlaytestWindowsVideoEncoder encoder = new ProtokitePlaytestWindowsVideoEncoder())
             {
-                ProtokitePlaytestVideoRecording recording = ProtokitePlaytestVideoRecording.Start(source, encoder, new ProtokitePlaytestWebmFile(),
-                    Settings(s => { s.Codec = ProtokitePlaytestVideoCodec.Vp9; s.Speed = 12; }), FinishedPath, out string error);
+                ProtokitePlaytestVideoRecording recording = ProtokitePlaytestVideoRecording.Start(source, encoder, new ProtokitePlaytestMp4File(), Settings(), FinishedPath, out string error);
                 Assert.IsNull(recording);
-                StringAssert.Contains("speed", error);
+                StringAssert.Contains("even", error);
                 Assert.IsFalse(File.Exists(FinishedPath + ".part"), "No file is opened for a recording that cannot start");
             }
         }
+#endif
 
         [Test]
         public void WaitingForTheFileIsBounded()
         {
             FakeFrameSource source = new FakeFrameSource();
             ManualResetEventSlim holdWriting = new ManualResetEventSlim(false);
-            ProtokitePlaytestVideoRecording recording = Start(source, new FakeVp8Encoder(), Settings(), beforeEachWrite: () => holdWriting.Wait(Plenty));
+            ProtokitePlaytestVideoRecording recording = Start(source, new FakeH264Encoder(), Settings(), beforeEachWrite: () => holdWriting.Wait(Plenty));
             Play(recording, 20);
             recording.StopCapturing(ProtokitePlaytestVideoStopReason.GameQuitting);
             System.Diagnostics.Stopwatch clock = System.Diagnostics.Stopwatch.StartNew();
@@ -380,27 +459,25 @@ namespace Protokite.Playtest.Tests
             Assert.IsTrue(recording.WaitUntilWritten(Plenty), "And it is finished once the disk lets go");
         }
 
-        // A real encoder, end to end
+#if UNITY_EDITOR_WIN
+        // A real encoder, end to end: started on the recording's own encoding thread, and the file read back by Windows.
 
-        [TestCase(8)]
-        [TestCase(9)]
-        public void ARealEncoderRecordsAFileThatDecodesFrameForFrame(int codecNumber)
+        [Test]
+        public void ARealEncoderRecordsAFileWindowsDecodesFrameForFrame()
         {
-            ProtokitePlaytestVideoCodec codec = (ProtokitePlaytestVideoCodec)codecNumber;
-            FakeFrameSource source = new FakeFrameSource(64, 48);
-            IProtokitePlaytestVideoEncoder encoder = ProtokitePlaytestVideoEncoders.Create(out string whyNot);
-            Assert.IsNotNull(encoder, "Precondition: this editor carries the encoder. " + whyNot);
-            ProtokitePlaytestVideoRecording recording = Start(source, encoder, Settings(s => s.Codec = codec));
+            RealEncoding.AssumeAGraphicsCardEncoder();
+            FakeFrameSource source = new FakeFrameSource(RealEncoding.Width, RealEncoding.Height);
+            ProtokitePlaytestVideoRecording recording = Start(source, new ProtokitePlaytestWindowsVideoEncoder(), Settings());
+            // Paced, so each frame goes through before the next, as in a game.
             Play(recording, 120, pacedBy: source);
             ProtokitePlaytestVideoRecordingSummary summary = StopAndWait(recording);
             Assert.AreEqual(30, summary.FramesWritten, summary.Error);
-            Assert.IsTrue(ProtokitePlaytestWebmTestFiles.Read(FinishedPath, out WebmFileRead read));
-            Assert.AreEqual(codec == ProtokitePlaytestVideoCodec.Vp8 ? "V_VP8" : "V_VP9", read.Codec);
-            using (ProtokitePlaytestLibVpx.Decoder decoder = new ProtokitePlaytestLibVpx.Decoder(codec))
-            {
-                foreach (WebmFrameRead frame in read.Frames)
-                    Assert.IsNotNull(decoder.Decode(frame.Bytes, 64, 48, out string error), error);
-            }
+            StringAssert.Contains("(on the graphics card)", summary.EncodedBy);
+            ProtokitePlaytestWindowsMp4Reader.Result read = ProtokitePlaytestWindowsMp4Reader.Read(FinishedPath);
+            Assert.IsNull(read.Error);
+            CollectionAssert.AreEqual(source.Asked, read.TimesMs, "Windows decodes every frame, at the time it was captured");
+            Assert.AreEqual(source.Asked.Last() + 67, read.DurationMs);
         }
+#endif
     }
 }

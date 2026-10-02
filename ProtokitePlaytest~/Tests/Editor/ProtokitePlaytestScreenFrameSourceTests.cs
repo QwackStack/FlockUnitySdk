@@ -28,7 +28,7 @@ namespace Protokite.Playtest.Tests
         private ProtokitePlaytestScreenFrameSource Source(int width, int height, int blocks = 4)
         {
             Assume.That(SystemInfo.graphicsUVStartsAtTop, "These pictures are laid out for a graphics API whose textures start at the top");
-            Assert.IsNull(ProtokitePlaytestScreenFrameSource.WhyThisDeviceCannotRecord(ProtokitePlaytestPixelFormat.I420), "Precondition: this editor's graphics card can capture");
+            Assert.IsNull(ProtokitePlaytestScreenFrameSource.WhyThisDeviceCannotRecord(ProtokitePlaytestPixelFormat.Nv12), "Precondition: this editor's graphics card can capture");
             ProtokitePlaytestScreenFrameSource source = ProtokitePlaytestScreenFrameSource.Create(width, height, blocks, out string whyNot);
             Assert.IsNotNull(source, whyNot);
             _sources.Add(source);
@@ -71,16 +71,16 @@ namespace Protokite.Playtest.Tests
             return frames[0];
         }
 
-        // BT.601, limited range: what an encoder expects of each colour.
-        private static void AssertColourAt(byte[] i420, int width, int height, int x, int y, Color32 colour, string where)
+        // BT.709, limited range, NV12: the colour the stream states, read from the Y plane and the interleaved U and V plane.
+        private static void AssertColourAt(byte[] nv12, int width, int height, int x, int y, Color32 colour, string where)
         {
             double r = colour.r / 255.0, g = colour.g / 255.0, b = colour.b / 255.0;
-            int luma = i420[y * width + x];
-            int blue = i420[width * height + (y / 2) * (width / 2) + x / 2];
-            int red = i420[width * height + width * height / 4 + (y / 2) * (width / 2) + x / 2];
-            Assert.AreEqual(16 + 65.481 * r + 128.553 * g + 24.966 * b, luma, 1.0, where + ": brightness");
-            Assert.AreEqual(128 - 37.797 * r - 74.203 * g + 112.0 * b, blue, 1.0, where + ": blue difference");
-            Assert.AreEqual(128 + 112.0 * r - 93.786 * g - 18.214 * b, red, 1.0, where + ": red difference");
+            int luma = nv12[y * width + x];
+            int blue = nv12[width * height + (y / 2) * width + (x / 2) * 2];
+            int red = nv12[width * height + (y / 2) * width + (x / 2) * 2 + 1];
+            Assert.AreEqual(16 + 46.559 * r + 156.629 * g + 15.812 * b, luma, 1.0, where + ": brightness");
+            Assert.AreEqual(128 - 25.664 * r - 86.336 * g + 112.0 * b, blue, 1.0, where + ": blue difference");
+            Assert.AreEqual(128 + 112.0 * r - 101.730 * g - 10.270 * b, red, 1.0, where + ": red difference");
         }
 
         [Test]
@@ -91,7 +91,7 @@ namespace Protokite.Playtest.Tests
             ProtokitePlaytestCapturedFrame frame = CaptureOne(source, Picture(width, height, (x, y) => Quadrants(x, y, width, height)), 1234);
 
             Assert.AreEqual(1234, frame.TimestampMs);
-            Assert.AreEqual(ProtokitePlaytestI420.FrameLength(width, height), frame.Pixels.Length);
+            Assert.AreEqual(ProtokitePlaytestNv12.FrameLength(width, height), frame.Pixels.Length);
             AssertColourAt(frame.Pixels, width, height, 64, 32, Red, $"Top left ({QualitySettings.activeColorSpace})");
             AssertColourAt(frame.Pixels, width, height, 192, 32, Green, "Top right");
             AssertColourAt(frame.Pixels, width, height, 64, 96, SlateBlue, "Bottom left, a middle colour");

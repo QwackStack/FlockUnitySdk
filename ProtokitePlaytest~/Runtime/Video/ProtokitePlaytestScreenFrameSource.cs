@@ -16,7 +16,7 @@ namespace Protokite.Playtest
         internal const int MostFramesOnTheirWay = 3;
 
         /// <summary>The compute shader, in the package's Resources so every build carries it.</summary>
-        internal const string ConversionShaderName = "ProtokitePlaytestRgbaToI420";
+        internal const string ConversionShaderName = "ProtokitePlaytestRgbaToNv12";
 
         private readonly ComputeShader _convert;
         private readonly int _lumaKernel;
@@ -72,7 +72,7 @@ namespace Protokite.Playtest
         /// <summary>Why this device cannot capture frames for an encoder taking <paramref name="format"/>, or null when it can.</summary>
         internal static string WhyThisDeviceCannotRecord(ProtokitePlaytestPixelFormat format)
         {
-            if (format != ProtokitePlaytestPixelFormat.I420)
+            if (format != ProtokitePlaytestPixelFormat.Nv12)
                 return $"the encoder takes {format} frames, which this capture cannot make.";
             if (SystemInfo.graphicsDeviceType == GraphicsDeviceType.Null)
                 return "this process draws nothing (a server build, or one started with -nographics).";
@@ -87,7 +87,7 @@ namespace Protokite.Playtest
         {
             Width = width;
             Height = height;
-            _frameBytes = (int)ProtokitePlaytestI420.FrameLength(width, height);
+            _frameBytes = (int)ProtokitePlaytestNv12.FrameLength(width, height);
             _blocks = new ProtokitePlaytestFrameBlocks(blocks, _frameBytes);
             _video = new RenderTexture(width, height, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB) { name = "Protokite Playtest video" };
             _video.Create();
@@ -132,7 +132,8 @@ namespace Protokite.Playtest
                 return;
             Graphics.Blit(source, _video);
             _convert.Dispatch(_lumaKernel, (Width * Height / 4 + 63) / 64, 1, 1);
-            _convert.Dispatch(_chromaKernel, (Width * Height / 16 + 63) / 64, 1, 1);
+            // Two chroma samples a thread: a quarter of the pixels each have one, so an eighth of them is the count of threads.
+            _convert.Dispatch(_chromaKernel, (Width * Height / 8 + 63) / 64, 1, 1);
             _framesOnTheirWay++;
             AsyncGPUReadback.Request(_pixels, request => HandleReadback(timestampMs, request));
         }

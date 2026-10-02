@@ -111,6 +111,9 @@ namespace Protokite.Playtest.Tests
         [UnityTest]
         public IEnumerator TheRecordingIsTheScreenUprightAndInItsOwnColours()
         {
+            // What is checked is the capture and the encoding, not this PC: one whose graphics card has no H.264 encoder records nothing by default.
+            List<ProtokitePlaytestEncoderFound> offered = ProtokitePlaytestVideoEncoders.EncodersOnThisPc(out string whyNone);
+            Assume.That(offered != null && offered.Exists(encoder => encoder.OnGraphicsCard), "This PC's graphics card has no H.264 encoder: " + (whyNone ?? string.Join(", ", offered)));
             BuildTheScene();
             ProtokitePlaytestDriver.StartWithTheGame();
             Texture2D screen;
@@ -135,19 +138,15 @@ namespace Protokite.Playtest.Tests
             Assert.IsNotNull(summary.FilePath, summary.Error);
             Assert.Greater(summary.FramesWritten, 10, summary.Error);
 
-            List<byte[]> frames = ReadFrames(File.ReadAllBytes(summary.FilePath));
-            Assert.AreEqual(summary.FramesWritten, frames.Count, "Every frame is in the file");
+            int lastFrame = summary.FramesWritten - 1;
+            ProtokitePlaytestWindowsMp4Reader.Result read = ProtokitePlaytestWindowsMp4Reader.Read(summary.FilePath, index => index == lastFrame);
+            Assert.IsNull(read.Error, "Windows reads the recording");
+            Assert.AreEqual(summary.FramesWritten, read.TimesMs.Count, "Windows decodes every frame in the file");
             ProtokitePlaytestVideoSettings video = ProtokitePlaytestVideoSettings.From(_settings);
             Assert.IsTrue(ProtokitePlaytestVideoSettings.FitVideoSize(Screen.width, Screen.height, video.MaxVideoWidth, video.MaxVideoHeight, out int width, out int height));
-            byte[] last = null;
-            using (ProtokitePlaytestLibVpx.Decoder decoder = new ProtokitePlaytestLibVpx.Decoder(video.Codec))
-            {
-                foreach (byte[] frame in frames)
-                {
-                    last = decoder.Decode(frame, width, height, out string error);
-                    Assert.IsNotNull(last, error);
-                }
-            }
+            Assert.AreEqual((width, height), (read.Width, read.Height), "At the size the screen was fitted to");
+            byte[] last = read.Pictures[lastFrame];
+            StringAssert.Contains("(on the graphics card)", summary.EncodedBy, "Encoded on the graphics card");
 
             // Looked at by eye while this test was written; kept beside the test's own temporary files.
             string looked = Environment.GetEnvironmentVariable("PROTOKITE_SCREEN_TEST_IMAGES");
@@ -198,16 +197,11 @@ namespace Protokite.Playtest.Tests
             Assert.IsNull(summary.Error);
             Assert.AreEqual(ProtokitePlaytestVideoStopReason.ReachedLengthLimit, summary.StopReason, "Two seconds, as asked");
             StringAssert.StartsWith(Path.Combine(_folder, "Recordings", "TestVideos"), summary.FilePath);
-            List<byte[]> frames = ReadFrames(File.ReadAllBytes(summary.FilePath));
-            Assert.AreEqual(summary.FramesWritten, frames.Count, "Every frame is in the file");
-            Assert.GreaterOrEqual(frames.Count, 20, "Two seconds at 15 frames a second, give or take a frame the screen was not ready for");
-            ProtokitePlaytestVideoSettings video = ProtokitePlaytestVideoSettings.From(_settings);
-            Assert.IsTrue(ProtokitePlaytestVideoSettings.FitVideoSize(Screen.width, Screen.height, video.MaxVideoWidth, video.MaxVideoHeight, out int width, out int height));
-            using (ProtokitePlaytestLibVpx.Decoder decoder = new ProtokitePlaytestLibVpx.Decoder(video.Codec))
-            {
-                foreach (byte[] frame in frames)
-                    Assert.IsNotNull(decoder.Decode(frame, width, height, out string error), error);
-            }
+            StringAssert.EndsWith(".mp4", summary.FilePath);
+            ProtokitePlaytestWindowsMp4Reader.Result read = ProtokitePlaytestWindowsMp4Reader.Read(summary.FilePath);
+            Assert.IsNull(read.Error, "Windows reads the test video");
+            Assert.AreEqual(summary.FramesWritten, read.TimesMs.Count, "Windows decodes every frame in the file");
+            Assert.GreaterOrEqual(read.TimesMs.Count, 20, "Two seconds at 15 frames a second, give or take a frame the screen was not ready for");
         }
 
         // What a camera clearing to this colour, or an unlit shader drawing it, puts on the screen: its sRGB bytes.
@@ -217,9 +211,10 @@ namespace Protokite.Playtest.Tests
         {
             string all = $"{where}. Drawn {drawn}, screenshot {screenshot}, video {video}";
             Assert.IsTrue(Vector3.Distance(drawn, screenshot) <= 3f, "Precondition: the screenshot shows the scene. " + all);
-            Assert.AreEqual(screenshot.x, video.x, 1.0, all + ": red");
-            Assert.AreEqual(screenshot.y, video.y, 1.0, all + ": green");
-            Assert.AreEqual(screenshot.z, video.z, 1.0, all + ": blue");
+            // Within 2: converting to 8-bit YUV and back, through the encoder, moves a flat colour by up to that (measured, BT.709 both ways).
+            Assert.AreEqual(screenshot.x, video.x, 2.0, all + ": red");
+            Assert.AreEqual(screenshot.y, video.y, 2.0, all + ": green");
+            Assert.AreEqual(screenshot.z, video.z, 2.0, all + ": blue");
         }
 
         // The mean colour, 0 to 255, of the rows between two heights measured from the bottom, away from the sides.
@@ -240,69 +235,24 @@ namespace Protokite.Playtest.Tests
             return new Vector3((float)(r / count), (float)(g / count), (float)(b / count));
         }
 
-        // The same for a decoded frame, whose rows run from the top, turned back to colour the way a player does (BT.601, limited range).
-        private static Vector3 MeanOfVideo(byte[] i420, int width, int height, float fromTop, float toTop)
+        // The same for a decoded frame, whose rows run from the top, turned back to colour the way a player does with the colour the stream states (BT.709, limited range).
+        private static Vector3 MeanOfVideo(byte[] nv12, int width, int height, float fromTop, float toTop)
         {
-            double r = 0, g = 0, b = 0;
+            Vector3 sum = Vector3.zero;
             int count = 0;
-            int uPlane = width * height;
-            int vPlane = uPlane + (width / 2) * (height / 2);
             for (int y = (int)(height * fromTop); y < (int)(height * toTop); y++)
             for (int x = width / 10; x < width * 9 / 10; x++)
             {
-                double luma = 1.164 * (i420[y * width + x] - 16);
-                int chroma = (y / 2) * (width / 2) + x / 2;
-                double u = i420[uPlane + chroma] - 128;
-                double v = i420[vPlane + chroma] - 128;
-                r += Clamp(luma + 1.596 * v);
-                g += Clamp(luma - 0.392 * u - 0.813 * v);
-                b += Clamp(luma + 2.017 * u);
+                sum += MeanOfVideoBox(nv12, width, height, x, y);
                 count++;
             }
-            return new Vector3((float)(r / count), (float)(g / count), (float)(b / count));
+            return sum / count;
         }
 
-        private static Vector3 MeanOfVideoBox(byte[] i420, int width, int height, int x, int y)
+        private static Vector3 MeanOfVideoBox(byte[] nv12, int width, int height, int x, int y)
         {
-            int uPlane = width * height;
-            int vPlane = uPlane + (width / 2) * (height / 2);
-            double luma = 1.164 * (i420[y * width + x] - 16);
-            int chroma = (y / 2) * (width / 2) + x / 2;
-            double u = i420[uPlane + chroma] - 128;
-            double v = i420[vPlane + chroma] - 128;
-            return new Vector3((float)Clamp(luma + 1.596 * v), (float)Clamp(luma - 0.392 * u - 0.813 * v), (float)Clamp(luma + 2.017 * u));
-        }
-
-        private static double Clamp(double value) => value < 0 ? 0 : value > 255 ? 255 : value;
-
-        // Each frame's bytes, walked cluster by cluster from the first; written apart from the package's own reader.
-        private static List<byte[]> ReadFrames(byte[] file)
-        {
-            List<byte[]> frames = new List<byte[]>();
-            int position = IndexOf(file, new byte[] { 0x1F, 0x43, 0xB6, 0x75 });
-            while (position >= 0 && position + 23 <= file.Length && file[position] == 0x1F && file[position + 1] == 0x43)
-            {
-                int clusterBytes = ((file[position + 4] & 0x0F) << 24) | (file[position + 5] << 16) | (file[position + 6] << 8) | file[position + 7];
-                int frameBytes = clusterBytes - 15;
-                byte[] frame = new byte[frameBytes];
-                Array.Copy(file, position + 23, frame, 0, frameBytes);
-                frames.Add(frame);
-                position += 8 + clusterBytes;
-            }
-            return frames;
-        }
-
-        private static int IndexOf(byte[] bytes, byte[] pattern)
-        {
-            for (int i = 0; i + pattern.Length <= bytes.Length; i++)
-            {
-                int j = 0;
-                while (j < pattern.Length && bytes[i + j] == pattern[j])
-                    j++;
-                if (j == pattern.Length)
-                    return i;
-            }
-            return -1;
+            int[] rgb = ProtokitePlaytestWindowsMp4Reader.Rgb(nv12, width, height, x, y);
+            return new Vector3(rgb[0], rgb[1], rgb[2]);
         }
     }
 }

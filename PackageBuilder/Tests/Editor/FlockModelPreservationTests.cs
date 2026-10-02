@@ -46,7 +46,29 @@ namespace Flock.Tests.Editor
             XDocument document = Parse(FlockModelPreservation.BuildLinkXml(new Dictionary<string, SortedSet<string>>()));
             XElement sdk = Assemblies(document).Single(element => (string)element.Attribute("fullname") == "Flock.Runtime");
             Assert.AreEqual("all", (string)sdk.Attribute("preserve"));
-            Assert.AreEqual(1, Assemblies(document).Count(), "With no generated code, only the SDK is listed");
+            string[] framework = FlockModelPreservation.FrameworkTypesMadeByReflection.Select(entry => entry.Assembly).Distinct().ToArray();
+            CollectionAssert.AreEquivalent(new[] { "Flock.Runtime" }.Concat(framework).ToArray(),
+                Assemblies(document).Select(element => (string)element.Attribute("fullname")).ToArray(),
+                "With no generated code, only the SDK and the .NET types it needs are listed");
+        }
+
+        [Test]
+        public void TheConfigurationHostEveryWebRequestStartsWithIsKept()
+        {
+            // Measured: a Mono player stripped at High lost this constructor, and the SDK could make no request at all.
+            XDocument document = Parse(FlockModelPreservation.BuildLinkXml(new Dictionary<string, SortedSet<string>>()));
+            XElement configuration = Assemblies(document).Single(element => (string)element.Attribute("fullname") == "System.Configuration");
+            Assert.AreEqual("1", (string)configuration.Attribute("ignoreIfMissing"), "A build without the assembly (IL2CPP's) must not fail");
+            Assert.IsNull(configuration.Attribute("preserve"), "Only the types listed, not the whole assembly");
+            XElement host = configuration.Elements("type").Single(element => (string)element.Attribute("fullname") == "System.Configuration.ExeConfigurationHost");
+            Assert.AreEqual("all", (string)host.Attribute("preserve"), "Its constructor, which .NET calls by reflection");
+
+            // Measured next: with the host kept, the system.net section types machine.config names were the ones lost.
+            XElement system = Assemblies(document).Single(element => (string)element.Attribute("fullname") == "System");
+            Assert.AreEqual("1", (string)system.Attribute("ignoreIfMissing"));
+            Assert.IsNull(system.Attribute("preserve"), "Only the namespace, not the whole of System");
+            XElement sections = system.Elements("namespace").Single(element => (string)element.Attribute("fullname") == "System.Net.Configuration");
+            Assert.AreEqual("all", (string)sections.Attribute("preserve"));
         }
 
         [Test]

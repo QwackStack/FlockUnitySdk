@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.63.0]
+
+Released together with the Protokite Playtest's move to Windows' own video encoder, which ships no native file (see its
+changelog: a breaking change to the playtest's video settings only).
+
+### Fixed
+- **A Mono player stripped at High could not start the SDK.** The first request failed with "The type initializer for
+  'System.Net.HttpWebRequest' threw an exception": the linker removed .NET's configuration host and its `system.net` section types,
+  which .NET builds by reflection the first time a web request is used, so the SDK could make no request at all. Every player build
+  now keeps `System.Configuration.ExeConfigurationHost` and the `System.Net.Configuration` namespace. Measured in Mono players on
+  Unity 2021.3 and 6000.3, which now sign in and send their events at High; IL2CPP players at High were not affected.
+- The SDK's own tests compile on Unity 2021.3 again: two used `PlayerSettings.insecureHttpOption` (2022.1 and later) and NUnit's
+  `Assert.DoesNotThrowAsync`, which 2021.3's test framework does not have.
+
 ## [1.62.0]
 
 No changes to the Flock SDK's code. The README's playtesting section links the Protokite Playtest's new step-by-step guide,

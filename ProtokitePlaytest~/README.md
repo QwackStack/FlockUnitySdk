@@ -261,10 +261,11 @@ install it there.
 ## Video
 
 When the playtest's config turns **video_recording** on, the game's screen is recorded from the moment the config loads,
-before anyone signs in: one recording a launch, written as it records as a WebM file a browser plays with nothing installed.
-It stops for good at the length or size limit, or when the game quits; quitting waits for the file within the same 3
-seconds as the session end, and a file not finished by then stays as its `.part` file. Time the game spends in the
-background is left out.
+before anyone signs in: one recording a launch, encoded as H.264 by the graphics card's own video encoder and written as it
+records as an MP4 file a browser plays with nothing installed. Each frame is written whole as it comes, so a recording cut
+off by a crash keeps every frame before the cut. It stops for good at the length or size limit, or when the game quits;
+quitting waits for the file within the same 3 seconds as the session end, and a file not finished by then stays as its
+`.part` file, which the next launch finishes. Time the game spends in the background is left out.
 
 ```csharp
 ProtokitePlaytest.IsRecordingVideo       // this launch's recording is capturing (a test video does not count)
@@ -353,21 +354,19 @@ take each other's room. One that is finished but in use (being uploaded, or its 
 either, and counts at what it takes. With less than 1 MB left, that launch records no video, and a warning names the
 setting to raise.
 
-The frame is copied, scaled and converted on the graphics card and read back without waiting for it; encoding and writing
-each run on a thread of their own, and a frame that cannot keep up is dropped rather than stalling the game. The log says
-where the recording goes when it starts, and what it holds, and how many frames were dropped and why, when it ends.
+The frame is copied, scaled and converted on the graphics card and read back without waiting for it, then encoded on the
+graphics card too; handing frames to the encoder and writing the file each run on a thread of their own, and a frame that
+cannot keep up is dropped rather than stalling the game. The log says where the recording goes when it starts, and what it
+holds, which encoder made it, and how many frames were dropped and why, when it ends.
 
 The settings are in **Protokite > Playtest > Settings**, under **Video recording**:
 
 | Setting | Default | |
 |---|---|---|
-| Video Codec | VP8 | VP8 costs a slow PC least; VP9 makes smaller files for more processor time |
 | Video Width, Video Height | 1280, 720 | The largest the video is. The screen's shape is kept, a smaller window is not enlarged, and each side is rounded down to a multiple of 16 |
 | Video Frames Per Second | 15 | |
-| Video Bitrate Kbps | 1500 | |
-| Encoder Threads | 1 | |
-| Use Codec Default Speed, Encoder Speed | on, 12 | Off: the speed you set (VP8 -16 to 16, VP9 -9 to 9; higher is faster and looks worse) |
-| Encoder Below Game Priority | on | The encoder gives way to the game when the processor is busy |
+| Video Bitrate Kbps | 1500 | The most the video uses; a still picture uses far less |
+| Allow Software Encoder | off | On: a PC whose graphics card has no H.264 encoder records with Windows' own encoder on the processor instead, which costs the game frame rate (measured at the defaults: 11% of a processor core on a desktop, against 3% on the graphics card; about 30% of a core on a slow laptop, where capturing the screen took 2 to 4% and the game kept its 60 frames a second) |
 | Max Recording Minutes | 60 | |
 | Max Recording Size Mb | 1536 | |
 | Recordings Disk Budget Mb | 4096 | The most every recording kept on the machine may take together (above) |
@@ -421,23 +420,24 @@ sends, so you can find them in Flock and Protokite. The session's end is sent wh
 
 ## Platforms
 
-Everything above runs wherever the Flock SDK runs. **Video is recorded on 64-bit Windows only** (the Editor and players,
-Mono and IL2CPP): the package carries its encoder there as `Runtime/Plugins/x86_64/protokite_vpx.dll`. Any other build
-leaves the DLL out, records no video, and says so once in the log. That includes 32-bit and ARM64 Windows builds, which
-are told video is for 64-bit Windows rather than that the DLL is missing. On 64-bit Windows, recording runs on Direct3D 11
-and 12, Vulkan and OpenGL, in the Built-in Render Pipeline and URP, in Linear and Gamma colour. It needs a graphics card
-that runs compute shaders; a game that draws nothing (a server build, or one started with `-nographics` or `-batchmode`)
-records nothing.
+Everything above runs wherever the Flock SDK runs. Measured in 64-bit Windows players built with Unity 2021.3 and 6000.3, Mono (Minimal
+stripping) and IL2CPP (High stripping): each records, uploads and ends its session. **Video is recorded on 64-bit Windows only** (the Editor and players,
+Mono and IL2CPP), through Windows' own H.264 encoder on the graphics card (Media Foundation). The package ships no native
+file, so there is nothing of its own for Windows 11's Smart App Control, which refuses unsigned native files it does not
+recognise, to refuse. A PC whose graphics card has no H.264 encoder records no video and says why once in the log, unless
+**Allow Software Encoder** is on; so does a Windows N edition without its Media Feature Pack, which has no Media Foundation.
+Any other build records no video and says so once in the log, including 32-bit and ARM64 Windows builds. On 64-bit Windows,
+recording runs on Direct3D 11 and 12, Vulkan and OpenGL, in the Built-in Render Pipeline and URP, in Linear and Gamma
+colour. It needs a graphics card that runs compute shaders; a game that draws nothing (a server build, or one started with
+`-nographics` or `-batchmode`) records nothing. The setup window names the encoder Windows offers first on the PC you work
+on, and a test video shows whether it records.
+
+Recordings an earlier version of the package kept as WebM files are still finished after a crash and uploaded as they are.
 
 **On WebGL** the playtest's files (the consent answer, the device id and feedback forms waiting to be sent) are copied to the
 browser's storage after every change, so they are there on the player's next visit wherever the browser keeps the site's data
 (a private window forgets it when closed, and a browser where the player blocked site data keeps none). A change made in the
 moment before the tab closes may not finish copying, and two tabs of one game share one storage, where the last to copy wins.
-
-## Third-party software
-
-The Windows video encoder contains **libvpx 1.17.0** (VP8 and VP9), © The WebM Project authors, under a BSD licence with an
-additional patent grant: see `Runtime/Plugins/x86_64/libvpx-LICENSE.txt` and `libvpx-PATENTS.txt`, which ship with it.
 
 ## Remove it
 

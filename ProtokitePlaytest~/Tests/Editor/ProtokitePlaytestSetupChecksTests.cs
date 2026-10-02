@@ -400,6 +400,52 @@ namespace Protokite.Playtest.Tests
         }
 
         [Test]
+        public void TheVideoCheckSaysWhatRecordsOnThisPcBesideItsAnswer()
+        {
+            ProtokitePlaytestSetupInput input = ProtokitePlaytestSetupInput.From(Playtest(), Flock(PlaytestVersionName, PlaytestVersionId), BuildTarget.StandaloneWindows64, "x64");
+            input.ThisPcEncoder = "NVIDIA H.264 Encoder MFT (on the graphics card)";
+            ProtokitePlaytestSetupCheck check = Check(input, ProtokitePlaytestSetupChecks.VideoCheck);
+            Assert.IsTrue(check.Passed);
+            StringAssert.Contains("Allow Software Encoder", check.Detail, "A player's PC with no graphics card encoder is named, with the setting");
+            StringAssert.EndsWith("Windows offers NVIDIA H.264 Encoder MFT (on the graphics card) first; a test video shows whether it records.", check.Detail,
+                "Offered, not promised: a listed encoder may still fail to start");
+
+            input.ThisPcEncoder = null;
+            input.WhyThisPcRecordsNoVideo = ProtokitePlaytestVideoEncoders.NoGraphicsCardEncoder;
+            check = Check(input, ProtokitePlaytestSetupChecks.VideoCheck);
+            Assert.IsTrue(check.Passed, "This PC is not a player's: the build still records on PCs that have an encoder");
+            StringAssert.Contains("This PC records no video, so it records no test video: " + ProtokitePlaytestVideoEncoders.NoGraphicsCardEncoder, check.Detail);
+        }
+
+#if UNITY_EDITOR_WIN
+        [Test]
+        public void ReadingTheProjectAsksWindowsWhatRecordsOnThisPc()
+        {
+            // What this PC offers stands in, so the test is about reading the project, not about this PC's graphics card.
+            ProtokitePlaytestVideoEncoders.ResetForNewLaunch();
+            ProtokitePlaytestVideoEncoders.LookForEncodersForTesting = () => new KeyValuePair<List<ProtokitePlaytestEncoderFound>, string>(
+                new List<ProtokitePlaytestEncoderFound> { new ProtokitePlaytestEncoderFound { Name = "H264 Encoder MFT" }, new ProtokitePlaytestEncoderFound { Name = "A Card's Encoder", OnGraphicsCard = true } }, null);
+            try
+            {
+                ProtokitePlaytestSetupInput input = ProtokitePlaytestSetupInput.FromProject();
+                Assert.IsNull(input.WhyThisPcRecordsNoVideo);
+                Assert.AreEqual("A Card's Encoder (on the graphics card)", input.ThisPcEncoder, "A graphics card encoder is named before the software one");
+
+                ProtokitePlaytestVideoEncoders.ResetForNewLaunch();
+                ProtokitePlaytestVideoEncoders.LookForEncodersForTesting = () => new KeyValuePair<List<ProtokitePlaytestEncoderFound>, string>(null, ProtokitePlaytestVideoEncoders.MediaFoundationMissing);
+                input = ProtokitePlaytestSetupInput.FromProject();
+                Assert.AreEqual(ProtokitePlaytestVideoEncoders.MediaFoundationMissing, input.WhyThisPcRecordsNoVideo);
+                Assert.IsNull(input.ThisPcEncoder);
+            }
+            finally
+            {
+                ProtokitePlaytestVideoEncoders.LookForEncodersForTesting = null;
+                ProtokitePlaytestVideoEncoders.ResetForNewLaunch();
+            }
+        }
+#endif
+
+        [Test]
         public void TheCheckAndTheGameAgreeWhichProcessorsRecord()
         {
             // The runtime leaves the encoder out of every Windows build that is not x64; the check names the same builds.

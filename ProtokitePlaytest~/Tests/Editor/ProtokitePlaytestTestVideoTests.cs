@@ -26,7 +26,7 @@ namespace Protokite.Playtest.Tests
         private ProtokitePlaytestSettingsForTests _settings;
         private string _folder;
         private FakeFrameSource _source;
-        private FakeVp8Encoder _encoder;
+        private FakeH264Encoder _encoder;
         private int _sourcesMade;
 
         private string Recordings => Path.Combine(_folder, "Recordings");
@@ -49,7 +49,7 @@ namespace Protokite.Playtest.Tests
             _encoder = null;
             _sourcesMade = 0;
             // A capture and an encoder of their own for each recording, as a game makes them.
-            ProtokitePlaytest.VideoEncoderForTesting = () => _encoder = new FakeVp8Encoder();
+            ProtokitePlaytest.VideoEncoderForTesting = () => _encoder = new FakeH264Encoder();
             ProtokitePlaytest.VideoFrameSourceForTesting = (settings, format) =>
             {
                 _sourcesMade++;
@@ -130,7 +130,7 @@ namespace Protokite.Playtest.Tests
             Assert.AreEqual(ProtokitePlaytestStatus.TurnedOff, ProtokitePlaytest.Status, "Precondition: playtesting is off and Flock is not running");
             RecordTestVideo(2);
             Assert.AreEqual(ProtokitePlaytestTestVideoState.WaitingToStart, ProtokitePlaytest.TestVideoState, "It starts at the end of a frame");
-            LogAssert.Expect(LogType.Log, new Regex(@"Recording a test video to .*TestVideos.*test-recording-.*\.webm\.part, at 64x48 and 15 frames a second \(Vp8\)\. It stops after 2 seconds of play"));
+            LogAssert.Expect(LogType.Log, new Regex(@"Recording a test video to .*TestVideos.*test-recording-.*\.mp4\.part, at 64x48 and 15 frames a second, as H\.264\. It stops after 2 seconds of play"));
             Frames(1);
             Assert.AreEqual(ProtokitePlaytestTestVideoState.Recording, ProtokitePlaytest.TestVideoState);
             string partPath = ProtokitePlaytest.TestVideoPartPath;
@@ -158,7 +158,7 @@ namespace Protokite.Playtest.Tests
             Frames(1);
             ProtokitePlaytestVideoSettings expected = ProtokitePlaytestVideoSettings.From(_settings.Settings);
             expected.MaxSeconds = 20;
-            long ownLength = expected.BytesToMakeRoomFor(ProtokitePlaytestWebmFile.FrameHeaderBytes);
+            long ownLength = expected.BytesToMakeRoomFor(ProtokitePlaytestMp4File.FrameHeaderBytes);
             Assert.Greater(ownLength, ProtokitePlaytestRecordingsFolder.SmallestRoomForARecording, "Precondition: twenty seconds need more than the least a recording starts with");
             string run = RunFolderOf(ProtokitePlaytest.TestVideoPartPath);
             Assert.AreEqual(ownLength.ToString(), File.ReadAllText(Path.Combine(run, "reserved-bytes.txt")),

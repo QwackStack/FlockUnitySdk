@@ -4,6 +4,7 @@
     "references": [
         "Protokite.Playtest",
         "Protokite.Playtest.Editor",
+        "Protokite.Playtest.Tests.PlayMode",
         "Flock.Runtime",
         "Flock.Tests.Support",
         "Unity.Newtonsoft.Json",

@@ -607,7 +607,7 @@ namespace Protokite.Playtest.Tests
         private void RecordWithFakes()
         {
             ProtokitePlaytest.RecordingsFolderForTesting = Path.Combine(_folder, "Recordings");
-            ProtokitePlaytest.VideoEncoderForTesting = () => new FakeVp8Encoder();
+            ProtokitePlaytest.VideoEncoderForTesting = () => new FakeH264Encoder();
             ProtokitePlaytest.VideoFrameSourceForTesting = (settings, format) => new FakeFrameSource();
         }
 

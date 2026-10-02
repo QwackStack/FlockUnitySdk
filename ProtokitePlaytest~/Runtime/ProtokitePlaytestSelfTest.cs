@@ -342,14 +342,23 @@ namespace Protokite.Playtest
                 return run.Skip("the playtest records no video: it does not turn video on, or the player's answer does not allow the screen.");
             // The launch's recording starts on a frame once earlier launches' recordings are gone through.
             await run.WaitUntilAsync(() => _videoStartedThisLaunch, SelfTestWaitSecondsForTesting ?? SelfTestWaitSeconds);
-            if (_videoRecording == null)
+            // A recording that already ended (its length limit, or an encoder that could not start) has started; its file is judged below.
+            if (_videoRecording == null && FinishedVideo == null)
             {
                 string why = _videoNotStartedBecause ?? "no recording started within the wait.";
                 return _videoNotStartedIsExpected ? run.Skip("this build records no video: " + why) : run.Fail("the recording did not start: " + why);
             }
+            // Frames are captured once the graphics card's encoder has started (0.1 to 2.2 s, measured): a recording stopped before its
+            // first frame holds nothing to send.
+            await run.WaitUntilAsync(() => _videoRecording == null || !_videoRecording.IsCapturing || _videoRecording.FramesAskedFor > 0,
+                SelfTestWaitSecondsForTesting ?? SelfTestWaitSeconds);
             if (IsRecordingVideo && !StopRecordingAndSendIt())
                 return run.Fail("the recording could not be stopped and sent.");
-            await run.WaitUntilAsync(() => ThisLaunchsUpload != null && ThisLaunchsUpload.IsCompleted, SelfTestWaitSecondsForTesting ?? SelfTestUploadWaitSeconds);
+            await run.WaitUntilAsync(() => (ThisLaunchsUpload != null && ThisLaunchsUpload.IsCompleted) || (FinishedVideo != null && FinishedVideo.FilePath == null),
+                SelfTestWaitSecondsForTesting ?? SelfTestUploadWaitSeconds);
+            // A recording that kept no file has nothing to upload: its own reason, not the upload's wait running out.
+            if (FinishedVideo != null && FinishedVideo.FilePath == null)
+                return run.Fail("the recording kept no file to upload: " + (FinishedVideo.Error ?? "no frame was captured before it stopped."));
             if (ThisLaunchsUpload == null || !ThisLaunchsUpload.IsCompleted)
                 return run.Fail("the recording was not uploaded within the wait: its file was not finished, or the upload is still going.");
             ProtokitePlaytestRecordingUploadOutcome outcome = await ThisLaunchsUpload;

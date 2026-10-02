@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.RegularExpressions;
 using Flock.Config;
 using UnityEditor;
@@ -58,6 +59,12 @@ namespace Protokite.Playtest.Editor
         /// <summary>What the build settings name a 64-bit Windows player's processor ("x64", "ARM64"); empty where the editor has no such setting, which builds x64.</summary>
         public string WindowsArchitecture;
 
+        /// <summary>The encoder Windows offers first on this PC, the editor's, or null when it offers none a recording may use.</summary>
+        public string ThisPcEncoder;
+
+        /// <summary>Why this PC records no video, or null when it records.</summary>
+        public string WhyThisPcRecordsNoVideo;
+
         /// <summary>The checks' input from these settings, either of which may be null (the project has none).</summary>
         public static ProtokitePlaytestSetupInput From(ProtokitePlaytestSettings playtest, FlockConfigAsset flock, BuildTarget buildTarget, string windowsArchitecture)
             => new ProtokitePlaytestSetupInput
@@ -74,10 +81,23 @@ namespace Protokite.Playtest.Editor
                 WindowsArchitecture = windowsArchitecture ?? ""
             };
 
-        /// <summary>The settings a build of this project carries, and the platform it is built for now.</summary>
+        /// <summary>The settings a build of this project carries, the platform it is built for now, and what records on this PC.</summary>
         public static ProtokitePlaytestSetupInput FromProject()
-            => From(ProtokitePlaytestSettings.Load(), LoadFlockSettings(), EditorUserBuildSettings.activeBuildTarget,
+        {
+            ProtokitePlaytestSettings playtest = ProtokitePlaytestSettings.Load();
+            ProtokitePlaytestSetupInput input = From(playtest, LoadFlockSettings(), EditorUserBuildSettings.activeBuildTarget,
                 EditorUserBuildSettings.GetPlatformSettings(BuildPipeline.GetBuildTargetName(BuildTarget.StandaloneWindows64), "Architecture"));
+            bool allowSoftware = playtest != null && playtest.AllowSoftwareEncoder;
+            // Asked of Windows once an editor session; the game's graphics card maker's encoder is the one tried first.
+            input.WhyThisPcRecordsNoVideo = ProtokitePlaytestVideoEncoders.WhyThisPcRecordsNoVideo(allowSoftware);
+            if (input.WhyThisPcRecordsNoVideo == null)
+                input.ThisPcEncoder = ProtokitePlaytestVideoEncoders.EncodersOnThisPc(out _)?
+                    .Where(encoder => encoder.OnGraphicsCard || allowSoftware)
+                    .OrderBy(encoder => encoder.OnGraphicsCard ? 0 : 1)
+                    .ThenBy(encoder => encoder.VendorId == SystemInfo.graphicsDeviceVendorID ? 0 : 1)
+                    .FirstOrDefault()?.ToString();
+            return input;
+        }
 
         /// <summary>The Flock settings a build carries, or null.</summary>
         public static FlockConfigAsset LoadFlockSettings() => Resources.Load<FlockConfigAsset>(FlockSettingsResourceName);
@@ -228,13 +248,22 @@ namespace Protokite.Playtest.Editor
         private static ProtokitePlaytestSetupCheck CheckVideo(ProtokitePlaytestSetupInput input)
         {
             if (RecordsVideo(input.BuildTarget, input.WindowsArchitecture))
-                return Passed(VideoCheck, "Players built for this platform record video", "The build target is 64-bit Windows, x64.");
+                return Passed(VideoCheck, "Players built for this platform record video",
+                    "The build target is 64-bit Windows, x64. Players record with their graphics card's own H.264 encoder, and a PC without one records " +
+                    "no video unless Allow Software Encoder is on." + ThisPc(input));
             string platform = input.BuildTarget == BuildTarget.StandaloneWindows64 ? $"64-bit Windows on {input.WindowsArchitecture}" : input.BuildTarget.ToString();
             return Failed(VideoCheck, $"Players built for {platform} record no video",
                 "Only 64-bit Windows (x64) builds record the screen. This build still runs the playtest, without video. " +
                 "If you want video, switch the build target to Windows, x64.",
                 ProtokitePlaytestSetupFix.OpenBuildProfiles);
         }
+
+        // This PC is not a player's, so what it can record is said beside the check, never as its answer.
+        private static string ThisPc(ProtokitePlaytestSetupInput input)
+            // Offered is not proven: an encoder Windows lists may still fail to start, which only a test video shows.
+            => input.ThisPcEncoder != null ? $" On this PC, Windows offers {input.ThisPcEncoder} first; a test video shows whether it records."
+                : input.WhyThisPcRecordsNoVideo != null ? $" This PC records no video, so it records no test video: {input.WhyThisPcRecordsNoVideo}"
+                : "";
 
         private static ProtokitePlaytestSetupCheck Passed(string id, string title, string detail)
             => new ProtokitePlaytestSetupCheck { Id = id, Passed = true, Title = title, Detail = detail, Fix = ProtokitePlaytestSetupFix.None };

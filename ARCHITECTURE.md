@@ -91,7 +91,7 @@ Plain serializable DTOs mirroring backend wire shapes — auth, analytics, shop,
 - **FlockConfigLocator** — single source for "which FlockConfig asset".
 - **FlockVersionResolver** — bakes Game-Version name→id at edit time so runtime init needs no network.
 - **FlockPlayModeGuard** / **FlockBuildGuard** — block Play / build when the SDK is unset or schemas drifted.
-- **FlockModelPreservation** — `IUnityLinkerProcessor`: on every player build writes `Library/Flock/link.xml` keeping `Flock.Runtime` whole and each `Flock.Generated.*` namespace in whichever player assembly holds it, so IL2CPP Medium/High stripping cannot remove what Newtonsoft reaches by reflection. A `link.xml` inside a UPM package is not read by the linker (measured); a runtime-only `.unitypackage` (Package Builder, Editor unticked) ships a static one instead.
+- **FlockModelPreservation** — `IUnityLinkerProcessor`: on every player build writes `Library/Flock/link.xml` keeping `Flock.Runtime` whole and each `Flock.Generated.*` namespace in whichever player assembly holds it, so IL2CPP Medium/High stripping cannot remove what Newtonsoft reaches by reflection; it also keeps .NET's `System.Configuration.ExeConfigurationHost` and `System.Net.Configuration`, which a Mono player stripped at High otherwise loses, so that no web request could start (measured, 1.63.0). A `link.xml` inside a UPM package is not read by the linker (measured); a runtime-only `.unitypackage` (Package Builder, Editor unticked) ships a static one instead.
 - **FlockCodeGenValidator** — warns when the baked version id drifts from generated schemas; `GetGeneratedGameVersionId()` returning null is the "codegen never ran" signal.
 - **FlockCodegenCompileHint** / **FlockCodegenHintClassifier** — watch compilation and point at Codegen > Sync when an unresolved member looks like a generated accessor (classifier is pure/testable). Recompiles only — a cold start compiles before `[InitializeOnLoad]`; the Codegen tab's Status card covers that.
 - **FlockSetupChecklist** / **FlockSetupClassifier** (+ `FlockSetupItem`/`FlockSetupState`/`FlockSetupFacts`/verdict enums) — pure, testable setup-readiness logic.
@@ -102,7 +102,7 @@ Plain serializable DTOs mirroring backend wire shapes — auth, analytics, shop,
   Package Builder**, and `FlockMaintainerToolingTests` fails if the SDK itself names a Qwacks Dev menu.
 - **FlockPlaytestInstaller** — the Playtesting tab's install, update and remove for the Protokite Playtest package: downloads `ProtokitePlaytest-<version>.unitypackage` from the GitHub release matching `FlockSdkVersion.Current` (a blocking, cancellable download, so a script reload cannot drop it) and imports it; an update deletes the old `Assets/` copy only once the new one has downloaded, so a dropped file cannot linger; every download result but success counts as a failure (a failed disk write answers 200). Finds an installed copy from its assembly definition, wherever it is. Reads the version through `InternalsVisibleTo("Flock.Editor")`. Refuses to install into a Flock SDK exported without Analytics (`WhyPlaytestCannotBeInstalled`, whose refusal compiles only under `FLOCK_NO_ANALYTICS`: the playtest calls `FlockClient.Analytics`, and the define lives in Flock's own `csc.rsp`, where the playtest cannot see it). Names the two playtest menu items the tab
   opens (`SettingsMenuPath`, `SetupWindowMenuPath`); the playtest's own tests read both and check its menu has them.
-- **FlockPlaytestPackageBuilder** — maintainer tooling (`BuildFromMenu`, called by the maintainers' project from **Qwacks Dev > Build Protokite Playtest Package** through `InternalsVisibleTo("FlockTestRun.Editor")`, or `-executeMethod ...BuildFromCommandLine -playtestOut <folder>`): stages the playtest's `Runtime`, `Editor` and `Samples` under `Assets/ProtokitePlaytest/` with GUIDs made from their paths and exports it. Excluded from core's own `.unitypackage`.
+- **FlockPlaytestPackageBuilder** — maintainer tooling (`BuildFromMenu`, called by the maintainers' project from **Qwacks Dev > Build Protokite Playtest Package** through `InternalsVisibleTo("FlockTestRun.Editor")`, or `-executeMethod ...BuildFromCommandLine -playtestOut <folder>`): stages the playtest's `Runtime`, `Editor` and `Samples` under `Assets/ProtokitePlaytest/` with GUIDs made from their paths and exports it; a Unity text asset naming another shipped file by GUID (the panel settings name their theme) is given that file's new GUID (`NewGuidsByOldGuid`, `WithNewGuids`), or the release would name a file it does not carry (measured, 1.63.0). Excluded from core's own `.unitypackage`.
 
 ## Editor/Codegen/
 Writes typed accessors to `Assets/Flock/Generated/`. Each sync replaces the files it generated and nothing else: `GeneratedFiles` is the one owner of what codegen may delete (a `.g.cs` with codegen's header, its `.meta`, and a folder that leaves empty).
@@ -155,7 +155,9 @@ script.
   loaded. Tests point the file elsewhere with `ConsentFilePathForTesting` (the settings fixtures set it, asking off unless a
   test turns it on).
 - **Panels (`Runtime/Panels/`)** — **ProtokitePlaytestPanel**: a full-screen UI Toolkit panel built from code (a `UIDocument`
-  and a runtime `PanelSettings` with an empty theme, the built-in font given at the root, sorting order 30000), one view at a
+  and a copy of `Runtime/Resources/ProtokitePlaytestPanelSettings.asset`, which holds the empty imported theme
+  `ProtokitePlaytestPanelTheme.tss`: settings or a theme made in code warn and throw on Unity 2021.3, measured 1.63.0; the built-in
+  font given at the root, sorting order 30000), one view at a
   time so a second question can follow, the view itself focused so no button is; it keeps the cursor free while open, notes a
   game that locks it again, gives the game's cursor back when closed (not an ended launch's), and is drawn only while playing,
   not in batch mode, with graphics. **ProtokitePlaytestConsentQuestionView**: the words and the four buttons from one options
@@ -193,37 +195,51 @@ script.
   `Plugins/WebGL/FlockSavedFiles.jslib`), so the page keeps one queue of copies. `CopyToBrowserStorageForTesting` sees each
   request. A test fails any direct change outside it in `Runtime/` except `Video/` (never reached in a WebGL player); another
   fails when the call it imports is not one core's library defines.
-- **Video encoder (`Runtime/Video/`)** — `IProtokitePlaytestVideoEncoder` (configure, encode an I420 frame, finish) is
-  the one seam recording goes through; `ProtokitePlaytestLibVpx` is its only implementation and the only file that names
-  libvpx (a test scans for it). It calls `Runtime/Plugins/x86_64/protokite_vpx.dll`, a flat C wrapper over a static
-  libvpx 1.17.0 (VP8 + VP9, static CRT, KERNEL32 only), with timestamps in milliseconds. The DLL's own wrapper version is
-  checked before any other call; a missing, 32-bit or stale DLL means no video, logged once (Warning on Windows, Log
-  elsewhere). The DllImports are fenced to Windows, so every other platform compiles none. The C wrapper owns the checks
-  that guard native memory (frame length, codec, speed range). Settings default to D-Y9, with VP9 getting its own speed.
+- **Video encoder (`Runtime/Video/`)** — `IProtokitePlaytestVideoEncoder` (configure, encode an NV12 frame, finish; it
+  says what encoded once it has) is the one seam recording goes through. **ProtokitePlaytestWindowsVideoEncoder** drives
+  Windows' Media Foundation H.264 encoder (an MFT) directly from C# COM interop (`ProtokitePlaytestMediaFoundation`: every GUID
+  and interface method order read from the Windows SDK 10.0.26100 headers), so the package ships no native file (Smart App
+  Control refused the unsigned libvpx DLL earlier versions carried, measured). Graphics card encoders first, the game's
+  graphics card maker's first; Windows' software encoder only with Allow Software Encoder. `Start` starts Media Foundation
+  and the encoder on the recording's encoding thread before any frame is captured (0.1 to 2.2 s, measured), and that thread
+  makes every later call and disposes of it; graphics card encoders are asynchronous, so a frame waits (polled, 10 s at most)
+  for the encoder to ask for one and takes what it hands back, one output call per event: after a change of output format it
+  waits for the next event, as Windows requires, and re-reads the buffer size the new format needs (Intel's encoder refused
+  an output call on a laptop, most likely the one made at once). Tests drive this
+  through a stand-in that keeps those rules (`StandInEventEncoder`, via `TransformForTesting`). Each frame goes in with its own time and comes out in order
+  (B-frames off by low latency); output that is not an H.264 byte stream fails the recording rather than vanish, and the
+  units are stored after their lengths, the first frame carrying the stream's sequence and picture settings
+  (`ProtokitePlaytestH264`, which also checks a stored frame). **ProtokitePlaytestVideoEncoders** asks Windows once a launch,
+  on a thread of its own started with the finishing pass when playtesting is on, whether this PC records (64-bit Windows,
+  Media Foundation present, a graphics card encoder or the software one allowed); a recording or test video becomes due only
+  once that answer is in or its 10 s are up, so the main thread never waits for it, and a check an earlier launch started
+  never answers a later one. It logs the first "no video" (Warning on 64-bit Windows, Log elsewhere). Only these three files
+  name Media Foundation (a test scans for it).
 - **Recording file (`Runtime/Video/`)** — `IProtokitePlaytestRecordingFile` (open, write an encoded frame, close, finish a
-  file a dead run left) is the seam a recording's frames go through, and names its own content type for the upload;
-  `ProtokitePlaytestWebmFile` is its only implementation and the only file that names WebM (a test scans for it). VP8 or
-  VP9, one cluster per frame, every size written before its bytes, each frame handed to the operating system as it is
-  written; only the length and the duration are stamped on close, so a file cut off anywhere plays up to the cut. Every
-  offset is read off the file itself, never a constant, so the name written into the file can change. Finishing a cut-off
-  file checks each frame's first bytes against its codec (read from the file's own track), and the writer refuses any
-  frame that check would stop at; after a failed write it takes no more frames, and closing cuts the torn one off
-  (so does finishing the file after a crash). Written unbuffered, so a write the disk refuses fails where it happens.
+  file a dead run left; `BytesFor` says exactly what a frame adds, header included, for the size limit) is the seam a
+  recording's frames go through, and names its own content type for the upload; **ProtokitePlaytestMp4File** writes
+  fragmented MP4 and is the only file that names its boxes (a test scans for it). The file's type at open, the movie's
+  header with the first frame, then one fragment per frame written in one piece, unbuffered, each laid out the same way;
+  only the length (`mehd`) is stamped on close, so a file cut off anywhere plays up to the cut. Finishing a cut-off file walks
+  the fragments against that layout and each frame's first unit, and the writer refuses any frame that check would stop at;
+  after a failed write it takes no more frames, and closing cuts the torn one off. **ProtokitePlaytestWebmFinisher** finishes
+  the WebM recordings earlier versions left (read off the file itself), and **ProtokitePlaytestRecordingFiles** picks the
+  file a recording is written to and, by ending, the finisher and content type of a kept one.
   **ProtokitePlaytestFrameSchedule** decides which game frames are captured and when each is shown (the frame nearest each
   capture time, background time left out, times always rising, a length limit).
 - **Video capture (`Runtime/Video/`, `Runtime/ProtokitePlaytestVideo.cs`)** — `UpdateVideo` runs at the end of every
   frame from the driver's coroutine (a batchmode editor never gets there, so its tests run in a windowed editor). It starts
   the launch's one recording when the loaded config turns video on, before sign-in; a Flock restart (config fetched again)
   does not stop it, a loaded config with video off or a closed playtest does. **ProtokitePlaytestVideoRecording** owns the
-  schedule, an encoding thread (below the game's priority by default) and a writing thread, each fed by a bounded queue
+  schedule, an encoding thread (below the game's priority) and a writing thread, each fed by a bounded queue
   (8 and 300); frames are dropped before encoding and counted, the size limit is checked where a frame is handed to be
   written, the file is written as `.part` and renamed when finished, and a failure keeps every whole frame.
   **ProtokitePlaytestScreenFrameSource** is the one GPU class: `ScreenCapture.CaptureScreenshotIntoRenderTexture`, a blit to
-  the video size, the `ProtokitePlaytestRgbaToI420` compute shader (in the package's `Resources`), and
+  the video size, the `ProtokitePlaytestRgbaToNv12` compute shader (BT.709, limited range; in the package's `Resources`), and
   `AsyncGPUReadback` with at most 3 frames on their way, into a pool of blocks (`ProtokitePlaytestFrameBlocks`). Rows flip
   only where textures start at the bottom (OpenGL); Linear projects convert back to sRGB before conversion. The capture
   is asked for the encoder's pixel layout (the Android seam); `ProtokitePlaytestVideoEncoders` and
-  `ProtokitePlaytestRecordingFiles` are the only places that pick libvpx and WebM. **ProtokitePlaytestVideoSettings**
+  `ProtokitePlaytestRecordingFiles` are the only places that pick the encoder and the file. **ProtokitePlaytestVideoSettings**
   reads the settings asset's video values in range and fits the video to the screen, each side a multiple of 16. Quitting
   stops the capture first and waits for the file within the session end's 3 seconds.
 - **Recording files on disk (`Runtime/Video/ProtokitePlaytestRecordingsFolder.cs`)** — self-contained (it does not use core's
@@ -264,13 +280,6 @@ script.
   writer, an earlier one's from its ending through `ContentTypeFor`, a test holding the two equal); uploaded only on the
   storage's 2xx; one more try with a fresh link unless S3 said `SignatureDoesNotMatch`; uploaded → `DeleteEverything`. One
   `CancellationTokenSource` a launch, cancelled at quit, by `Stop` and on a new launch.
-- **Native~/** — `protokite_vpx.c`, `build-protokite-vpx.sh` (maintainers: finds Visual Studio 2022 through vswhere,
-  downloads libvpx, nasm and make pinned by SHA-256, builds, links, and refuses a DLL that needs more than KERNEL32;
-  `--check-dll <dll>` runs those checks alone) and `link-protokite-vpx.bat`. A `~` folder, so
-  Unity never imports it and it carries no `.meta`.
-- **ProtokitePlaytestNativePluginImport** (Editor) — the DLL's platforms (64-bit Windows editor and players only) set
-  through `PluginImporter` and saved, never by hand; run after every script load, because settings changed from an import
-  rule do not stick to a native plugin (measured).
 - **ProtokitePlaytestDriver** — a hidden `DontDestroyOnLoad` object started `BeforeSceneLoad` (`StartWithTheGame`) in every
   launch, playtesting on or off: with it off the status stays `TurnedOff` (no config, no session, no recording) and the
   driver only finishes and uploads what earlier launches kept, so a build with it off never strands a recording.
@@ -326,17 +335,21 @@ script.
   `ProtokitePlaytestPublicSurfaceTests`, whose reflection test fails on a public member with no call. **Sample**:
   `Samples/PlaytestSample` (asmdef `Protokite.Playtest.Samples`), one IMGUI script making every call, shipped in the
   `.unitypackage` and compiled by a git install as core's quick start is.
-- Tests: **ProtokitePlaytestStatusTests**, **ProtokitePlaytestVideoEncoderTests** (encode and decode frame for frame
-  with each codec, a fake encoder held to the same contract), **ProtokitePlaytestWebmFileTests** (real VP8 and VP9
-  recordings read back by a reader of their own, decoded frame for frame, cut off and finished; a fake recording file held
-  to the same contract), **ProtokitePlaytestFrameScheduleTests**, **ProtokitePlaytestVideoRecordingTests** (fake frames and a fake encoder
+- Tests: **ProtokitePlaytestStatusTests**, **ProtokitePlaytestVideoEncoderTests** (the real Windows encoder on a thread of
+  its own, decoded frame for frame by Windows' own reader, the keyframe interval, the software encoder only when allowed;
+  every "no video" reason through a stand-in for what Windows offers; scans for Media Foundation and for any native file; a
+  fake encoder held to the same contract), **ProtokitePlaytestMp4FileTests** (written files read back by a reader of their
+  own, cut off every way and finished, a real recording decoded by Windows; a fake recording file held to the same
+  contract), **ProtokitePlaytestH264Tests**, **ProtokitePlaytestWebmFinisherTests** (earlier versions' WebM, cut off and
+  finished), **ProtokitePlaytestFrameScheduleTests**, **ProtokitePlaytestVideoRecordingTests** (fake frames and a fake encoder
   through the real file: limits, drops, failures, the bounded wait), **ProtokitePlaytestScreenFrameSourceTests** (the real
   shader and readback on known colours), **ProtokitePlaytestVideoSettingsTests**, **ProtokitePlaytestVideoTests** (when the
   playtest records and what stops it), **ProtokitePlaytestPerformanceTimelineTests**, **ProtokitePlaytestHeavyAnalyticsTests**
   (through core's real event queue, each test in a launch folder of its own), and in PlayMode
   **ProtokitePlaytestHeavyAnalyticsPlayModeTests** (a real scene load, time away and an active scene through the real
   driver), **ProtokitePlaytestScreenRecordingTests** (the real screen, encoder
-  and file, judged against the screen; windowed editor only), **ProtokitePlaytestSessionTests** (held starts and ends for the quit and late-answer
+  and file, decoded by Windows (`ProtokitePlaytestWindowsMp4Reader`, in the PlayMode assembly, which the EditMode tests also
+  use) and judged against the screen; windowed editor only), **ProtokitePlaytestSessionTests** (held starts and ends for the quit and late-answer
   cases), **ProtokitePlaytestConfigTests** (EditMode, fake transport; a held-answer adapter
   for late replies), **ProtokitePlaytestDriverTests** (PlayMode, the real driver), **ProtokitePlaytestSetupChecksTests** (each
   check failing and passing from real settings objects, the project's own read, core's menu paths),

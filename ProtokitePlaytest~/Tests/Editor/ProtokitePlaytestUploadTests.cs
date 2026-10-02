@@ -43,7 +43,7 @@ namespace Protokite.Playtest.Tests
             + (video ? "true" : "false") + "},\"form\":null}}";
 
         private static string Link(string url) =>
-            "{\"result\":{\"upload_url\":\"" + url + "\",\"bucket\":\"protokite-playtest-recordings\",\"key\":\"recordings/t/pk-1/r.webm\"},"
+            "{\"result\":{\"upload_url\":\"" + url + "\",\"bucket\":\"protokite-playtest-recordings\",\"key\":\"recordings/t/pk-1/r.mp4\"},"
             + "\"error\":{\"code\":null},\"response\":{\"message\":null,\"code\":null}}";
 
         [SetUp]
@@ -56,7 +56,7 @@ namespace Protokite.Playtest.Tests
             Directory.CreateDirectory(_folder);
             ProtokitePlaytest.DeviceIdFilePathForTesting = Path.Combine(_folder, "device_id.txt");
             ProtokitePlaytest.RecordingsFolderForTesting = Recordings;
-            ProtokitePlaytest.VideoEncoderForTesting = () => new FakeVp8Encoder();
+            ProtokitePlaytest.VideoEncoderForTesting = () => new FakeH264Encoder();
             ProtokitePlaytest.VideoFrameSourceForTesting = (settings, format) => new FakeFrameSource();
             _uploader = new FakeUploader();
             FlockHttpClient.UseFileUploader(_uploader);
@@ -178,7 +178,7 @@ namespace Protokite.Playtest.Tests
                 FlockHttpRequest asked = flock.Transport.LastTo(LinkRoute);
                 Assert.AreEqual("http://protokite.test/game/sdk/playtest-session/pk-1/recording-upload", asked.Url);
                 Assert.AreEqual("POST", asked.Method);
-                Assert.AreEqual("video/webm", (string)JObject.Parse(asked.JsonBody)["content_type"]);
+                Assert.AreEqual("video/mp4", (string)JObject.Parse(asked.JsonBody)["content_type"]);
                 Assert.AreEqual(1, JObject.Parse(asked.JsonBody).Count, "Webcam and voice are left to the server's false");
                 Assert.AreEqual("test-key", asked.Headers["X-Flock-API-Key"]);
                 Assert.AreEqual("test-gvid", asked.Headers["X-Game-Version-ID"]);
@@ -186,7 +186,7 @@ namespace Protokite.Playtest.Tests
                 FakeUploader.Sent sent = _uploader.Single();
                 Assert.AreEqual(FirstLink, sent.Url, "To the link Protokite gave");
                 Assert.AreEqual(video, sent.FilePath);
-                Assert.AreEqual("video/webm", sent.ContentType, "The type the link was signed for");
+                Assert.AreEqual("video/mp4", sent.ContentType, "The type the link was signed for");
                 Assert.Greater(sent.FileBytes, 0, "The finished file was there to send");
                 Assert.IsFalse(Directory.Exists(runFolder), "Uploaded, so no longer kept on disk");
             }
@@ -234,7 +234,7 @@ namespace Protokite.Playtest.Tests
 
                 ProtokitePlaytestRecordingUploadOutcome outcome = ProtokitePlaytest.ThisLaunchsUpload.Result;
                 Assert.IsFalse(outcome.Uploaded, "A link was given, which Protokite counts; the file never arrived, which is what counts here");
-                Assert.AreEqual(1, Directory.GetFiles(runFolder, "*.webm").Length, "The video is kept");
+                Assert.AreEqual(1, Directory.GetFiles(runFolder, "*.mp4").Length, "The video is kept");
                 Assert.IsTrue(File.Exists(Path.Combine(runFolder, "session.json")), "With the session a later launch uploads it to");
                 Assert.AreEqual(2, _uploader.Count, "Tried once more");
             }
@@ -360,9 +360,9 @@ namespace Protokite.Playtest.Tests
                 yield return RecordAndStop();
                 yield return ThisLaunchsUpload();
 
-                Assert.AreEqual("video/mp4", (string)JObject.Parse(flock.Transport.LastTo(LinkRoute).JsonBody)["content_type"], "Asked for as its own type");
-                Assert.AreEqual("video/mp4", _uploader.Single().ContentType, "And sent as it");
-                StringAssert.EndsWith(".mp4", _uploader.Single().FilePath);
+                Assert.AreEqual("video/webm", (string)JObject.Parse(flock.Transport.LastTo(LinkRoute).JsonBody)["content_type"], "Asked for as its own type");
+                Assert.AreEqual("video/webm", _uploader.Single().ContentType, "And sent as it");
+                StringAssert.EndsWith(".webm", _uploader.Single().FilePath);
             }
         }
 
@@ -443,7 +443,7 @@ namespace Protokite.Playtest.Tests
                 Assert.IsTrue(_uploader.WasCancelled, "The upload was told to stop");
                 Assert.IsFalse(ProtokitePlaytest.ThisLaunchsUpload.Result.Uploaded);
                 Assert.IsTrue(File.Exists(Path.Combine(runFolder, "session.json")), "Kept, with its session, for the next launch");
-                Assert.AreEqual(1, Directory.GetFiles(runFolder, "*.webm").Length);
+                Assert.AreEqual(1, Directory.GetFiles(runFolder, "*.mp4").Length);
             }
         }
 
@@ -629,10 +629,11 @@ namespace Protokite.Playtest.Tests
             }
         }
 
-        private string PlantWaitingRecording(string name, string sessionId, string gameVersionId, string apiUrl = "http://protokite.test")
+        private string PlantWaitingRecording(string name, string sessionId, string gameVersionId, string apiUrl = "http://protokite.test", bool earlierVersionsWebm = false)
         {
             string run = ProtokitePlaytestPlantedRuns.Plant(Recordings, ProtokitePlaytestRecordingKind.Playtest, name, 1000,
-                finishedVideo: ProtokitePlaytestPlantedRuns.FinishedVideo(_folder, 3));
+                finishedVideo: earlierVersionsWebm ? ProtokitePlaytestPlantedRuns.FinishedWebm(_folder, 3) : ProtokitePlaytestPlantedRuns.FinishedVideo(_folder, 3),
+                videoEnding: earlierVersionsWebm ? ".webm" : ".mp4");
             JObject session = new JObject { ["protokite_session_id"] = sessionId, ["protokite_api_url"] = apiUrl };
             if (gameVersionId != null)
                 session["flock_game_version_id"] = gameVersionId;
@@ -674,7 +675,24 @@ namespace Protokite.Playtest.Tests
                 Assert.AreEqual("http://protokite.test/game/sdk/playtest-session/pk-9/recording-upload", asked.Url);
                 Assert.AreEqual("session-gvid", asked.Headers["X-Game-Version-ID"], "The version its session started with, which is how Protokite finds that session's playtest");
                 Assert.AreEqual("test-key", asked.Headers["X-Flock-API-Key"], "This launch's key: the session never saves one");
+                Assert.AreEqual("video/mp4", _uploader.Single().ContentType);
+                Assert.IsFalse(Directory.Exists(run), "Uploaded, so no longer kept");
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator AWebmRecordingAnEarlierVersionKeptIsSentAsWebm()
+        {
+            string run = PlantWaitingRecording("20260101-000000-00000001", "pk-9", "session-gvid", earlierVersionsWebm: true);
+            yield return TheEarlierRecordingsAreGoneThrough();
+            using (FlockTestClient flock = StartFlock(EarlierTransport()))
+            {
+                yield return EarlierUploads();
+                Assert.AreEqual((1, 0), ProtokitePlaytest.EarlierUploadsForTesting.Result);
+                Assert.AreEqual("video/webm", (string)JObject.Parse(flock.Transport.LastTo("/pk-9/recording-upload").JsonBody)["content_type"],
+                    "Asked for as what it is, though this version records MP4");
                 Assert.AreEqual("video/webm", _uploader.Single().ContentType);
+                StringAssert.EndsWith(".webm", _uploader.Single().FilePath);
                 Assert.IsFalse(Directory.Exists(run), "Uploaded, so no longer kept");
             }
         }
@@ -782,7 +800,7 @@ namespace Protokite.Playtest.Tests
             {
                 yield return EarlierUploads();
                 Assert.AreEqual((1, 0), ProtokitePlaytest.EarlierUploadsForTesting.Result);
-                StringAssert.EndsWith(".webm", _uploader.Single().FilePath, "The recording, not the stray file");
+                StringAssert.EndsWith(".mp4", _uploader.Single().FilePath, "The recording, not the stray file");
             }
         }
 
@@ -948,11 +966,10 @@ namespace Protokite.Playtest.Tests
             }
         }
 
-        /// <summary>A recording written as WebM that says it is another kind, so the type on the wire can be told from the default.</summary>
-        // A WebM file whose close waits until the test lets it: the recording's writing thread holds there, as a slow disk would.
+        // An MP4 file whose close waits until the test lets it: the recording's writing thread holds there, as a slow disk would.
         private sealed class CloseHeldRecordingFile : IProtokitePlaytestRecordingFile
         {
-            private readonly ProtokitePlaytestWebmFile _inner = new ProtokitePlaytestWebmFile();
+            private readonly ProtokitePlaytestMp4File _inner = new ProtokitePlaytestMp4File();
             private readonly ManualResetEventSlim _released = new ManualResetEventSlim(false);
 
             public void Release() => _released.Set();
@@ -960,10 +977,11 @@ namespace Protokite.Playtest.Tests
             public string ContentType => _inner.ContentType;
             public string FileExtension => _inner.FileExtension;
             public int BytesAddedToEachFrame => _inner.BytesAddedToEachFrame;
+            public long BytesFor(ProtokitePlaytestEncodedFrame frame) => _inner.BytesFor(frame);
             public long BytesWritten => _inner.BytesWritten;
             public int FramesWritten => _inner.FramesWritten;
             public long LastTimestampMs => _inner.LastTimestampMs;
-            public bool Open(string path, ProtokitePlaytestVideoCodec codec, int width, int height, out string error) => _inner.Open(path, codec, width, height, out error);
+            public bool Open(string path, int width, int height, long frameDurationMs, out string error) => _inner.Open(path, width, height, frameDurationMs, out error);
             public bool WriteFrame(ProtokitePlaytestEncodedFrame frame, out string error) => _inner.WriteFrame(frame, out error);
 
             public bool Close(out string error)
@@ -978,17 +996,19 @@ namespace Protokite.Playtest.Tests
             public void Dispose() => _inner.Dispose();
         }
 
+        /// <summary>A recording written as MP4 that says it is another kind, so the type on the wire can be told from the default.</summary>
         private sealed class AnotherKindOfRecordingFile : IProtokitePlaytestRecordingFile
         {
-            private readonly ProtokitePlaytestWebmFile _inner = new ProtokitePlaytestWebmFile();
+            private readonly ProtokitePlaytestMp4File _inner = new ProtokitePlaytestMp4File();
 
-            public string ContentType => "video/mp4";
-            public string FileExtension => ".mp4";
+            public string ContentType => "video/webm";
+            public string FileExtension => ".webm";
             public int BytesAddedToEachFrame => _inner.BytesAddedToEachFrame;
+            public long BytesFor(ProtokitePlaytestEncodedFrame frame) => _inner.BytesFor(frame);
             public long BytesWritten => _inner.BytesWritten;
             public int FramesWritten => _inner.FramesWritten;
             public long LastTimestampMs => _inner.LastTimestampMs;
-            public bool Open(string path, ProtokitePlaytestVideoCodec codec, int width, int height, out string error) => _inner.Open(path, codec, width, height, out error);
+            public bool Open(string path, int width, int height, long frameDurationMs, out string error) => _inner.Open(path, width, height, frameDurationMs, out error);
             public bool WriteFrame(ProtokitePlaytestEncodedFrame frame, out string error) => _inner.WriteFrame(frame, out error);
             public bool Close(out string error) => _inner.Close(out error);
 

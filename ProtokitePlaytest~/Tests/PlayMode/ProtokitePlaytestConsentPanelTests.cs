@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.IO;
 using Flock;
 using Flock.Http;
@@ -26,12 +27,15 @@ namespace Protokite.Playtest.Tests
         private string _folder;
         private ProtokitePlaytestConsentForPlayModeTests _consent;
         private FlockTestClient _flock;
+        private readonly List<string> _heardWhileOnScreen = new List<string>();
 
         [UnitySetUp]
         public IEnumerator SetUp()
         {
             if (Application.isBatchMode)
                 Assert.Ignore("A batchmode editor draws nothing, so there is no question to answer; run the PlayMode tests in a windowed editor.");
+            _heardWhileOnScreen.Clear();
+            Application.logMessageReceived += HeardWhileOnScreen;
             foreach (ProtokitePlaytestDriver driver in Resources.FindObjectsOfTypeAll<ProtokitePlaytestDriver>())
                 Object.Destroy(driver.gameObject);
             if (FlockClient.IsInitialized)
@@ -59,6 +63,7 @@ namespace Protokite.Playtest.Tests
         [TearDown]
         public void TearDown()
         {
+            Application.logMessageReceived -= HeardWhileOnScreen;
             foreach (ProtokitePlaytestDriver driver in Resources.FindObjectsOfTypeAll<ProtokitePlaytestDriver>())
                 Object.Destroy(driver.gameObject);
             _flock?.Dispose();
@@ -85,6 +90,13 @@ namespace Protokite.Playtest.Tests
             catch (IOException)
             {
             }
+        }
+
+        // Unity's warning that a panel "will not render properly", and anything thrown or logged as an error.
+        private void HeardWhileOnScreen(string message, string stack, LogType type)
+        {
+            if ((type == LogType.Warning && message.Contains("Theme Style Sheet")) || type == LogType.Exception || type == LogType.Error)
+                _heardWhileOnScreen.Add(type + ": " + message);
         }
 
         private static IEnumerator Until(Func<bool> done, string what, float seconds = 5f)
@@ -141,11 +153,27 @@ namespace Protokite.Playtest.Tests
                 Assert.Greater(button.layout.width, 100f, "The button is laid out, not collapsed");
             }
             Assert.IsTrue(question.panel != null && question.panel.contextType == ContextType.Player, "Drawn in the game, not an editor window");
+            PanelSettings packageSettings = Resources.Load<PanelSettings>(ProtokitePlaytestPanel.PanelSettingsResource);
+            Assert.IsNotNull(packageSettings, "The package's panel settings asset is found under Resources");
+            Assert.IsNotNull(packageSettings.themeStyleSheet, "The asset's theme resolves, so two missing themes cannot pass as the same one");
             foreach (UIDocument document in Resources.FindObjectsOfTypeAll<UIDocument>())
             {
                 if (document.gameObject.name == "Protokite Playtest Consent")
-                    Assert.IsNotNull(document.panelSettings.themeStyleSheet, "Without a theme Unity logs, in every player, that the panel will not render properly");
+                {
+                    Assert.AreNotSame(packageSettings, document.panelSettings, "Each panel draws with a copy, so closing it never destroys the package's asset");
+                    Assert.AreSame(packageSettings.themeStyleSheet, document.panelSettings.themeStyleSheet,
+                        "The panel's theme is the package's imported one: an empty theme made in code throws on Unity 2021.3");
+                }
             }
+        }
+
+        [UnityTest]
+        public IEnumerator TheQuestionIsDrawnWithNoThemeWarningAndNothingThrown()
+        {
+            for (int frame = 0; frame < 10; frame++)
+                yield return null;
+            Assert.IsTrue(ProtokitePlaytest.IsConsentQuestionOpen, "Precondition: the question has been on screen for every one of those frames");
+            Assert.IsEmpty(_heardWhileOnScreen, "Opening and drawing the question logged: " + string.Join(" | ", _heardWhileOnScreen));
         }
 
         [UnityTest]

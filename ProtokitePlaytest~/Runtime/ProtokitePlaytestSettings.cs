@@ -32,9 +32,6 @@ namespace Protokite.Playtest
         [SerializeField] private bool pauseTheGameWhileTheFormIsOpen;
 
         [Header("Video recording (64-bit Windows)")]
-        [Tooltip("VP8 costs a slow PC least. VP9 makes smaller files for more processor time.")]
-        [SerializeField] private ProtokitePlaytestVideoCodec videoCodec = ProtokitePlaytestVideoCodec.Vp8;
-
         [Tooltip("The widest the video is, in pixels. The screen's shape is kept, a smaller window is not enlarged, and each side is rounded down to a multiple of 16.")]
         [SerializeField, Range(16, 3840)] private int videoWidth = 1280;
 
@@ -47,17 +44,8 @@ namespace Protokite.Playtest
         [Tooltip("The video's bitrate, in kilobits a second.")]
         [SerializeField, Range(100, 50000)] private int videoBitrateKbps = 1500;
 
-        [Tooltip("Threads the encoder uses. One costs the game least.")]
-        [SerializeField, Range(1, 16)] private int encoderThreads = 1;
-
-        [Tooltip("On: the codec's own speed (12 for VP8, 8 for VP9). Off: Encoder Speed.")]
-        [SerializeField] private bool useCodecDefaultSpeed = true;
-
-        [Tooltip("Higher is faster and looks worse: VP8 takes -16 to 16, VP9 -9 to 9. Used when Use Codec Default Speed is off.")]
-        [SerializeField, Range(-16, 16)] private int encoderSpeed = 12;
-
-        [Tooltip("On: the encoder gives way to the game when the processor is busy.")]
-        [SerializeField] private bool encoderBelowGamePriority = true;
+        [Tooltip("Off by default: video is encoded on the graphics card's own video engine, and a PC whose graphics card has none records no video. On: such a PC records with Windows' own encoder on the processor instead, which costs the game frame rate.")]
+        [SerializeField] private bool allowSoftwareEncoder;
 
         [Tooltip("A recording stops for good after this many minutes of play.")]
         [SerializeField, Min(0.1f)] private float maxRecordingMinutes = 60f;
@@ -98,9 +86,6 @@ namespace Protokite.Playtest
         /// <summary>Whether the game's time scale is 0 while the feedback form is open.</summary>
         public bool PauseTheGameWhileTheFormIsOpen { get => pauseTheGameWhileTheFormIsOpen; set => pauseTheGameWhileTheFormIsOpen = value; }
 
-        /// <summary>The codec recordings use.</summary>
-        public ProtokitePlaytestVideoCodec VideoCodec { get => videoCodec; set => videoCodec = value; }
-
         /// <summary>The widest the video is, in pixels.</summary>
         public int VideoWidth { get => videoWidth; set => videoWidth = value; }
 
@@ -113,17 +98,8 @@ namespace Protokite.Playtest
         /// <summary>The video's bitrate, in kilobits a second.</summary>
         public int VideoBitrateKbps { get => videoBitrateKbps; set => videoBitrateKbps = value; }
 
-        /// <summary>Threads the encoder uses.</summary>
-        public int EncoderThreads { get => encoderThreads; set => encoderThreads = value; }
-
-        /// <summary>Whether the encoder runs at its codec's own speed rather than <see cref="EncoderSpeed"/>.</summary>
-        public bool UseCodecDefaultSpeed { get => useCodecDefaultSpeed; set => useCodecDefaultSpeed = value; }
-
-        /// <summary>The encoder's speed when <see cref="UseCodecDefaultSpeed"/> is off.</summary>
-        public int EncoderSpeed { get => encoderSpeed; set => encoderSpeed = value; }
-
-        /// <summary>Whether the encoder gives way to the game when the processor is busy.</summary>
-        public bool EncoderBelowGamePriority { get => encoderBelowGamePriority; set => encoderBelowGamePriority = value; }
+        /// <summary>Whether a PC whose graphics card has no video encoder records with Windows' software encoder, at a cost to the game's frame rate.</summary>
+        public bool AllowSoftwareEncoder { get => allowSoftwareEncoder; set => allowSoftwareEncoder = value; }
 
         /// <summary>Minutes of play after which a recording stops for good.</summary>
         public float MaxRecordingMinutes { get => maxRecordingMinutes; set => maxRecordingMinutes = value; }

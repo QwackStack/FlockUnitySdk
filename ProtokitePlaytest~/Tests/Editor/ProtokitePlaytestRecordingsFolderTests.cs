@@ -60,7 +60,7 @@ namespace Protokite.Playtest.Tests
             Assert.IsNotNull(run, error);
             StringAssert.IsMatch(@"^\d{8}-\d{6}-[0-9a-f]{8}$", run.Name, "Named for its UTC start and eight random hex digits");
             Assert.AreEqual(Path.GetFullPath(Path.Combine(_root, "Playtest", run.Name)), run.FolderPath);
-            Assert.AreEqual(Path.Combine(run.FolderPath, "recording-" + run.Name + ".webm"), run.VideoPath(".webm"));
+            Assert.AreEqual(Path.Combine(run.FolderPath, "recording-" + run.Name + ".mp4"), run.VideoPath(".mp4"));
             Assert.AreEqual("12345", File.ReadAllText(Path.Combine(run.FolderPath, "reserved-bytes.txt")));
 
             Assert.Catch<IOException>(() => new FileStream(Path.Combine(run.FolderPath, "in-use.lock"), FileMode.Open, FileAccess.Read,
@@ -81,7 +81,7 @@ namespace Protokite.Playtest.Tests
             ProtokitePlaytestRecordingRun run = Held(ProtokitePlaytestRecordingRun.Start(_root, TestVideo, 1, out string error));
             Assert.IsNotNull(run, error);
             Assert.AreEqual(Path.GetFullPath(Path.Combine(_root, "TestVideos", run.Name)), run.FolderPath);
-            Assert.AreEqual(Path.Combine(run.FolderPath, "test-recording-" + run.Name + ".webm"), run.VideoPath(".webm"));
+            Assert.AreEqual(Path.Combine(run.FolderPath, "test-recording-" + run.Name + ".mp4"), run.VideoPath(".mp4"));
         }
 
         [Test]
@@ -121,14 +121,40 @@ namespace Protokite.Playtest.Tests
 
             string video = VideoPath(run, Playtest);
             Assert.IsFalse(File.Exists(video + ".part"), "Finished, not left cut off");
-            Assert.IsTrue(ProtokitePlaytestWebmTestFiles.Read(video, out WebmFileRead read), "It reads as a whole WebM file");
+            Assert.IsTrue(ProtokitePlaytestMp4TestFiles.Read(video, out Mp4FileRead read), "It reads as a whole MP4 file");
             Assert.AreEqual(5, read.Frames.Count, "Every whole frame, without the one cut off");
-            Assert.IsTrue(read.SegmentSizeWritten);
+            Assert.AreEqual(5 * 33, read.DurationMs, "With its length stamped in");
             Assert.AreEqual(1, found.CutOffVideosFinished);
             Assert.AreEqual(5, found.FramesKeptInFinishedVideos);
             Assert.AreEqual(1, found.RecordingsWaitingToUpload);
             Assert.IsTrue(File.Exists(Path.Combine(run, "session.json")), "Kept with its session");
             Assert.IsTrue(File.Exists(Path.Combine(run, "in-use.lock")), "Still a run a later launch finds");
+        }
+
+        [Test]
+        public void ACutOffWebmAnEarlierVersionLeftIsFinishedAndKeptToBeUploaded()
+        {
+            // Earlier versions recorded WebM; this one finishes what they left and the upload sends it as WebM.
+            string run = Plant(_root, Playtest, "20260101-000000-00000001", 1000000, "pk-1", cutOffVideo: CutOffWebm(_scratch, 5), videoEnding: ".webm");
+            ProtokitePlaytestEarlierRecordings found = ProtokitePlaytestRecordingsFolder.FinishEndedRuns(_root);
+
+            string video = VideoPath(run, Playtest, ".webm");
+            Assert.IsFalse(File.Exists(video + ".part"), "Finished, not left cut off for ever");
+            Assert.IsTrue(ProtokitePlaytestWebmTestFiles.Read(video, out WebmFileRead read), "It reads as a whole WebM file");
+            Assert.AreEqual(5, read.Frames.Count);
+            Assert.IsTrue(read.SegmentSizeWritten);
+            Assert.AreEqual(1, found.CutOffVideosFinished);
+            Assert.AreEqual(1, found.RecordingsWaitingToUpload);
+            Assert.AreEqual(video, ProtokitePlaytestRecordingRun.FinishedVideoPath(run), "And it is the run's video to upload");
+        }
+
+        [Test]
+        public void AFinishedWebmAnEarlierVersionLeftIsKeptToBeUploaded()
+        {
+            string run = Plant(_root, Playtest, "20260101-000000-00000001", 10, "pk-1", FinishedWebm(_scratch, 3), videoEnding: ".webm");
+            ProtokitePlaytestEarlierRecordings found = ProtokitePlaytestRecordingsFolder.FinishEndedRuns(_root);
+            Assert.AreEqual(1, found.RecordingsWaitingToUpload);
+            Assert.AreEqual(VideoPath(run, Playtest, ".webm"), ProtokitePlaytestRecordingRun.FinishedVideoPath(run));
         }
 
         [Test]
@@ -155,7 +181,7 @@ namespace Protokite.Playtest.Tests
 
             ProtokitePlaytestEarlierRecordings found = ProtokitePlaytestRecordingsFolder.FinishEndedRuns(_root);
             Assert.IsTrue(File.Exists(VideoPath(whole, TestVideo)), "A test video needs no session");
-            Assert.IsTrue(ProtokitePlaytestWebmTestFiles.Read(VideoPath(cutOff, TestVideo), out WebmFileRead read));
+            Assert.IsTrue(ProtokitePlaytestMp4TestFiles.Read(VideoPath(cutOff, TestVideo), out Mp4FileRead read));
             Assert.AreEqual(4, read.Frames.Count);
             Assert.AreEqual(2, found.TestVideosKept);
             Assert.AreEqual(1, found.CutOffVideosFinished);
@@ -188,7 +214,7 @@ namespace Protokite.Playtest.Tests
 
             ProtokitePlaytestEarlierRecordings found = ProtokitePlaytestRecordingsFolder.FinishEndedRuns(_root);
             Assert.IsFalse(File.Exists(VideoPath(run, Playtest) + ".part"));
-            Assert.IsTrue(ProtokitePlaytestWebmTestFiles.Read(VideoPath(run, Playtest), out WebmFileRead read));
+            Assert.IsTrue(ProtokitePlaytestMp4TestFiles.Read(VideoPath(run, Playtest), out Mp4FileRead read));
             Assert.AreEqual(5, read.Frames.Count, "The whole file is kept, not replaced by the shorter copy");
             Assert.AreEqual(0, found.CutOffVideosFinished);
             Assert.AreEqual(1, found.RecordingsWaitingToUpload);
@@ -393,7 +419,7 @@ namespace Protokite.Playtest.Tests
         {
             string upload = Plant(_root, Playtest, "20260101-000000-00000001", sessionId: "pk-1", finishedVideo: new byte[7 * 1024 * 1024]);
             ProtokitePlaytestVideoSettings settings = new ProtokitePlaytestVideoSettings { MaxSeconds = 5.0, DiskBudgetBytes = 9L * 1024 * 1024 };
-            long wanted = settings.BytesToMakeRoomFor(ProtokitePlaytestWebmFile.FrameHeaderBytes);
+            long wanted = settings.BytesToMakeRoomFor(ProtokitePlaytestMp4File.FrameHeaderBytes);
             ProtokitePlaytestRecordingRun run = Held(ProtokitePlaytestRecordingRun.Start(_root, TestVideo, wanted, out string error));
             Assert.IsNotNull(run, error);
 

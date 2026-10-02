@@ -18,6 +18,14 @@ namespace Flock.Editor
         internal const string RuntimeAssemblyName = "Flock.Runtime";
         internal const string GeneratedNamespace = "Flock.Generated";
 
+        // .NET types made only by reflection that a Mono player stripped at High loses, so the SDK could make no request (measured).
+        internal static readonly (string Assembly, string Element, string Name)[] FrameworkTypesMadeByReflection =
+        {
+            // The configuration host .NET starts on a web request's first use, then the system.net sections machine.config names.
+            ("System.Configuration", "type", "System.Configuration.ExeConfigurationHost"),
+            ("System", "namespace", "System.Net.Configuration"),
+        };
+
         public int callbackOrder => 0;
 
         public string GenerateAdditionalLinkXmlFile(BuildReport report, UnityLinkerBuildPipelineData data)
@@ -80,6 +88,14 @@ namespace Flock.Editor
         {
             XElement linker = new XElement("linker",
                 new XElement("assembly", new XAttribute("fullname", RuntimeAssemblyName), new XAttribute("preserve", "all")));
+            // Missing from a build that does not ship them (IL2CPP's class libraries), which must not fail it.
+            foreach (IGrouping<string, (string Assembly, string Element, string Name)> framework in FrameworkTypesMadeByReflection.GroupBy(entry => entry.Assembly))
+            {
+                linker.Add(new XElement("assembly",
+                    new XAttribute("fullname", framework.Key),
+                    new XAttribute("ignoreIfMissing", "1"),
+                    framework.Select(entry => new XElement(entry.Element, new XAttribute("fullname", entry.Name), new XAttribute("preserve", "all")))));
+            }
             // Only the generated namespaces: preserving the game's whole assembly would switch stripping off for the game.
             foreach (KeyValuePair<string, SortedSet<string>> assembly in generatedNamespacesByAssembly.OrderBy(pair => pair.Key, StringComparer.Ordinal))
             {

@@ -5,20 +5,20 @@ namespace Protokite.Playtest
     /// <summary>The video settings one recording uses: the settings asset's values, each moved into the range it can take.</summary>
     internal sealed class ProtokitePlaytestVideoSettings
     {
-        /// <summary>The conversion to the encoder's pixel layout packs pixels in fours, so every side is a multiple of this.</summary>
+        /// <summary>The conversion to the encoder's pixel layout packs pixels in fours, and H.264 codes 16-pixel blocks, so every side is a multiple of this.</summary>
         internal const int SideMultiple = 16;
 
-        public ProtokitePlaytestVideoCodec Codec = ProtokitePlaytestVideoCodec.Vp8;
         public int MaxVideoWidth = 1280;
         public int MaxVideoHeight = 720;
         public int FramesPerSecond = 15;
         public int BitrateKbps = 1500;
-        public int Threads = 1;
 
-        /// <summary>Null means the codec's own speed.</summary>
-        public int? Speed;
+        /// <summary>Whether Windows' software encoder may be used on a PC whose graphics card has none.</summary>
+        public bool AllowSoftwareEncoder;
 
-        public bool EncoderBelowGamePriority = true;
+        /// <summary>The game's graphics card maker, whose encoder is tried first; 0 when unknown.</summary>
+        public int GraphicsCardVendorId;
+
         public double MaxSeconds = 3600.0;
         public long MaxBytes = 1536L * 1024 * 1024;
         public long DiskBudgetBytes = 4096L * 1024 * 1024;
@@ -35,14 +35,11 @@ namespace Protokite.Playtest
             ProtokitePlaytestVideoSettings video = new ProtokitePlaytestVideoSettings();
             if (settings == null)
                 return video;
-            video.Codec = settings.VideoCodec == ProtokitePlaytestVideoCodec.Vp9 ? ProtokitePlaytestVideoCodec.Vp9 : ProtokitePlaytestVideoCodec.Vp8;
             video.MaxVideoWidth = Clamp(settings.VideoWidth, SideMultiple, 3840);
             video.MaxVideoHeight = Clamp(settings.VideoHeight, SideMultiple, 2160);
             video.FramesPerSecond = Clamp(settings.VideoFramesPerSecond, 1, 60);
             video.BitrateKbps = Clamp(settings.VideoBitrateKbps, 100, 50000);
-            video.Threads = Clamp(settings.EncoderThreads, 1, 16);
-            video.Speed = settings.UseCodecDefaultSpeed ? (int?)null : Clamp(settings.EncoderSpeed, -16, 16);
-            video.EncoderBelowGamePriority = settings.EncoderBelowGamePriority;
+            video.AllowSoftwareEncoder = settings.AllowSoftwareEncoder;
             float minutes = settings.MaxRecordingMinutes;
             video.MaxSeconds = float.IsNaN(minutes) || minutes < 0.1f ? 6.0 : Math.Min(minutes, 1e6) * 60.0;
             video.MaxBytes = Math.Max(1L, settings.MaxRecordingSizeMb) * 1024 * 1024;
@@ -54,7 +51,7 @@ namespace Protokite.Playtest
         // Reserving the size limit instead would have the shortest recording delete recordings waiting to upload.
         public long BytesToMakeRoomFor(int bytesAddedToEachFrame)
         {
-            // Measured: a 148 s recording at the defaults came to 0.7% over its bitrate, container included.
+            // The encoder holds the bitrate as a ceiling (a still picture measured far under it); a quarter more covers what it overshoots.
             double seconds = Math.Max(0.0, MaxSeconds);
             double videoBytes = BitrateKbps * 1000.0 / 8.0 * seconds * 1.25;
             double frameBytes = Math.Ceiling(seconds * FramesPerSecond) * bytesAddedToEachFrame;
@@ -65,13 +62,12 @@ namespace Protokite.Playtest
         /// <summary>What the encoder is configured with for a video of this size.</summary>
         public ProtokitePlaytestVideoEncoderSettings EncoderSettings(int width, int height) => new ProtokitePlaytestVideoEncoderSettings
         {
-            Codec = Codec,
             Width = width,
             Height = height,
             FramesPerSecond = FramesPerSecond,
             BitrateKbps = BitrateKbps,
-            Threads = Threads,
-            Speed = Speed
+            AllowSoftwareEncoder = AllowSoftwareEncoder,
+            GraphicsCardVendorId = GraphicsCardVendorId
         };
 
         /// <summary>

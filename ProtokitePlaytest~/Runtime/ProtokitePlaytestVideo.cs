@@ -46,7 +46,7 @@ namespace Protokite.Playtest
         /// <summary>What became of this launch's recording once its file is written, or null until then.</summary>
         internal static ProtokitePlaytestVideoRecordingSummary FinishedVideo { get; private set; }
 
-        /// <summary>Whether this launch's playtest recording is capturing frames now; a test video does not count. Main thread only.</summary>
+        /// <summary>Whether this launch's playtest recording is running, from its start (its encoder starting first, up to a couple of seconds) until it stops; a test video does not count. Main thread only.</summary>
         public static bool IsRecordingVideo => _videoRecording != null && _videoRecording.IsCapturing;
 
         /// <summary>The recording while it runs, for tests.</summary>
@@ -64,6 +64,10 @@ namespace Protokite.Playtest
 #if !(UNITY_WEBGL && !UNITY_EDITOR)
             // Read here: the folder asks Unity for its data path, which only the main thread may.
             string folder = RecordingsFolder;
+            // Asked of Windows now, beside the earlier recordings, so the recording does not wait for it; a build with playtesting off never asks.
+            ProtokitePlaytestSettings settings = ProtokitePlaytestSettings.Load();
+            if (settings != null && settings.PlaytestingEnabled)
+                ProtokitePlaytestVideoEncoders.StartLookingForEncoders();
             Action<string> beforeEachRun = BeforeFinishingEachEarlierRecordingForTesting;
             _stopWaitingForEarlierRecordingsAt = DateTime.UtcNow + (LongestWaitForEarlierRecordingsForTesting ?? TimeSpan.FromSeconds(10));
             _earlierRecordings = Task.Run(() => FinishEarlierRecordings(folder, beforeEachRun));
@@ -73,6 +77,9 @@ namespace Protokite.Playtest
         // Making room counts a run the pass has not finished at its whole reservation, so a recording waits for the pass, a while at most.
         private static bool EarlierRecordingsGoneThrough()
             => _earlierRecordings == null || _earlierRecordings.IsCompleted || DateTime.UtcNow >= _stopWaitingForEarlierRecordingsAt;
+
+        // A recording starts once asking for its encoder takes no wait, so the main thread never waits for Windows; a stand-in encoder needs no answer.
+        private static bool EncoderAnswerReady() => VideoEncoderForTesting != null || ProtokitePlaytestVideoEncoders.FinishedLookingForEncoders();
 
         /// <summary>Waits up to the timeout for the earlier launches' recordings to be gone through; true once they are, or when none were started.</summary>
         internal static bool WaitForEarlierRecordingsForTesting(TimeSpan timeout) => _earlierRecordings == null || _earlierRecordings.Wait(timeout);
@@ -125,7 +132,7 @@ namespace Protokite.Playtest
         {
             // The launch's recording belongs to the playtest: a test video gives way on the frame the playtest's could start, and the
             // playtest's starts once the test video's file is written.
-            bool playtestRecordingDue = _videoRecording == null && !_videoStartedThisLaunch && VideoIsOnInTheLoadedConfig() && EarlierRecordingsGoneThrough();
+            bool playtestRecordingDue = _videoRecording == null && !_videoStartedThisLaunch && VideoIsOnInTheLoadedConfig() && EarlierRecordingsGoneThrough() && EncoderAnswerReady();
             if (playtestRecordingDue)
                 MakeTheTestVideoGiveWay();
             UpdateTestVideo(frameSeconds);
@@ -203,7 +210,7 @@ namespace Protokite.Playtest
                 ? $" (Max Recording Size Mb is {sizeLimit / BytesPerMegabyte:0.#} MB, but Recordings Disk Budget Mb has only this much left)"
                 : "";
             Debug.Log(LogPrefix + $"Recording video for the playtest to {_videoRecording.PartPath}, at {_videoRecording.Width}x{_videoRecording.Height} and " +
-                $"{settings.FramesPerSecond} frames a second ({settings.Codec}). It stops for good after {settings.MaxSeconds / 60.0:0.#} minutes of play, " +
+                $"{settings.FramesPerSecond} frames a second, as H.264. It stops for good after {settings.MaxSeconds / 60.0:0.#} minutes of play, " +
                 $"before the file passes {settings.MaxBytes / BytesPerMegabyte:0.#} MB{cutShort}, or when the game stops it.");
         }
 
@@ -225,7 +232,9 @@ namespace Protokite.Playtest
             contentType = null;
             notStarted = RecordingNotStarted.NoEncoder;
             whyNot = null;
-            IProtokitePlaytestVideoEncoder encoder = VideoEncoderForTesting != null ? VideoEncoderForTesting() : ProtokitePlaytestVideoEncoders.Create(out whyNot);
+            // Read here, on the main thread: the encoder tries the game's graphics card maker's encoder first.
+            settings.GraphicsCardVendorId = SystemInfo.graphicsDeviceVendorID;
+            IProtokitePlaytestVideoEncoder encoder = VideoEncoderForTesting != null ? VideoEncoderForTesting() : ProtokitePlaytestVideoEncoders.Create(settings.AllowSoftwareEncoder, out whyNot);
             if (encoder == null)
             {
                 whyNot = whyNot ?? "this build has no video encoder.";
@@ -364,7 +373,7 @@ namespace Protokite.Playtest
             else
             {
                 Debug.Log(LogPrefix + $"Playtest video saved to {summary.FilePath}: {summary.VideoSeconds:0.0} seconds, {summary.FramesWritten} frames, " +
-                    $"{summary.BytesWritten / (1024.0 * 1024.0):0.0} MB. It stopped because {why}. Encoding took {summary.AverageEncodeMs:0.00} ms a frame on average " +
+                    $"{summary.BytesWritten / (1024.0 * 1024.0):0.0} MB. It stopped because {why}. Encoding with {summary.EncodedBy} took {summary.AverageEncodeMs:0.00} ms a frame on average " +
                     $"and {summary.LongestEncodeMs:0.00} ms at most, and one write took at most {summary.LongestWriteMs:0.00} ms. Frames dropped: " +
                     $"{summary.FramesDroppedBecauseEncodingFellBehind} because encoding fell behind, {summary.FramesDroppedBecauseWritingFellBehind} because writing " +
                     $"fell behind, {summary.FramesNotReadyInTime} because earlier frames were still on their way, {summary.FramesLostOnTheGraphicsCard} lost on the " +

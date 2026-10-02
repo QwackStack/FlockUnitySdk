@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
@@ -20,6 +21,9 @@ namespace Flock.Editor
         // Only what a studio needs: the tests stay in the repository.
         private static readonly string[] ShippedFolders = { "Runtime", "Editor", "Samples" };
         private static readonly string[] ShippedRootFiles = { "package.json", "README.md", "CHANGELOG.md", "LICENSE.md" };
+        private static readonly Regex MetaGuid = new Regex(@"^(guid:\s+)(\w+)", RegexOptions.Multiline);
+        // How a Unity text asset (a .asset, .prefab or scene) names another file.
+        private static readonly Regex GuidReference = new Regex(@"(guid:\s*)([0-9a-f]{32})");
 
         /// <summary>Asks for a folder and builds there; the maintainers' own project calls it from Qwacks Dev > Build Protokite Playtest Package.</summary>
         internal static void BuildFromMenu()
@@ -60,8 +64,10 @@ namespace Flock.Editor
             try
             {
                 CleanStaging();
-                foreach (string relative in ShippedFiles(source))
-                    StageFile(source, relative);
+                string[] shipped = ShippedFiles(source);
+                Dictionary<string, string> newGuids = NewGuidsByOldGuid(source, shipped);
+                foreach (string relative in shipped)
+                    StageFile(source, relative, newGuids);
                 AssetDatabase.Refresh();
 
                 string[] assets = AssetDatabase.GetAllAssetPaths().Where(path => path.StartsWith(StagingRoot, StringComparison.Ordinal)).ToArray();
@@ -90,20 +96,48 @@ namespace Flock.Editor
                 .ToArray();
         }
 
-        // Each .meta gets a GUID made from its staged path, so a studio updating from one release to the next keeps the same GUIDs.
-        private static void StageFile(string source, string relative)
+        /// <summary>Each shipped .meta's GUID, mapped to the one its staged copy is given.</summary>
+        internal static Dictionary<string, string> NewGuidsByOldGuid(string source, IEnumerable<string> shipped)
         {
+            Dictionary<string, string> newGuids = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (string relative in shipped.Where(file => file.EndsWith(".meta", StringComparison.OrdinalIgnoreCase)))
+            {
+                Match guid = MetaGuid.Match(File.ReadAllText(Path.Combine(source, relative)));
+                if (guid.Success)
+                    newGuids[guid.Groups[2].Value] = GuidFor(StagingRoot + relative);
+            }
+            return newGuids;
+        }
+
+        /// <summary>A Unity text asset with each shipped file it names given that file's new GUID; Unity's own and other packages' are left as they are.</summary>
+        internal static string WithNewGuids(string content, IReadOnlyDictionary<string, string> newGuids)
+        {
+            return GuidReference.Replace(content, reference => newGuids.TryGetValue(reference.Groups[2].Value, out string renamed)
+                ? reference.Groups[1].Value + renamed
+                : reference.Value);
+        }
+
+        // Each .meta gets a GUID made from its staged path, so a studio updating from one release to the next keeps the same GUIDs,
+        // and an asset naming another shipped file by GUID is given its new one, or it would name a file the release does not carry.
+        private static void StageFile(string source, string relative, IReadOnlyDictionary<string, string> newGuids)
+        {
+            string from = Path.Combine(source, relative);
             string destination = StagingRoot + relative;
             Directory.CreateDirectory(Path.GetDirectoryName(destination));
             if (relative.EndsWith(".meta", StringComparison.OrdinalIgnoreCase))
-            {
-                string content = File.ReadAllText(Path.Combine(source, relative));
-                File.WriteAllText(destination, Regex.Replace(content, @"^(guid:\s+)\w+", "${1}" + GuidFor(destination), RegexOptions.Multiline));
-            }
+                File.WriteAllText(destination, MetaGuid.Replace(File.ReadAllText(from), "${1}" + GuidFor(destination)));
+            else if (IsUnityTextAsset(from))
+                File.WriteAllText(destination, WithNewGuids(File.ReadAllText(from), newGuids));
             else
-            {
-                File.Copy(Path.Combine(source, relative), destination, true);
-            }
+                File.Copy(from, destination, true);
+        }
+
+        // Unity writes its text assets as YAML, each starting with this line.
+        private static bool IsUnityTextAsset(string path)
+        {
+            byte[] start = new byte[5];
+            using (FileStream file = File.OpenRead(path))
+                return file.Read(start, 0, start.Length) == start.Length && Encoding.ASCII.GetString(start) == "%YAML";
         }
 
         private static string GuidFor(string stagedPath)
