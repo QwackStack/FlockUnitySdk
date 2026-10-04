@@ -193,6 +193,131 @@ namespace Protokite.Playtest.Tests
             Assert.AreEqual(1000, source.Asked.Last(), "The frame after the five minutes away follows the second before it");
         }
 
+        // Going to the background
+
+        // The frames in the unfinished file as it is on disk now: what a game Android ended now would keep.
+        private int FramesOnDiskNow()
+        {
+            string copy = Path.Combine(_folder, "as-it-is-now.mp4");
+            using (FileStream part = new FileStream(FinishedPath + ".part", FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            using (FileStream to = File.Create(copy))
+                part.CopyTo(to);
+            ProtokitePlaytestMp4TestFiles.Read(copy, out Mp4FileRead read);
+            return read.Frames.Count;
+        }
+
+        [Test]
+        public void GoingToTheBackgroundWritesOutTheFramesOnTheirWayAndThoseTheEncoderHolds()
+        {
+            FakeFrameSource source = new FakeFrameSource { HoldFrames = true };
+            FakeH264Encoder encoder = new FakeH264Encoder { HoldsEveryFrame = true };
+            ProtokitePlaytestVideoRecording recording = Start(source, encoder, Settings());
+            Play(recording, 20);
+            Assert.AreEqual(5, source.Asked.Count, "Precondition: five frames asked for, none arrived yet");
+            Assert.AreEqual(0, FramesOnDiskNow(), "Precondition: nothing on disk while the frames are on their way and in the encoder");
+
+            recording.WriteOutEverythingHeld();
+            Assert.IsTrue(SpinWait.SpinUntil(() => FramesOnDiskNow() == 5, Plenty), $"Every frame captured before the game left is on disk while it is away ({FramesOnDiskNow()} of 5)");
+            Assert.IsTrue(recording.IsCapturing, "The recording goes on when the game comes back");
+            lock (encoder.Calls)
+                CollectionAssert.AreEqual(new[] { "encode 0", "encode 67", "encode 133", "encode 200", "encode 267", "let go" }, encoder.Calls,
+                    "The frames on their way are encoded before the encoder lets go");
+            StopAndWait(recording);
+        }
+
+        [Test]
+        public void ComingBackGoesOnInTheSameFileFromAKeyframe()
+        {
+            FakeFrameSource source = new FakeFrameSource();
+            FakeH264Encoder encoder = new FakeH264Encoder();
+            ProtokitePlaytestVideoRecording recording = Start(source, encoder, Settings());
+            Play(recording, 60, pacedBy: source);
+            recording.WriteOutEverythingHeld();
+            recording.LeaveOutNextFrame();
+            recording.AddFrame(300.0);
+            Play(recording, 60, pacedBy: source);
+            ProtokitePlaytestVideoRecordingSummary summary = StopAndWait(recording);
+
+            Assert.IsTrue(ProtokitePlaytestMp4TestFiles.Read(FinishedPath, out Mp4FileRead read), read.Problem);
+            Assert.AreEqual(30, read.Frames.Count, "One file, a second before and a second after");
+            Assert.AreEqual(1, encoder.TimesLetGo);
+            Assert.IsTrue(read.Frames[15].IsKeyframe, "The first frame after the game came back starts a new stream");
+            Assert.IsFalse(read.Frames[14].IsKeyframe, "Control: the frame before it does not");
+            Assert.Less(read.Frames[15].TimestampMs - read.Frames[14].TimestampMs, 200, "The five minutes away are not in the video");
+            Assert.AreEqual(1, summary.TimesInTheBackground);
+            Assert.IsNull(summary.Error);
+            StringAssert.Contains("The game went to the background 1 time(s)", summary.DescribeTimesInTheBackground());
+        }
+
+        [Test]
+        public void GoingToTheBackgroundAfterCapturingStoppedDoesNothing()
+        {
+            FakeH264Encoder encoder = new FakeH264Encoder();
+            ProtokitePlaytestVideoRecording recording = Start(new FakeFrameSource(), encoder, Settings());
+            Play(recording, 20);
+            recording.StopCapturing(ProtokitePlaytestVideoStopReason.StoppedByGame);
+            Assert.DoesNotThrow(() => recording.WriteOutEverythingHeld(), "Nothing more is handed to a recording that is finishing");
+            Assert.IsTrue(recording.WaitUntilWritten(Plenty));
+            Assert.AreEqual(0, encoder.TimesLetGo);
+            Assert.AreEqual(0, recording.Summary().TimesInTheBackground);
+        }
+
+        [Test]
+        public void GoingToTheBackgroundOftenTakesNoRoomFromTheFrames()
+        {
+            FakeFrameSource source = new FakeFrameSource();
+            FakeH264Encoder encoder = new FakeH264Encoder();
+            ProtokitePlaytestVideoRecording recording = Start(source, encoder, Settings());
+            // More times away than frames may wait to be encoded, so a time away held as a waiting frame would drop frames.
+            for (int i = 0; i < 3 * ProtokitePlaytestVideoRecording.MostFramesWaitingToEncode; i++)
+            {
+                Play(recording, 4, pacedBy: source);
+                recording.WriteOutEverythingHeld();
+            }
+            ProtokitePlaytestVideoRecordingSummary summary = StopAndWait(recording);
+            Assert.AreEqual(24, source.Asked.Count, "Precondition: a frame asked for between each time away");
+            Assert.AreEqual(0, summary.FramesDroppedBecauseEncodingFellBehind);
+            Assert.AreEqual(24, summary.FramesWritten);
+            Assert.AreEqual(24, source.BlocksReturned, "A block goes back for each frame, and none for a time away");
+            Assert.AreEqual(24, encoder.TimesLetGo);
+        }
+
+        [Test]
+        public void FramesEncodedBeforeAnEncodingFailureAreStillWritten()
+        {
+            FakeFrameSource source = new FakeFrameSource();
+            FakeH264Encoder encoder = new FakeH264Encoder { FailAtFrame = 5 };
+            using (ManualResetEventSlim letWrite = new ManualResetEventSlim(false))
+            {
+                ProtokitePlaytestVideoRecording recording = Start(source, encoder, Settings(), beforeEachWrite: () =>
+                {
+                    letWrite.Wait(Plenty);
+                    return true;
+                });
+                Assert.AreEqual(ProtokitePlaytestVideoStopReason.CouldNotWrite, Play(recording, 40, pacedBy: source),
+                    "Precondition: the sixth frame failed to encode while the five before it waited to be written");
+                letWrite.Set();
+                ProtokitePlaytestVideoRecordingSummary summary = StopAndWait(recording);
+                Assert.AreEqual(5, summary.FramesWritten, "Every frame encoded before the failure is in the file");
+                StringAssert.Contains("the encoder refused the frame", summary.Error);
+            }
+        }
+
+        [Test]
+        public void AnEncoderThatCannotLetGoEndsTheRecordingKeepingWhatWasWritten()
+        {
+            FakeFrameSource source = new FakeFrameSource();
+            FakeH264Encoder encoder = new FakeH264Encoder { RefuseToLetGo = "the phone's encoder would not end its stream" };
+            ProtokitePlaytestVideoRecording recording = Start(source, encoder, Settings());
+            Play(recording, 60, pacedBy: source);
+            recording.WriteOutEverythingHeld();
+            Assert.IsTrue(SpinWait.SpinUntil(() => recording.AddFrame(SixtyFps) == ProtokitePlaytestVideoStopReason.CouldNotWrite, Plenty), "The recording stops");
+            ProtokitePlaytestVideoRecordingSummary summary = StopAndWait(recording);
+            StringAssert.Contains("the phone's encoder would not end its stream", summary.Error);
+            Assert.AreEqual(FinishedPath, summary.FilePath, "What was written before is kept");
+            Assert.AreEqual(15, summary.FramesWritten);
+        }
+
         [Test]
         public void TheSourcesLossesAreReported()
         {
@@ -414,6 +539,7 @@ namespace Protokite.Playtest.Tests
                 => _inner.Encode(pixels, timestampMs, durationMs, output, out error);
 
             public bool Finish(List<ProtokitePlaytestEncodedFrame> output, out string error) => _inner.Finish(output, out error);
+            public bool HandOverEverythingAndLetGo(List<ProtokitePlaytestEncodedFrame> output, out string error) => _inner.HandOverEverythingAndLetGo(output, out error);
             public void Dispose() => _inner.Dispose();
         }
 

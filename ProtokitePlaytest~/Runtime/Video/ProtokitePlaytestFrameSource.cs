@@ -41,6 +41,9 @@ namespace Protokite.Playtest
         /// <summary>Waits for the frames still on their way and moves them into <paramref name="frames"/>; nothing is captured afterwards.</summary>
         void Stop(List<ProtokitePlaytestCapturedFrame> frames);
 
+        /// <summary>Waits for the frames still on their way and moves them, with every frame that has arrived, into <paramref name="frames"/>; capturing goes on.</summary>
+        void TakeFramesOnTheirWay(List<ProtokitePlaytestCapturedFrame> frames);
+
         /// <summary>Frames the graphics card could not hand back.</summary>
         int FramesLostOnTheGraphicsCard { get; }
 

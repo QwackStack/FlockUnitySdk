@@ -25,6 +25,15 @@ namespace Protokite.Playtest
         /// <summary>Whether these are an Android player's settings, read from the Android section.</summary>
         public bool ForAndroid;
 
+        /// <summary>Whether an Android recording takes half its frame rate while the phone is warm and stops when it is too hot.</summary>
+        public bool SlowDownWhenHot = true;
+
+        /// <summary>The battery percentage below which an Android recording stops while the phone is not charging; 0 never.</summary>
+        public int StopBelowBatteryPercent = DefaultStopBelowBatteryPercent;
+
+        internal const int DefaultStopBelowBatteryPercent = 15;
+        internal const long DefaultAndroidDiskBudgetBytes = 1024L * 1024 * 1024;
+
         /// <summary>The game's graphics card maker, whose encoder is tried first; 0 when unknown.</summary>
         public int GraphicsCardVendorId;
 
@@ -52,6 +61,7 @@ namespace Protokite.Playtest
                 int longSide = settings == null ? DefaultAndroidLongSide : Clamp(settings.AndroidVideoLongSide, 320, 1920);
                 video.MaxVideoWidth = longSide;
                 video.MaxVideoHeight = longSide;
+                video.DiskBudgetBytes = DefaultAndroidDiskBudgetBytes;
             }
             if (settings == null)
                 return video;
@@ -61,6 +71,8 @@ namespace Protokite.Playtest
                 video.BitrateKbps = Clamp(settings.AndroidVideoBitrateKbps, 100, 20000);
                 video.AllowSoftwareEncoder = settings.AndroidAllowSoftwareEncoder;
                 video.RecordVideo = settings.RecordVideoOnAndroid;
+                video.SlowDownWhenHot = settings.SlowDownTheRecordingWhenThePhoneIsHot;
+                video.StopBelowBatteryPercent = Clamp(settings.StopTheRecordingBelowBatteryPercent, 0, 100);
             }
             else
             {
@@ -73,7 +85,7 @@ namespace Protokite.Playtest
             float minutes = settings.MaxRecordingMinutes;
             video.MaxSeconds = float.IsNaN(minutes) || minutes < 0.1f ? 6.0 : Math.Min(minutes, 1e6) * 60.0;
             video.MaxBytes = Math.Max(1L, settings.MaxRecordingSizeMb) * 1024 * 1024;
-            video.DiskBudgetBytes = Math.Max(1L, settings.RecordingsDiskBudgetMb) * 1024 * 1024;
+            video.DiskBudgetBytes = Math.Max(1L, forAndroid ? settings.AndroidRecordingsDiskBudgetMb : settings.RecordingsDiskBudgetMb) * 1024 * 1024;
             return video;
         }
 

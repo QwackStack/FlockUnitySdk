@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Runtime.InteropServices;
 
 namespace Protokite.Playtest
@@ -23,6 +24,9 @@ namespace Protokite.Playtest
         private byte[] _sequenceSettings;
         private byte[] _pictureSettings;
         private bool _decoderSettingsHandedOver;
+        // The settings the video's file holds, which a stream started after the background must match.
+        private byte[] _settingsInTheVideo;
+        private bool _newStreamToCheck;
         private long _lastTimestampUs = -1;
 
         /// <summary>An encoder for the phone's encoder the check chose.</summary>
@@ -282,6 +286,7 @@ namespace Protokite.Playtest
                 return true;
 
             byte[] decoderSettings = null;
+            bool keyframe = (buffer.Flags & ProtokitePlaytestMediaCodec.KeyframeFlag) != 0 || ProtokitePlaytestH264.HoldsKeyframe(units);
             if (!_decoderSettingsHandedOver)
             {
                 decoderSettings = ProtokitePlaytestH264.DecoderSettingsRecord(_sequenceSettings, _pictureSettings);
@@ -291,9 +296,21 @@ namespace Protokite.Playtest
                     return false;
                 }
                 _decoderSettingsHandedOver = true;
+                _settingsInTheVideo = decoderSettings;
+            }
+            else if (_newStreamToCheck)
+            {
+                // The file describes its stream once, in its header: frames of a stream described otherwise would not decode.
+                byte[] again = ProtokitePlaytestH264.DecoderSettingsRecord(_sequenceSettings, _pictureSettings);
+                if (!keyframe || again == null || !again.SequenceEqual(_settingsInTheVideo))
+                {
+                    error = "it came back from the background with " + (keyframe ? "stream settings other than the video's" : "no keyframe to start from") +
+                            ", so the video ends where the game left.";
+                    return false;
+                }
+                _newStreamToCheck = false;
             }
             long timestampMs = (buffer.PresentationTimeUs + MicrosecondsPerMillisecond / 2) / MicrosecondsPerMillisecond;
-            bool keyframe = (buffer.Flags & ProtokitePlaytestMediaCodec.KeyframeFlag) != 0 || ProtokitePlaytestH264.HoldsKeyframe(units);
             output.Add(new ProtokitePlaytestEncodedFrame(ProtokitePlaytestH264.FrameAsStored(units), timestampMs, keyframe, decoderSettings));
             return true;
         }
@@ -348,7 +365,24 @@ namespace Protokite.Playtest
             return true;
         }
 
-        public void Dispose()
+        // The phone's encoder is given back while the game is away, so another app may have it, and Android has none to take back from
+        // the game. The stream is ended first, so every frame it held comes out; the next frame starts a new one on a keyframe.
+        public bool HandOverEverythingAndLetGo(List<ProtokitePlaytestEncodedFrame> output, out string error)
+        {
+            if (!Finish(output, out error))
+                return false;
+            LetGoOfTheCodec();
+            _endOfStreamHandedIn = false;
+            _endOfStreamCameOut = false;
+            _sequenceSettings = null;
+            _pictureSettings = null;
+            _newStreamToCheck = _decoderSettingsHandedOver;
+            return true;
+        }
+
+        public void Dispose() => LetGoOfTheCodec();
+
+        private void LetGoOfTheCodec()
         {
             if (_codec == null)
                 return;

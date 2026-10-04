@@ -392,6 +392,8 @@ namespace Protokite.Playtest
         public long BytesLeft;
         /// <summary>What every other run takes after deleting, counting a run still in use at the room it reserved.</summary>
         public long BytesUsedByOtherRuns;
+        /// <summary>Whether the disk's free space, rather than the budget, set the most recordings may take.</summary>
+        public bool LimitedByTheDisk;
         public int TestVideosDeleted;
         public int WaitingRecordingsDeleted;
         public readonly List<string> CouldNotDelete = new List<string>();
@@ -553,8 +555,10 @@ namespace Protokite.Playtest
         // Room for a test video comes from other test videos only: a recording waiting to upload is never deleted for one.
         // The new run is made, with its reservation, before this is called, so a game starting at the same moment counts it. A run
         // in use, or holding an unfinished video, is never deleted and counts at its reservation (runInUseWithNoReservation if none).
+        // freeBytesRecordingsMayTake, when known, is the disk's free space recordings may still fill: the budget is never more than the
+        // other runs' files and that. Deleting a run frees what it takes, so that sum is the same before and after.
         internal static ProtokitePlaytestRoomMade MakeRoom(string recordingsFolder, ProtokitePlaytestRecordingRun newRun, long budgetBytes, long wantedBytes,
-            long runInUseWithNoReservation)
+            long runInUseWithNoReservation, long? freeBytesRecordingsMayTake = null)
         {
             Action hook = BeforeNextMakingRoomForTesting;
             BeforeNextMakingRoomForTesting = null;
@@ -563,6 +567,7 @@ namespace Protokite.Playtest
             ProtokitePlaytestRoomMade room = new ProtokitePlaytestRoomMade();
             List<(string Folder, ProtokitePlaytestRecordingKind Kind, long Bytes)> deletable = new List<(string, ProtokitePlaytestRecordingKind, long)>();
             long used = 0;
+            long othersOnDisk = 0;
             foreach (ProtokitePlaytestRecordingKind kind in Kinds)
             {
                 foreach (string folder in FindRuns(recordingsFolder, kind))
@@ -571,6 +576,7 @@ namespace Protokite.Playtest
                         continue;
 
                     long onDisk = ProtokitePlaytestRecordingRun.BytesOnDisk(folder);
+                    othersOnDisk += onDisk;
                     // An unfinished video is the finishing pass's to finish, so its run is never claimed here.
                     bool unfinished = ProtokitePlaytestRecordingRun.HasUnfinishedVideo(folder);
                     bool ended = false;
@@ -595,6 +601,12 @@ namespace Protokite.Playtest
                         used += Math.Max(onDisk, ProtokitePlaytestRecordingRun.ReadReservedBytes(folder) ?? runInUseWithNoReservation);
                     }
                 }
+            }
+
+            if (freeBytesRecordingsMayTake.HasValue && othersOnDisk + Math.Max(0L, freeBytesRecordingsMayTake.Value) < budgetBytes)
+            {
+                budgetBytes = othersOnDisk + Math.Max(0L, freeBytesRecordingsMayTake.Value);
+                room.LimitedByTheDisk = true;
             }
 
             // Test videos go first, then recordings waiting to upload; oldest first within each, as FindRuns lists them.

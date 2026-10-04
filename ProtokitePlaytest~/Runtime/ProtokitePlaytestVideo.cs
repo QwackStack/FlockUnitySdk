@@ -136,6 +136,7 @@ namespace Protokite.Playtest
         /// </summary>
         internal static void UpdateVideo(double frameSeconds)
         {
+            KeepRecordingsWithinThePhonesLimits(frameSeconds);
             // The launch's recording belongs to the playtest: a test video gives way on the frame the playtest's could start, and the
             // playtest's starts once the test video's file is written.
             bool playtestRecordingDue = _videoRecording == null && !_videoStartedThisLaunch && VideoIsOnInTheLoadedConfig() && EarlierRecordingsGoneThrough() && EncoderAnswerReady();
@@ -167,6 +168,13 @@ namespace Protokite.Playtest
             _performanceTimeline?.LeaveOutNextFrame();
         }
 
+        /// <summary>The game went to the background: what each recording holds is written out, so a game Android ends while away keeps it.</summary>
+        internal static void HandleGameWentToTheBackground()
+        {
+            _videoRecording?.WriteOutEverythingHeld();
+            _testVideo?.WriteOutEverythingHeld();
+        }
+
         // A config being fetched again (after a Flock restart) is no reason to end the launch's only recording; a loaded config
         // with video off, or a playtest that closed, is.
         private static bool VideoTurnedOffForGood()
@@ -189,7 +197,7 @@ namespace Protokite.Playtest
             ProtokitePlaytestVideoSettings settings = ProtokitePlaytestVideoSettings.From(ProtokitePlaytestSettings.Load());
             long sizeLimit = settings.MaxBytes;
             if (!TryStartRecording(ProtokitePlaytestRecordingKind.Playtest, settings, out ProtokitePlaytestVideoRecording recording, out ProtokitePlaytestRecordingRun run,
-                    out string contentType, out RecordingNotStarted notStarted, out string whyNot))
+                    out string contentType, out string roomLimitedBy, out RecordingNotStarted notStarted, out string whyNot))
             {
                 bool expected = notStarted == RecordingNotStarted.NoEncoder || notStarted == RecordingNotStarted.TurnedOff
                                 || (notStarted == RecordingNotStarted.NoCapture && SystemInfo.graphicsDeviceType == GraphicsDeviceType.Null);
@@ -212,8 +220,9 @@ namespace Protokite.Playtest
             // Uploaded as the kind of file it is written as, so a platform writing another kind sends its own.
             _recordingContentType = contentType;
             SaveSessionBesideRecording();
-            string cutShort = settings.MaxBytes < sizeLimit
-                ? $" (Max Recording Size Mb is {sizeLimit / BytesPerMegabyte:0.#} MB, but Recordings Disk Budget Mb has only this much left)"
+            AskThePhoneAtTheNextFrame();
+            string cutShort = roomLimitedBy != null
+                ? $" (Max Recording Size Mb is {sizeLimit / BytesPerMegabyte:0.#} MB, but {roomLimitedBy} leaves only this much)"
                 : "";
             Debug.Log(LogPrefix + $"Recording video for the playtest to {_videoRecording.PartPath}, at {_videoRecording.Width}x{_videoRecording.Height} and " +
                 $"{settings.FramesPerSecond} frames a second, as H.264. It stops for good after {settings.MaxSeconds / 60.0:0.#} minutes of play, " +
@@ -233,11 +242,12 @@ namespace Protokite.Playtest
 
         /// <summary>Sets up a recording of this kind, its run and room included; false, with why and at which step, leaving nothing behind.</summary>
         private static bool TryStartRecording(ProtokitePlaytestRecordingKind kind, ProtokitePlaytestVideoSettings settings, out ProtokitePlaytestVideoRecording recording,
-            out ProtokitePlaytestRecordingRun run, out string contentType, out RecordingNotStarted notStarted, out string whyNot)
+            out ProtokitePlaytestRecordingRun run, out string contentType, out string roomLimitedBy, out RecordingNotStarted notStarted, out string whyNot)
         {
             recording = null;
             run = null;
             contentType = null;
+            roomLimitedBy = null;
             notStarted = RecordingNotStarted.TurnedOff;
             whyNot = null;
             // A studio's off switch, for the playtest's recording and a test video alike: off at launch holds for the launch (the phone
@@ -279,7 +289,7 @@ namespace Protokite.Playtest
             }
 
             IProtokitePlaytestRecordingFile file = RecordingFileForTesting != null ? RecordingFileForTesting() : ProtokitePlaytestRecordingFiles.Create();
-            if (!StartRecordingRun(kind, settings, file, out run, out whyNot))
+            if (!StartRecordingRun(kind, settings, file, out run, out roomLimitedBy, out whyNot))
             {
                 file.Dispose();
                 source.Dispose();
@@ -314,9 +324,10 @@ namespace Protokite.Playtest
 
         /// <summary>Makes a run of this kind and room for it in the budget, and cuts the size limit to the room left; false, with why, under a megabyte.</summary>
         private static bool StartRecordingRun(ProtokitePlaytestRecordingKind kind, ProtokitePlaytestVideoSettings settings, IProtokitePlaytestRecordingFile file,
-            out ProtokitePlaytestRecordingRun startedRun, out string error)
+            out ProtokitePlaytestRecordingRun startedRun, out string roomLimitedBy, out string error)
         {
             startedRun = null;
+            roomLimitedBy = null;
             string folder = RecordingsFolder;
             bool testVideo = kind == ProtokitePlaytestRecordingKind.TestVideo;
             long wanted = RoomToReserve(kind, settings, file);
@@ -325,8 +336,31 @@ namespace Protokite.Playtest
             if (run == null)
                 return false;
 
-            ProtokitePlaytestRoomMade room = ProtokitePlaytestRecordingsFolder.MakeRoom(folder, run, settings.DiskBudgetBytes, wanted, settings.MaxBytes);
-            string budget = $"Recordings Disk Budget Mb ({settings.DiskBudgetBytes / BytesPerMegabyte:0.#} MB)";
+            // A phone's recordings never take its free space below where Android warns that storage is running out.
+            long? freeBytesRecordingsMayTake = null;
+            string phoneSpace = null;
+            if (settings.ForAndroid)
+            {
+                (long FreeBytes, long TotalBytes)? space = ProtokitePlaytestPhoneConditions.ReadDiskSpace(folder, out string whyNotRead);
+                if (space.HasValue)
+                {
+                    long line = ProtokitePlaytestPhoneConditions.LowStorageLine(space.Value.TotalBytes);
+                    freeBytesRecordingsMayTake = space.Value.FreeBytes - line;
+                    phoneSpace = $"the phone has {space.Value.FreeBytes / BytesPerMegabyte:0.#} MB free, and recordings leave {line / BytesPerMegabyte:0.#} MB of it, " +
+                                 "where Android warns that storage is running out";
+                }
+                else
+                {
+                    Debug.LogWarning(LogPrefix + $"The phone's free space could not be read, so {(testVideo ? "a test video" : "this launch's recording")} is kept to " +
+                        "Android Recordings Disk Budget Mb alone: " + whyNotRead);
+                }
+            }
+
+            ProtokitePlaytestRoomMade room = ProtokitePlaytestRecordingsFolder.MakeRoom(folder, run, settings.DiskBudgetBytes, wanted, settings.MaxBytes, freeBytesRecordingsMayTake);
+            string budgetName = BudgetSettingName(settings);
+            string budget = room.LimitedByTheDisk
+                ? $"the room the phone's free space leaves ({phoneSpace})"
+                : $"{budgetName} ({settings.DiskBudgetBytes / BytesPerMegabyte:0.#} MB)";
             string forWhat = testVideo ? "a test video" : "this launch's recording";
             if (room.WaitingRecordingsDeleted > 0)
                 Debug.LogWarning(LogPrefix + $"Deleted {room.WaitingRecordingsDeleted} recording(s) earlier launches kept to be uploaded, the oldest first, to make room in {budget} for {forWhat}.");
@@ -338,16 +372,22 @@ namespace Protokite.Playtest
             if (room.BytesLeft < ProtokitePlaytestRecordingsFolder.SmallestRoomForARecording)
             {
                 run.DeleteEverything();
-                error = $"the recordings in {folder} take {room.BytesUsedByOtherRuns / BytesPerMegabyte:0.#} MB of {budget}, and " +
-                        (testVideo
-                            ? "a test video makes room by deleting older test videos only, never a recording waiting to upload."
-                            : "none of them can be deleted now, because their games are still running or another program is using them.") +
-                        " Raise Recordings Disk Budget Mb in Protokite > Playtest > Settings.";
+                error = room.LimitedByTheDisk
+                    ? $"{phoneSpace}, which leaves {room.BytesLeft / BytesPerMegabyte:0.#} MB for {forWhat} once the recordings in {folder} " +
+                      $"({room.BytesUsedByOtherRuns / BytesPerMegabyte:0.#} MB) are counted. Free some of the phone's storage."
+                    : $"the recordings in {folder} take {room.BytesUsedByOtherRuns / BytesPerMegabyte:0.#} MB of {budget}, and " +
+                      (testVideo
+                          ? "a test video makes room by deleting older test videos only, never a recording waiting to upload."
+                          : "none of them can be deleted now, because their games are still running or another program is using them.") +
+                      $" Raise {budgetName} in Protokite > Playtest > Settings.";
                 return false;
             }
 
             // A recording may grow into all the room left, a test video only into what it reserved; others count either at what it saved.
             long maxBytes = Math.Min(testVideo ? wanted : settings.MaxBytes, room.BytesLeft);
+            // Named only when the room may stop it before its length limit, so a budget above what it will record says nothing.
+            if (maxBytes < wanted)
+                roomLimitedBy = room.LimitedByTheDisk ? "the phone's free space" : budgetName;
             if (maxBytes != wanted && !run.SaveReservedBytes(maxBytes, out string saveError))
             {
                 maxBytes = Math.Min(maxBytes, wanted);
@@ -357,6 +397,10 @@ namespace Protokite.Playtest
             startedRun = run;
             return true;
         }
+
+        // The disk budget setting a recording of these settings is held to.
+        private static string BudgetSettingName(ProtokitePlaytestVideoSettings settings)
+            => settings.ForAndroid ? "Android Recordings Disk Budget Mb" : "Recordings Disk Budget Mb";
 
         /// <summary>Saves this launch's Protokite session beside its recording, so a later launch uploads the recording to it rather than delete it.</summary>
         private static void SaveSessionBesideRecording()
@@ -390,7 +434,7 @@ namespace Protokite.Playtest
             else if (summary.Error != null)
             {
                 Debug.LogWarning(LogPrefix + $"The playtest video could not be written to the end: {summary.Error}. The {summary.FramesWritten} frames written before, " +
-                    $"{summary.VideoSeconds:0.0} seconds, are kept in {summary.FilePath}.");
+                    $"{summary.VideoSeconds:0.0} seconds, are kept in {summary.FilePath}." + summary.DescribeTimesInTheBackground());
             }
             else if (summary.FilePath == null)
             {
@@ -403,7 +447,7 @@ namespace Protokite.Playtest
                     $"and {summary.LongestEncodeMs:0.00} ms at most, and one write took at most {summary.LongestWriteMs:0.00} ms. Frames dropped: " +
                     $"{summary.FramesDroppedBecauseEncodingFellBehind} because encoding fell behind, {summary.FramesDroppedBecauseWritingFellBehind} because writing " +
                     $"fell behind, {summary.FramesNotReadyInTime} because earlier frames were still on their way, {summary.FramesLostOnTheGraphicsCard} lost on the " +
-                    $"graphics card and {summary.FramesDroppedForWantOfABlock} for want of room.");
+                    $"graphics card and {summary.FramesDroppedForWantOfABlock} for want of room." + summary.DescribeTimesInTheBackground());
             }
             UploadThisLaunchsRecordingWhenReady();
         }
@@ -461,6 +505,7 @@ namespace Protokite.Playtest
             _videoNotStartedIsExpected = false;
             _videoTurnedOffOnThisPlatform = false;
             FinishedVideo = null;
+            ResetPhoneLimitsForNewLaunch();
         }
     }
 }

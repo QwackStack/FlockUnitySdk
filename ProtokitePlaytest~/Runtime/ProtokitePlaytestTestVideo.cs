@@ -113,7 +113,7 @@ namespace Protokite.Playtest
             double lengthLimit = settings.MaxSeconds;
             settings.MaxSeconds = Math.Min(secondsAskedFor, lengthLimit);
             if (!TryStartRecording(ProtokitePlaytestRecordingKind.TestVideo, settings, out ProtokitePlaytestVideoRecording recording, out ProtokitePlaytestRecordingRun run,
-                    out _, out _, out string whyNot))
+                    out _, out _, out _, out string whyNot))
             {
                 SayTestVideoNotRecorded(whyNot);
                 return;
@@ -121,6 +121,7 @@ namespace Protokite.Playtest
 
             _testVideo = recording;
             _testVideoRun = run;
+            AskThePhoneAtTheNextFrame();
             string cutToTheLimit = secondsAskedFor > lengthLimit ? $" ({secondsAskedFor:0.#} were asked for, and Max Recording Minutes allows no more)" : "";
             Debug.Log(LogPrefix + $"Recording a test video to {_testVideo.PartPath}, at {_testVideo.Width}x{_testVideo.Height} and {settings.FramesPerSecond} " +
                 $"frames a second, as H.264. It stops after {settings.MaxSeconds:0.#} seconds of play{cutToTheLimit}, or before the file passes " +
@@ -141,12 +142,12 @@ namespace Protokite.Playtest
                 Debug.LogWarning(LogPrefix + $"The test video could not be written, so no finished file was kept: {summary.Error}. It had stopped because {why}.");
             else if (summary.Error != null)
                 Debug.LogWarning(LogPrefix + $"The test video could not be written to the end: {summary.Error}. The {summary.FramesWritten} frames written before, " +
-                    $"{summary.VideoSeconds:0.0} seconds, are kept in {summary.FilePath}.");
+                    $"{summary.VideoSeconds:0.0} seconds, are kept in {summary.FilePath}." + summary.DescribeTimesInTheBackground());
             else if (summary.FilePath == null)
                 Debug.Log(LogPrefix + $"The test video stopped because {why} before any frame was captured, so no file was kept.");
             else
                 Debug.Log(LogPrefix + $"Test video saved to {summary.FilePath}: {summary.VideoSeconds:0.0} seconds, {summary.FramesWritten} frames, " +
-                    $"{summary.BytesWritten / BytesPerMegabyte:0.0} MB, encoded by {summary.EncodedBy}. It stopped because {why}.");
+                    $"{summary.BytesWritten / BytesPerMegabyte:0.0} MB, encoded by {summary.EncodedBy}. It stopped because {why}." + summary.DescribeTimesInTheBackground());
         }
 
         // The launch's one recording at a time belongs to the playtest: a test video waiting to start is dropped, and one recording stops.

@@ -220,6 +220,14 @@ namespace Protokite.Playtest
             TakeCapturedFrames(frames);
         }
 
+        public void TakeFramesOnTheirWay(List<ProtokitePlaytestCapturedFrame> frames)
+        {
+            // The wait finishes the game's own readbacks too, so it is made only when frames of ours are on their way.
+            if (!_stopped && _framesOnTheirWay > 0)
+                AsyncGPUReadback.WaitAllRequests();
+            TakeCapturedFrames(frames);
+        }
+
         public void Dispose()
         {
             if (!_stopped)

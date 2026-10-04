@@ -68,6 +68,16 @@ namespace Protokite.Playtest.Tests
             TakeCapturedFrames(frames);
         }
 
+        /// <summary>Times the recording waited for the frames on their way while capturing went on.</summary>
+        public int TimesFramesOnTheirWayWereTaken;
+
+        public void TakeFramesOnTheirWay(List<ProtokitePlaytestCapturedFrame> frames)
+        {
+            TimesFramesOnTheirWayWereTaken++;
+            LetFramesArrive();
+            TakeCapturedFrames(frames);
+        }
+
         public void Dispose() => Disposed = true;
     }
 
@@ -158,6 +168,18 @@ namespace Protokite.Playtest.Tests
         public bool Disposed;
         public readonly List<long> DurationsMs = new List<long>();
 
+        /// <summary>True keeps every frame inside the encoder until it finishes or lets go, as a phone's encoder may hold its last frames.</summary>
+        public bool HoldsEveryFrame;
+
+        /// <summary>What the encoding thread asked of it, in order: "encode 66" for a frame shown at 66 ms, and "let go".</summary>
+        public readonly List<string> Calls = new List<string>();
+
+        /// <summary>Whether each frame it handed over is a keyframe, in order.</summary>
+        public readonly List<bool> KeyframesHandedOver = new List<bool>();
+
+        private readonly List<ProtokitePlaytestEncodedFrame> _held = new List<ProtokitePlaytestEncodedFrame>();
+        private bool _nextIsAKeyframe = true;
+
         public bool Configure(ProtokitePlaytestVideoEncoderSettings settings, out string error)
         {
             Configured = settings;
@@ -189,17 +211,60 @@ namespace Protokite.Playtest.Tests
             if (error != null)
                 return false;
             DurationsMs.Add(durationMs);
-            output.Add(new ProtokitePlaytestEncodedFrame(ProtokitePlaytestMp4TestFiles.MakeFrame(_encoded, FrameBytes, _encoded == 0), timestampMs, _encoded == 0,
-                _encoded == 0 ? ProtokitePlaytestMp4TestFiles.DecoderSettings : null));
+            lock (Calls)
+                Calls.Add("encode " + timestampMs);
+            bool keyframe = _nextIsAKeyframe;
+            _nextIsAKeyframe = false;
+            ProtokitePlaytestEncodedFrame frame = new ProtokitePlaytestEncodedFrame(ProtokitePlaytestMp4TestFiles.MakeFrame(_encoded, FrameBytes, keyframe), timestampMs, keyframe,
+                _encoded == 0 ? ProtokitePlaytestMp4TestFiles.DecoderSettings : null);
             _encoded++;
+            if (HoldsEveryFrame)
+                _held.Add(frame);
+            else
+                HandOver(frame, output);
             return true;
         }
 
         public bool Finish(List<ProtokitePlaytestEncodedFrame> output, out string error)
         {
             Finished = true;
+            HandOverHeld(output);
             error = null;
             return true;
+        }
+
+        /// <summary>Times it was asked to hand over what it held and let go.</summary>
+        public int TimesLetGo;
+
+        /// <summary>Set to make letting go fail, the way a phone's encoder that will not end its stream does.</summary>
+        public string RefuseToLetGo;
+
+        public bool HandOverEverythingAndLetGo(List<ProtokitePlaytestEncodedFrame> output, out string error)
+        {
+            lock (Calls)
+                Calls.Add("let go");
+            TimesLetGo++;
+            error = RefuseToLetGo;
+            if (error != null)
+                return false;
+            HandOverHeld(output);
+            // A new stream starts with the next frame, on a keyframe.
+            _nextIsAKeyframe = true;
+            return true;
+        }
+
+        private void HandOverHeld(List<ProtokitePlaytestEncodedFrame> output)
+        {
+            foreach (ProtokitePlaytestEncodedFrame frame in _held)
+                HandOver(frame, output);
+            _held.Clear();
+        }
+
+        private void HandOver(ProtokitePlaytestEncodedFrame frame, List<ProtokitePlaytestEncodedFrame> output)
+        {
+            lock (KeyframesHandedOver)
+                KeyframesHandedOver.Add(frame.IsKeyframe);
+            output.Add(frame);
         }
 
         public void Dispose() => Disposed = true;

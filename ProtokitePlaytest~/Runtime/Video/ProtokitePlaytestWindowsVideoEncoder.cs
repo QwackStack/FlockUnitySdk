@@ -132,6 +132,9 @@ namespace Protokite.Playtest
             return drained || Fail(error);
         }
 
+        // A desktop game keeps its encoder: Windows neither ends a game in the background nor takes its encoder back.
+        public bool HandOverEverythingAndLetGo(List<ProtokitePlaytestEncodedFrame> output, out string error) => Usable(out error);
+
         public void Dispose()
         {
             if (_disposed)

@@ -63,6 +63,15 @@ namespace Protokite.Playtest
         [Tooltip("Off by default: video is encoded by the phone's hardware encoder, and a phone without one records no video. On: such a phone records with Android's software encoder on the processor instead, which costs the game frame rate and battery.")]
         [SerializeField] private bool androidAllowSoftwareEncoder;
 
+        [Tooltip("On by default: when Android says the phone has started to slow itself down for heat (thermal status moderate), video is recorded at half its frame rate until the phone cools; when Android says it is slowing the phone down enough for the player to notice (severe or above), the recording stops for the launch and what it holds is kept and uploaded as usual. Phones before Android 10 do not report their heat, and record as set.")]
+        [SerializeField] private bool slowDownTheRecordingWhenThePhoneIsHot = true;
+
+        [Tooltip("The recording stops for the launch, and what it holds is kept and uploaded as usual, when the phone's battery falls below this percentage while it is not charging. 0: never.")]
+        [SerializeField, Range(0, 100)] private int stopTheRecordingBelowBatteryPercent = 15;
+
+        [Tooltip("The most every recording kept on the phone may take together, in megabytes, in place of Recordings Disk Budget Mb. Recordings never take the phone's free space below the line where Android warns that storage is running out (500 MB, or a twentieth of the storage when that is less), so a fuller phone gives them less.")]
+        [SerializeField, Min(1)] private int androidRecordingsDiskBudgetMb = 1024;
+
         [Header("Recordings (every platform)")]
         [Tooltip("A recording stops for good after this many minutes of play.")]
         [SerializeField, Min(0.1f)] private float maxRecordingMinutes = 60f;
@@ -70,7 +79,7 @@ namespace Protokite.Playtest
         [Tooltip("A recording stops for good before its file passes this many megabytes.")]
         [SerializeField, Min(1)] private int maxRecordingSizeMb = 1536;
 
-        [Tooltip("The most every recording kept on this machine may take together, in megabytes. To make room for a new recording, those whose game has closed are deleted, the oldest first.")]
+        [Tooltip("The most every recording kept on this machine may take together, in megabytes (on Android, Android Recordings Disk Budget Mb instead). To make room for a new recording, those whose game has closed are deleted, the oldest first.")]
         [SerializeField, Min(1)] private int recordingsDiskBudgetMb = 4096;
 
         [Header("Heavy analytics")]
@@ -133,6 +142,15 @@ namespace Protokite.Playtest
 
         /// <summary>Whether a phone with no hardware video encoder records with Android's software encoder, at a cost to frame rate and battery.</summary>
         public bool AndroidAllowSoftwareEncoder { get => androidAllowSoftwareEncoder; set => androidAllowSoftwareEncoder = value; }
+
+        /// <summary>Whether an Android player's recording takes half its frame rate while the phone is warm, and stops for the launch when it is too hot.</summary>
+        public bool SlowDownTheRecordingWhenThePhoneIsHot { get => slowDownTheRecordingWhenThePhoneIsHot; set => slowDownTheRecordingWhenThePhoneIsHot = value; }
+
+        /// <summary>The battery percentage below which an Android player's recording stops for the launch while the phone is not charging; 0 never stops it.</summary>
+        public int StopTheRecordingBelowBatteryPercent { get => stopTheRecordingBelowBatteryPercent; set => stopTheRecordingBelowBatteryPercent = value; }
+
+        /// <summary>The most every recording kept on a phone may take together, in megabytes; the phone's free space can make it less.</summary>
+        public int AndroidRecordingsDiskBudgetMb { get => androidRecordingsDiskBudgetMb; set => androidRecordingsDiskBudgetMb = value; }
 
         /// <summary>Minutes of play after which a recording stops for good.</summary>
         public float MaxRecordingMinutes { get => maxRecordingMinutes; set => maxRecordingMinutes = value; }

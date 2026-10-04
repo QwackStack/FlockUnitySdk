@@ -30,6 +30,9 @@ namespace Protokite.Playtest
         /// <summary>How much time the recording holds so far.</summary>
         public double RecordedSeconds { get; private set; }
 
+        /// <summary>Whether captures come half as often, for a phone that is warming up; a player shows each frame until the next.</summary>
+        public bool HalfTheFrameRate { get; set; }
+
         public ProtokitePlaytestFrameSchedule(int framesPerSecond, double maxSeconds)
         {
             _captureIntervalSeconds = 1.0 / Math.Max(1, framesPerSecond);
@@ -72,14 +75,15 @@ namespace Protokite.Playtest
             {
                 return ProtokitePlaytestFrameDecision.Skip;
             }
+            double interval = HalfTheFrameRate ? _captureIntervalSeconds * 2 : _captureIntervalSeconds;
             // A frame far longer than the interval jumps most of the way at once; one interval at a time it could run for ever.
-            if (frameMiddleSeconds - _nextCaptureSeconds > _captureIntervalSeconds * 1000)
+            if (frameMiddleSeconds - _nextCaptureSeconds > interval * 1000)
             {
-                _nextCaptureSeconds += Math.Floor((frameMiddleSeconds - _nextCaptureSeconds) / _captureIntervalSeconds) * _captureIntervalSeconds;
+                _nextCaptureSeconds += Math.Floor((frameMiddleSeconds - _nextCaptureSeconds) / interval) * interval;
             }
             while (_nextCaptureSeconds <= frameMiddleSeconds)
             {
-                double next = _nextCaptureSeconds + _captureIntervalSeconds;
+                double next = _nextCaptureSeconds + interval;
                 _nextCaptureSeconds = next > _nextCaptureSeconds ? next : double.PositiveInfinity;
             }
 

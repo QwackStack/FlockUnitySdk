@@ -188,6 +188,9 @@ namespace Protokite.Playtest.Tests
             asset.AndroidVideoFramesPerSecond = 20;
             asset.AndroidVideoBitrateKbps = 1200;
             asset.AndroidAllowSoftwareEncoder = false;
+            asset.SlowDownTheRecordingWhenThePhoneIsHot = false;
+            asset.StopTheRecordingBelowBatteryPercent = 19;
+            asset.AndroidRecordingsDiskBudgetMb = 17;
             asset.MaxRecordingMinutes = 7f;
             asset.MaxRecordingSizeMb = 11;
             asset.RecordingsDiskBudgetMb = 13;
@@ -206,9 +209,11 @@ namespace Protokite.Playtest.Tests
             Assert.AreEqual(1200, video.BitrateKbps);
             Assert.IsFalse(video.AllowSoftwareEncoder);
             Assert.IsFalse(video.RecordVideo);
+            Assert.IsFalse(video.SlowDownWhenHot);
+            Assert.AreEqual(19, video.StopBelowBatteryPercent);
             Assert.AreEqual(420.0, video.MaxSeconds, 1e-9, "The recordings' own limits are every platform's");
             Assert.AreEqual(11L * 1024 * 1024, video.MaxBytes);
-            Assert.AreEqual(13L * 1024 * 1024, video.DiskBudgetBytes);
+            Assert.AreEqual(17L * 1024 * 1024, video.DiskBudgetBytes, "A phone's recordings have a budget of their own");
             Object.DestroyImmediate(asset);
         }
 
@@ -224,6 +229,7 @@ namespace Protokite.Playtest.Tests
             Assert.AreEqual(900, video.BitrateKbps);
             Assert.IsTrue(video.AllowSoftwareEncoder);
             Assert.IsTrue(video.RecordVideo, "Record Video On Android turns off Android's video alone");
+            Assert.AreEqual(13L * 1024 * 1024, video.DiskBudgetBytes, "Android's budget is Android's alone");
             Object.DestroyImmediate(asset);
         }
 
@@ -257,6 +263,14 @@ namespace Protokite.Playtest.Tests
             Assert.AreEqual(320, video.MaxVideoWidth);
             Assert.AreEqual(1, video.FramesPerSecond);
             Assert.AreEqual(20000, video.BitrateKbps);
+
+            asset.StopTheRecordingBelowBatteryPercent = 150;
+            asset.AndroidRecordingsDiskBudgetMb = 0;
+            video = ProtokitePlaytestVideoSettings.From(asset, true);
+            Assert.AreEqual(100, video.StopBelowBatteryPercent);
+            Assert.AreEqual(1024L * 1024, video.DiskBudgetBytes, "A budget of nothing is a megabyte, as on every platform");
+            asset.StopTheRecordingBelowBatteryPercent = -5;
+            Assert.AreEqual(0, ProtokitePlaytestVideoSettings.From(asset, true).StopBelowBatteryPercent);
             Object.DestroyImmediate(asset);
         }
 
@@ -270,6 +284,9 @@ namespace Protokite.Playtest.Tests
             Assert.AreEqual(1500, video.BitrateKbps);
             Assert.IsFalse(video.AllowSoftwareEncoder);
             Assert.IsTrue(video.RecordVideo);
+            Assert.IsTrue(video.SlowDownWhenHot);
+            Assert.AreEqual(15, video.StopBelowBatteryPercent);
+            Assert.AreEqual(1024L * 1024 * 1024, video.DiskBudgetBytes);
         }
 
         [Test]
@@ -286,6 +303,9 @@ namespace Protokite.Playtest.Tests
                 Assert.AreEqual(15, asset.AndroidVideoFramesPerSecond);
                 Assert.AreEqual(1500, asset.AndroidVideoBitrateKbps);
                 Assert.IsFalse(asset.AndroidAllowSoftwareEncoder, "Windows' switch on does not turn Android's on");
+                Assert.IsTrue(asset.SlowDownTheRecordingWhenThePhoneIsHot);
+                Assert.AreEqual(15, asset.StopTheRecordingBelowBatteryPercent);
+                Assert.AreEqual(1024, asset.AndroidRecordingsDiskBudgetMb);
             }
             Object.DestroyImmediate(fresh);
             Object.DestroyImmediate(loaded);

@@ -69,7 +69,9 @@ namespace Protokite.Playtest
 
         private void OnApplicationPause(bool paused)
         {
-            if (!paused)
+            if (paused)
+                ProtokitePlaytest.HandleGameWentToTheBackground();
+            else
                 ProtokitePlaytest.HandleGameLeftOrCameBack();
         }
 

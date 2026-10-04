@@ -30,6 +30,10 @@ namespace Protokite.Playtest.Tests
         public bool NeverFreesAnInputBuffer;
         public bool HandsBackNoStartCode;
         public bool HandsBackPastItsBuffer;
+        /// <summary>The sequence settings this codec's stream carries; another codec of the same phone may write others.</summary>
+        public byte[] SequenceSettingsSent = SequenceSettings;
+        /// <summary>True makes the first picture a frame that needs an earlier one, which a new stream never should.</summary>
+        public bool FirstPictureNeedsAnEarlierOne;
 
         public int Width;
         public int Height;
@@ -132,16 +136,16 @@ namespace Protokite.Playtest.Tests
             {
                 _settingsSent = true;
                 if (SettingsInABufferOfTheirOwn)
-                    _waiting.Enqueue(new Output { Bytes = Join(StartCode, SequenceSettings, StartCode, PictureSettings), Flags = ProtokitePlaytestMediaCodec.SettingsOnlyFlag });
+                    _waiting.Enqueue(new Output { Bytes = Join(StartCode, SequenceSettingsSent, StartCode, PictureSettings), Flags = ProtokitePlaytestMediaCodec.SettingsOnlyFlag });
                 if (SettingsOnlyOnTheOutputFormat)
                     _waiting.Enqueue(new Output { FormatChange = true });
             }
-            bool first = FramesQueued.Count == 1;
+            bool first = FramesQueued.Count == 1 && !FirstPictureNeedsAnEarlierOne;
             byte[] picture = HandsBackNoStartCode
                 ? new byte[] { 0x65, 0x88, (byte)FramesQueued.Count }
                 : Join(StartCode, new byte[] { (byte)(first ? 0x65 : 0x41), 0x88, (byte)FramesQueued.Count });
             if (first && SettingsInFrontOfTheFirstPicture)
-                picture = Join(StartCode, SequenceSettings, StartCode, PictureSettings, picture);
+                picture = Join(StartCode, SequenceSettingsSent, StartCode, PictureSettings, picture);
             Output frame = new Output { Bytes = picture, TimeUs = presentationTimeUs, Flags = first ? ProtokitePlaytestMediaCodec.KeyframeFlag : 0 };
             _held.Enqueue(frame);
             while (_held.Count > FramesHeldUntilTheEnd)
@@ -188,7 +192,7 @@ namespace Protokite.Playtest.Tests
         }
 
         public List<byte[]> SettingsOnTheOutputFormat()
-            => SettingsOnlyOnTheOutputFormat ? new List<byte[]> { Join(StartCode, SequenceSettings), Join(StartCode, PictureSettings) } : new List<byte[]>();
+            => SettingsOnlyOnTheOutputFormat ? new List<byte[]> { Join(StartCode, SequenceSettingsSent), Join(StartCode, PictureSettings) } : new List<byte[]>();
 
         public void Stop() => StopCalls++;
 

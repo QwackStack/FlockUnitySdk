@@ -824,13 +824,14 @@ namespace Protokite.Playtest.Tests
         public void TheRecordingMayTakeOnlyTheRoomTheBudgetHasLeft()
         {
             _settings.Settings.RecordingsDiskBudgetMb = 3;
-            _settings.Settings.MaxRecordingMinutes = 0.1f;
+            // A minute at the bitrate is about 14 MB, so the 2 MB left stops it before its length limit and the log names why.
+            _settings.Settings.MaxRecordingMinutes = 1f;
             string otherGame = ProtokitePlaytestPlantedRuns.Plant(Recordings, ProtokitePlaytestRecordingKind.Playtest, "20260101-000000-00000001", Megabyte);
             using (ProtokitePlaytestPlantedRuns.HoldLock(otherGame))
             using (FlockWithConfig(true))
             {
                 ProtokitePlaytest.Refresh();
-                LogAssert.Expect(LogType.Log, new Regex(@"before the file passes 2 MB \(Max Recording Size Mb is 1536 MB, but Recordings Disk Budget Mb has only this much left\)"));
+                LogAssert.Expect(LogType.Log, new Regex(@"before the file passes 2 MB \(Max Recording Size Mb is 1536 MB, but Recordings Disk Budget Mb leaves only this much\)"));
                 Frames(1);
                 Assert.AreEqual(2 * Megabyte, ProtokitePlaytest.VideoRecordingForTesting.MaxBytes, "The 3 MB budget less the 1 MB another game still running reserved");
                 Assert.AreEqual((2 * Megabyte).ToString(), File.ReadAllText(Path.Combine(ProtokitePlaytest.RecordingRunForTesting.FolderPath, "reserved-bytes.txt")));
@@ -980,6 +981,7 @@ namespace Protokite.Playtest.Tests
             }
 
             public bool Finish(System.Collections.Generic.List<ProtokitePlaytestEncodedFrame> output, out string error) => _inner.Finish(output, out error);
+            public bool HandOverEverythingAndLetGo(System.Collections.Generic.List<ProtokitePlaytestEncodedFrame> output, out string error) => _inner.HandOverEverythingAndLetGo(output, out error);
             public void Dispose() => _inner.Dispose();
         }
     }

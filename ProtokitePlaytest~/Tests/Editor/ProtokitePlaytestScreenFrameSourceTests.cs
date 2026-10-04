@@ -200,6 +200,26 @@ namespace Protokite.Playtest.Tests
         }
 
         [Test]
+        public void FramesOnTheirWayAreHandedOverWhenAskedAndCapturingGoesOn()
+        {
+            ProtokitePlaytestScreenFrameSource source = Source(64, 32, 8);
+            Texture2D picture = Picture(64, 32, (x, y) => Red);
+            source.CaptureFromTexture(picture, 0);
+            source.CaptureFromTexture(picture, 1);
+            List<ProtokitePlaytestCapturedFrame> frames = new List<ProtokitePlaytestCapturedFrame>();
+            source.TakeCapturedFrames(frames);
+            Assert.AreEqual(0, frames.Count, "Precondition: both are still on their way from the graphics card");
+
+            source.TakeFramesOnTheirWay(frames);
+            CollectionAssert.AreEqual(new long[] { 0, 1 }, frames.ConvertAll(frame => frame.TimestampMs), "Waited for, as the game leaves for the background");
+            Assert.IsTrue(source.IsReadyForAnotherFrame, "And the capture goes on when the game comes back");
+            source.CaptureFromTexture(picture, 2);
+            frames.Clear();
+            source.Stop(frames);
+            CollectionAssert.AreEqual(new long[] { 2 }, frames.ConvertAll(frame => frame.TimestampMs));
+        }
+
+        [Test]
         public void AFrameThatFindsNoFreeBlockIsDroppedAndCounted()
         {
             ProtokitePlaytestScreenFrameSource source = Source(64, 32, 1);

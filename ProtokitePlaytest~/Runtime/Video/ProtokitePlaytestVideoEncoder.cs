@@ -71,6 +71,9 @@ namespace Protokite.Playtest
 
         /// <summary>Hands over anything the encoder still holds. Nothing can be encoded afterwards.</summary>
         bool Finish(List<ProtokitePlaytestEncodedFrame> output, out string error);
+
+        /// <summary>The game went to the background: hands over every frame it holds, and may let the platform's encoder go until the next frame.</summary>
+        bool HandOverEverythingAndLetGo(List<ProtokitePlaytestEncodedFrame> output, out string error);
     }
 
     /// <summary>The size of the frames both sides of the encoder agree on.</summary>

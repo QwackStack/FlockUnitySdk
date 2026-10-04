@@ -266,7 +266,11 @@ before anyone signs in: one recording a launch, encoded as H.264 by the graphics
 records as an MP4 file a browser plays with nothing installed. Each frame is written whole as it comes, so a recording cut
 off by a crash keeps every frame before the cut. It stops for good at the length or size limit, or when the game quits;
 quitting waits for the file within the same 3 seconds as the session end, and a file not finished by then stays as its
-`.part` file, which the next launch finishes. Time the game spends in the background is left out.
+`.part` file, which the next launch finishes. Time the game spends in the background is left out, and nothing fills it: the
+video goes on from the moment the player left. As the game goes to the background, everything the recording holds (frames on
+their way from the graphics card, and those the encoder has not handed back) is written to its file, so a game Android ends
+while it is away keeps every frame recorded before. On a phone the encoder is given back to the phone meanwhile, and the first
+frame after the return starts a new stream on a keyframe in the same file.
 
 ```csharp
 ProtokitePlaytest.IsRecordingVideo       // this launch's recording is capturing (a test video does not count)
@@ -343,7 +347,8 @@ When a later launch starts, a thread of its own goes through the folders whose g
 This runs in every launch, Playtesting Enabled or not. Files an earlier version left straight in `ProtokitePlaytest/Recordings/`
 are left where they are and not counted below.
 
-**Recordings Disk Budget Mb** is the most every recording kept on the machine may take together. Before a recording starts,
+**Recordings Disk Budget Mb** (on Android, **Android Recordings Disk Budget Mb**) is the most every recording kept on the
+machine may take together. Before a recording starts,
 recordings whose game has closed are deleted until it fits: test videos first, then recordings waiting to upload, the oldest
 first. A recording starts once the folders above have
 been gone through (usually milliseconds, at most 10 seconds), so nothing is deleted for room a cut-off file only seems to
@@ -354,6 +359,11 @@ being written counts at the most it may grow to and is never deleted, so two cop
 take each other's room. One that is finished but in use (being uploaded, or its game still running) is never deleted
 either, and counts at what it takes. With less than 1 MB left, that launch records no video, and a warning names the
 setting to raise.
+
+On a phone, recordings also never take its free space below the line where Android warns that storage is running out (500 MB,
+or 5% of the storage when that is less), read when each recording starts: a fuller phone gives a recording less room, the
+log says when the phone's free space cut it shorter, and with less than 1 MB the warning says to free some of the phone's
+storage. A recording deleted to make room counts as free space again.
 
 The video's size is set when the recording starts. A window resized, or a phone turned between upright and sideways, later
 on is recorded at its own shape inside that size, with black bars beside or above it, rather than stretched.
@@ -385,9 +395,16 @@ therefore records with the Windows settings.
 | Android Video Frames Per Second | 15 | 30 doubles the phone's encoding work and the frames copied from the screen (measured) |
 | Android Video Bitrate Kbps | 1500 | Held as a constant rate where the phone's encoder says it takes one (1,520 kbps measured against 1,500 asked); on an encoder that does not, a busy picture can run over (26% measured in the phone's default mode) |
 | Android Allow Software Encoder | off | On: a phone with no hardware H.264 encoder records with Android's software encoder on the processor instead, which costs frame rate and battery (about 6.5 times the hardware encoder's processor time, measured) |
+| Slow Down The Recording When The Phone Is Hot | on | When Android says it has started to slow the phone down for heat (thermal status moderate), the recording takes half its frame rate until the phone cools; when Android says it is slowing the phone down enough for the player to notice (severe or above), the recording stops for the launch, and what it holds is kept and uploaded as usual. Phones before Android 10 do not report their heat, and record as set; the log says so once |
+| Stop The Recording Below Battery Percent | 15 | The recording stops for the launch, and what it holds is kept and uploaded as usual, when the battery falls below this percentage while the phone is not charging. 0: never |
+| Android Recordings Disk Budget Mb | 1024 | The most every recording kept on the phone may take together, in place of Recordings Disk Budget Mb, and never past the phone's own low-storage line (above) |
 
 A phone whose encoder does not take the video's size or rate records at the next size down it does (three quarters, a half,
 three eighths of the long side), then at 15 and 10 frames a second, and the log says which.
+
+While an Android player records, the phone is asked about its heat and battery every 5 seconds of play (0.14 ms for the heat and
+0.07 ms for the battery on the main thread, measured on a Galaxy S23 Ultra), and at once when a recording starts; only what a setting uses is asked. Each change of rate, and a stop, is
+logged once.
 
 **Recordings (every platform)**
 
@@ -395,7 +412,7 @@ three eighths of the long side), then at 15 and 10 frames a second, and the log 
 |---|---|---|
 | Max Recording Minutes | 60 | |
 | Max Recording Size Mb | 1536 | |
-| Recordings Disk Budget Mb | 4096 | The most every recording kept on the machine may take together (above) |
+| Recordings Disk Budget Mb | 4096 | The most every recording kept on the machine may take together (above); Android players use Android Recordings Disk Budget Mb |
 
 ## The sample
 
@@ -467,7 +484,10 @@ hardware encoding cost 2 to 4 ms of graphics time on one frame in four, 2% of a 
 graphics cannot run compute shaders (OpenGL ES 3.0, measured by forcing it) or read the screen back without waiting records no
 video and says why once. A phone with no hardware H.264 encoder records no video unless **Android Allow Software Encoder** is on.
 A live playtest on that phone signed in, recorded, uploaded its recording (stored as MP4 that Chrome plays) and ended its session
-when the game quit. Not yet measured: other phones, and x86 Android devices (some Chromebooks and emulators).
+when the game quit. Sent to the home screen for five minutes and brought back, a recording on that phone went on in the same file
+from a keyframe, with the time away left out, and a game Android ended while it was away kept every frame recorded before it left.
+Heat and a low battery were measured through the package's stand-ins, since ten minutes of encoding raised no heat on that phone.
+Not yet measured: other phones, and x86 Android devices (some Chromebooks and emulators).
 
 Recordings an earlier version of the package kept as WebM files are still finished after a crash and uploaded as they are.
 

@@ -324,5 +324,179 @@ namespace Protokite.Playtest.Tests
             Assert.AreEqual(1, codec.StopCalls);
             Assert.AreEqual(1, codec.DisposeCalls);
         }
+
+        // Going to the background
+
+        // A codec of its own each time the encoder makes one, as the phone gives a new one after the background; the test sets each up.
+        private static ProtokitePlaytestAndroidVideoEncoder OverCodecsInTurn(List<ProtokitePlaytestStandInAndroidCodec> made,
+            Action<ProtokitePlaytestStandInAndroidCodec, int> setUp = null)
+            => new ProtokitePlaytestAndroidVideoEncoder(PhoneEncoder(), (out string whyNot) =>
+            {
+                whyNot = null;
+                ProtokitePlaytestStandInAndroidCodec codec = new ProtokitePlaytestStandInAndroidCodec();
+                setUp?.Invoke(codec, made.Count);
+                made.Add(codec);
+                return codec;
+            });
+
+        // Encodes frames one a frame time apart from the time given; false with why at the first refused.
+        private static bool Encode(ProtokitePlaytestAndroidVideoEncoder encoder, long fromMs, int frames, List<ProtokitePlaytestEncodedFrame> all, out string error)
+        {
+            List<ProtokitePlaytestEncodedFrame> output = new List<ProtokitePlaytestEncodedFrame>();
+            byte[] pixels = Frame();
+            for (int i = 0; i < frames; i++)
+            {
+                output.Clear();
+                if (!encoder.Encode(pixels, fromMs + i * FrameMs, FrameMs, output, out error))
+                    return false;
+                all.AddRange(output);
+            }
+            error = null;
+            return true;
+        }
+
+        private static bool LetGo(ProtokitePlaytestAndroidVideoEncoder encoder, List<ProtokitePlaytestEncodedFrame> all, out string error)
+        {
+            List<ProtokitePlaytestEncodedFrame> output = new List<ProtokitePlaytestEncodedFrame>();
+            bool letGo = encoder.HandOverEverythingAndLetGo(output, out error);
+            all.AddRange(output);
+            return letGo;
+        }
+
+        [Test]
+        public void LettingGoHandsOverEveryFrameTheCodecHeldAndGivesTheCodecBack()
+        {
+            List<ProtokitePlaytestStandInAndroidCodec> made = new List<ProtokitePlaytestStandInAndroidCodec>();
+            using (ProtokitePlaytestAndroidVideoEncoder encoder = OverCodecsInTurn(made, (codec, index) => codec.FramesHeldUntilTheEnd = 2))
+            {
+                List<ProtokitePlaytestEncodedFrame> frames = new List<ProtokitePlaytestEncodedFrame>();
+                Assert.IsTrue(encoder.Configure(Settings(), out string error), error);
+                Assert.IsTrue(Encode(encoder, 0, 4, frames, out error), error);
+                Assert.AreEqual(2, frames.Count, "Precondition: the codec still holds the last two frames");
+
+                Assert.IsTrue(LetGo(encoder, frames, out error), error);
+                CollectionAssert.AreEqual(new long[] { 0, 67, 134, 201 }, frames.ConvertAll(frame => frame.TimestampMs), "The frames it held come out as it lets go");
+                Assert.IsTrue(made[0].EndOfStreamQueued, "Its stream is ended, which is what makes a codec hand back what it holds");
+                Assert.AreEqual(1, made[0].StopCalls, "Stopped");
+                Assert.AreEqual(1, made[0].DisposeCalls, "And given back to the phone while the game is away");
+            }
+            Assert.AreEqual(1, made.Count, "No codec is made until a frame needs one");
+            Assert.AreEqual(1, made[0].DisposeCalls, "Disposing afterwards gives nothing back twice");
+        }
+
+        [Test]
+        public void TheNextFrameStartsANewCodecOnAKeyframeAndTheVideoGoesOn()
+        {
+            List<ProtokitePlaytestStandInAndroidCodec> made = new List<ProtokitePlaytestStandInAndroidCodec>();
+            using (ProtokitePlaytestAndroidVideoEncoder encoder = OverCodecsInTurn(made))
+            {
+                List<ProtokitePlaytestEncodedFrame> frames = new List<ProtokitePlaytestEncodedFrame>();
+                Assert.IsTrue(encoder.Configure(Settings(), out string error), error);
+                Assert.IsTrue(Encode(encoder, 0, 3, frames, out error), error);
+                Assert.IsTrue(LetGo(encoder, frames, out error), error);
+                Assert.IsTrue(Encode(encoder, 1000, 3, frames, out error), "The first frame after the background starts a new codec: " + error);
+                Assert.IsTrue(encoder.Finish(frames, out error), error);
+
+                Assert.AreEqual(2, made.Count, "A codec of its own after the background");
+                Assert.AreEqual(64, made[1].Width, "Configured as the first was");
+                Assert.AreEqual(1500000, made[1].BitsPerSecond);
+                CollectionAssert.AreEqual(new long[] { 0, 67, 134, 1000, 1067, 1134 }, frames.ConvertAll(frame => frame.TimestampMs));
+                Assert.IsTrue(frames[3].IsKeyframe, "The new stream starts on a keyframe");
+                Assert.IsNull(frames[3].DecoderSettings, "The video's settings were handed over once, with its first frame");
+                Assert.IsTrue(made[1].EndOfStreamQueued, "Finishing ends the new stream");
+            }
+        }
+
+        [Test]
+        public void ANewStreamDescribedOtherwiseEndsTheVideoWhereTheGameLeft()
+        {
+            byte[] otherSettings = { 0x67, 0x64, 0x00, 0x28, 0xAC, 0xD9, 0x40 };
+            List<ProtokitePlaytestStandInAndroidCodec> made = new List<ProtokitePlaytestStandInAndroidCodec>();
+            using (ProtokitePlaytestAndroidVideoEncoder encoder = OverCodecsInTurn(made, (codec, index) =>
+                   {
+                       if (index == 1)
+                           codec.SequenceSettingsSent = otherSettings;
+                   }))
+            {
+                List<ProtokitePlaytestEncodedFrame> frames = new List<ProtokitePlaytestEncodedFrame>();
+                Assert.IsTrue(encoder.Configure(Settings(), out string error), error);
+                Assert.IsTrue(Encode(encoder, 0, 3, frames, out error), error);
+                Assert.IsTrue(LetGo(encoder, frames, out error), error);
+                Assert.IsFalse(Encode(encoder, 1000, 3, frames, out error), "A frame the file's header does not describe is never written");
+                StringAssert.Contains("came back from the background with stream settings other than the video's, so the video ends where the game left", error);
+                Assert.AreEqual(3, frames.Count, "Only the frames before the background");
+            }
+        }
+
+        [Test]
+        public void ANewStreamWithSettingsOnlyOnItsOutputFormatIsCheckedToo()
+        {
+            byte[] otherSettings = { 0x67, 0x64, 0x00, 0x28, 0xAC, 0xD9, 0x40 };
+            List<ProtokitePlaytestStandInAndroidCodec> made = new List<ProtokitePlaytestStandInAndroidCodec>();
+            using (ProtokitePlaytestAndroidVideoEncoder encoder = OverCodecsInTurn(made, (codec, index) =>
+                   {
+                       codec.SettingsInABufferOfTheirOwn = false;
+                       codec.SettingsOnlyOnTheOutputFormat = true;
+                       if (index == 1)
+                           codec.SequenceSettingsSent = otherSettings;
+                   }))
+            {
+                List<ProtokitePlaytestEncodedFrame> frames = new List<ProtokitePlaytestEncodedFrame>();
+                Assert.IsTrue(encoder.Configure(Settings(), out string error), error);
+                Assert.IsTrue(Encode(encoder, 0, 3, frames, out error), error);
+                Assert.IsTrue(LetGo(encoder, frames, out error), error);
+                Assert.IsFalse(Encode(encoder, 1000, 3, frames, out error), "The new stream's own settings are read, not the first stream's kept");
+                StringAssert.Contains("stream settings other than the video's", error);
+            }
+        }
+
+        [Test]
+        public void ANewStreamThatDoesNotStartOnAKeyframeEndsTheVideo()
+        {
+            List<ProtokitePlaytestStandInAndroidCodec> made = new List<ProtokitePlaytestStandInAndroidCodec>();
+            using (ProtokitePlaytestAndroidVideoEncoder encoder = OverCodecsInTurn(made, (codec, index) => codec.FirstPictureNeedsAnEarlierOne = index == 1))
+            {
+                List<ProtokitePlaytestEncodedFrame> frames = new List<ProtokitePlaytestEncodedFrame>();
+                Assert.IsTrue(encoder.Configure(Settings(), out string error), error);
+                Assert.IsTrue(Encode(encoder, 0, 3, frames, out error), error);
+                Assert.IsTrue(LetGo(encoder, frames, out error), error);
+                Assert.IsFalse(Encode(encoder, 1000, 3, frames, out error));
+                StringAssert.Contains("came back from the background with no keyframe to start from", error);
+            }
+        }
+
+        [Test]
+        public void LettingGoBeforeAnyFrameOrTwiceInARowHandsOverNothing()
+        {
+            List<ProtokitePlaytestStandInAndroidCodec> made = new List<ProtokitePlaytestStandInAndroidCodec>();
+            using (ProtokitePlaytestAndroidVideoEncoder encoder = OverCodecsInTurn(made))
+            {
+                List<ProtokitePlaytestEncodedFrame> frames = new List<ProtokitePlaytestEncodedFrame>();
+                Assert.IsTrue(encoder.Configure(Settings(), out string error), error);
+                Assert.IsTrue(LetGo(encoder, frames, out error), "Nothing to hand over before the first frame: " + error);
+                Assert.AreEqual(0, made.Count, "No codec is made to be let go");
+                Assert.IsTrue(Encode(encoder, 0, 2, frames, out error), error);
+                Assert.IsTrue(LetGo(encoder, frames, out error), error);
+                Assert.IsTrue(LetGo(encoder, frames, out error), "A second time away with no frame between: " + error);
+                Assert.AreEqual(1, made[0].StopCalls, "Stopped once");
+                Assert.AreEqual(2, frames.Count);
+                Assert.IsTrue(encoder.Finish(frames, out error), "Finishing with no codec running is nothing to do: " + error);
+            }
+        }
+
+        [Test]
+        public void AFrameOlderThanOneBeforeTheBackgroundIsStillRefused()
+        {
+            List<ProtokitePlaytestStandInAndroidCodec> made = new List<ProtokitePlaytestStandInAndroidCodec>();
+            using (ProtokitePlaytestAndroidVideoEncoder encoder = OverCodecsInTurn(made))
+            {
+                List<ProtokitePlaytestEncodedFrame> frames = new List<ProtokitePlaytestEncodedFrame>();
+                Assert.IsTrue(encoder.Configure(Settings(), out string error), error);
+                Assert.IsTrue(Encode(encoder, 0, 3, frames, out error), error);
+                Assert.IsTrue(LetGo(encoder, frames, out error), error);
+                Assert.IsFalse(Encode(encoder, 100, 1, frames, out error), "The file takes each frame later than the one before, across the background too");
+                StringAssert.Contains("came after one at 134 ms", error);
+            }
+        }
     }
 }

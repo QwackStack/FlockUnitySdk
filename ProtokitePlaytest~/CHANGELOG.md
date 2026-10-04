@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 It is released with the Flock SDK, at the Flock SDK's version.
 
 
+## [1.65.0]
+
+### Added
+- **A phone's recording follows the phone's heat, battery and free space**, with three new settings in **Video recording
+  (Android)**, each with a property of the same name on `ProtokitePlaytestSettings`; a settings asset saved by an earlier
+  version starts with these defaults:
+  - **Slow Down The Recording When The Phone Is Hot** (on): when Android says it has started to slow the phone down for heat
+    (thermal status moderate), the recording takes half its frame rate until the phone cools; when Android says it is slowing
+    the phone down enough for the player to notice (severe or above), the recording stops for the launch, and what it holds is
+    kept and uploaded as usual. Phones before Android 10 do not report their heat, record as set, and the log says so once.
+  - **Stop The Recording Below Battery Percent** (15): the recording stops for the launch, kept and uploaded as usual, when the
+    battery falls below it while the phone is not charging. 0 never stops it.
+  - **Android Recordings Disk Budget Mb** (1024): Android players' recordings are held to it in place of Recordings Disk Budget
+    Mb, and never take the phone's free space below the line where Android warns that storage is running out (500 MB, or a
+    twentieth of the storage when that is less). A fuller phone gives a recording less room, and the log says so.
+  - The phone is asked about its heat and battery every 5 seconds of play while a recording runs, and at once when one starts;
+    only what a setting uses is asked. Every change of rate, and a stop, is logged once.
+
+### Changed
+- **Going to the background writes out everything a recording holds**: the frames still on their way from the graphics card,
+  and those the encoder has not handed back, so a game Android ends while it is away keeps every frame recorded before it left
+  (measured on the earlier version: about two frames were lost). On a phone the encoder is given back to the phone while the
+  game is away, and the first frame after the return starts a new stream on a keyframe, in the same file; the time away is
+  still left out of the video, with nothing filling it. A phone whose new stream would not match the video's ends the video
+  where the game left, keeping what was recorded, and says why. The log of a finished recording says how many times the game
+  went to the background.
+- **Frames encoded before an encoding failure are written.** A recording whose encoder failed used to stop writing at once, so
+  frames already encoded and waiting for the disk were dropped; only a failed write stops the writing now.
+- A recording's start line names a budget or the phone's free space as cutting it short only when that room can stop it before its
+  length limit.
+
+### Verified
+- On a Galaxy S23 Ultra (Android 16) with Unity 6000.3 players, High managed stripping: **five minutes in the background and back**
+  (IL2CPP, Vulkan) gave one recording of 451 frames, read back by the phone's own decoder and played by Chrome at 30 s, with the
+  time away left out (longest step between frames 83 ms), the first frame after the return a keyframe and no error; waiting for the
+  frames on their way took 2.6 ms on the main thread and the encoder's hand-over 33.4 ms. The same 30 seconds away on OpenGL ES
+  (13.2 ms and 41.4 ms) and on a 32-bit Mono player passed every check. A live playtest sent to the background for five minutes
+  against a local Protokite and Flock kept one session, ended at quit, and its recording was stored as MP4 that Chrome plays at
+  its 13.7 s of play, not five minutes more.
+- **Killed 10 seconds into the background** (`am force-stop`), the file the kill left held every frame captured before the game
+  left (IL2CPP and Mono), where the earlier version lost 135 ms; the next launch finished it whole.
+- Heat, battery and free space, driven by the package's test stand-ins on the phone (ten minutes of encoding raised no heat on
+  this phone): severe heat at 8 s stopped the recording at the next question (9.8 s kept, Chrome plays it); moderate heat from 5 s
+  to 15 s halved the rate for 75 frames, then full rate again; no heat left it at 15 frames a second throughout; 10% battery not
+  charging stopped it, 10% charging did not; 50 MB free recorded no test video and said why, and with an earlier test video kept,
+  deleting it made the room. The package's own readers, called in the stripped player, read thermal status 0, the battery the
+  phone reports and the free space `df` reports.
+- The package's tests pass on Unity 2021.3 and 6000.3.
+
 ## [1.64.0]
 
 ### Added
