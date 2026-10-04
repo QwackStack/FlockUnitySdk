@@ -26,6 +26,12 @@ namespace Protokite.Playtest.Tests
             ["PlaytestConsent"] = () => Assert.AreEqual(ProtokitePlaytestConsentChoice.VideoAndPlayData, ProtokitePlaytest.PlaytestConsent, "What a build that does not ask assumes"),
             ["PlayersConsentAnswer"] = () => Assert.AreEqual(ProtokitePlaytestConsentChoice.NotAnswered, ProtokitePlaytest.PlayersConsentAnswer, "Never what a build that does not ask assumes"),
             ["IsConsentQuestionOpen"] = () => Assert.IsFalse(ProtokitePlaytest.IsConsentQuestionOpen),
+            ["PlayersUploadNetworkAnswer"] = () => Assert.AreEqual(ProtokitePlaytestUploadNetworkChoice.NotAnswered, ProtokitePlaytest.PlayersUploadNetworkAnswer),
+            ["SetPlaytestUploadNetwork(ProtokitePlaytestUploadNetworkChoice)"] = () =>
+            {
+                Assert.IsTrue(ProtokitePlaytest.SetPlaytestUploadNetwork(ProtokitePlaytestUploadNetworkChoice.WiFiOnly));
+                Assert.AreEqual(ProtokitePlaytestUploadNetworkChoice.WiFiOnly, ProtokitePlaytest.PlayersUploadNetworkAnswer);
+            },
             ["SetPlaytestConsent(ProtokitePlaytestConsentChoice)"] = () =>
             {
                 Assert.IsTrue(ProtokitePlaytest.SetPlaytestConsent(ProtokitePlaytestConsentChoice.PlayDataOnly));

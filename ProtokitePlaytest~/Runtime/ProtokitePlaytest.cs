@@ -149,8 +149,10 @@ namespace Protokite.Playtest
         {
             FlockClient running = RunningFlock();
             bool flockChanged = !ReferenceEquals(running, _flock);
-            // Before the early return below: it waits on the finishing pass, which changes no state Refresh follows.
+            // Before the early return below: these wait on the finishing pass and the device's network, which change no state Refresh follows.
             UploadEarlierRecordingsWhenReady(running);
+            UploadThisLaunchsRecordingWhenReady();
+            StopUploadsTheNetworkNoLongerAllows();
             SendWaitingFormsWhenDue(running);
 
             // Nothing to do when neither the Flock client nor the playtest's state has changed since the last frame, unless a
@@ -214,6 +216,7 @@ namespace Protokite.Playtest
             ResetUploadsForNewLaunch();
             ResetHeavyAnalyticsForNewLaunch();
             ResetConsentForNewLaunch();
+            ResetUploadNetworkForNewLaunch();
             ResetFormsForNewLaunch();
             _selfTest = null;
             _statusLastReported = null;

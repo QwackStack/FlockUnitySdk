@@ -43,6 +43,8 @@ namespace Protokite.Playtest.Tests
         private string _folder;
         private string _formsBefore;
         private bool _reachable;
+
+        private NetworkReachability Network() => _reachable ? NetworkReachability.ReachableViaLocalAreaNetwork : NetworkReachability.NotReachable;
         private DateTime _now;
 
         private string Forms => Path.Combine(_folder, "FeedbackForms");
@@ -61,7 +63,7 @@ namespace Protokite.Playtest.Tests
             ProtokitePlaytest.FeedbackFormsFolderForTesting = Forms;
             _reachable = true;
             _now = new DateTime(2026, 9, 29, 12, 0, 0, DateTimeKind.Utc);
-            ProtokitePlaytest.ReachabilityForTesting = () => _reachable;
+            ProtokitePlaytest.NetworkForTesting = Network;
             ProtokitePlaytest.ClockForTesting = () => _now;
         }
 
@@ -73,7 +75,7 @@ namespace Protokite.Playtest.Tests
             ProtokitePlaytest.ResetForNewLaunch();
             ProtokitePlaytest.DeviceIdFilePathForTesting = null;
             ProtokitePlaytest.FeedbackFormsFolderForTesting = _formsBefore;
-            ProtokitePlaytest.ReachabilityForTesting = null;
+            ProtokitePlaytest.NetworkForTesting = null;
             ProtokitePlaytest.ClockForTesting = null;
             ProtokitePlaytest.SetSteamId(null);
             _settings.Dispose();
@@ -455,10 +457,10 @@ namespace Protokite.Playtest.Tests
         public void TheNetworkIsAskedAboutOnlyWhileFormsWaitAfterAFailure()
         {
             int asked = 0;
-            ProtokitePlaytest.ReachabilityForTesting = () =>
+            ProtokitePlaytest.NetworkForTesting = () =>
             {
                 asked++;
-                return _reachable;
+                return Network();
             };
             FlockFakeTransport transport = Transport();
             using (FlockTestClient flock = StartFlock(transport))

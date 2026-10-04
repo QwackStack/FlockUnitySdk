@@ -118,6 +118,8 @@ namespace Protokite.Playtest.Samples
         {
             GUILayout.Label("Consent in force: " + ProtokitePlaytest.PlaytestConsent + ". The player's own answer: " + ProtokitePlaytest.PlayersConsentAnswer + ".");
             GUILayout.Label(ProtokitePlaytest.Describe(ProtokitePlaytest.PlaytestConsent));
+            // Asked on a phone after an answer that lets the screen be recorded; a game asking in its own menu answers with SetPlaytestUploadNetwork.
+            GUILayout.Label("Recordings upload on: " + ProtokitePlaytest.PlayersUploadNetworkAnswer + ".");
             GUILayout.BeginHorizontal();
             GUI.enabled = !ProtokitePlaytest.IsConsentQuestionOpen;
             if (GUILayout.Button("Show The Consent Question"))

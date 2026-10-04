@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 It is released with the Flock SDK, at the Flock SDK's version.
 
 
+## [1.66.0]
+
+### Added
+- **On a phone, the player chooses which networks recordings upload on.** On an Android player that records video, an answer to
+  the consent question that lets the screen be recorded is followed, on the same panel, by a second question: upload on Wi-Fi
+  only, or on Wi-Fi or mobile data (it says about how many MB a minute of play takes, at the recording's bitrate). The answer
+  holds back uploads, never the recording: a Wi-Fi only player's recordings wait on the phone and upload the next time it is on
+  Wi-Fi, in the same launch or a later one, and an upload under way stops when the phone leaves Wi-Fi and is sent again on Wi-Fi.
+  The answer is kept beside the consent answer (`ProtokitePlaytest/playtest_upload_network.json`), counts in a build that stops
+  asking, and is asked again by `AskForPlaytestConsent`. Nothing is asked on Windows, and nothing waits there.
+- `ProtokitePlaytest.PlayersUploadNetworkAnswer` and `ProtokitePlaytest.SetPlaytestUploadNetwork(choice)`, with
+  `ProtokitePlaytestUploadNetworkChoice` (`NotAnswered`, `WiFiOnly`, `WiFiAndMobileData`), for a game that asks in its own menu.
+- Each session start carries the answer in its debug facts as `playtest_upload_network` (`wifi_only`, `wifi_and_mobile_data` or
+  `not_asked`). On a phone that asks, the session starts once the question is answered, so it always carries the answer; the
+  screen is recorded meanwhile.
+
+### Changed
+- **A recording waiting to upload is never deleted for a new one while the player's answer holds uploads back** (Wi-Fi only and
+  the phone off Wi-Fi, or the question still to be answered): the new recording records into the room left in the disk budget,
+  and with less than 1 MB records nothing that launch and says why. Otherwise a Wi-Fi only player who played again on mobile data
+  would lose the last session's video once about 20 minutes of it waited (Android Recordings Disk Budget Mb 1024, with a new
+  recording making room for 810 MB). At 1024 MB, about 94 minutes of play can wait for Wi-Fi in full.
+- **Forget This Machine's Answer** in the setup window forgets the answer about upload networks too.
+- The live self-test skips its upload step, saying why, when the player chose Wi-Fi only and the device is not on Wi-Fi, and its
+  session steps while the session waits for that answer.
+
+### Fixed
+- **A recording the player took the screen back from is deleted even when its upload had failed.** Since 1.57.0, once this
+  launch's upload had ended without going (refused, or no connection), an answer that no longer lets the screen be recorded left
+  the recording and its session on disk, and the next launch uploaded it. Only an upload still under way, or one that went, is
+  left alone now.
+
+### Verified
+- On a Galaxy S23 Ultra (Android 16, IL2CPP, Vulkan, High managed stripping), with the questions answered by taps on the panel:
+  "Wi-Fi only" off Wi-Fi asked for no upload link and sent nothing, and back on Wi-Fi the recording uploaded in the same launch,
+  whole; "Wi-Fi or mobile data" uploaded off Wi-Fi; "play data only" was never followed by the question about networks; and each
+  session start carried its answer. Unity reported the phone's Wi-Fi as a local network, and no network once it was off (mobile
+  data was off on that phone, so a mobile data reading was not measured). Reading the network costs about 2 µs.
+- Unity 6000.3 and 2021.3 test suites, and every deliberate break of the new rules caught by a test (48 breaks).
+
 ## [1.65.0]
 
 ### Added

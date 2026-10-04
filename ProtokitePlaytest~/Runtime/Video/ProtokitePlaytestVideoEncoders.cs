@@ -225,6 +225,18 @@ namespace Protokite.Playtest
             return null;
         }
 
+        /// <summary>Whether the platform has already answered that this machine records no video with these settings; never asks, and never waits.</summary>
+        internal static bool AnsweredThatItRecordsNoVideo(bool allowSoftwareEncoder)
+        {
+            lock (CheckLock)
+            {
+                if (!_checked)
+                    return false;
+            }
+            // Answered, so this finds the answer without waiting.
+            return WhyThisPcRecordsNoVideo(allowSoftwareEncoder) != null;
+        }
+
         /// <summary>Why this machine records no video with these settings, or null when it can.</summary>
         internal static string WhyThisPcRecordsNoVideo(bool allowSoftwareEncoder)
         {

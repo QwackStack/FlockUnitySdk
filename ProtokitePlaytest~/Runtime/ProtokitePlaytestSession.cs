@@ -36,6 +36,7 @@ namespace Protokite.Playtest
         private static Task<string> _sessionStartEndedAtQuit;
         private static bool _playtestNoLongerCollecting;
         private static bool _loggedWaitingForFlockSession;
+        private static bool _loggedWaitingForUploadNetwork;
         private static int _launch;
         private static string _steamId;
         private static string _playerName;
@@ -88,6 +89,16 @@ namespace Protokite.Playtest
         {
             if (_sessionState != ProtokitePlaytestSessionState.NotStarted)
                 return;
+            // On a phone, once the player has said which networks recordings upload on, so the start carries it.
+            if (UploadNetworkAnswerIsDue())
+            {
+                if (!_loggedWaitingForUploadNetwork)
+                {
+                    _loggedWaitingForUploadNetwork = true;
+                    Debug.Log(LogPrefix + "The Protokite session starts once the player says which networks recordings may upload on, so the session carries the answer.");
+                }
+                return;
+            }
 
             string flockSessionId = running.ServerSessionId;
             if (flockSessionId == null)
@@ -338,6 +349,8 @@ namespace Protokite.Playtest
                 // asks nobody and a player who allowed everything look the same.
                 ["playtest_consent"] = ProtokitePlaytestConsent.ToWire(EffectiveConsent()),
                 ["playtest_consent_asked"] = AsksThePlayer(ProtokitePlaytestSettings.Load()) ? "true" : "false",
+                // So a dashboard can say why a phone's recording has not arrived: it may be waiting for Wi-Fi.
+                ["playtest_upload_network"] = ProtokitePlaytestUploadNetwork.ToWire(SavedUploadNetwork()),
                 ["engine_version"] = Application.unityVersion,
                 ["build_configuration"] = Application.isEditor ? "Editor" : Debug.isDebugBuild ? "Development" : "Release",
                 ["sdk_version"] = ProtokitePlaytestVersion.Current
@@ -360,6 +373,7 @@ namespace Protokite.Playtest
             _sessionStart = null;
             _playtestNoLongerCollecting = false;
             _loggedWaitingForFlockSession = false;
+            _loggedWaitingForUploadNetwork = false;
             _steamId = null;
             _playerName = null;
         }

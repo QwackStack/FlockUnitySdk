@@ -21,7 +21,7 @@ namespace Protokite.Playtest
         [SerializeField] private string protokiteApiUrl = DefaultProtokiteApiUrl;
 
         [Header("Player consent")]
-        [Tooltip("On by default: the player is asked what this playtest may collect (the screen, play data, both or nothing), and nothing is collected until they answer. The answer is kept on their machine for later launches. Turn it off only where players were asked another way, or for a test run with nobody to answer; everything the playtest turns on is then collected, and each session says nobody was asked.")]
+        [Tooltip("On by default: the player is asked what this playtest may collect (the screen, play data, both or nothing), and nothing is collected until they answer; on a phone that records, an answer that lets the screen be recorded is followed by which networks recordings may upload on (Wi-Fi only, or Wi-Fi and mobile data). The answers are kept on their machine for later launches. Turn it off only where players were asked another way, or for a test run with nobody to answer; everything the playtest turns on is then collected, and each session says nobody was asked.")]
         [SerializeField] private bool askThePlayerForPlaytestConsent = true;
 
         [Header("Feedback form")]

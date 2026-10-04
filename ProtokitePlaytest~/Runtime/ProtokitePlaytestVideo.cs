@@ -199,7 +199,9 @@ namespace Protokite.Playtest
             if (!TryStartRecording(ProtokitePlaytestRecordingKind.Playtest, settings, out ProtokitePlaytestVideoRecording recording, out ProtokitePlaytestRecordingRun run,
                     out string contentType, out string roomLimitedBy, out RecordingNotStarted notStarted, out string whyNot))
             {
+                // Recordings kept waiting for Wi-Fi are the player's own choice, so a launch with no room left for another is not a fault either.
                 bool expected = notStarted == RecordingNotStarted.NoEncoder || notStarted == RecordingNotStarted.TurnedOff
+                                || notStarted == RecordingNotStarted.NoRoomWhileUploadsWait
                                 || (notStarted == RecordingNotStarted.NoCapture && SystemInfo.graphicsDeviceType == GraphicsDeviceType.Null);
                 _videoNotStartedBecause = whyNot;
                 _videoNotStartedIsExpected = expected;
@@ -237,6 +239,7 @@ namespace Protokite.Playtest
             NoSizeTheEncoderTakes,
             NoCapture,
             NoRunOrRoom,
+            NoRoomWhileUploadsWait,
             CouldNotStart
         }
 
@@ -289,12 +292,12 @@ namespace Protokite.Playtest
             }
 
             IProtokitePlaytestRecordingFile file = RecordingFileForTesting != null ? RecordingFileForTesting() : ProtokitePlaytestRecordingFiles.Create();
-            if (!StartRecordingRun(kind, settings, file, out run, out roomLimitedBy, out whyNot))
+            if (!StartRecordingRun(kind, settings, file, out run, out roomLimitedBy, out bool roomKeptForWaitingUploads, out whyNot))
             {
                 file.Dispose();
                 source.Dispose();
                 encoder.Dispose();
-                notStarted = RecordingNotStarted.NoRunOrRoom;
+                notStarted = roomKeptForWaitingUploads ? RecordingNotStarted.NoRoomWhileUploadsWait : RecordingNotStarted.NoRunOrRoom;
                 return false;
             }
 
@@ -324,10 +327,11 @@ namespace Protokite.Playtest
 
         /// <summary>Makes a run of this kind and room for it in the budget, and cuts the size limit to the room left; false, with why, under a megabyte.</summary>
         private static bool StartRecordingRun(ProtokitePlaytestRecordingKind kind, ProtokitePlaytestVideoSettings settings, IProtokitePlaytestRecordingFile file,
-            out ProtokitePlaytestRecordingRun startedRun, out string roomLimitedBy, out string error)
+            out ProtokitePlaytestRecordingRun startedRun, out string roomLimitedBy, out bool roomKeptForWaitingUploads, out string error)
         {
             startedRun = null;
             roomLimitedBy = null;
+            roomKeptForWaitingUploads = false;
             string folder = RecordingsFolder;
             bool testVideo = kind == ProtokitePlaytestRecordingKind.TestVideo;
             long wanted = RoomToReserve(kind, settings, file);
@@ -356,7 +360,12 @@ namespace Protokite.Playtest
                 }
             }
 
-            ProtokitePlaytestRoomMade room = ProtokitePlaytestRecordingsFolder.MakeRoom(folder, run, settings.DiskBudgetBytes, wanted, settings.MaxBytes, freeBytesRecordingsMayTake);
+            // While uploads wait on the player's network answer, a recording waiting to upload is never deleted for a new one (owner, 2026-10-04):
+            // a Wi-Fi only player would otherwise lose the last session's video each time they played again on mobile data.
+            bool keepWaitingRecordings = !testVideo && RecordingsWaitForThePlayersNetwork();
+            ProtokitePlaytestRoomMade room = ProtokitePlaytestRecordingsFolder.MakeRoom(folder, run, settings.DiskBudgetBytes, wanted, settings.MaxBytes,
+                freeBytesRecordingsMayTake, keepWaitingRecordings);
+            roomKeptForWaitingUploads = room.KeptRecordingsWaitingToUpload;
             string budgetName = BudgetSettingName(settings);
             string budget = room.LimitedByTheDisk
                 ? $"the room the phone's free space leaves ({phoneSpace})"
@@ -372,7 +381,11 @@ namespace Protokite.Playtest
             if (room.BytesLeft < ProtokitePlaytestRecordingsFolder.SmallestRoomForARecording)
             {
                 run.DeleteEverything();
-                error = room.LimitedByTheDisk
+                error = room.KeptRecordingsWaitingToUpload
+                    ? $"the recordings in {folder} take {room.BytesUsedByOtherRuns / BytesPerMegabyte:0.#} MB of {budget}, and those waiting to upload are kept " +
+                      "while the player's answer holds them back (Wi-Fi only, and the device is not on Wi-Fi, or the question is still to be answered). " +
+                      "They upload on Wi-Fi, which makes room again."
+                    : room.LimitedByTheDisk
                     ? $"{phoneSpace}, which leaves {room.BytesLeft / BytesPerMegabyte:0.#} MB for {forWhat} once the recordings in {folder} " +
                       $"({room.BytesUsedByOtherRuns / BytesPerMegabyte:0.#} MB) are counted. Free some of the phone's storage."
                     : $"the recordings in {folder} take {room.BytesUsedByOtherRuns / BytesPerMegabyte:0.#} MB of {budget}, and " +
@@ -387,7 +400,9 @@ namespace Protokite.Playtest
             long maxBytes = Math.Min(testVideo ? wanted : settings.MaxBytes, room.BytesLeft);
             // Named only when the room may stop it before its length limit, so a budget above what it will record says nothing.
             if (maxBytes < wanted)
-                roomLimitedBy = room.LimitedByTheDisk ? "the phone's free space" : budgetName;
+                roomLimitedBy = room.LimitedByTheDisk ? "the phone's free space"
+                    : room.KeptRecordingsWaitingToUpload ? budgetName + ", beside the recordings kept until the player's answer lets them upload,"
+                    : budgetName;
             if (maxBytes != wanted && !run.SaveReservedBytes(maxBytes, out string saveError))
             {
                 maxBytes = Math.Min(maxBytes, wanted);

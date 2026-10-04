@@ -396,6 +396,8 @@ namespace Protokite.Playtest
         public bool LimitedByTheDisk;
         public int TestVideosDeleted;
         public int WaitingRecordingsDeleted;
+        /// <summary>Whether recordings waiting to upload were kept where today's rule would have deleted one, because the player's network answer holds them back.</summary>
+        public bool KeptRecordingsWaitingToUpload;
         public readonly List<string> CouldNotDelete = new List<string>();
     }
 
@@ -556,9 +558,10 @@ namespace Protokite.Playtest
         // The new run is made, with its reservation, before this is called, so a game starting at the same moment counts it. A run
         // in use, or holding an unfinished video, is never deleted and counts at its reservation (runInUseWithNoReservation if none).
         // freeBytesRecordingsMayTake, when known, is the disk's free space recordings may still fill: the budget is never more than the
-        // other runs' files and that. Deleting a run frees what it takes, so that sum is the same before and after.
+        // other runs' files and that. Deleting a run frees what it takes, so that sum is the same before and after. With
+        // keepRecordingsWaitingToUpload (the player's network answer holds uploads back), only test videos are deleted.
         internal static ProtokitePlaytestRoomMade MakeRoom(string recordingsFolder, ProtokitePlaytestRecordingRun newRun, long budgetBytes, long wantedBytes,
-            long runInUseWithNoReservation, long? freeBytesRecordingsMayTake = null)
+            long runInUseWithNoReservation, long? freeBytesRecordingsMayTake = null, bool keepRecordingsWaitingToUpload = false)
         {
             Action hook = BeforeNextMakingRoomForTesting;
             BeforeNextMakingRoomForTesting = null;
@@ -620,6 +623,11 @@ namespace Protokite.Playtest
                     break;
                 if (forATestVideo && kind == ProtokitePlaytestRecordingKind.Playtest)
                     break;
+                if (keepRecordingsWaitingToUpload && kind == ProtokitePlaytestRecordingKind.Playtest)
+                {
+                    room.KeptRecordingsWaitingToUpload = true;
+                    break;
+                }
                 // Claimed again only now: holding every run while deciding would stop other launches finishing theirs.
                 using (ProtokitePlaytestRecordingRun run = ProtokitePlaytestRecordingRun.ClaimEnded(folder, kind))
                 {

@@ -153,16 +153,33 @@ script.
   session check in `UploadThisLaunchsRecordingWhenReady`); `SaveSessionBesideRecording` never gives one a session. Earlier
   launches' uploads wait for an answer of nothing, and while nobody has answered in a build whose config is on its way or
   loaded. Tests point the file elsewhere with `ConsentFilePathForTesting` (the settings fixtures set it, asking off unless a
-  test turns it on).
+  test turns it on). The file's save, read and forget are `ProtokitePlaytestAnswerFile<TChoice>`'s, shared with the next answer.
+- **Upload networks (`ProtokitePlaytestUploadNetwork.cs`)** — the phone's second question (1.66.0): `ProtokitePlaytestUploadNetworkChoice`
+  (`NotAnswered`, `WiFiOnly`, `WiFiAndMobileData`), the inert rule `AllowsUploadOn` (Wi-Fi only uploads only on what Unity reports
+  as a local network; Unity's Android player reports a default network with the cellular transport as carrier data and any other
+  as local, read in its classes), the spellings `wifi_only` / `wifi_and_mobile_data` / `not_asked`, and
+  `ProtokitePlaytestUploadNetworkFile` (`playtest_upload_network.json` beside the consent file). Put only where a build that asks
+  records a phone's screen (`OnAndroid`, Record Video On Android) after an answer that lets the screen be recorded, and only when
+  the loaded config turns video on (`UploadNetworkAnswerIsDue`); the session start waits for it (`SessionCanStart`) and sends it
+  as `playtest_upload_network`; the recording never waits. `UploadsWaitForWiFi()` is the one gate both uploads read (the network
+  is read only for a Wi-Fi only answer, through `NetworkForTesting` in tests, the form's network check included);
+  `StopUploadsTheNetworkNoLongerAllows` cancels an upload under way when the device leaves Wi-Fi (a token of its own beside the
+  launch's), and the next frame's `Upload...WhenReady` starts again a pass whose result says it stopped for that. An answer that
+  cannot be saved holds for the launch. `RecordingsWaitForThePlayersNetwork()` (that gate closed, or the question still to come)
+  has `MakeRoom` keep every recording waiting to upload (owner, 2026-10-04).
 - **Panels (`Runtime/Panels/`)** — **ProtokitePlaytestPanel**: a full-screen UI Toolkit panel built from code (a `UIDocument`
   and a copy of `Runtime/Resources/ProtokitePlaytestPanelSettings.asset`, which holds the empty imported theme
   `ProtokitePlaytestPanelTheme.tss`: settings or a theme made in code warn and throw on Unity 2021.3, measured 1.63.0; the built-in
   font given at the root, sorting order 30000), one view at a
   time so a second question can follow, the view itself focused so no button is; it keeps the cursor free while open, notes a
   game that locks it again, gives the game's cursor back when closed (not an ended launch's), and is drawn only while playing,
-  not in batch mode, with graphics. **ProtokitePlaytestConsentQuestionView**: the words and the four buttons from one options
-  table the tests read too; a press in the first half second is ignored, and a mouse press while the game keeps the cursor
-  locked. **Forget This Machine's Answer** in the setup window (editor) forgets the saved answer. **ProtokitePlaytestFormView**: the
+  not in batch mode, with graphics. The panel's `DeliberateAnswers`, `AnswerButton` and `QuestionView` build every question:
+  a press in the first half second is ignored (`SecondsBeforeAnAnswerCounts`, read by the form too), and a mouse press while
+  the game keeps the cursor locked. **ProtokitePlaytestConsentQuestionView**: the words and the four buttons from one options
+  table the tests read too. **ProtokitePlaytestUploadNetworkQuestionView**: the phone's second question, shown in the same panel
+  after a consent answer that lets the screen be recorded (`UpdateConsentQuestion` picks the question due, so the cursor the panel
+  freed stays free between them), with the megabytes a minute at the recording's bitrate. **Forget This Machine's Answer** in the
+  setup window (editor) forgets both saved answers. **ProtokitePlaytestFormView**: the
   feedback form built from the published form (text, many-line text, a 1-5 rating and options as buttons, a checkbox recorded
   unticked when drawn, unknown kinds as text), text boxes styled in code (with no theme their input box has no size), Escape
   stopped before a text field puts back its old text, select-all on click off, problems shown once Send is tried; Send, Close
@@ -314,7 +331,9 @@ script.
   enveloped `upload_url`) only now, then core's `UploadFileAsync` with the file's own content type (this launch's from its
   writer, an earlier one's from its ending through `ContentTypeFor`, a test holding the two equal); uploaded only on the
   storage's 2xx; one more try with a fresh link unless S3 said `SignatureDoesNotMatch`; uploaded → `DeleteEverything`. One
-  `CancellationTokenSource` a launch, cancelled at quit, by `Stop` and on a new launch.
+  `CancellationTokenSource` a launch, cancelled at quit, by `Stop` and on a new launch, and one cancelled when the device leaves
+  Wi-Fi under a Wi-Fi only answer (the outcome's `StoppedWhenTheDeviceLeftWiFi`); both kinds wait for `UploadsWaitForWiFi()`,
+  checked every frame from `Refresh`.
 - **ProtokitePlaytestDriver** — a hidden `DontDestroyOnLoad` object started `BeforeSceneLoad` (`StartWithTheGame`) in every
   launch, playtesting on or off: with it off the status stays `TurnedOff` (no config, no session, no recording) and the
   driver only finishes and uploads what earlier launches kept, so a build with it off never strands a recording.
@@ -397,7 +416,10 @@ script.
   for late replies), **ProtokitePlaytestDriverTests** (PlayMode, the real driver), **ProtokitePlaytestSetupChecksTests** (each
   check failing and passing from real settings objects, the project's own read, core's menu paths),
   **ProtokitePlaytestGameVersionLookupTests** (a fake Flock answering by name and by the ID header, held answers) and
-  **ProtokitePlaytestTestVideoTests**, and **ProtokitePlaytestSelfTestTests** (a fake Protokite that refuses for the server's
+  **ProtokitePlaytestTestVideoTests**, **ProtokitePlaytestUploadNetworkTests** (the answer's rules, spellings and file, when a
+  phone asks, and what the session start carries) with the upload and disk budget cases in **ProtokitePlaytestUploadTests**
+  (a held upload stopped by leaving Wi-Fi and sent again), **ProtokitePlaytestUploadNetworkPanelTests** (PlayMode, windowed:
+  the second question on the same panel, through its own buttons), and **ProtokitePlaytestSelfTestTests** (a fake Protokite that refuses for the server's
   reasons, reading the key, version, body and session, with each probe read back); the windowed PlayMode pass records a real test
   video. Live `[Explicit]` checks live in FlockUnityProject: `ProtokitePlaytestLiveConfigTests`, and
   `ProtokitePlaytestLiveSelfTest` (PlayMode, windowed), which `Libraries/Unity/playtest-self-test/run_p15_live.py` runs and

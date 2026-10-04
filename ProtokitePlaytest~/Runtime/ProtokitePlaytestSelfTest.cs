@@ -140,6 +140,9 @@ namespace Protokite.Playtest
                                        "ProtokitePlaytest.SetPlaytestConsent, or turn off Ask The Player For Playtest Consent in Protokite > Playtest > Settings.";
             else if (status == ProtokitePlaytestStatus.PlayerRefusedPlaytest)
                 run.NoSessionBecause = "the player asked this playtest to collect nothing, so no session starts. Ask again with ProtokitePlaytest.AskForPlaytestConsent.";
+            else if (UploadNetworkAnswerIsDue())
+                run.NoSessionBecause = "the player has not said which networks recordings may upload on, and the session waits for the answer. Answer the " +
+                                       "question on screen, or call ProtokitePlaytest.SetPlaytestUploadNetwork.";
             return run.Pass(run.NoSessionBecause == null ? loaded + "." : loaded + "; " + run.NoSessionBecause);
         }
 
@@ -354,11 +357,13 @@ namespace Protokite.Playtest
                 SelfTestWaitSecondsForTesting ?? SelfTestWaitSeconds);
             if (IsRecordingVideo && !StopRecordingAndSendIt())
                 return run.Fail("the recording could not be stopped and sent.");
-            await run.WaitUntilAsync(() => (ThisLaunchsUpload != null && ThisLaunchsUpload.IsCompleted) || (FinishedVideo != null && FinishedVideo.FilePath == null),
-                SelfTestWaitSecondsForTesting ?? SelfTestUploadWaitSeconds);
+            await run.WaitUntilAsync(() => (ThisLaunchsUpload != null && ThisLaunchsUpload.IsCompleted) || (FinishedVideo != null && FinishedVideo.FilePath == null)
+                                           || ThisLaunchsRecordingWaitsForWiFi(), SelfTestWaitSecondsForTesting ?? SelfTestUploadWaitSeconds);
             // A recording that kept no file has nothing to upload: its own reason, not the upload's wait running out.
             if (FinishedVideo != null && FinishedVideo.FilePath == null)
                 return run.Fail("the recording kept no file to upload: " + (FinishedVideo.Error ?? "no frame was captured before it stopped."));
+            if (ThisLaunchsRecordingWaitsForWiFi())
+                return run.Skip("the player chose Wi-Fi only and the device is not on Wi-Fi, so the recording waits on it and uploads on Wi-Fi.");
             if (ThisLaunchsUpload == null || !ThisLaunchsUpload.IsCompleted)
                 return run.Fail("the recording was not uploaded within the wait: its file was not finished, or the upload is still going.");
             ProtokitePlaytestRecordingUploadOutcome outcome = await ThisLaunchsUpload;
@@ -368,6 +373,11 @@ namespace Protokite.Playtest
                 return run.Fail($"it was uploaded ({outcome.BytesSent} bytes), but its files could not all be deleted, so a later launch may find them.");
             return run.Pass($"the storage took all {outcome.BytesSent} bytes for session {run.SessionId}, and the recording is no longer kept on disk.");
         }
+
+        // Finished, and not being sent because the player's answer holds it back on this network (never begun, or stopped on leaving Wi-Fi).
+        private static bool ThisLaunchsRecordingWaitsForWiFi()
+            => FinishedVideo?.FilePath != null && UploadsWaitForWiFi()
+               && (ThisLaunchsUpload == null || (ThisLaunchsUpload.Status == TaskStatus.RanToCompletion && ThisLaunchsUpload.Result.StoppedWhenTheDeviceLeftWiFi));
 
         private static async Task<ProtokitePlaytestSelfTestStep> ExpectRefusalAsync<T>(SelfTestRun run, int expectedStatus, Func<Task<T>> send)
         {

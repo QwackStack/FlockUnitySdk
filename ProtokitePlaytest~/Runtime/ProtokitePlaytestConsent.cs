@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -100,52 +101,70 @@ namespace Protokite.Playtest
     /// unreadable or holds anything else reads as NotAnswered: losing an answer costs one question, guessing one would collect
     /// from somebody who never agreed.
     /// </summary>
-    internal sealed class ProtokitePlaytestConsentFile
+    internal sealed class ProtokitePlaytestConsentFile : ProtokitePlaytestAnswerFile<ProtokitePlaytestConsentChoice>
     {
-        private const string AnswerKey = "playtest_consent";
+        internal ProtokitePlaytestConsentFile(string path)
+            : base(path, "playtest_consent", ProtokitePlaytestConsent.ToWire, ProtokitePlaytestConsent.FromWire, ProtokitePlaytestConsentChoice.NotAnswered)
+        {
+        }
+
+        /// <summary>ProtokitePlaytest/playtest_consent.json in the game's persistent data folder. Main thread only.</summary>
+        internal static string DefaultPath => System.IO.Path.Combine(Application.persistentDataPath, "ProtokitePlaytest", "playtest_consent.json");
+    }
+
+    /// <summary>One of the player's answers in a small file of its own, under one key and spelt as it is sent; NotAnswered is the file's absence.</summary>
+    internal abstract class ProtokitePlaytestAnswerFile<TChoice> where TChoice : struct
+    {
         private const string AnsweredAtKey = "answered_at";
         private const string TemporarySuffix = ".tmp";
         private static readonly TimeSpan TemporaryFileAge = TimeSpan.FromMinutes(1);
 
-        internal ProtokitePlaytestConsentFile(string path) => Path = path;
+        private readonly string _answerKey;
+        private readonly Func<TChoice, string> _toWire;
+        private readonly Func<string, TChoice> _fromWire;
+        private readonly TChoice _notAnswered;
+
+        protected ProtokitePlaytestAnswerFile(string path, string answerKey, Func<TChoice, string> toWire, Func<string, TChoice> fromWire, TChoice notAnswered)
+        {
+            Path = path;
+            _answerKey = answerKey;
+            _toWire = toWire;
+            _fromWire = fromWire;
+            _notAnswered = notAnswered;
+        }
 
         internal string Path { get; }
 
-        /// <summary>ProtokitePlaytest/playtest_consent.json in the game's persistent data folder. Main thread only.</summary>
-        internal static string DefaultPath => System.IO.Path.Combine(Application.persistentDataPath, "ProtokitePlaytest", "playtest_consent.json");
-
         /// <summary>The saved answer, or NotAnswered when the file holds none this build can read.</summary>
-        internal ProtokitePlaytestConsentChoice Read()
+        internal TChoice Read()
         {
             try
             {
                 if (!File.Exists(Path))
-                    return ProtokitePlaytestConsentChoice.NotAnswered;
+                    return _notAnswered;
                 JObject saved = JObject.Parse(File.ReadAllText(Path));
-                JToken answer = saved[AnswerKey];
-                return answer?.Type == JTokenType.String
-                    ? ProtokitePlaytestConsent.FromWire((string)answer)
-                    : ProtokitePlaytestConsentChoice.NotAnswered;
+                JToken answer = saved[_answerKey];
+                return answer?.Type == JTokenType.String ? _fromWire((string)answer) : _notAnswered;
             }
             catch (Exception)
             {
-                return ProtokitePlaytestConsentChoice.NotAnswered;
+                return _notAnswered;
             }
         }
 
         /// <summary>
         /// Saves the answer, or removes the file for NotAnswered (asking to be asked again). True when the file now holds it.
-        /// A save that fails forgets the answer saved before: the next launch would otherwise collect under one the player replaced.
+        /// A save that fails forgets the answer saved before: the next launch would otherwise act on one the player replaced.
         /// </summary>
-        internal bool Save(ProtokitePlaytestConsentChoice choice)
+        internal bool Save(TChoice choice)
         {
-            if (!ProtokitePlaytestConsent.IsAnswered(choice))
+            if (EqualityComparer<TChoice>.Default.Equals(choice, _notAnswered))
                 return Forget();
 
             DeleteTemporaryFiles(TemporaryFileAge);
             JObject saved = new JObject
             {
-                [AnswerKey] = ProtokitePlaytestConsent.ToWire(choice),
+                [_answerKey] = _toWire(choice),
                 // For whoever opens the file; only the answer decides anything.
                 [AnsweredAtKey] = DateTime.UtcNow.ToString("o")
             };
@@ -159,7 +178,7 @@ namespace Protokite.Playtest
                     ProtokitePlaytestSavedFiles.Replace(temporary, Path);
                 else
                     ProtokitePlaytestSavedFiles.Move(temporary, Path);
-                if (Read() == choice)
+                if (EqualityComparer<TChoice>.Default.Equals(Read(), choice))
                     return true;
             }
             catch (Exception)

@@ -61,7 +61,8 @@ the place to change it:
   offered.
 - The Game Version is checked with Flock when the window opens and when the Flock settings change; **Check Again** asks again.
   When Flock cannot be asked, the check goes by what the settings hold and says so.
-- Under **While testing**, **Forget This Machine's Answer** makes the next Play ask the consent question again, and in Play Mode
+- Under **While testing**, **Forget This Machine's Answer** makes the next Play ask the consent question again (and, on a phone,
+  the question about upload networks after it), and in Play Mode
   **Open Feedback Form** opens the form the way its key does.
 - The Video check reads the active build target: players built for another platform, or for 32-bit or ARM64 Windows, record
   no video, and everything else in the playtest still runs there. An Android build records with the phone's own hardware
@@ -116,7 +117,7 @@ debug facts as `playtest_consent` (`video_and_play_data`, `video_only`, `play_da
 
 | Setting | Default | |
 |---|---|---|
-| Ask The Player For Playtest Consent | on | Put the question, and collect nothing until it is answered. Turn it off only where players were asked another way, or for a test run with nobody to answer; everything the playtest turns on is then collected, and each session says nobody was asked |
+| Ask The Player For Playtest Consent | on | Put the question, and collect nothing until it is answered; on a phone that records, the question about upload networks follows (below). Turn it off only where players were asked another way, or for a test run with nobody to answer; everything the playtest turns on is then collected, and each session says nobody was asked |
 
 ```csharp
 ProtokitePlaytest.PlaytestConsent                 // the answer in force
@@ -136,6 +137,31 @@ ProtokitePlaytest.IsConsentQuestionOpen
   answer with `SetPlaytestConsent`, or turn asking off.
 - In the editor, **Forget This Machine's Answer** in **Protokite > Playtest > Setup Checks And Test Video** forgets the answer,
   so the next Play asks again.
+
+### On a phone: which networks recordings upload on
+
+On an Android player that records video (**Record Video On Android** on, and the playtest turns video on), an answer that lets
+the screen be recorded is followed, on the same panel, by a second question: upload recordings **on Wi-Fi only**, or **on
+Wi-Fi or mobile data**. The second answer says what uploading on mobile data costs at the recording's own bitrate (about 11 MB
+for each minute played at the default 1500 kbps). The answer decides only when recordings upload, never whether the screen is
+recorded: a Wi-Fi only player's recordings wait on the phone and upload the next time it is on Wi-Fi, in the same launch or a
+later one. Unity reports any network that is not the phone's mobile data (Wi-Fi, Ethernet, tethering) as a local one, and that
+counts as Wi-Fi. An upload under way stops when the phone leaves Wi-Fi, and its recording is kept and sent again, from the
+start, on Wi-Fi.
+
+The answer is kept beside the consent answer, in `ProtokitePlaytest/playtest_upload_network.json`, and like it counts in a build
+that stops asking. The Protokite session waits for it, so each session start carries it in its debug facts as
+`playtest_upload_network`: `wifi_only`, `wifi_and_mobile_data`, or `not_asked` when no answer is saved (a desktop, a build that
+asks nobody, or an answer that records nothing, unless the player answered in an earlier launch). The screen is recorded
+meanwhile; a game closed while the question is open has no session for what it recorded, so the next launch deletes it. A phone
+that has already said it can record no video is not asked. Recordings earlier launches kept wait while the question may
+still be put. Asking the consent question again (`AskForPlaytestConsent`) puts this one again after an answer that lets the
+screen be recorded. Nothing is asked on Windows, and nothing waits there.
+
+```csharp
+ProtokitePlaytest.PlayersUploadNetworkAnswer         // WiFiOnly, WiFiAndMobileData, or NotAnswered (uploads on any network)
+ProtokitePlaytest.SetPlaytestUploadNetwork(choice)   // your own menu answers it; NotAnswered asks again on a phone
+```
 
 ## What the playtest turns on
 
@@ -320,7 +346,9 @@ the next launch. When a launch starts, the recordings earlier launches kept go o
 the Flock SDK is running, one at a time and the oldest first, with this build's API key and the Game Version ID each
 recording's session started with. **This happens with Playtesting Enabled off too**, so a release build of the game never
 strands what a playtest build recorded; with it off, nothing else is recorded or sent. They wait while the player's answer is
-**nothing**, or while the consent question may still be put (see [The player's consent](#the-players-consent)).
+**nothing**, or while the consent question may still be put (see [The player's consent](#the-players-consent)). On a phone whose
+player chose Wi-Fi only, every upload waits for Wi-Fi (see
+[On a phone: which networks recordings upload on](#on-a-phone-which-networks-recordings-upload-on)).
 
 Every refusal keeps the recording, including Protokite saying the session belongs to another playtest (403) or no longer
 exists (404): a later launch asks again. Such a recording goes only when a launch that records needs its room in the disk
@@ -350,9 +378,12 @@ are left where they are and not counted below.
 **Recordings Disk Budget Mb** (on Android, **Android Recordings Disk Budget Mb**) is the most every recording kept on the
 machine may take together. Before a recording starts,
 recordings whose game has closed are deleted until it fits: test videos first, then recordings waiting to upload, the oldest
-first. A recording starts once the folders above have
+first. **While a phone's uploads wait on the player's answer** (Wi-Fi only and the phone off Wi-Fi, or the question still to be
+answered), a recording waiting to upload is never deleted for a new one: the new one records into the room left, and with less
+than 1 MB that launch records no video and the log says why, not as a warning, since it is the player's choice. At the default
+1024 MB, about 94 minutes of play can wait for Wi-Fi in full. A recording starts once the folders above have
 been gone through (usually milliseconds, at most 10 seconds), so nothing is deleted for room a cut-off file only seems to
-take. A recording makes room only for what its length limit records at its bitrate, with a quarter to spare (about 845 MB
+take. A recording makes room only for what its length limit records at its bitrate, with a quarter to spare (about 810 MB
 at the defaults), so a short recording never deletes one waiting to be uploaded that it would fit beside; it may then grow
 into all the room left, up to Max Recording Size Mb, and the log says so when the budget cuts it shorter. A recording still
 being written counts at the most it may grow to and is never deleted, so two copies of the game recording at once never

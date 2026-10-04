@@ -79,6 +79,9 @@ namespace Protokite.Playtest.Tests
             ProtokitePlaytest.VideoFrameSourceForTesting = null;
             ProtokitePlaytest.SelfTestWaitSecondsForTesting = null;
             ProtokitePlaytest.SelfTestRunsInThisBuildForTesting = null;
+            ProtokitePlaytest.NetworkForTesting = null;
+            ProtokitePlaytestVideoEncoders.ActAsAndroidForTesting = false;
+            ProtokitePlaytestVideoEncoders.ResetForNewLaunch();
             FlockHttpClient.UseFileUploader(null);
             FlockHttpClient.Configure(TimeSpan.FromSeconds(30));
             _settings.Dispose();
@@ -509,6 +512,51 @@ namespace Protokite.Playtest.Tests
                 ProtokitePlaytestSelfTestStep upload = StepNamed(run.Result, "This launch's recording");
                 Assert.AreEqual(ProtokitePlaytestSelfTestOutcome.Skipped, upload.Outcome);
                 StringAssert.Contains("records no video", upload.Detail);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator APlayerWhoChoseWiFiOnlyOffWiFiSkipsTheUploadAndSaysWhy()
+        {
+            Assert.IsTrue(new ProtokitePlaytestUploadNetworkFile(_settings.UploadNetworkFilePath).Save(ProtokitePlaytestUploadNetworkChoice.WiFiOnly));
+            ProtokitePlaytest.NetworkForTesting = () => NetworkReachability.ReachableViaCarrierDataNetwork;
+            FakeProtokite protokite = new FakeProtokite(Config(video: true, heavyAnalytics: false, form: false));
+            using (FlockTestClient flock = StartFlock(protokite))
+            {
+                yield return AReadyPlaytestWithASession(flock);
+                AFrame();
+                ExpectTheRaisedExceptions();
+                Task<ProtokitePlaytestSelfTestReport> run = ProtokitePlaytestSelfTest.RunAsync();
+                yield return TheRunEnds(run);
+                ProtokitePlaytestSelfTestStep upload = StepNamed(run.Result, "This launch's recording");
+                Assert.AreEqual(ProtokitePlaytestSelfTestOutcome.Skipped, upload.Outcome, upload.Detail);
+                StringAssert.Contains("chose Wi-Fi only and the device is not on Wi-Fi", upload.Detail);
+                Assert.AreEqual(1, protokite.LinkRequests.Count, "Only the probe for a session that does not exist: the recording waits on the device");
+                Assert.AreEqual(0, _storage.Uploads, "Nothing was sent to the storage");
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator WhileThePhonesQuestionAboutNetworksWaitsTheSessionStepsSayWhy()
+        {
+            ProtokitePlaytestVideoEncoders.ActAsAndroidForTesting = true;
+            _settings.Settings.RecordVideoOnAndroid = true;
+            _settings.Settings.AskThePlayerForPlaytestConsent = true;
+            Assert.IsTrue(new ProtokitePlaytestConsentFile(_settings.ConsentFilePath).Save(ProtokitePlaytestConsentChoice.VideoOnly));
+            FakeProtokite protokite = new FakeProtokite(Config(video: true, heavyAnalytics: false, form: false));
+            using (FlockTestClient flock = StartFlock(protokite))
+            {
+                yield return Frames(() => ProtokitePlaytest.Status == ProtokitePlaytestStatus.Ready, 5f, "The playtest is ready");
+                flock.Client.Analytics.InitializeAsync(CancellationToken.None).GetAwaiter().GetResult();
+                flock.Run(() => flock.Client.Analytics.StartSessionAsync());
+
+                ExpectTheRaisedExceptions();
+                Task<ProtokitePlaytestSelfTestReport> run = ProtokitePlaytestSelfTest.RunAsync(ClosedVersion);
+                yield return TheRunEnds(run);
+                ProtokitePlaytestSelfTestStep session = StepNamed(run.Result, "This launch's Protokite session starts");
+                Assert.AreEqual(ProtokitePlaytestSelfTestOutcome.Skipped, session.Outcome, session.Detail);
+                StringAssert.Contains("has not said which networks recordings may upload on", session.Detail);
+                Assert.AreEqual(2, protokite.SessionStarts.Count, "Only the two probes; the game's own waits for the answer");
             }
         }
 

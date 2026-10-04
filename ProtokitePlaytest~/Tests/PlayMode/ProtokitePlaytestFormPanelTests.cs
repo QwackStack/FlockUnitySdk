@@ -132,7 +132,7 @@ namespace Protokite.Playtest.Tests
         // Send and Close ignore a press in the form's first moment.
         private static IEnumerator ReadTheForm()
         {
-            DateTime until = DateTime.UtcNow.AddSeconds(ProtokitePlaytestConsentQuestionView.SecondsBeforeAnAnswerCounts + 0.2);
+            DateTime until = DateTime.UtcNow.AddSeconds(ProtokitePlaytestPanel.SecondsBeforeAnAnswerCounts + 0.2);
             while (DateTime.UtcNow < until)
                 yield return null;
         }

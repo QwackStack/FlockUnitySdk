@@ -29,13 +29,15 @@ namespace Protokite.Playtest.Editor
             EditorGUIUtility.PingObject(settings);
         }
 
-        /// <summary>Forgets the answer this machine gave the consent question, so the next Play asks again; the setup window's Forget This Machine's Answer button.</summary>
+        /// <summary>Forgets the answers this machine gave the consent question and the question about upload networks, so the next Play asks again; the setup window's Forget This Machine's Answer button.</summary>
         public static void ForgetThePlayersConsentAnswer()
         {
-            if (ProtokitePlaytest.SetPlaytestConsent(ProtokitePlaytestConsentChoice.NotAnswered))
-                Debug.Log("[Protokite Playtest] The answer this machine gave the playtest's consent question is forgotten; the question is put again the next time the playtest loads.");
+            bool consentForgotten = ProtokitePlaytest.SetPlaytestConsent(ProtokitePlaytestConsentChoice.NotAnswered);
+            bool uploadNetworkForgotten = ProtokitePlaytest.SetPlaytestUploadNetwork(ProtokitePlaytestUploadNetworkChoice.NotAnswered);
+            if (consentForgotten && uploadNetworkForgotten)
+                Debug.Log("[Protokite Playtest] The answers this machine gave the playtest's questions are forgotten; the questions are put again the next time the playtest loads.");
             else
-                Debug.LogWarning("[Protokite Playtest] The answer this machine gave the playtest's consent question could not be removed; see the warning before this one.");
+                Debug.LogWarning("[Protokite Playtest] The answers this machine gave the playtest's questions could not all be removed; see the warning before this one.");
         }
 
         /// <summary>In Play Mode, opens the feedback form the way its key does; the setup window's Open Feedback Form button.</summary>

@@ -344,7 +344,7 @@ namespace Protokite.Playtest
             Button button = new Button { name = name, text = text };
             button.clickable.clickedWithEventInfo += press =>
             {
-                if (Time.realtimeSinceStartupAsDouble - _shownAt < ProtokitePlaytestConsentQuestionView.SecondsBeforeAnAnswerCounts)
+                if (Time.realtimeSinceStartupAsDouble - _shownAt < ProtokitePlaytestPanel.SecondsBeforeAnAnswerCounts)
                     return;
                 if ((press is IPointerEvent || press is IMouseEvent) && _theGameKeepsTheCursorLocked())
                 {

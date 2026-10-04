@@ -36,9 +36,6 @@ namespace Protokite.Playtest
         /// <summary>Where waiting forms are kept, when a test sets it; the game's persistent data folder otherwise.</summary>
         internal static string FeedbackFormsFolderForTesting;
 
-        /// <summary>Whether the network is up, when a test sets it; the platform's own answer otherwise.</summary>
-        internal static Func<bool> ReachabilityForTesting;
-
         /// <summary>The time now, when a test sets it.</summary>
         internal static Func<DateTime> ClockForTesting;
 
@@ -423,8 +420,7 @@ namespace Protokite.Playtest
                 Debug.LogWarning(LogPrefix + $"A feedback form kept at {path} {because} It could not be deleted, so it is tried again later.");
         }
 
-        private static bool NetworkIsReachable()
-            => ReachabilityForTesting?.Invoke() ?? Application.internetReachability != NetworkReachability.NotReachable;
+        private static bool NetworkIsReachable() => CurrentNetwork() != NetworkReachability.NotReachable;
 
         private static DateTime Now() => ClockForTesting?.Invoke() ?? DateTime.UtcNow;
 
