@@ -60,7 +60,7 @@ PackageBuilder/Tests/Editor/   EditMode tests (asmdef Flock.Tests.Editor)
 ## Runtime/Auth
 - **JwtTokenParser** / **JwtTokenClaims** — decode token + read claims (expiry, player id).
 - **TokenStoreFactory** — picks the secure store per platform at compile time.
-- **TokenStore/** — **ITokenStore** + `StoredTokens`, with **Android/Ios/Mac/Windows/WebGl/Other** secure-storage impls.
+- **TokenStore/** — **ITokenStore** + `StoredTokens`, with **Android/Ios/Mac/Windows/WebGl/Other** secure-storage impls. Android's hands bytes to and from Java as `sbyte[]` through **FlockJavaBytes** (bit for bit, so earlier files still read): Unity warns on every byte array at its Java boundary, and `FlockJavaBytesTests` fails a Java call that reads a `byte[]` back.
 
 ## Runtime/Analytics
 - **FlockSession** — tracks the current play session (start/end/ids); its live-session record is `session_state.json` in the launch's folder.
@@ -209,12 +209,23 @@ script.
   through a stand-in that keeps those rules (`StandInEventEncoder`, via `TransformForTesting`). Each frame goes in with its own time and comes out in order
   (B-frames off by low latency); output that is not an H.264 byte stream fails the recording rather than vanish, and the
   units are stored after their lengths, the first frame carrying the stream's sequence and picture settings
-  (`ProtokitePlaytestH264`, which also checks a stored frame). **ProtokitePlaytestVideoEncoders** asks Windows once a launch,
-  on a thread of its own started with the finishing pass when playtesting is on, whether this PC records (64-bit Windows,
-  Media Foundation present, a graphics card encoder or the software one allowed); a recording or test video becomes due only
-  once that answer is in or its 10 s are up, so the main thread never waits for it, and a check an earlier launch started
-  never answers a later one. It logs the first "no video" (Warning on 64-bit Windows, Log elsewhere). Only these three files
-  name Media Foundation (a test scans for it).
+  (`ProtokitePlaytestH264`, which also checks a stored frame). **ProtokitePlaytestAndroidVideoEncoder** drives Android's
+  MediaCodec through `libmediandk` from C# (`ProtokitePlaytestMediaCodec`), so Android needs no native file either. It codes
+  against `IProtokitePlaytestAndroidCodec`, so tests run it through a stand-in codec that hands back frames late, in buffers
+  of their own, past their buffer or without start codes (`ProtokitePlaytestStandInAndroidCodec`). It asks for constant
+  bitrate where the phone takes it (the default overshot a busy scene by 26%, measured), no B-frames, a keyframe every 10
+  seconds (as on Windows) and BT.709 limited range; copies NV12 at the stride and slice height the codec's input format gives; and sends the
+  stream's sequence and picture settings with the first frame, from their own buffer or the output format. A configure or
+  start the codec refuses ends the recording with the status. **ProtokitePlaytestVideoEncoders** asks the platform once a
+  launch, on a thread of its own started with the finishing pass when playtesting is on (and, on Android, Record Video On
+  Android is on), which encoders it has: Windows (64-bit, Media Foundation present, a graphics card encoder or the software
+  one allowed), or the phone's codec list read through Java on that thread attached to it (hardware encoders that take NV12
+  first, the software one only when allowed; each keeps its capabilities object, released at the next launch). A recording
+  or test video becomes due only once that answer is in or its 10 s are up, so the main thread never waits for it, and a
+  check an earlier launch started never answers a later one. On a phone, `FitTheEncoder` asks the chosen encoder whether it
+  takes the video's size and rate and steps down when not (the box at 8, 6, 4 and 3 eighths at the asked rate, then 15 and
+  10 frames a second), logging which. It logs the first "no video" (Warning where video is built, Log elsewhere). Only
+  these three files name Media Foundation (a test scans for it).
 - **Recording file (`Runtime/Video/`)** — `IProtokitePlaytestRecordingFile` (open, write an encoded frame, close, finish a
   file a dead run left; `BytesFor` says exactly what a frame adds, header included, for the size limit) is the seam a
   recording's frames go through, and names its own content type for the upload; **ProtokitePlaytestMp4File** writes
@@ -237,10 +248,15 @@ script.
   **ProtokitePlaytestScreenFrameSource** is the one GPU class: `ScreenCapture.CaptureScreenshotIntoRenderTexture`, a blit to
   the video size, the `ProtokitePlaytestRgbaToNv12` compute shader (BT.709, limited range; in the package's `Resources`), and
   `AsyncGPUReadback` with at most 3 frames on their way, into a pool of blocks (`ProtokitePlaytestFrameBlocks`). Rows flip
-  only where textures start at the bottom (OpenGL); Linear projects convert back to sRGB before conversion. The capture
+  only where textures start at the bottom (OpenGL); Linear projects convert back to sRGB before conversion. A screen whose
+  shape no longer matches the video (a window resized, a phone turned) is scaled to its own shape in the middle, and the
+  shader writes black outside it (centred, so no row order matters); a difference under 16 pixels, the sides' rounding, fills. The capture
   is asked for the encoder's pixel layout (the Android seam); `ProtokitePlaytestVideoEncoders` and
   `ProtokitePlaytestRecordingFiles` are the only places that pick the encoder and the file. **ProtokitePlaytestVideoSettings**
-  reads the settings asset's video values in range and fits the video to the screen, each side a multiple of 16. Quitting
+  reads the settings asset's video values in range, from the Android section in an Android player (the long side as a
+  square box, so an upright game records upright) and from the Windows one everywhere else, the editor included; with
+  Record Video On Android off an Android player records nothing and never asks the phone. It fits the video to the screen,
+  each side a multiple of 16. Quitting
   stops the capture first and waits for the file within the session end's 3 seconds.
 - **Recording files on disk (`Runtime/Video/ProtokitePlaytestRecordingsFolder.cs`)** — self-contained (it does not use core's
   launch folders). **ProtokitePlaytestRecordingRun** is one recording's folder, `Recordings/Playtest/` or
@@ -340,7 +356,9 @@ script.
   every "no video" reason through a stand-in for what Windows offers; scans for Media Foundation and for any native file; a
   fake encoder held to the same contract), **ProtokitePlaytestMp4FileTests** (written files read back by a reader of their
   own, cut off every way and finished, a real recording decoded by Windows; a fake recording file held to the same
-  contract), **ProtokitePlaytestH264Tests**, **ProtokitePlaytestWebmFinisherTests** (earlier versions' WebM, cut off and
+  contract), **ProtokitePlaytestAndroidVideoEncoderTests** (the Android encoder through the stand-in codec) and
+  **ProtokitePlaytestPhoneEncoderTests** (the phone encoder's choice, its reasons, the size and rate step-down),
+  **ProtokitePlaytestH264Tests**, **ProtokitePlaytestWebmFinisherTests** (earlier versions' WebM, cut off and
   finished), **ProtokitePlaytestFrameScheduleTests**, **ProtokitePlaytestVideoRecordingTests** (fake frames and a fake encoder
   through the real file: limits, drops, failures, the bounded wait), **ProtokitePlaytestScreenFrameSourceTests** (the real
   shader and readback on known colours), **ProtokitePlaytestVideoSettingsTests**, **ProtokitePlaytestVideoTests** (when the

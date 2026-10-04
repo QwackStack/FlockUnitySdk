@@ -65,6 +65,9 @@ namespace Protokite.Playtest.Editor
         /// <summary>Why this PC records no video, or null when it records.</summary>
         public string WhyThisPcRecordsNoVideo;
 
+        /// <summary>Whether Android players record video; on where the project has no playtest settings, as a new asset starts.</summary>
+        public bool RecordVideoOnAndroid = true;
+
         /// <summary>The checks' input from these settings, either of which may be null (the project has none).</summary>
         public static ProtokitePlaytestSetupInput From(ProtokitePlaytestSettings playtest, FlockConfigAsset flock, BuildTarget buildTarget, string windowsArchitecture)
             => new ProtokitePlaytestSetupInput
@@ -78,7 +81,8 @@ namespace Protokite.Playtest.Editor
                 GameVersion = flock != null ? flock.gameVersion : null,
                 GameVersionId = flock != null ? flock.gameVersionId : null,
                 BuildTarget = buildTarget,
-                WindowsArchitecture = windowsArchitecture ?? ""
+                WindowsArchitecture = windowsArchitecture ?? "",
+                RecordVideoOnAndroid = playtest == null || playtest.RecordVideoOnAndroid
             };
 
         /// <summary>The settings a build of this project carries, the platform it is built for now, and what records on this PC.</summary>
@@ -92,8 +96,8 @@ namespace Protokite.Playtest.Editor
             input.WhyThisPcRecordsNoVideo = ProtokitePlaytestVideoEncoders.WhyThisPcRecordsNoVideo(allowSoftware);
             if (input.WhyThisPcRecordsNoVideo == null)
                 input.ThisPcEncoder = ProtokitePlaytestVideoEncoders.EncodersOnThisPc(out _)?
-                    .Where(encoder => encoder.OnGraphicsCard || allowSoftware)
-                    .OrderBy(encoder => encoder.OnGraphicsCard ? 0 : 1)
+                    .Where(encoder => encoder.InHardware || allowSoftware)
+                    .OrderBy(encoder => encoder.InHardware ? 0 : 1)
                     .ThenBy(encoder => encoder.VendorId == SystemInfo.graphicsDeviceVendorID ? 0 : 1)
                     .FirstOrDefault()?.ToString();
             return input;
@@ -137,9 +141,11 @@ namespace Protokite.Playtest.Editor
         public static bool IsAPlaytestVersionName(string name)
             => name != null && name.Length > PlaytestVersionPrefix.Length && name.StartsWith(PlaytestVersionPrefix, StringComparison.Ordinal);
 
-        /// <summary>Whether players built for this target record video: 64-bit Windows on x64 only, as the runtime decides.</summary>
+        /// <summary>Whether players built for this target record video: Android, and 64-bit Windows on x64, as the runtime decides.</summary>
         public static bool RecordsVideo(BuildTarget target, string windowsArchitecture)
         {
+            if (target == BuildTarget.Android)
+                return true;
             string architecture = windowsArchitecture ?? "";
             return target == BuildTarget.StandaloneWindows64 && (architecture.Length == 0 || architecture == "x64");
         }
@@ -247,15 +253,29 @@ namespace Protokite.Playtest.Editor
 
         private static ProtokitePlaytestSetupCheck CheckVideo(ProtokitePlaytestSetupInput input)
         {
-            if (RecordsVideo(input.BuildTarget, input.WindowsArchitecture))
+            if (!RecordsVideo(input.BuildTarget, input.WindowsArchitecture))
+            {
+                string platform = input.BuildTarget == BuildTarget.StandaloneWindows64 ? $"64-bit Windows on {input.WindowsArchitecture}" : input.BuildTarget.ToString();
+                return Failed(VideoCheck, $"Players built for {platform} record no video",
+                    "Only 64-bit Windows (x64) and Android builds record the screen. This build still runs the playtest, without video. " +
+                    "If you want video, switch the build target to Windows, x64, or to Android.",
+                    ProtokitePlaytestSetupFix.OpenBuildProfiles);
+            }
+            if (input.BuildTarget != BuildTarget.Android)
                 return Passed(VideoCheck, "Players built for this platform record video",
                     "The build target is 64-bit Windows, x64. Players record with their graphics card's own H.264 encoder, and a PC without one records " +
                     "no video unless Allow Software Encoder is on." + ThisPc(input));
-            string platform = input.BuildTarget == BuildTarget.StandaloneWindows64 ? $"64-bit Windows on {input.WindowsArchitecture}" : input.BuildTarget.ToString();
-            return Failed(VideoCheck, $"Players built for {platform} record no video",
-                "Only 64-bit Windows (x64) builds record the screen. This build still runs the playtest, without video. " +
-                "If you want video, switch the build target to Windows, x64.",
-                ProtokitePlaytestSetupFix.OpenBuildProfiles);
+            if (!input.RecordVideoOnAndroid)
+                return Failed(VideoCheck, "Players built for Android record no video",
+                    "Record Video On Android is off in Protokite > Playtest > Settings, so Android players record nothing and never ask the phone for " +
+                    "its encoders. Everything else in the playtest still runs. Turn it on if you want video.",
+                    ProtokitePlaytestSetupFix.OpenPlaytestSettings);
+            // This PC's encoder is not said here: a test video in the editor records with it and the Windows settings, which proves nothing of a phone.
+            return Passed(VideoCheck, "Players built for this platform record video",
+                "The build target is Android. Players record with the phone's own hardware H.264 encoder (measured on one 64-bit ARM phone, in " +
+                "64-bit and 32-bit players; x86 Android devices are not measured), and a phone without one records no video unless Android Allow " +
+                "Software Encoder is on. A test video in the editor records with this PC and the Windows settings, so only a test video in an " +
+                "Android player (ProtokitePlaytest.RecordTestVideo) shows whether a phone records.");
         }
 
         // This PC is not a player's, so what it can record is said beside the check, never as its answer.

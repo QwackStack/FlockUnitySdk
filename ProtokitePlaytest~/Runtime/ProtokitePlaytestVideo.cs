@@ -24,6 +24,8 @@ namespace Protokite.Playtest
         private static ProtokitePlaytestRecordingRun _recordingRun;
         private static Task _earlierRecordings;
         private static DateTime _stopWaitingForEarlierRecordingsAt;
+        // Read at launch: a platform whose video a studio turned off is never asked for its encoders.
+        private static bool _videoTurnedOffOnThisPlatform;
 
         /// <summary>Runs on the finishing thread with each earlier launch's run held, just before it is finished; tests hold it there.</summary>
         internal static Action<string> BeforeFinishingEachEarlierRecordingForTesting;
@@ -64,9 +66,11 @@ namespace Protokite.Playtest
 #if !(UNITY_WEBGL && !UNITY_EDITOR)
             // Read here: the folder asks Unity for its data path, which only the main thread may.
             string folder = RecordingsFolder;
-            // Asked of Windows now, beside the earlier recordings, so the recording does not wait for it; a build with playtesting off never asks.
+            // Asked of the platform now, beside the earlier recordings, so the recording does not wait for it; a build with playtesting
+            // off, or video turned off for the platform, never asks.
             ProtokitePlaytestSettings settings = ProtokitePlaytestSettings.Load();
-            if (settings != null && settings.PlaytestingEnabled)
+            _videoTurnedOffOnThisPlatform = !ProtokitePlaytestVideoSettings.From(settings).RecordVideo;
+            if (settings != null && settings.PlaytestingEnabled && !_videoTurnedOffOnThisPlatform)
                 ProtokitePlaytestVideoEncoders.StartLookingForEncoders();
             Action<string> beforeEachRun = BeforeFinishingEachEarlierRecordingForTesting;
             _stopWaitingForEarlierRecordingsAt = DateTime.UtcNow + (LongestWaitForEarlierRecordingsForTesting ?? TimeSpan.FromSeconds(10));
@@ -78,8 +82,10 @@ namespace Protokite.Playtest
         private static bool EarlierRecordingsGoneThrough()
             => _earlierRecordings == null || _earlierRecordings.IsCompleted || DateTime.UtcNow >= _stopWaitingForEarlierRecordingsAt;
 
-        // A recording starts once asking for its encoder takes no wait, so the main thread never waits for Windows; a stand-in encoder needs no answer.
-        private static bool EncoderAnswerReady() => VideoEncoderForTesting != null || ProtokitePlaytestVideoEncoders.FinishedLookingForEncoders();
+        // A recording starts once asking for its encoder takes no wait, so the main thread never waits for the platform; a stand-in
+        // encoder needs no answer, and a platform whose video is turned off is not asked (its recording says why it records nothing).
+        private static bool EncoderAnswerReady()
+            => VideoEncoderForTesting != null || _videoTurnedOffOnThisPlatform || ProtokitePlaytestVideoEncoders.FinishedLookingForEncoders();
 
         /// <summary>Waits up to the timeout for the earlier launches' recordings to be gone through; true once they are, or when none were started.</summary>
         internal static bool WaitForEarlierRecordingsForTesting(TimeSpan timeout) => _earlierRecordings == null || _earlierRecordings.Wait(timeout);
@@ -185,7 +191,7 @@ namespace Protokite.Playtest
             if (!TryStartRecording(ProtokitePlaytestRecordingKind.Playtest, settings, out ProtokitePlaytestVideoRecording recording, out ProtokitePlaytestRecordingRun run,
                     out string contentType, out RecordingNotStarted notStarted, out string whyNot))
             {
-                bool expected = notStarted == RecordingNotStarted.NoEncoder
+                bool expected = notStarted == RecordingNotStarted.NoEncoder || notStarted == RecordingNotStarted.TurnedOff
                                 || (notStarted == RecordingNotStarted.NoCapture && SystemInfo.graphicsDeviceType == GraphicsDeviceType.Null);
                 _videoNotStartedBecause = whyNot;
                 _videoNotStartedIsExpected = expected;
@@ -193,7 +199,7 @@ namespace Protokite.Playtest
                 if (notStarted == RecordingNotStarted.NoEncoder)
                     return;
                 string line = LogPrefix + "This launch records no playtest video: " + whyNot + " Everything else in the playtest still runs.";
-                // No capture is expected in a build that draws nothing; loud where a studio's players should have been recorded.
+                // No capture is expected in a build that draws nothing, and nothing in one a studio turned off; loud where a studio's players should have been recorded.
                 if (expected)
                     Debug.Log(line);
                 else
@@ -217,7 +223,9 @@ namespace Protokite.Playtest
         /// <summary>What stopped a recording from starting.</summary>
         private enum RecordingNotStarted
         {
+            TurnedOff,
             NoEncoder,
+            NoSizeTheEncoderTakes,
             NoCapture,
             NoRunOrRoom,
             CouldNotStart
@@ -230,8 +238,16 @@ namespace Protokite.Playtest
             recording = null;
             run = null;
             contentType = null;
-            notStarted = RecordingNotStarted.NoEncoder;
+            notStarted = RecordingNotStarted.TurnedOff;
             whyNot = null;
+            // A studio's off switch, for the playtest's recording and a test video alike: off at launch holds for the launch (the phone
+            // was never asked, and asking now would make this frame wait for it), and off now is off.
+            if (!settings.RecordVideo || _videoTurnedOffOnThisPlatform)
+            {
+                whyNot = ProtokitePlaytestVideoEncoders.VideoTurnedOffOnAndroid;
+                return false;
+            }
+            notStarted = RecordingNotStarted.NoEncoder;
             // Read here, on the main thread: the encoder tries the game's graphics card maker's encoder first.
             settings.GraphicsCardVendorId = SystemInfo.graphicsDeviceVendorID;
             IProtokitePlaytestVideoEncoder encoder = VideoEncoderForTesting != null ? VideoEncoderForTesting() : ProtokitePlaytestVideoEncoders.Create(settings.AllowSoftwareEncoder, out whyNot);
@@ -240,6 +256,16 @@ namespace Protokite.Playtest
                 whyNot = whyNot ?? "this build has no video encoder.";
                 return false;
             }
+
+            // Fitted before the capture is made at that size: a phone's encoder may not take what the settings make of this screen.
+            if (!ProtokitePlaytestVideoEncoders.FitTheEncoder(encoder, settings, Screen.width, Screen.height, out string fitted, out whyNot))
+            {
+                encoder.Dispose();
+                notStarted = RecordingNotStarted.NoSizeTheEncoderTakes;
+                return false;
+            }
+            if (fitted != null)
+                Debug.Log(LogPrefix + fitted);
 
             IProtokitePlaytestFrameSource source = VideoFrameSourceForTesting != null
                 ? VideoFrameSourceForTesting(settings, encoder.InputPixelFormat)
@@ -433,6 +459,7 @@ namespace Protokite.Playtest
             _videoStartedThisLaunch = false;
             _videoNotStartedBecause = null;
             _videoNotStartedIsExpected = false;
+            _videoTurnedOffOnThisPlatform = false;
             FinishedVideo = null;
         }
     }

@@ -29,7 +29,7 @@ namespace Protokite.Playtest.Tests
         }
 
         private static ProtokitePlaytestEncoderFound OnTheGraphicsCard(string name, int vendorId = 0x10DE) =>
-            new ProtokitePlaytestEncoderFound { Name = name, OnGraphicsCard = true, VendorId = vendorId };
+            new ProtokitePlaytestEncoderFound { Name = name, InHardware = true, VendorId = vendorId };
 
         private static readonly ProtokitePlaytestEncoderFound Software = new ProtokitePlaytestEncoderFound { Name = "H264 Encoder MFT" };
 
@@ -93,13 +93,13 @@ namespace Protokite.Playtest.Tests
 
         [TestCase(Architecture.X86)]
         [TestCase(Architecture.Arm64)]
-        public void A32BitOrArmWindowsBuildIsToldVideoIsFor64BitWindowsWithoutAWarning(Architecture architecture)
+        public void A32BitOrArmWindowsBuildIsToldWhereVideoRecordsWithoutAWarning(Architecture architecture)
         {
             Func<int> asked = PcOffers(OnTheGraphicsCard("NVIDIA H.264 Encoder MFT"));
             ProtokitePlaytestVideoEncoders.ReadProcessArchitectureForTesting = () => architecture;
-            LogAssert.Expect(LogType.Log, new Regex("records no playtest video: video is recorded on 64-bit Windows only"));
+            LogAssert.Expect(LogType.Log, new Regex("records no playtest video: video is recorded on 64-bit Windows and Android only"));
             Assert.IsNull(ProtokitePlaytestVideoEncoders.Create(false, out string whyNot));
-            StringAssert.Contains("64-bit Windows only", whyNot);
+            StringAssert.Contains("64-bit Windows and Android only", whyNot);
             Assert.AreEqual(0, asked(), "Windows is not asked about encoders a build of this kind does not use");
             LogAssert.NoUnexpectedReceived();
         }
@@ -225,7 +225,7 @@ namespace Protokite.Playtest.Tests
             Assert.AreNotEqual(Thread.CurrentThread.ManagedThreadId, looking.ManagedThreadId);
             List<ProtokitePlaytestEncoderFound> found = ProtokitePlaytestVideoEncoders.EncodersOnThisPc(out string whyNone);
             Assert.IsNotNull(found, whyNone);
-            Assert.IsTrue(found.Any(encoder => !encoder.OnGraphicsCard), "Windows' own software encoder is offered on every PC with Media Foundation");
+            Assert.IsTrue(found.Any(encoder => !encoder.InHardware), "Windows' own software encoder is offered on every PC with Media Foundation");
             Assert.AreEqual((apartmentBefore, typeBefore), (CoGetApartmentType(out int typeAfter, out _), typeAfter), "The main thread's COM is left as it was");
         }
 
@@ -335,12 +335,12 @@ namespace Protokite.Playtest.Tests
             RealEncoding.OnItsOwnThread(() =>
             {
                 List<ProtokitePlaytestEncodedFrame> output = new List<ProtokitePlaytestEncodedFrame>();
-                using (ProtokitePlaytestWindowsVideoEncoder encoder = new ProtokitePlaytestWindowsVideoEncoder { EncoderAllowedForTesting = found => !found.OnGraphicsCard })
+                using (ProtokitePlaytestWindowsVideoEncoder encoder = new ProtokitePlaytestWindowsVideoEncoder { EncoderAllowedForTesting = found => !found.InHardware })
                 {
                     Assert.IsTrue(encoder.Configure(Settings(), out string error), error);
                     Assert.IsFalse(encoder.Encode(RealEncoding.MovingPicture(0), 0, FrameMs, output, out refused), "A PC with no graphics card encoder, the software one not allowed");
                 }
-                using (ProtokitePlaytestWindowsVideoEncoder encoder = new ProtokitePlaytestWindowsVideoEncoder { EncoderAllowedForTesting = found => !found.OnGraphicsCard })
+                using (ProtokitePlaytestWindowsVideoEncoder encoder = new ProtokitePlaytestWindowsVideoEncoder { EncoderAllowedForTesting = found => !found.InHardware })
                 {
                     ProtokitePlaytestVideoEncoderSettings settings = Settings();
                     settings.AllowSoftwareEncoder = true;
@@ -442,7 +442,7 @@ namespace Protokite.Playtest.Tests
         {
             List<ProtokitePlaytestEncoderFound> onThisPc = ProtokitePlaytestVideoEncoders.EncodersOnThisPc(out string whyNone);
             Assert.IsNotNull(onThisPc, whyNone);
-            foreach (int vendorId in onThisPc.Where(encoder => encoder.OnGraphicsCard && encoder.VendorId != 0).Select(encoder => encoder.VendorId).Distinct())
+            foreach (int vendorId in onThisPc.Where(encoder => encoder.InHardware && encoder.VendorId != 0).Select(encoder => encoder.VendorId).Distinct())
             {
                 List<string> offered = null;
                 RealEncoding.OnItsOwnThread(() =>

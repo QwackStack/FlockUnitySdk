@@ -384,9 +384,10 @@ namespace Protokite.Playtest.Tests
         [TestCase(BuildTarget.StandaloneOSX, "x64", false)]
         [TestCase(BuildTarget.StandaloneLinux64, "x64", false)]
         [TestCase(BuildTarget.WebGL, "x64", false)]
-        [TestCase(BuildTarget.Android, "x64", false)]
+        [TestCase(BuildTarget.Android, "", true)]
+        [TestCase(BuildTarget.Android, "x64", true)]
         [TestCase(BuildTarget.iOS, "x64", false)]
-        public void OnlyA64BitWindowsX64BuildRecordsVideo(BuildTarget target, string architecture, bool records)
+        public void OnlyAndroidAndA64BitWindowsX64BuildRecordVideo(BuildTarget target, string architecture, bool records)
         {
             ProtokitePlaytestSetupCheck check = Check(ProtokitePlaytestSetupInput.From(Playtest(), Flock(PlaytestVersionName, PlaytestVersionId), target, architecture),
                 ProtokitePlaytestSetupChecks.VideoCheck);
@@ -395,8 +396,48 @@ namespace Protokite.Playtest.Tests
                 return;
             StringAssert.Contains(target == BuildTarget.StandaloneWindows64 ? architecture : target.ToString(), check.Title, "Naming what it is built for");
             StringAssert.Contains("still runs the playtest, without video", check.Detail, "Saying video is the only thing missing");
-            StringAssert.Contains("Windows, x64", check.Detail, "Naming the build that records");
+            StringAssert.Contains("Windows, x64, or to Android", check.Detail, "Naming the builds that record");
             Assert.AreEqual(ProtokitePlaytestSetupFix.OpenBuildProfiles, check.Fix);
+        }
+
+        [Test]
+        public void AnAndroidBuildRecordsWithThePhonesOwnEncoder()
+        {
+            ProtokitePlaytestSetupInput input = ProtokitePlaytestSetupInput.From(Playtest(), Flock(PlaytestVersionName, PlaytestVersionId), BuildTarget.Android, "");
+            // What this PC offers, as the window fills it in; a Windows build's check names it.
+            input.ThisPcEncoder = "a stand-in graphics card encoder";
+            ProtokitePlaytestSetupCheck check = Check(input, ProtokitePlaytestSetupChecks.VideoCheck);
+            Assert.IsTrue(check.Passed, check.Detail);
+            StringAssert.Contains("The build target is Android", check.Detail);
+            StringAssert.Contains("the phone's own hardware H.264 encoder", check.Detail);
+            StringAssert.Contains("x86 Android devices are not measured", check.Detail, "Saying what no run has proven");
+            StringAssert.Contains("Android Allow Software Encoder", check.Detail, "Naming the setting for a phone without one");
+            StringAssert.Contains("only a test video in an Android player", check.Detail, "An editor test video proves nothing of a phone");
+            StringAssert.DoesNotContain("On this PC, Windows offers", check.Detail, "This PC's encoder is not offered as a phone's");
+        }
+
+        [Test]
+        public void AnAndroidBuildWithVideoTurnedOffSaysSoAndOpensTheSettings()
+        {
+            ProtokitePlaytestSettings playtest = Playtest();
+            playtest.RecordVideoOnAndroid = false;
+            ProtokitePlaytestSetupCheck check = Check(ProtokitePlaytestSetupInput.From(playtest, Flock(PlaytestVersionName, PlaytestVersionId), BuildTarget.Android, ""),
+                ProtokitePlaytestSetupChecks.VideoCheck);
+            Assert.IsFalse(check.Passed);
+            Assert.AreEqual("Players built for Android record no video", check.Title);
+            StringAssert.Contains("Record Video On Android is off", check.Detail);
+            StringAssert.Contains("Everything else in the playtest still runs", check.Detail);
+            Assert.AreEqual(ProtokitePlaytestSetupFix.OpenPlaytestSettings, check.Fix);
+
+            ProtokitePlaytestSetupCheck windows = Check(ProtokitePlaytestSetupInput.From(playtest, Flock(PlaytestVersionName, PlaytestVersionId), BuildTarget.StandaloneWindows64, "x64"),
+                ProtokitePlaytestSetupChecks.VideoCheck);
+            Assert.IsTrue(windows.Passed, "The switch is Android's alone");
+        }
+
+        [Test]
+        public void AProjectWithNoPlaytestSettingsReadsAndroidVideoAsOn()
+        {
+            Assert.IsTrue(ProtokitePlaytestSetupInput.From(null, null, BuildTarget.Android, "").RecordVideoOnAndroid, "As a new settings asset starts");
         }
 
         [Test]
@@ -424,7 +465,7 @@ namespace Protokite.Playtest.Tests
             // What this PC offers stands in, so the test is about reading the project, not about this PC's graphics card.
             ProtokitePlaytestVideoEncoders.ResetForNewLaunch();
             ProtokitePlaytestVideoEncoders.LookForEncodersForTesting = () => new KeyValuePair<List<ProtokitePlaytestEncoderFound>, string>(
-                new List<ProtokitePlaytestEncoderFound> { new ProtokitePlaytestEncoderFound { Name = "H264 Encoder MFT" }, new ProtokitePlaytestEncoderFound { Name = "A Card's Encoder", OnGraphicsCard = true } }, null);
+                new List<ProtokitePlaytestEncoderFound> { new ProtokitePlaytestEncoderFound { Name = "H264 Encoder MFT" }, new ProtokitePlaytestEncoderFound { Name = "A Card's Encoder", InHardware = true } }, null);
             try
             {
                 ProtokitePlaytestSetupInput input = ProtokitePlaytestSetupInput.FromProject();

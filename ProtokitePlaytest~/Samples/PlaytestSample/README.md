@@ -25,7 +25,7 @@ that wants its own menus or buttons around it.
 | Stop And Send It, Stop It | `CanSendTheRecording`, `StopRecordingAndSendIt`, `IsRecordingVideo`, `StopVideoRecording` |
 | Open It, Send Answers From Code | `FeedbackForm`, `CanOpenFeedbackForm`, `OpenFeedbackForm`, `SendFeedbackForm` with `ProtokitePlaytestFormAnswers` |
 | Close The Form From Code | `IsFeedbackFormOpen`, `CloseFeedbackForm`, shown while the form is open |
-| Record A Test Video | `RecordTestVideo`, `TestVideoState`, `FinishedTestVideoPath`, `TestVideoProblem`: never uploaded, 64-bit Windows only |
+| Record A Test Video | `RecordTestVideo`, `TestVideoState`, `FinishedTestVideoPath`, `TestVideoProblem`: never uploaded, 64-bit Windows and Android |
 
 While the playtest's form or consent question is on screen, the sample draws only a small strip, so it never covers them.
 Every call is made on the main thread, as the playtest requires.

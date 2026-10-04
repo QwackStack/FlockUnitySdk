@@ -229,6 +229,165 @@ namespace Protokite.Playtest.Tests
         }
 #endif
 
+        // A studio turning Android's video off
+
+        [Test]
+        public void AnAndroidPlayerWithVideoTurnedOffNeverAsksThePhoneAndSaysWhyQuietly()
+        {
+            ProtokitePlaytest.VideoEncoderForTesting = null;
+            ProtokitePlaytestVideoEncoders.ResetForNewLaunch();
+            ProtokitePlaytestVideoEncoders.ActAsAndroidForTesting = true;
+            int asked = 0;
+            ProtokitePlaytestVideoEncoders.LookForEncodersForTesting = () =>
+            {
+                Interlocked.Increment(ref asked);
+                return new KeyValuePair<List<ProtokitePlaytestEncoderFound>, string>(new List<ProtokitePlaytestEncoderFound>(), null);
+            };
+            try
+            {
+                _settings.Settings.RecordVideoOnAndroid = false;
+                ProtokitePlaytest.StartFinishingEarlierRecordings();
+                Assert.IsTrue(ProtokitePlaytest.WaitForEarlierRecordingsForTesting(TimeSpan.FromSeconds(10)), "Precondition: earlier launches' recordings are gone through, as a recording waits for");
+                using (FlockWithConfig(true))
+                {
+                    ProtokitePlaytest.Refresh();
+                    LogAssert.Expect(LogType.Log, new Regex(Regex.Escape("This launch records no playtest video: " + ProtokitePlaytestVideoEncoders.VideoTurnedOffOnAndroid + " Everything else")));
+                    Frames(60);
+                    Assert.IsFalse(ProtokitePlaytest.IsRecordingVideo);
+                    Assert.AreEqual(0, _sourcesMade, "Nothing is captured");
+                }
+                Assert.IsFalse(ProtokitePlaytestVideoEncoders.AskedThisLaunchForTesting, "The phone is never asked for its encoders");
+                Assert.AreEqual(0, Volatile.Read(ref asked));
+
+                // Control: with the switch on, the same launch asks the phone at once.
+                ProtokitePlaytest.ResetForNewLaunch();
+                _settings.Settings.RecordVideoOnAndroid = true;
+                ProtokitePlaytest.StartFinishingEarlierRecordings();
+                Assert.IsTrue(ProtokitePlaytestVideoEncoders.AskedThisLaunchForTesting, "Asked at launch when video is on");
+            }
+            finally
+            {
+                ProtokitePlaytestVideoEncoders.ActAsAndroidForTesting = false;
+                ProtokitePlaytestVideoEncoders.LookForEncodersForTesting = null;
+                ProtokitePlaytestVideoEncoders.ResetForNewLaunch();
+            }
+        }
+
+        [Test]
+        public void ATestVideoOnAnAndroidPlayerWithVideoTurnedOffIsRefusedWithTheReason()
+        {
+            ProtokitePlaytestVideoEncoders.ResetForNewLaunch();
+            ProtokitePlaytestVideoEncoders.ActAsAndroidForTesting = true;
+            ProtokitePlaytestVideoEncoders.LookForEncodersForTesting = () =>
+                new KeyValuePair<List<ProtokitePlaytestEncoderFound>, string>(new List<ProtokitePlaytestEncoderFound>(), null);
+            try
+            {
+                _settings.Settings.RecordVideoOnAndroid = false;
+                ProtokitePlaytest.StartFinishingEarlierRecordings();
+                Assert.IsTrue(ProtokitePlaytest.WaitForEarlierRecordingsForTesting(TimeSpan.FromSeconds(10)), "Precondition: earlier launches' recordings are gone through, as a recording waits for");
+                Assert.IsTrue(ProtokitePlaytest.RecordTestVideo(2.0, out string whyNot), whyNot);
+                LogAssert.Expect(LogType.Warning, new Regex(Regex.Escape("No test video is recorded: " + ProtokitePlaytestVideoEncoders.VideoTurnedOffOnAndroid)));
+                Frames(1);
+                Assert.AreEqual(ProtokitePlaytestVideoEncoders.VideoTurnedOffOnAndroid, ProtokitePlaytest.TestVideoProblem);
+                Assert.AreEqual(0, _sourcesMade, "Nothing is captured");
+            }
+            finally
+            {
+                ProtokitePlaytestVideoEncoders.ActAsAndroidForTesting = false;
+                ProtokitePlaytestVideoEncoders.LookForEncodersForTesting = null;
+                ProtokitePlaytestVideoEncoders.ResetForNewLaunch();
+            }
+        }
+
+        [Test]
+        public void AndroidsSwitchTurnedOnMidLaunchWaitsForTheNextLaunchAndNeverMakesTheGameWait()
+        {
+            ProtokitePlaytest.VideoEncoderForTesting = null;
+            ProtokitePlaytestVideoEncoders.ResetForNewLaunch();
+            ProtokitePlaytestVideoEncoders.ActAsAndroidForTesting = true;
+            int asked = 0;
+            ProtokitePlaytestVideoEncoders.LookForEncodersForTesting = () =>
+            {
+                Interlocked.Increment(ref asked);
+                return new KeyValuePair<List<ProtokitePlaytestEncoderFound>, string>(new List<ProtokitePlaytestEncoderFound>(), null);
+            };
+            try
+            {
+                _settings.Settings.RecordVideoOnAndroid = false;
+                ProtokitePlaytest.StartFinishingEarlierRecordings();
+                Assert.IsTrue(ProtokitePlaytest.WaitForEarlierRecordingsForTesting(TimeSpan.FromSeconds(10)), "Precondition: earlier launches' recordings are gone through, as a recording waits for");
+                _settings.Settings.RecordVideoOnAndroid = true;
+                Assert.IsTrue(ProtokitePlaytest.RecordTestVideo(2.0, out string whyNot), whyNot);
+                LogAssert.Expect(LogType.Warning, new Regex(Regex.Escape("No test video is recorded: " + ProtokitePlaytestVideoEncoders.VideoTurnedOffOnAndroid)));
+                Frames(1);
+                Assert.AreEqual(ProtokitePlaytestVideoEncoders.VideoTurnedOffOnAndroid, ProtokitePlaytest.TestVideoProblem, "Off at launch holds for the launch");
+                Assert.IsFalse(ProtokitePlaytestVideoEncoders.AskedThisLaunchForTesting, "The phone is never asked, so the frame never waits for it");
+                Assert.AreEqual(0, Volatile.Read(ref asked));
+                Assert.AreEqual(0, _sourcesMade, "Nothing is captured");
+            }
+            finally
+            {
+                ProtokitePlaytestVideoEncoders.ActAsAndroidForTesting = false;
+                ProtokitePlaytestVideoEncoders.LookForEncodersForTesting = null;
+                ProtokitePlaytestVideoEncoders.ResetForNewLaunch();
+            }
+        }
+
+        [Test]
+        public void APhonesEncoderThatRefusesTheScreensSizeRecordsTheNextSizeDownAndSaysWhich()
+        {
+            Assume.That(Screen.width > 64 && Screen.height > 64, "The recording is sized from the screen, which this editor must have");
+            ProtokitePlaytestVideoSettings.FitVideoSize(Screen.width, Screen.height, 1280, 1280, out int fullWidth, out int fullHeight);
+            ProtokitePlaytestEncoderFound found = new ProtokitePlaytestEncoderFound
+            {
+                Name = "c2.stand.in.avc.encoder", InHardware = true, OnAPhone = true, TakesSizeAndRate = (width, height, rate) => width < fullWidth
+            };
+            ProtokitePlaytestStandInAndroidCodec codec = new ProtokitePlaytestStandInAndroidCodec();
+            ProtokitePlaytest.VideoEncoderForTesting = () => new ProtokitePlaytestAndroidVideoEncoder(found, (out string whyNot) =>
+            {
+                whyNot = null;
+                return codec;
+            });
+            int widestAllowed = 0;
+            ProtokitePlaytest.VideoFrameSourceForTesting = (settings, format) =>
+            {
+                widestAllowed = settings.MaxVideoWidth;
+                _sourcesMade++;
+                return _source;
+            };
+            ProtokitePlaytestVideoEncoders.ActAsAndroidForTesting = true;
+            try
+            {
+                using (FlockWithConfig(true))
+                {
+                    ProtokitePlaytest.Refresh();
+                    LogAssert.Expect(LogType.Log, new Regex(Regex.Escape($"c2.stand.in.avc.encoder (the phone's hardware encoder) does not take {fullWidth}x{fullHeight} at 15 frames a second, so this recording is ")));
+                    Frames(1);
+                    Assert.AreEqual(1, _sourcesMade, "The capture is made once, at the size the encoder takes");
+                    Assert.Less(widestAllowed, 1280, "The capture was asked for a smaller size");
+                    ProtokitePlaytestVideoSettings.FitVideoSize(Screen.width, Screen.height, widestAllowed, widestAllowed, out int width, out _);
+                    Assert.Less(width, fullWidth, "One the encoder takes");
+                    Assert.IsTrue(ProtokitePlaytest.IsRecordingVideo);
+                }
+            }
+            finally
+            {
+                ProtokitePlaytestVideoEncoders.ActAsAndroidForTesting = false;
+            }
+        }
+
+        [Test]
+        public void EveryOtherPlatformRecordsWhateverAndroidsSwitchSays()
+        {
+            _settings.Settings.RecordVideoOnAndroid = false;
+            using (FlockWithConfig(true))
+            {
+                ProtokitePlaytest.Refresh();
+                Frames(1);
+                Assert.IsTrue(ProtokitePlaytest.IsRecordingVideo, "The switch is Android's alone");
+            }
+        }
+
         [Test]
         public void NothingIsRecordedUntilThePlayerAllowsTheScreen()
         {

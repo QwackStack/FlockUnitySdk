@@ -10,6 +10,11 @@ uint Width;
 uint Height;
 uint FlipVertically;
 uint SourceIsLinear;
+// Where the picture lies in the video, top first, right and bottom outside it; black around it when the screen's shape changed.
+uint PictureLeft;
+uint PictureTop;
+uint PictureRight;
+uint PictureBottom;
 
 float3 LinearToSrgb(float3 c)
 {
@@ -19,6 +24,7 @@ float3 LinearToSrgb(float3 c)
 // Whether the source's first row is the top of the picture depends on the graphics API; the video's first row is the top.
 float3 Pixel(uint x, uint y)
 {
+    if (x < PictureLeft || x >= PictureRight || y < PictureTop || y >= PictureBottom) return float3(0, 0, 0);
     uint row = FlipVertically != 0 ? Height - 1 - y : y;
     // A linear-colour project reads its sRGB texture back as linear values; a gamma project reads the stored values as they are.
     float3 c = Source.Load(int3(x, row, 0)).rgb;

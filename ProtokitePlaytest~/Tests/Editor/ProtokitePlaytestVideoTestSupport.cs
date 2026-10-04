@@ -83,7 +83,7 @@ namespace Protokite.Playtest.Tests
         {
             List<ProtokitePlaytestEncoderFound> found = ProtokitePlaytestVideoEncoders.EncodersOnThisPc(out string whyNone);
             whatIsOffered = found == null ? whyNone : "Windows offers " + (found.Count == 0 ? "no H.264 encoder" : string.Join(", ", found));
-            return found != null && found.Exists(encoder => encoder.OnGraphicsCard);
+            return found != null && found.Exists(encoder => encoder.InHardware);
         }
 
         /// <summary>Leaves a test inconclusive on a PC whose graphics card has no H.264 encoder: what it checks is the encoder, not this PC.</summary>

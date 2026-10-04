@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 It is released with the Flock SDK, at the Flock SDK's version.
 
 
+## [1.64.0]
+
+### Added
+- **Android players record the game's screen**, with the phone's own hardware H.264 encoder, into the same MP4 file Windows
+  writes, uploaded as `video/mp4`. Android's media library is called from C#, so the package still ships no native file. The
+  capture is the one Windows uses: copied, scaled and converted on the graphics card, read back without waiting for it.
+  - A new **Video recording (Android)** section in **Protokite > Playtest > Settings**: **Record Video On Android** (on),
+    **Android Video Long Side** (1280), **Android Video Frames Per Second** (15), **Android Video Bitrate Kbps** (1500) and
+    **Android Allow Software Encoder** (off), with properties of the same names on `ProtokitePlaytestSettings`. A settings
+    asset saved by an earlier version starts with these defaults.
+  - The long side is the limit whichever way the phone is held, so a game held upright records upright: on a 20:9 phone,
+    1280x592 sideways and 592x1280 upright.
+  - The bitrate is held as a constant rate where the phone's encoder says it takes one (measured: 1,520 kbps against 1,500
+    asked, where the phone's default mode wrote 1,895 on a busy scene).
+  - A phone whose encoder does not take the video's size or rate records at the next size down it does (three quarters, a
+    half, three eighths of the long side), then at 15 and 10 frames a second, and the log says which.
+  - A phone with no hardware H.264 encoder that takes the capture's frames records no video and says why once; **Android
+    Allow Software Encoder** has it record with Android's software encoder on the processor instead, which costs frame rate
+    and battery. An encoder that refuses to start ends the recording, and the log gives its status.
+  - With **Record Video On Android** off as the game starts, an Android player records no video and never asks the phone for
+    its encoders; everything else in the playtest still runs. Turned on later in a launch, it takes effect from the next one.
+  - The setup window's Video check passes for an Android build target with Record Video On Android on, and says how to turn
+    it back on when it is off.
+- The settings are now grouped as **Video recording (64-bit Windows)**, **Video recording (Android)**, **Recordings (every
+  platform)** (length, size and disk budget) and **Heavy analytics**. The editor, whatever it builds for, reads the Windows
+  section, so a test video in the editor records with it.
+
+### Changed
+- **A window resized, or a phone turned, during a recording keeps its shape** inside the video's size, with black bars, where it
+  used to be stretched to fill it. The video's size is still set when the recording starts.
+
+### Verified
+- On a Galaxy S23 Ultra (Android 16), in Unity 6000.3 players built with High managed stripping: IL2CPP 64-bit on Vulkan and
+  OpenGL ES, and Mono 32-bit on Vulkan. Each recorded a 20 second test video through the phone's hardware encoder
+  (`c2.qti.avc.encoder`): 300 frames read back by the phone's own decoder, played and sought by Chrome, at 1,511 to 1,517 kbps
+  against 1,500 asked, while the game kept 60 frames a second. Held sideways it recorded 1280x592, held upright 592x1280.
+- Counter-cases on the same phone: with Record Video On Android off, the test video was refused with the setting named and the
+  phone was never asked for its encoders; with OpenGL ES 3.0 forced (no compute shaders), it was refused with that reason, said once.
+- Turned upright 8 seconds into a sideways recording, the game was recorded at its own shape in the middle of the 1280x592 video,
+  with black bars beside it, as Chrome showed 15 seconds in, on Vulkan and OpenGL ES; a Windows player whose window was made tall
+  mid-recording did the same.
+- Unity 2021.3 Android players on the same phone: every case above passed (IL2CPP on Vulkan and OpenGL ES, Mono 32-bit).
+- A live playtest on the phone, against a local Protokite and Flock: the player signed in, its session started and recorded,
+  the recording uploaded (stored as MP4 that Chrome plays), the session ended when the game quit, and its playtest event reached
+  Flock once.
+- The package's tests pass on Unity 2021.3 and 6000.3, the capture's new margins checked on the editor's own graphics card.
+- Not yet measured: other phones (a flagship's costs are a best case), and x86 Android devices (some Chromebooks and emulators).
+- On that phone, a 32-bit Mono player built with Unity 6000.3 sometimes stayed paused before its first scene until it was left and
+  reopened, with or without this package (measured: 1 of 3 and 2 of 3 cold starts reached the scene unaided); IL2CPP players always
+  started, and a 2021.3 Mono player started unaided.
+
 ## [1.63.0]
 
 ### Changed (breaking)

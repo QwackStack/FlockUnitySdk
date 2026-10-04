@@ -47,6 +47,23 @@ namespace Protokite.Playtest
         [Tooltip("Off by default: video is encoded on the graphics card's own video engine, and a PC whose graphics card has none records no video. On: such a PC records with Windows' own encoder on the processor instead, which costs the game frame rate.")]
         [SerializeField] private bool allowSoftwareEncoder;
 
+        [Header("Video recording (Android)")]
+        [Tooltip("On by default: Android players record the screen when the playtest's config turns video on and the player agrees. Off: Android players record no video and never ask the phone for its encoders; everything else in the playtest still runs. Read as the game starts: turned on later in a launch, it takes effect from the next one.")]
+        [SerializeField] private bool recordVideoOnAndroid = true;
+
+        [Tooltip("The longer side of the video, in pixels, whichever way the phone is held: on a 20:9 phone, 1280 records a game held sideways at 1280x592 and one held upright at 592x1280. A smaller screen is not enlarged, and each side is rounded down to a multiple of 16. A phone whose encoder does not take the size records at the next size down it does, and says so.")]
+        [SerializeField, Range(320, 1920)] private int androidVideoLongSide = 1280;
+
+        [Tooltip("Frames recorded each second of play. 30 doubles the phone's encoding work and the frames the capture copies from the screen.")]
+        [SerializeField, Range(1, 30)] private int androidVideoFramesPerSecond = 15;
+
+        [Tooltip("The video's bitrate, in kilobits a second.")]
+        [SerializeField, Range(100, 20000)] private int androidVideoBitrateKbps = 1500;
+
+        [Tooltip("Off by default: video is encoded by the phone's hardware encoder, and a phone without one records no video. On: such a phone records with Android's software encoder on the processor instead, which costs the game frame rate and battery.")]
+        [SerializeField] private bool androidAllowSoftwareEncoder;
+
+        [Header("Recordings (every platform)")]
         [Tooltip("A recording stops for good after this many minutes of play.")]
         [SerializeField, Min(0.1f)] private float maxRecordingMinutes = 60f;
 
@@ -56,6 +73,7 @@ namespace Protokite.Playtest
         [Tooltip("The most every recording kept on this machine may take together, in megabytes. To make room for a new recording, those whose game has closed are deleted, the oldest first.")]
         [SerializeField, Min(1)] private int recordingsDiskBudgetMb = 4096;
 
+        [Header("Heavy analytics")]
         [Tooltip("With heavy analytics on, a frame that takes this many milliseconds or longer is counted as a hitch.")]
         [SerializeField, Min(1f)] private float hitchFrameTimeMs = 60f;
 
@@ -100,6 +118,21 @@ namespace Protokite.Playtest
 
         /// <summary>Whether a PC whose graphics card has no video encoder records with Windows' software encoder, at a cost to the game's frame rate.</summary>
         public bool AllowSoftwareEncoder { get => allowSoftwareEncoder; set => allowSoftwareEncoder = value; }
+
+        /// <summary>Whether Android players record video at all; off, the phone is never asked for its encoders.</summary>
+        public bool RecordVideoOnAndroid { get => recordVideoOnAndroid; set => recordVideoOnAndroid = value; }
+
+        /// <summary>The longer side of an Android player's video, in pixels, whichever way the phone is held.</summary>
+        public int AndroidVideoLongSide { get => androidVideoLongSide; set => androidVideoLongSide = value; }
+
+        /// <summary>Frames an Android player records each second of play.</summary>
+        public int AndroidVideoFramesPerSecond { get => androidVideoFramesPerSecond; set => androidVideoFramesPerSecond = value; }
+
+        /// <summary>An Android player's video bitrate, in kilobits a second.</summary>
+        public int AndroidVideoBitrateKbps { get => androidVideoBitrateKbps; set => androidVideoBitrateKbps = value; }
+
+        /// <summary>Whether a phone with no hardware video encoder records with Android's software encoder, at a cost to frame rate and battery.</summary>
+        public bool AndroidAllowSoftwareEncoder { get => androidAllowSoftwareEncoder; set => androidAllowSoftwareEncoder = value; }
 
         /// <summary>Minutes of play after which a recording stops for good.</summary>
         public float MaxRecordingMinutes { get => maxRecordingMinutes; set => maxRecordingMinutes = value; }

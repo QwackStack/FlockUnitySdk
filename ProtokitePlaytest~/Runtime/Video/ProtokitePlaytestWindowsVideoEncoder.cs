@@ -829,7 +829,7 @@ namespace Protokite.Playtest
                 return preferred;
             foreach (KeyValuePair<IMFActivate, ProtokitePlaytestEncoderFound> encoder in Enumerate(EnumSynchronous | EnumSortAndFilter))
             {
-                if (encoder.Value.OnGraphicsCard)
+                if (encoder.Value.InHardware)
                     Release(encoder.Key);
                 else
                     preferred.Add(encoder);
@@ -866,7 +866,7 @@ namespace Protokite.Playtest
             ProtokitePlaytestEncoderFound found = new ProtokitePlaytestEncoderFound
             {
                 Name = ReadText(activate, FriendlyName) ?? "an unnamed H.264 encoder",
-                OnGraphicsCard = activate.GetStringLength(ref key, out uint _) >= 0
+                InHardware = activate.GetStringLength(ref key, out uint _) >= 0
             };
             // Windows says "VEN_10DE" for NVIDIA, the same number Unity reports as the graphics card's vendor ID.
             string vendor = ReadText(activate, HardwareVendorId);

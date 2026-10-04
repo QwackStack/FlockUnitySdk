@@ -8,13 +8,22 @@ namespace Protokite.Playtest
         /// <summary>The conversion to the encoder's pixel layout packs pixels in fours, and H.264 codes 16-pixel blocks, so every side is a multiple of this.</summary>
         internal const int SideMultiple = 16;
 
+        /// <summary>The longer side an Android player's video takes when the settings asset says nothing.</summary>
+        internal const int DefaultAndroidLongSide = 1280;
+
         public int MaxVideoWidth = 1280;
         public int MaxVideoHeight = 720;
         public int FramesPerSecond = 15;
         public int BitrateKbps = 1500;
 
-        /// <summary>Whether Windows' software encoder may be used on a PC whose graphics card has none.</summary>
+        /// <summary>Whether the platform's software encoder may be used on a machine whose hardware has none.</summary>
         public bool AllowSoftwareEncoder;
+
+        /// <summary>Whether this platform records video at all: off only where a studio turned Android video off.</summary>
+        public bool RecordVideo = true;
+
+        /// <summary>Whether these are an Android player's settings, read from the Android section.</summary>
+        public bool ForAndroid;
 
         /// <summary>The game's graphics card maker, whose encoder is tried first; 0 when unknown.</summary>
         public int GraphicsCardVendorId;
@@ -29,17 +38,38 @@ namespace Protokite.Playtest
         /// <summary>How long each captured frame is shown, in milliseconds.</summary>
         public long FrameDurationMs => Math.Max(1L, (long)Math.Round(1000.0 / FramesPerSecond));
 
-        /// <summary>The settings asset's values, in range. The asset's inspector keeps them there, but a file edited by hand can hold anything.</summary>
+        /// <summary>The settings asset's values for the platform this runs on, in range: an Android player reads the Android section, everything else (an editor included, whatever it builds for) the other.</summary>
         public static ProtokitePlaytestVideoSettings From(ProtokitePlaytestSettings settings)
+            => From(settings, ProtokitePlaytestVideoEncoders.OnAndroid);
+
+        /// <summary>The settings asset's values in range, read as an Android player's or not. The asset's inspector keeps them in range, but a file edited by hand can hold anything.</summary>
+        internal static ProtokitePlaytestVideoSettings From(ProtokitePlaytestSettings settings, bool forAndroid)
         {
-            ProtokitePlaytestVideoSettings video = new ProtokitePlaytestVideoSettings();
+            ProtokitePlaytestVideoSettings video = new ProtokitePlaytestVideoSettings { ForAndroid = forAndroid };
+            if (forAndroid)
+            {
+                // The longer side is the limit whichever way the phone is held, so the video fits a square of that side.
+                int longSide = settings == null ? DefaultAndroidLongSide : Clamp(settings.AndroidVideoLongSide, 320, 1920);
+                video.MaxVideoWidth = longSide;
+                video.MaxVideoHeight = longSide;
+            }
             if (settings == null)
                 return video;
-            video.MaxVideoWidth = Clamp(settings.VideoWidth, SideMultiple, 3840);
-            video.MaxVideoHeight = Clamp(settings.VideoHeight, SideMultiple, 2160);
-            video.FramesPerSecond = Clamp(settings.VideoFramesPerSecond, 1, 60);
-            video.BitrateKbps = Clamp(settings.VideoBitrateKbps, 100, 50000);
-            video.AllowSoftwareEncoder = settings.AllowSoftwareEncoder;
+            if (forAndroid)
+            {
+                video.FramesPerSecond = Clamp(settings.AndroidVideoFramesPerSecond, 1, 30);
+                video.BitrateKbps = Clamp(settings.AndroidVideoBitrateKbps, 100, 20000);
+                video.AllowSoftwareEncoder = settings.AndroidAllowSoftwareEncoder;
+                video.RecordVideo = settings.RecordVideoOnAndroid;
+            }
+            else
+            {
+                video.MaxVideoWidth = Clamp(settings.VideoWidth, SideMultiple, 3840);
+                video.MaxVideoHeight = Clamp(settings.VideoHeight, SideMultiple, 2160);
+                video.FramesPerSecond = Clamp(settings.VideoFramesPerSecond, 1, 60);
+                video.BitrateKbps = Clamp(settings.VideoBitrateKbps, 100, 50000);
+                video.AllowSoftwareEncoder = settings.AllowSoftwareEncoder;
+            }
             float minutes = settings.MaxRecordingMinutes;
             video.MaxSeconds = float.IsNaN(minutes) || minutes < 0.1f ? 6.0 : Math.Min(minutes, 1e6) * 60.0;
             video.MaxBytes = Math.Max(1L, settings.MaxRecordingSizeMb) * 1024 * 1024;

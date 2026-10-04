@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.64.0]
+
+Released together with the Protokite Playtest's video recording on Android (see its changelog).
+
+### Fixed
+- **Signing in on Android no longer logs Unity's "using Byte parameters is obsolete" warnings.** The Android token store passed
+  byte arrays to Java and read them back, which Unity 2022 and later warn about on every call: about 12 warnings, with their
+  stack traces, at each sign-in (measured on a Galaxy S23 Ultra). Bytes now cross to Java as Java's own signed type, bit for bit,
+  so tokens saved by an earlier version still read back: measured by installing this version over a build with the earlier store
+  that had signed in, and the same player was restored. The store also lets go of the Java class handles it used to leave to the garbage
+  collector.
+
 ## [1.63.0]
 
 Released together with the Protokite Playtest's move to Windows' own video encoder, which ships no native file (see its
