@@ -355,8 +355,10 @@ script.
   its own, decoded frame for frame by Windows' own reader, the keyframe interval, the software encoder only when allowed;
   every "no video" reason through a stand-in for what Windows offers; scans for Media Foundation and for any native file; a
   fake encoder held to the same contract), **ProtokitePlaytestMp4FileTests** (written files read back by a reader of their
-  own, cut off every way and finished, a real recording decoded by Windows; a fake recording file held to the same
-  contract), **ProtokitePlaytestAndroidVideoEncoderTests** (the Android encoder through the stand-in codec) and
+  own that finds each frame from its fragment's own fields, as a player does, and names a fragment that points elsewhere;
+  cut off every way and finished; a recording shaped like a phone's, with frames of thousands of bytes at uneven times and a
+  later keyframe, cut through every part of every fragment; a real recording decoded by Windows; a fake recording file held
+  to the same contract), **ProtokitePlaytestAndroidVideoEncoderTests** (the Android encoder through the stand-in codec) and
   **ProtokitePlaytestPhoneEncoderTests** (the phone encoder's choice, its reasons, the size and rate step-down),
   **ProtokitePlaytestH264Tests**, **ProtokitePlaytestWebmFinisherTests** (earlier versions' WebM, cut off and
   finished), **ProtokitePlaytestFrameScheduleTests**, **ProtokitePlaytestVideoRecordingTests** (fake frames and a fake encoder
