@@ -42,5 +42,7 @@ in review. House rules that trip people up most often:
 
 ## Releases
 
-Maintainers cut releases by tagging `v<version>` (matching `package.json`); CI
-attaches a UPM tarball to the [GitHub release](https://github.com/QwackStack/FlockUnitySdk/releases).
+Maintainers cut releases by tagging `v<version>` (matching `package.json`, and exactly that shape: the
+Playtesting tab downloads from it). CI builds the UPM tarballs and both `.unitypackage` files, reads the
+packages back, and publishes the [GitHub release](https://github.com/QwackStack/FlockUnitySdk/releases)
+with all four only once every step has passed.

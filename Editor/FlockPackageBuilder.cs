@@ -312,11 +312,6 @@ namespace Flock.Editor
                 return;
             }
 
-            if (!Directory.Exists(_outputPath))
-            {
-                Directory.CreateDirectory(_outputPath);
-            }
-
             string sourceRoot = LocateSourceRoot();
             if (string.IsNullOrEmpty(sourceRoot))
             {
@@ -326,16 +321,108 @@ namespace Flock.Editor
                 return;
             }
 
+            SaveVersionToPackageJson(sourceRoot.Replace('\\', '/').TrimEnd('/'));
+
+            string built = Build(new PackageContents(_version, _outputPath, _includeEditor, _includeSamples, _includeDocs, _providerSelection),
+                out string problem);
+            if (built == null)
+            {
+                ShowStatus(problem, MessageType.Error);
+                return;
+            }
+            ShowStatus($"Package built: {Path.GetFileName(built)}", MessageType.Info);
+            EditorUtility.RevealInFinder(built);
+        }
+
+        /// <summary>What one build puts in the package: its version and folder, the optional parts, and which providers ship.</summary>
+        internal sealed class PackageContents
+        {
+            public string Version { get; }
+            public string OutputFolder { get; }
+            public bool IncludeEditor { get; }
+            public bool IncludeSamples { get; }
+            public bool IncludeDocs { get; }
+            public IReadOnlyDictionary<string, bool> SelectedProviders { get; }
+
+            public PackageContents(string version, string outputFolder, bool includeEditor, bool includeSamples, bool includeDocs,
+                IDictionary<string, bool> selectedProviders)
+            {
+                Version = version;
+                OutputFolder = outputFolder;
+                IncludeEditor = includeEditor;
+                IncludeSamples = includeSamples;
+                IncludeDocs = includeDocs;
+                SelectedProviders = new Dictionary<string, bool>(selectedProviders);
+            }
+        }
+
+        /// <summary>What a release carries: every provider, the editor, the samples and the docs, at this version.</summary>
+        internal static PackageContents ReleaseContents(string version, string outputFolder)
+            => new PackageContents(version, outputFolder, true, true, true,
+                FlockProviderManifest.Providers.ToDictionary(entry => entry.Id, entry => true));
+
+        /// <summary>For batch mode: -executeMethod Flock.Editor.FlockPackageBuilder.BuildReleaseFromCommandLine -releaseOut &lt;folder&gt;; exits 0 only when both release packages were built.</summary>
+        internal static void BuildReleaseFromCommandLine()
+        {
+            string folder = ReleaseFolderFromArguments(Environment.GetCommandLineArgs());
+            if (folder == null)
+            {
+                Debug.LogError("No release folder: pass -releaseOut <folder> after -executeMethod Flock.Editor.FlockPackageBuilder.BuildReleaseFromCommandLine.");
+                EditorApplication.Exit(1);
+                return;
+            }
+            EditorApplication.Exit(BuildRelease(folder) ? 0 : 1);
+        }
+
+        /// <summary>The folder after -releaseOut, or null when there is none (nothing after it, a blank, or another flag).</summary>
+        internal static string ReleaseFolderFromArguments(string[] arguments)
+        {
+            int index = Array.IndexOf(arguments, "-releaseOut");
+            if (index < 0 || index + 1 >= arguments.Length)
+                return null;
+            string folder = arguments[index + 1];
+            return string.IsNullOrWhiteSpace(folder) || folder.StartsWith("-", StringComparison.Ordinal) ? null : folder;
+        }
+
+        /// <summary>Builds FlockSDK-&lt;version&gt;.unitypackage and the Protokite Playtest's into this folder, at package.json's version; true when both were built.</summary>
+        internal static bool BuildRelease(string outputFolder)
+        {
+            string version = VersionInPackageJson();
+            if (string.IsNullOrEmpty(version))
+            {
+                Debug.LogError($"The Flock SDK package was not built: its package.json version could not be read. Expected the '{PackageName}' package in this project.");
+                return false;
+            }
+            string core = Build(ReleaseContents(version, outputFolder), out string problem);
+            if (core == null)
+            {
+                Debug.LogError("The Flock SDK package was not built: " + problem);
+                return false;
+            }
+            // The playtest builder logs its own reason when it builds nothing.
+            return FlockPlaytestPackageBuilder.Build(outputFolder) != null;
+        }
+
+        // Stages the SDK under Assets/FlockSDK/, exports it and cleans up; returns the file written, or null with the reason.
+        private static string Build(PackageContents contents, out string problem)
+        {
+            problem = null;
+            string sourceRoot = LocateSourceRoot();
+            if (string.IsNullOrEmpty(sourceRoot))
+            {
+                problem = $"Could not find SDK source. Expected the '{PackageName}' UPM package or '{StagingRoot}'.";
+                return null;
+            }
+            Directory.CreateDirectory(contents.OutputFolder);
+
             string normalizedSource = sourceRoot.Replace('\\', '/').TrimEnd('/');
             string normalizedStaging = StagingRoot.TrimEnd('/');
             bool sourceIsStaging = string.Equals(normalizedSource, normalizedStaging, StringComparison.OrdinalIgnoreCase);
 
-            SaveVersionToPackageJson(normalizedSource);
-
             HashSet<string> excludedRelpaths = new HashSet<string>();
             HashSet<string> excludedFolders = new HashSet<string>();
             List<string> defines = new List<string>();
-            CollectProviderExclusions(excludedRelpaths, excludedFolders, defines);
+            CollectProviderExclusions(contents.SelectedProviders, excludedRelpaths, excludedFolders, defines);
 
             if (sourceIsStaging)
             {
@@ -345,11 +432,10 @@ namespace Flock.Editor
                 // defines as runtime.
                 WriteOrDeleteRsp(StagingRuntimeRsp, defines);
                 WriteOrDeleteRsp(StagingEditorRsp, defines);
-                if (_includeSamples)
+                if (contents.IncludeSamples)
                     WriteOrDeleteRsp(StagingSamplesRsp, defines);
                 AssetDatabase.Refresh();
-                ExportFromStaging(excludedRelpaths, excludedFolders);
-                return;
+                return ExportFromStaging(contents, excludedRelpaths, excludedFolders, out problem);
             }
 
             // UPM mode: stage source under Assets/FlockSDK/, export, then clean up.
@@ -361,17 +447,17 @@ namespace Flock.Editor
             try
             {
                 CleanStagingArea();
-                StageFiles(normalizedSource, excludedRelpaths, excludedFolders);
+                StageFiles(normalizedSource, contents, excludedRelpaths, excludedFolders);
                 // Without the Editor folder there is no build hook to keep the models, but a link.xml under Assets is read.
-                if (!_includeEditor)
+                if (!contents.IncludeEditor)
                     File.WriteAllText(StagingRoot + "Runtime/link.xml", FlockModelPreservation.BuildLinkXml(new Dictionary<string, SortedSet<string>>()));
                 WriteOrDeleteRsp(StagingRuntimeRsp, defines);
-                if (_includeEditor)
+                if (contents.IncludeEditor)
                     WriteOrDeleteRsp(StagingEditorRsp, defines);
-                if (_includeSamples)
+                if (contents.IncludeSamples)
                     WriteOrDeleteRsp(StagingSamplesRsp, defines);
                 AssetDatabase.Refresh();
-                ExportFromStaging(excludedRelpaths, excludedFolders);
+                return ExportFromStaging(contents, excludedRelpaths, excludedFolders, out problem);
             }
             finally
             {
@@ -381,8 +467,10 @@ namespace Flock.Editor
             }
         }
 
-        private void ExportFromStaging(HashSet<string> excludedRelpaths, HashSet<string> excludedFolders)
+        private static string ExportFromStaging(PackageContents contents, HashSet<string> excludedRelpaths, HashSet<string> excludedFolders,
+            out string problem)
         {
+            problem = null;
             string[] assets = AssetDatabase.GetAllAssetPaths()
                 .Where(path =>
                 {
@@ -393,10 +481,10 @@ namespace Flock.Editor
                     if (IsExcluded(relative, excludedRelpaths, excludedFolders)) return false;
 
                     if (relative.StartsWith("Runtime/")) return true;
-                    if (relative.StartsWith("Editor/") && _includeEditor) return true;
-                    if (relative.StartsWith("Samples~/") && _includeSamples) return true;
-                    if (relative.StartsWith("Samples/") && _includeSamples) return true;
-                    if (relative.StartsWith("Documentation~/") && _includeDocs) return true;
+                    if (relative.StartsWith("Editor/") && contents.IncludeEditor) return true;
+                    if (relative.StartsWith("Samples~/") && contents.IncludeSamples) return true;
+                    if (relative.StartsWith("Samples/") && contents.IncludeSamples) return true;
+                    if (relative.StartsWith("Documentation~/") && contents.IncludeDocs) return true;
                     if (relative == "package.json") return true;
                     if (relative == "package.json.meta") return true;
                     if (relative == "CHANGELOG.md") return true;
@@ -409,18 +497,14 @@ namespace Flock.Editor
 
             if (assets.Length == 0)
             {
-                ShowStatus("No assets found to export. Check the SDK source location.", MessageType.Error);
-                return;
+                problem = "No assets found to export. Check the SDK source location.";
+                return null;
             }
 
-            string filename = $"FlockSDK-{_version}.unitypackage";
-            string packagePath = Path.Combine(_outputPath, filename);
-
+            string packagePath = Path.Combine(contents.OutputFolder, $"FlockSDK-{contents.Version}.unitypackage");
             AssetDatabase.ExportPackage(assets, packagePath, ExportPackageOptions.Recurse);
-
-            ShowStatus($"Package built: {filename} ({assets.Length} assets)", MessageType.Info);
             Debug.Log($"Flock SDK package built: {packagePath} ({assets.Length} assets)");
-            EditorUtility.RevealInFinder(packagePath);
+            return packagePath;
         }
 
         // Locate the SDK source on disk. Prefer the UPM package — that lets you develop the
@@ -444,9 +528,9 @@ namespace Flock.Editor
         // deterministic GUID so it doesn't collide with the live package's GUID in the
         // AssetDatabase. The asmdefs in this SDK reference each other by name (not GUID), so
         // the GUID remap doesn't break any inter-asset references.
-        private void StageFiles(string sourceRoot, HashSet<string> excludedRelpaths, HashSet<string> excludedFolders)
+        private static void StageFiles(string sourceRoot, PackageContents contents, HashSet<string> excludedRelpaths, HashSet<string> excludedFolders)
         {
-            foreach (string rel in EnumerateSourceFilesRelative(sourceRoot, excludedRelpaths, excludedFolders))
+            foreach (string rel in EnumerateSourceFilesRelative(sourceRoot, contents, excludedRelpaths, excludedFolders))
             {
                 string src = Path.Combine(sourceRoot, rel);
                 string dst = StagingRoot + rel.Replace('\\', '/');
@@ -466,7 +550,8 @@ namespace Flock.Editor
             }
         }
 
-        private IEnumerable<string> EnumerateSourceFilesRelative(string sourceRoot, HashSet<string> excludedRelpaths, HashSet<string> excludedFolders)
+        private static IEnumerable<string> EnumerateSourceFilesRelative(string sourceRoot, PackageContents contents, HashSet<string> excludedRelpaths,
+            HashSet<string> excludedFolders)
         {
             // Whitelisted top-level files (and their .meta companions).
             string[] rootFiles = { "package.json", "CHANGELOG.md", "LICENSE.md", "README.md" };
@@ -482,7 +567,7 @@ namespace Flock.Editor
             if (File.Exists(Path.Combine(sourceRoot, "Runtime.meta"))) yield return "Runtime.meta";
 
             // Optional: Editor tree.
-            if (_includeEditor)
+            if (contents.IncludeEditor)
             {
                 foreach (string p in WalkTree(sourceRoot, "Editor", excludedRelpaths, excludedFolders)) yield return p;
                 if (File.Exists(Path.Combine(sourceRoot, "Editor.meta"))) yield return "Editor.meta";
@@ -490,7 +575,7 @@ namespace Flock.Editor
 
             // Optional: Samples tree. A normal (non-tilde) folder so it ships in the
             // .unitypackage and lands in the consumer's Assets/.
-            if (_includeSamples)
+            if (contents.IncludeSamples)
             {
                 foreach (string p in WalkTree(sourceRoot, "Samples", excludedRelpaths, excludedFolders)) yield return p;
                 if (File.Exists(Path.Combine(sourceRoot, "Samples.meta"))) yield return "Samples.meta";
@@ -561,7 +646,8 @@ namespace Flock.Editor
             }
         }
 
-        private void CollectProviderExclusions(HashSet<string> excludedRelpaths, HashSet<string> excludedFolders, List<string> defines)
+        private static void CollectProviderExclusions(IReadOnlyDictionary<string, bool> selectedProviders, HashSet<string> excludedRelpaths,
+            HashSet<string> excludedFolders, List<string> defines)
         {
             foreach (string f in BuilderInternalFiles)
             {
@@ -571,7 +657,7 @@ namespace Flock.Editor
 
             foreach (FlockProviderManifest.Entry entry in FlockProviderManifest.Providers)
             {
-                bool selected = _providerSelection.TryGetValue(entry.Id, out bool v) && v;
+                bool selected = selectedProviders.TryGetValue(entry.Id, out bool v) && v;
                 if (selected) continue;
 
                 defines.Add("FLOCK_NO_" + entry.Id);
@@ -624,25 +710,28 @@ namespace Flock.Editor
 
         private void LoadVersionFromPackageJson()
         {
+            string version = VersionInPackageJson();
+            if (!string.IsNullOrEmpty(version))
+                _version = version;
+        }
+
+        // The SDK's own package.json version, or null when it cannot be read.
+        private static string VersionInPackageJson()
+        {
             string sourceRoot = LocateSourceRoot();
-            if (string.IsNullOrEmpty(sourceRoot)) return;
+            if (string.IsNullOrEmpty(sourceRoot)) return null;
 
             string path = Path.Combine(sourceRoot, "package.json");
-            if (!File.Exists(path)) return;
+            if (!File.Exists(path)) return null;
 
             try
             {
-                string json = File.ReadAllText(path);
-                JObject obj = JObject.Parse(json);
-                string version = obj["version"]?.ToString();
-                if (!string.IsNullOrEmpty(version))
-                {
-                    _version = version;
-                }
+                return JObject.Parse(File.ReadAllText(path))["version"]?.ToString();
             }
             catch (Exception ex)
             {
                 Debug.LogWarning($"Failed to read package.json version: {ex.Message}");
+                return null;
             }
         }
 
