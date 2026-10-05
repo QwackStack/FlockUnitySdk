@@ -75,7 +75,8 @@ graphify-out.meta
 # Maintainer-only docs (specs/plans) — kept local, not shipped.
 Documentation~/
 
-# Superpowers brainstorming/planning working docs — local scratch, not shipped
-docs/superpowers/
-docs/superpowers.meta
-docs.meta
+# Superpowers brainstorming/planning working docs — local scratch, not shipped. Anchored to the root: unanchored,
+# "docs.meta" also matched Runtime/Docs.meta, and Package Manager drops ignored files from a git install.
+/docs/superpowers/
+/docs/superpowers.meta
+/docs.meta

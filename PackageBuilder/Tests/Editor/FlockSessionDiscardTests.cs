@@ -1,3 +1,5 @@
+using System;
+using System.IO;
 using Flock.Analytics;
 using Flock.Logging;
 using NUnit.Framework;
@@ -8,6 +10,24 @@ namespace Flock.Tests.Editor
     // firing OnSessionEnded (which End()/Reset() do, spooling a final record for delivery).
     public class FlockSessionDiscardTests
     {
+        private string _folder;
+        private string _statePath;
+
+        [SetUp]
+        public void SetUp()
+        {
+            _folder = Path.Combine(Path.GetTempPath(), "flock_session_" + Guid.NewGuid().ToString("N"));
+            _statePath = Path.Combine(_folder, FlockAnalyticsLaunches.SessionStateFileName);
+        }
+
+        [TearDown]
+        public void TearDown()
+        {
+            if (Directory.Exists(_folder))
+                Directory.Delete(_folder, true);
+        }
+
+        private FlockSession NewSession(FlockAnalyticsConfig config) => new FlockSession(config, new NullFlockLogger(), _statePath);
         private static FlockAnalyticsConfig Config() => new FlockAnalyticsConfig
         {
             PersistSessionOnDisk = false,
@@ -32,38 +52,36 @@ namespace Flock.Tests.Editor
         [Test]
         public void End_SpoolFailed_KeepsMarker_SoNextLaunchRecovers()
         {
-            FlockSession session = new FlockSession(PersistingConfig(), new NullFlockLogger());
+            FlockSession session = NewSession(PersistingConfig());
             session.OnSessionEnded += _ => session.ReportEndSpoolFailed();
 
             session.Start("player-1");
             session.End(FlockSessionEndReason.Quit);
 
-            FlockSession nextLaunch = new FlockSession(PersistingConfig(), new NullFlockLogger());
-            Assert.IsNotNull(nextLaunch.RecoverOrphanedSession(),
+            Assert.IsNotNull(FlockSession.ReadOrphanedSession(_statePath, new NullFlockLogger()),
                 "The live marker must survive a failed spool so the session is recovered rather than lost.");
-
-            nextLaunch.ClearPersistedState();
         }
 
         // ---- SESS-11: the normal path still clears, so a delivered end is not recovered twice ----
         [Test]
         public void End_SpoolSucceeded_ClearsMarker()
         {
-            FlockSession session = new FlockSession(PersistingConfig(), new NullFlockLogger());
+            FlockSession session = NewSession(PersistingConfig());
             session.OnSessionEnded += _ => { };
 
             session.Start("player-1");
+            Assert.IsTrue(File.Exists(_statePath), "A running session keeps its record in the launch's folder.");
             session.End(FlockSessionEndReason.Quit);
 
-            FlockSession nextLaunch = new FlockSession(PersistingConfig(), new NullFlockLogger());
-            Assert.IsNull(nextLaunch.RecoverOrphanedSession(),
+            Assert.IsNull(FlockSession.ReadOrphanedSession(_statePath, new NullFlockLogger()),
                 "A spooled end clears the marker — otherwise the next launch re-reports a session already delivered.");
+            Assert.IsFalse(File.Exists(_statePath));
         }
 
         [Test]
         public void Discard_ActiveSession_StopsSessionWithoutFiringOnSessionEnded()
         {
-            FlockSession session = new FlockSession(Config(), new NullFlockLogger());
+            FlockSession session = NewSession(Config());
             bool onSessionEndedFired = false;
             session.OnSessionEnded += _ => onSessionEndedFired = true;
 
@@ -79,7 +97,7 @@ namespace Flock.Tests.Editor
         [Test]
         public void Discard_NoActiveSession_IsNoOp()
         {
-            FlockSession session = new FlockSession(Config(), new NullFlockLogger());
+            FlockSession session = NewSession(Config());
 
             // Must not throw when called with nothing active.
             session.Discard();

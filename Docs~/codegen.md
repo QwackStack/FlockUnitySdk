@@ -2,9 +2,9 @@
 
 [← Back to README](../README.md)
 
-Run **Sync Schemas** from the Codegen tab in **Flock > Settings** to fetch your game's player templates and game configs from the backend and generate typed C# accessors. Output goes to `Assets/Flock/Generated/` by default; change the path on the FlockConfig asset if you want it elsewhere. Treat the folder as Flock-owned — sync wipes the `Templates/`, `Commands/`, `Configs/`, and `Catalog/` subdirectories on each run, and **Delete Generated Code** clears the whole tree.
+Run **Sync Schemas** from the Codegen tab in **Flock > Settings** to fetch your game's player templates and game configs from the backend and generate typed C# accessors. Output goes to `Assets/Flock/Generated/` by default; change the path on the FlockConfig asset if you want it elsewhere. Codegen deletes only what it wrote: each sync replaces the generated `.g.cs` files in the `Player/`, `Commands/`, `Configs/`, `Shops/` and `Achievements/` subfolders, and **Delete Generated Code** removes every generated file under the output folder and the folders that leaves empty. Files of your own there are kept, but don't edit the generated ones: the next sync replaces them.
 
-**For designers:** each sync also writes `Generated/Catalog/FlockContentCatalog.asset` — a read-only ScriptableObject you can select in the Project view to browse every shop (items, prices, currency), game config (fields and current values), and player template (fields) in the Inspector, no code or dashboard login needed. It's regenerated on every sync, so it always mirrors the backend. (Editor-only; it's never referenced at runtime and is stripped from player builds. CI/headless syncs skip it.)
+**For designers:** each sync also writes `FlockContentCatalog.asset` into the output folder — a read-only ScriptableObject you can select in the Project view to browse every shop (items, prices, currency), game config (fields and current values), and player template (fields) in the Inspector, no code or dashboard login needed. It's regenerated on every sync, so it always mirrors the backend. (Editor-only; it's never referenced at runtime and is stripped from player builds. CI/headless syncs skip it.)
 
 What gets generated, given a player template named `PlayerProgress` and a game config named `Gameplay`:
 

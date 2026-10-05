@@ -22,10 +22,12 @@ namespace Flock.Analytics
         // Used for retag-after-auth flows where user ID was defaulted due to auth failure.
         void Rewrite(Func<T, bool> shouldRewrite, Action<T> setAuthID);
 
-        // Drains the cache one batch at a time via the supplied sender.
+        // Drains the cache one batch at a time via the supplied sender. With a flush already running it returns at once,
+        // or, asked to wait, waits for that flush and then sends what is left.
         Task FlushAsync(
             Func<IReadOnlyList<T>, CancellationToken, Task> sender,
-            CancellationToken cancellationToken);
+            CancellationToken cancellationToken,
+            bool waitForARunningFlush);
 
         void Clear();
     }

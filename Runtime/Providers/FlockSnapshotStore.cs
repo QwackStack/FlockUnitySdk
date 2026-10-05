@@ -88,12 +88,9 @@ namespace Flock.Providers
                 return false;
 
             string path = BuildPath(scope, key);
-            string tmpPath = path + ".tmp";
 
             try
             {
-                Directory.CreateDirectory(Path.GetDirectoryName(path));
-
                 Envelope<T> envelope = new Envelope<T>
                 {
                     Version = EnvelopeVersion,
@@ -102,20 +99,13 @@ namespace Flock.Providers
                     Data = value
                 };
 
-                File.WriteAllText(tmpPath, JsonConvert.SerializeObject(envelope));
-                // Atomic swap: File.Replace overwrites in one step so a crash can't leave the prior snapshot
-                // deleted-but-not-yet-replaced (the delete-then-move window). Move covers the first write.
-                if (File.Exists(path))
-                    File.Replace(tmpPath, path, null);
-                else
-                    File.Move(tmpPath, path);
-
+                // A temporary file of its own per write, replaced over the snapshot in one step.
+                FlockTemporaryFiles.Save(path, JsonConvert.SerializeObject(envelope));
                 return true;
             }
             catch (Exception ex)
             {
                 _logger?.LogWarning($"Snapshot write failed for {scope}/{key}: {ex.Message}");
-                TryDelete(tmpPath);
                 return false;
             }
         }
@@ -126,7 +116,7 @@ namespace Flock.Providers
             {
                 string path = Path.Combine(_root, SanitizeScope(scope));
                 if (Directory.Exists(path))
-                    Directory.Delete(path, true);
+                    FlockSavedFiles.DeleteFolder(path, true);
             }
             catch (Exception ex)
             {
@@ -233,15 +223,15 @@ namespace Flock.Providers
             int moved = 0;
             try
             {
-                Directory.CreateDirectory(to);
+                FlockSavedFiles.CreateFolder(to);
 
                 foreach (string file in Directory.EnumerateFiles(from))
                 {
                     string destination = Path.Combine(to, Path.GetFileName(file));
                     try
                     {
-                        if (File.Exists(destination)) File.Delete(file);
-                        else { File.Move(file, destination); moved++; }
+                        if (File.Exists(destination)) FlockSavedFiles.Delete(file);
+                        else { FlockSavedFiles.Move(file, destination); moved++; }
                     }
                     catch { }
                 }
@@ -251,7 +241,7 @@ namespace Flock.Providers
 
                 // Only ever removes what it has just emptied, so a file it could not move keeps its
                 // directory alive rather than being orphaned.
-                try { Directory.Delete(from); } catch { }
+                try { FlockSavedFiles.DeleteFolder(from, false); } catch { }
             }
             catch (Exception ex)
             {
@@ -259,6 +249,9 @@ namespace Flock.Providers
             }
             return moved;
         }
+
+        /// <summary>Deletes temporary files a write that never finished left over a minute ago; a fresh one may be another copy of the game writing.</summary>
+        public int DeleteLeftOverFiles() => FlockTemporaryFiles.DeleteLeftOverFiles(_root, true);
 
         public void PruneOtherVersions(string keepGameVersionId)
         {
@@ -276,7 +269,7 @@ namespace Flock.Providers
                         || string.Equals(name, StateScope, StringComparison.Ordinal))
                         continue;
 
-                    try { Directory.Delete(dir, true); }
+                    try { FlockSavedFiles.DeleteFolder(dir, true); }
                     catch { }
                 }
             }
@@ -333,7 +326,7 @@ namespace Flock.Providers
             try
             {
                 if (File.Exists(path))
-                    File.Delete(path);
+                    FlockSavedFiles.Delete(path);
             }
             catch
             {

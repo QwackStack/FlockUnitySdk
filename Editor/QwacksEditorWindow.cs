@@ -37,7 +37,7 @@ namespace Flock.Editor
         private static readonly Color DestructiveAction = new Color(0.85f, 0.40f, 0.40f);
         private static readonly Color HighlightAction = new Color(0.95f, 0.75f, 0.25f);
 
-        private enum Tab { Configuration, Advanced, CodeGen }
+        private enum Tab { Configuration, Advanced, CodeGen, Playtesting }
 
         private Tab activeTab = Tab.Configuration;
         private Vector2 scroll;
@@ -100,6 +100,7 @@ namespace Flock.Editor
             {
                 case Tab.Configuration: DrawConfigurationTab(); break;
                 case Tab.Advanced: DrawAdvancedTab(); break;
+                case Tab.Playtesting: DrawPlaytestingTab(); break;
 #if !FLOCK_NO_SCHEMA
                 case Tab.CodeGen: DrawCodegenTab(); break;
 #endif
@@ -166,6 +167,7 @@ namespace Flock.Editor
             if (activeTab == Tab.CodeGen) activeTab = Tab.Configuration;
 #endif
             DrawTabButton("Advanced Settings", Tab.Advanced);
+            DrawTabButton("Playtesting", Tab.Playtesting);
             GUILayout.FlexibleSpace();
             EditorGUILayout.EndHorizontal();
         }
@@ -192,6 +194,76 @@ namespace Flock.Editor
             DrawCredentialsCard();
             DrawAssetStatusCard();
             configSerialized.ApplyModifiedProperties();
+        }
+
+        // Playtesting tab — installs, updates and removes the Protokite Playtest package.
+        private void DrawPlaytestingTab()
+        {
+            InstalledPlaytest installed = FlockPlaytestInstaller.FindInstalled();
+            PlaytestInstallState state = FlockPlaytestInstaller.StateFor(installed, FlockPlaytestInstaller.FlockVersion);
+
+            EditorGUILayout.BeginVertical(cardStyle);
+            GUILayout.Label("Protokite Playtest", sectionHeaderStyle);
+            EditorGUILayout.LabelField(
+                "Records play sessions, gameplay video and in-game feedback for your Protokite playtests.",
+                EditorStyles.wordWrappedMiniLabel);
+            EditorGUILayout.Space(4);
+
+            // Between the import and the script reload the package is on disk but not yet compiled, so it reads as missing.
+            if (FlockPlaytestInstaller.InstalledThisSession)
+            {
+                EditorGUILayout.LabelField("Installed. Unity is compiling it; this tab updates when it finishes.", EditorStyles.wordWrappedMiniLabel);
+                EditorGUILayout.EndVertical();
+                return;
+            }
+
+            {
+                switch (state)
+                {
+                    case PlaytestInstallState.NotInstalled:
+                        EditorGUILayout.LabelField($"Not installed. Installs version {FlockPlaytestInstaller.FlockVersion}, matching your Flock SDK.", EditorStyles.wordWrappedMiniLabel);
+                        if (GUILayout.Button("Install Protokite Playtest", GUILayout.Height(28)))
+                            FlockPlaytestInstaller.Install(ShowStatus);
+                        break;
+
+                    case PlaytestInstallState.InstalledAtFlocksVersion:
+                        EditorGUILayout.LabelField($"Installed: version {installed.Version}, in {installed.RootFolder}.", EditorStyles.wordWrappedMiniLabel);
+                        if (GUILayout.Button("Open Playtest Settings", GUILayout.Height(24)))
+                            EditorApplication.ExecuteMenuItem(FlockPlaytestInstaller.SettingsMenuPath);
+                        if (GUILayout.Button("Check Playtest Setup", GUILayout.Height(24)))
+                            EditorApplication.ExecuteMenuItem(FlockPlaytestInstaller.SetupWindowMenuPath);
+                        DrawRemovePlaytestButton(installed);
+                        break;
+
+                    case PlaytestInstallState.InstalledAtAnotherVersion:
+                        EditorGUILayout.HelpBox(
+                            $"Protokite Playtest {installed.Version ?? "(unknown version)"} is installed, but your Flock SDK is {FlockPlaytestInstaller.FlockVersion}. They are released together and need the same version.",
+                            MessageType.Warning);
+                        // Updating over a Package Manager install would leave two copies, so that route is updated where it was installed.
+                        if (installed.RootFolder.StartsWith("Assets/"))
+                        {
+                            if (GUILayout.Button($"Update to {FlockPlaytestInstaller.FlockVersion}", GUILayout.Height(28)))
+                                FlockPlaytestInstaller.Install(ShowStatus, installed);
+                        }
+                        else
+                        {
+                            EditorGUILayout.LabelField($"Installed through Package Manager: change its version to {FlockPlaytestInstaller.FlockVersion} there.", EditorStyles.wordWrappedMiniLabel);
+                        }
+                        DrawRemovePlaytestButton(installed);
+                        break;
+                }
+            }
+
+            EditorGUILayout.EndVertical();
+        }
+
+        private void DrawRemovePlaytestButton(InstalledPlaytest installed)
+        {
+            if (!GUILayout.Button("Remove", GUILayout.Height(20)))
+                return;
+            if (EditorUtility.DisplayDialog("Remove Protokite Playtest",
+                    $"Remove the package from {installed.RootFolder}? Your playtest settings asset is kept.", "Remove", "Cancel"))
+                FlockPlaytestInstaller.Remove(installed);
         }
 
         // Advanced tab — extra/optional settings most projects can leave at their defaults
@@ -234,8 +306,9 @@ namespace Flock.Editor
             bool schemasGenerated = false;
 #if !FLOCK_NO_SCHEMA
             includeSchemas = true;
-            if (configExists && !string.IsNullOrEmpty(config.generatedCodePath) && Directory.Exists(config.generatedCodePath))
-                schemasGenerated = Directory.GetFiles(config.generatedCodePath, "*.cs", SearchOption.AllDirectories).Length > 0;
+            // The manifest every sync writes, not any script: the output folder may be one the game shares.
+            if (configExists && !string.IsNullOrEmpty(config.generatedCodePath))
+                schemasGenerated = ManifestEmitter.IsWrittenIn(config.generatedCodePath);
 #else
             includeSchemas = false;
 #endif
@@ -366,6 +439,10 @@ namespace Flock.Editor
                         "Baked from your Game Version at edit time. Runtime init uses this directly — no server call."),
                     config.gameVersionId);
 
+            // Only at Layout and before the button and status it changes, so the repaint draws what was laid out.
+            if (Event.current.type == EventType.Layout)
+                MaybeAutoResolveVersion();
+
             using (new EditorGUI.DisabledScope(
                 _resolvingVersion || config == null ||
                 string.IsNullOrWhiteSpace(config.apiUrl) || string.IsNullOrWhiteSpace(config.apiKey) ||
@@ -377,8 +454,6 @@ namespace Flock.Editor
 
             if (!string.IsNullOrEmpty(_versionResolveStatus))
                 EditorGUILayout.HelpBox(_versionResolveStatus, _versionResolveOk ? MessageType.Info : MessageType.Error);
-
-            MaybeAutoResolveVersion();
 
             if (!config.IsValid(out string validationError))
                 EditorGUILayout.HelpBox(validationError, MessageType.Warning);
@@ -459,6 +534,14 @@ namespace Flock.Editor
                     DrawProperty("analyticsPersistSession");
                     DrawProperty("analyticsTrackFps");
                     DrawProperty("analyticsFpsSampleInterval");
+
+                    GUILayout.Space(4);
+                    GUILayout.Label("Exceptions", EditorStyles.miniBoldLabel);
+                    DrawProperty("analyticsCaptureExceptions");
+                    using (new EditorGUI.DisabledScope(!configSerialized.FindProperty("analyticsCaptureExceptions").boolValue))
+                    {
+                        DrawProperty("analyticsExceptionRepeatWindow");
+                    }
 
                     GUILayout.Space(4);
                     GUILayout.Label("Caching", EditorStyles.miniBoldLabel);
@@ -606,7 +689,7 @@ namespace Flock.Editor
             using (new BackgroundColorScope(DestructiveAction))
             {
                 if (GUILayout.Button(
-                        new GUIContent("Delete Generated Code", "Remove the entire generated folder. Asks for confirmation."),
+                        new GUIContent("Delete Generated Code", "Remove the files codegen generated, and the folders that leaves empty; files of your own there are kept. Asks for confirmation."),
                         GUILayout.Height(36)))
                     FlockCodegenMenu.CleanGenerated();
             }

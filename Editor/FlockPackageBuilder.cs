@@ -48,11 +48,11 @@ namespace Flock.Editor
         private static readonly string[] BuilderInternalFiles =
         {
             "Editor/FlockPackageBuilder.cs",
+            "Editor/FlockPlaytestPackageBuilder.cs",
             "Editor/FlockProviderManifest.cs",
         };
 
-        // Maintainer tooling lives under Qwacks Dev; the consumer-facing SDK stays under Qwacks.
-        [MenuItem("Qwacks Dev/Package Builder")]
+        // No menu item here: a git install ships this file, so the maintainers' own project adds Qwacks Dev > Package Builder.
         public static void ShowWindow()
         {
             FlockPackageBuilder window = GetWindow<FlockPackageBuilder>("Flock Package Builder");
@@ -362,6 +362,9 @@ namespace Flock.Editor
             {
                 CleanStagingArea();
                 StageFiles(normalizedSource, excludedRelpaths, excludedFolders);
+                // Without the Editor folder there is no build hook to keep the models, but a link.xml under Assets is read.
+                if (!_includeEditor)
+                    File.WriteAllText(StagingRoot + "Runtime/link.xml", FlockModelPreservation.BuildLinkXml(new Dictionary<string, SortedSet<string>>()));
                 WriteOrDeleteRsp(StagingRuntimeRsp, defines);
                 if (_includeEditor)
                     WriteOrDeleteRsp(StagingEditorRsp, defines);

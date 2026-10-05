@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Threading;
 using Flock.Logging;
 using Newtonsoft.Json;
@@ -9,15 +10,16 @@ namespace Flock.Analytics
 {
     internal class FlockSession
     {
-        private const string PrefKeySessionData = "flock_session_active";
         private const string PrefKeySessionNumber = "flock_session_number";
-        // The name list is serialized into PlayerPrefs on every heartbeat, so it is capped;
+        // The name list is saved on every heartbeat, so it is capped;
         // ScreensViewed keeps the full count.
         private const int MaxTrackedScreenNames = 100;
 
         private readonly IFlockLogger _logger;
         private readonly FlockAnalyticsConfig _config;
         private readonly FlockBehaviour _behaviour;
+        // The live-session record, in this launch's own folder.
+        private readonly string _stateFilePath;
 
         private bool _active;
         private float _totalPauseDuration;
@@ -100,41 +102,49 @@ namespace Flock.Analytics
         // Quit-only: requests a best-effort delivery attempt before the process dies.
         internal event Action<FlockSessionSnapshot> OnQuitFlush;
 
-        internal FlockSession(FlockAnalyticsConfig config, IFlockLogger logger)
+        internal FlockSession(FlockAnalyticsConfig config, IFlockLogger logger, string stateFilePath)
         {
             _config = config;
             _logger = logger;
+            _stateFilePath = stateFilePath;
             _behaviour = FlockBehaviour.Instance;
         }
 
-        internal FlockSessionSnapshot RecoverOrphanedSession()
+        // Reads the live-session record a launch that has ended left, whatever this launch's own settings say.
+        internal static FlockSessionSnapshot ReadOrphanedSession(string stateFilePath, IFlockLogger logger)
         {
-            if (!_config.PersistSessionOnDisk)
+            string json;
+            try
+            {
+                if (!File.Exists(stateFilePath))
+                    return null;
+                json = File.ReadAllText(stateFilePath);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning($"Failed to recover orphaned session: {ex.Message}");
                 return null;
-
-            string json = PlayerPrefs.GetString(PrefKeySessionData, null);
-            if (string.IsNullOrEmpty(json))
-                return null;
+            }
 
             try
             {
                 FlockSessionSnapshot recovered = JsonConvert.DeserializeObject<FlockSessionSnapshot>(json);
                 if (recovered != null && recovered.IsActive)
                 {
-                    // Not cleared here: the caller spools the end durably, then clears.
+                    // Not deleted here: the caller spools the end durably, then deletes.
                     recovered.IsActive = false;
                     recovered.EndTimeUtc = recovered.LastHeartbeatUtc ?? recovered.StartTimeUtc;
-                    _logger.LogWarning($"Recovering orphaned session: {recovered.SessionId}");
+                    logger.LogWarning($"Recovering orphaned session: {recovered.SessionId}");
                     return recovered;
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning($"Failed to recover orphaned session: {ex.Message}");
+                logger.LogWarning($"Failed to recover orphaned session: {ex.Message}");
             }
 
-            // Corrupt or non-active payload — clear it so it can't poison future launches.
-            ClearPersistedState();
+            // Corrupt or non-active payload — delete it so it can't poison future launches.
+            DeleteRecord(stateFilePath, logger);
             return null;
         }
 
@@ -473,9 +483,7 @@ namespace Flock.Analytics
             try
             {
                 FlockSessionSnapshot snapshot = TakeSnapshot();
-                string json = JsonConvert.SerializeObject(snapshot);
-                PlayerPrefs.SetString(PrefKeySessionData, json);
-                PlayerPrefs.Save();
+                FlockTemporaryFiles.Save(_stateFilePath, JsonConvert.SerializeObject(snapshot));
             }
             catch (Exception ex)
             {
@@ -483,17 +491,19 @@ namespace Flock.Analytics
             }
         }
 
-        internal void ClearPersistedState()
+        internal void ClearPersistedState() => DeleteRecord(_stateFilePath, _logger);
+
+        internal static void DeleteRecord(string stateFilePath, IFlockLogger logger)
         {
             try
             {
-                PlayerPrefs.DeleteKey(PrefKeySessionData);
-                PlayerPrefs.Save();
+                if (File.Exists(stateFilePath))
+                    FlockSavedFiles.Delete(stateFilePath);
             }
             catch (Exception ex)
             {
-                // PlayerPrefs throws off the main thread; a surviving marker is re-delivered next launch.
-                _logger.LogWarning($"Failed to clear persisted session state: {ex.Message}");
+                // A record that survives is recovered by a later launch.
+                logger.LogWarning($"Failed to clear persisted session state: {ex.Message}");
             }
         }
     }

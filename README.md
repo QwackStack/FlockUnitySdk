@@ -15,6 +15,7 @@ The Flock Unity SDK provides access to Flock's game backend services from Unity 
   - [Code-Based Configuration](#code-based-configuration)
 - [Quick Start](#quick-start)
 - [Feature guides](#feature-guides)
+- [Playtesting with Protokite](#playtesting-with-protokite)
 - [Error handling](#error-handling)
 - [Offline caching](#offline-caching)
 - [Platform notes](#platform-notes)
@@ -35,7 +36,7 @@ The Flock Unity SDK provides access to Flock's game backend services from Unity 
 - Player ban lookup
 - Notification inbox (list, unread count, mark read), server-side scheduling of dashboard-authored templates, and push device-token registration
 - Asset listing and lookup by ID
-- Analytics (session tracking, events, transactions — no-op safe when disabled)
+- Analytics (gameplay events, session tracking, transactions, diagnostics — no-op safe when disabled)
 - Automatic retry with exponential backoff
 - Offline-safe init (no network at startup) — plus disk-cached static content that keeps serving without network after one online session
 - JWT token management
@@ -171,10 +172,22 @@ Per-feature usage and examples live in their own guides:
 | [Leaderboards](Docs~/leaderboards.md) | Standings, my-rank, around-me by board name; windows, board config, score formatting |
 | [Assets](Docs~/assets.md) | Listing/lookup, typed downloads, disk cache, preloading |
 | [Notifications](Docs~/notifications.md) | Player inbox, unread badge event, scheduling a template for later, pending-schedule tracking |
-| [Analytics](Docs~/analytics.md) | Sessions, logs/events, transactions, consent, unexpected-termination detection |
+| [Analytics](Docs~/analytics.md) | Gameplay events, sessions, transactions, diagnostics, exception capture, consent, unexpected-termination detection |
 | [SDK Events](Docs~/events.md) | The `FlockEvents` hub — lifecycle, auth, and session events |
 | [Codegen](Docs~/codegen.md) | Sync Schemas, generated templates/configs/shops/achievements, content catalog |
 | [Error handling](Docs~/errors.md) | The `FlockException` hierarchy, `.ErrorCode`, and the full coded-error list |
+| [HTTP and your own providers](Docs~/http.md) | Your game's identity for another Qwacks service, requests with or without an answer to read, retrying the way the SDK does, streamed file uploads, a provider of your own |
+
+## Playtesting with Protokite
+
+The **Protokite Playtest** package records play sessions, gameplay and in-game feedback for your Protokite playtests. It
+is a separate package, released with each Flock SDK version; the SDK itself never depends on it.
+
+To add it, open **Flock > Settings > Playtesting** and press **Install Protokite Playtest**. It downloads the version
+that matches your Flock SDK and imports it, with no Git needed. The same tab opens its settings, updates it when you
+update Flock, and removes it. The [step-by-step guide](https://docs.qwacks.com/protokite/unity-package) takes you
+from installing it to a first playtest session, with screenshots; every setting and call is in
+[its README](ProtokitePlaytest~/README.md).
 
 ## Error handling
 
@@ -216,3 +229,6 @@ Reads are snapshotted to disk and served when the server is unreachable, after a
   (`File.WriteAllBytes` will fail). Set `FlockInitConfig.EnableAssetCache = false`
   and `FlockInitConfig.EnableOfflineCache = false` on WebGL builds — everything else
   works online, just without the disk caches. See the "Offline caching" section.
+  The SDK's own saved files (queued analytics, session records) are copied to the browser's storage after each change, so
+  they survive a reload; two tabs of one game share that storage, and the last to save wins. A game that sets
+  `autoSyncPersistentDataPath` in its WebGL template keeps Unity's own copying.

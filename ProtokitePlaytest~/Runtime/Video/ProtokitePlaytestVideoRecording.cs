@@ -1,0 +1,571 @@
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Threading;
+
+namespace Protokite.Playtest
+{
+    /// <summary>Why a recording stopped.</summary>
+    internal enum ProtokitePlaytestVideoStopReason
+    {
+        StoppedByGame,
+        ReachedLengthLimit,
+        ReachedSizeLimit,
+        PlaytestStopped,
+        GameQuitting,
+        CouldNotWrite,
+        PlayerTookTheScreenBack,
+        PlayerAskedToSendIt,
+        PlaytestRecordingStarts,
+        PhoneTooHot,
+        BatteryLow
+    }
+
+    /// <summary>What became of a recording, once its file is written.</summary>
+    internal sealed class ProtokitePlaytestVideoRecordingSummary
+    {
+        /// <summary>The finished file, or null when none was kept: no whole frame was written, or the file could not even be finished.</summary>
+        public string FilePath;
+        public ProtokitePlaytestVideoStopReason StopReason;
+        public int FramesWritten;
+        public double VideoSeconds;
+        public long BytesWritten;
+        public int FramesDroppedBecauseEncodingFellBehind;
+        public int FramesDroppedBecauseWritingFellBehind;
+        public int FramesNotReadyInTime;
+        public int FramesLostOnTheGraphicsCard;
+        public int FramesDroppedForWantOfABlock;
+        public double AverageEncodeMs;
+        public double LongestEncodeMs;
+        public double LongestWriteMs;
+        /// <summary>Times the game went to the background while capturing, each time writing out everything the recording held.</summary>
+        public int TimesInTheBackground;
+        /// <summary>The longest the encoder took to hand over what it held and let go, when the game went to the background.</summary>
+        public double LongestHandOverMs;
+        /// <summary>The longest the main thread waited for the frames on their way from the graphics card, when the game went to the background.</summary>
+        public double LongestWaitForFramesOnTheirWayMs;
+        /// <summary>What encoded the video, or null when no frame was encoded.</summary>
+        public string EncodedBy;
+        /// <summary>Why the recording could not be written to the end, or null. The frames written before can still be kept in <see cref="FilePath"/>.</summary>
+        public string Error;
+
+        /// <summary>A sentence on the times the game went to the background while recording, or "" when it never did.</summary>
+        public string DescribeTimesInTheBackground()
+            => TimesInTheBackground == 0 ? ""
+                : $" The game went to the background {TimesInTheBackground} time(s); waiting for the frames on their way took at most " +
+                  $"{LongestWaitForFramesOnTheirWayMs:0.0} ms on the main thread, and the encoder's part at most {LongestHandOverMs:0.0} ms.";
+
+        /// <summary>The reason as the end of a sentence, for example "it reached its length limit".</summary>
+        public static string Describe(ProtokitePlaytestVideoStopReason reason)
+        {
+            switch (reason)
+            {
+                case ProtokitePlaytestVideoStopReason.StoppedByGame: return "the game stopped it";
+                case ProtokitePlaytestVideoStopReason.ReachedLengthLimit: return "it reached its length limit";
+                case ProtokitePlaytestVideoStopReason.ReachedSizeLimit: return "it reached its size limit";
+                case ProtokitePlaytestVideoStopReason.PlaytestStopped: return "the playtest stopped recording";
+                case ProtokitePlaytestVideoStopReason.GameQuitting: return "the game quit";
+                case ProtokitePlaytestVideoStopReason.CouldNotWrite: return "its file could not be written";
+                case ProtokitePlaytestVideoStopReason.PlayerTookTheScreenBack: return "the player asked for the screen not to be recorded";
+                case ProtokitePlaytestVideoStopReason.PlayerAskedToSendIt: return "the player asked for it to be sent";
+                case ProtokitePlaytestVideoStopReason.PlaytestRecordingStarts: return "the playtest's own recording was starting";
+                case ProtokitePlaytestVideoStopReason.PhoneTooHot: return "the phone was too hot";
+                case ProtokitePlaytestVideoStopReason.BatteryLow: return "the phone's battery was low";
+            }
+            return "it stopped";
+        }
+    }
+
+    /// <summary>
+    /// One video recording: frames from a source, captured on the schedule, encoded and written to a file as they come.
+    /// The file is written as its path plus ".part" and renamed once finished, so a file under its final name is whole; one
+    /// holding no frame is deleted. The main thread only captures and hands frames over. A thread of the recording's own encodes
+    /// them in order, and another writes them, so a disk that holds a write for seconds never stops the encoding. At most
+    /// <see cref="MostFramesWaitingToEncode"/> frames wait to be encoded and <see cref="MostFramesWaitingToWrite"/> to be written;
+    /// past either, frames are dropped before they are encoded, and counted, so memory stays bounded and what is written still
+    /// decodes. The file never passes the size limit: a frame counts toward it when it is handed to be written.
+    /// </summary>
+    internal sealed class ProtokitePlaytestVideoRecording
+    {
+        internal const int MostFramesWaitingToEncode = 8;
+
+        /// <summary>Encoded frames are small, so many may wait for a disk that has stopped for a moment.</summary>
+        internal const int MostFramesWaitingToWrite = 300;
+
+        /// <summary>What a video's file name ends with until it is finished.</summary>
+        internal const string PartSuffix = ".part";
+
+        // Queued behind the frames before it when the game goes to the background: the encoding thread then writes out what the encoder holds.
+        private static readonly ProtokitePlaytestCapturedFrame EverythingHeldGoesOut = new ProtokitePlaytestCapturedFrame(null, -1);
+
+        private readonly IProtokitePlaytestFrameSource _source;
+        private readonly IProtokitePlaytestVideoEncoder _encoder;
+        private readonly IProtokitePlaytestRecordingFile _file;
+        private readonly ProtokitePlaytestVideoSettings _settings;
+        private readonly ProtokitePlaytestFrameSchedule _schedule;
+        private readonly string _finishedPath;
+        private readonly string _partPath;
+        private readonly Action _beforeEachEncodeForTesting;
+        private readonly Func<bool> _beforeEachWriteForTesting;
+        private readonly BlockingCollection<ProtokitePlaytestCapturedFrame> _toEncode = new BlockingCollection<ProtokitePlaytestCapturedFrame>();
+        private readonly BlockingCollection<ProtokitePlaytestEncodedFrame> _toWrite = new BlockingCollection<ProtokitePlaytestEncodedFrame>();
+        private readonly List<ProtokitePlaytestCapturedFrame> _arrived = new List<ProtokitePlaytestCapturedFrame>();
+        private readonly Thread _encodingThread;
+        private readonly Thread _writingThread;
+
+        // Read and written by several threads.
+        private int _framesWaitingToEncode;
+        private int _framesWaitingToWrite;
+        private volatile bool _sizeLimitReached;
+        private volatile bool _couldNotWrite;
+        private volatile bool _written;
+        private volatile bool _encoderStarted;
+
+        // The main thread's.
+        private bool _capturing = true;
+        private int _framesAskedFor;
+        private ProtokitePlaytestVideoStopReason _stopReason;
+        private int _framesDroppedBecauseEncodingFellBehind;
+        private int _framesNotReadyInTime;
+        private int _timesInTheBackground;
+        private double _longestWaitForFramesOnTheirWayMs;
+
+        // The encoding thread's.
+        private long _bytesHandedToFile;
+        private int _framesEncoded;
+        private int _framesDroppedBecauseWritingFellBehind;
+        private double _encodeMsTotal;
+        private double _longestEncodeMs;
+        private double _longestHandOverMs;
+        private string _encodeError;
+        private string _keptPath;
+        private int _framesInKeptFile;
+        private long _bytesInKeptFile;
+
+        // The writing thread's.
+        private double _longestWriteMs;
+        private string _writeError;
+
+        /// <summary>
+        /// Configures the encoder, opens the file and starts the two threads. Null, with why, when either cannot be set up; the
+        /// caller still owns the source and the encoder then. A test can hand hooks that hold the encoding or writing thread
+        /// before each frame; the write hook answering false makes that frame's write fail, the way a full disk does.
+        /// </summary>
+        public static ProtokitePlaytestVideoRecording Start(IProtokitePlaytestFrameSource source, IProtokitePlaytestVideoEncoder encoder,
+            IProtokitePlaytestRecordingFile file, ProtokitePlaytestVideoSettings settings, string finishedPath, out string error,
+            Action beforeEachEncodeForTesting = null, Func<bool> beforeEachWriteForTesting = null)
+        {
+            if (!encoder.Configure(settings.EncoderSettings(source.Width, source.Height), out error))
+                return null;
+            string partPath = finishedPath + PartSuffix;
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(finishedPath)));
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is ArgumentException || ex is NotSupportedException)
+            {
+                error = $"the folder for {finishedPath} could not be made: {ex.Message}";
+                return null;
+            }
+            if (!file.Open(partPath, source.Width, source.Height, settings.FrameDurationMs, out error))
+                return null;
+            return new ProtokitePlaytestVideoRecording(source, encoder, file, settings, finishedPath, partPath, beforeEachEncodeForTesting, beforeEachWriteForTesting);
+        }
+
+        private ProtokitePlaytestVideoRecording(IProtokitePlaytestFrameSource source, IProtokitePlaytestVideoEncoder encoder, IProtokitePlaytestRecordingFile file,
+            ProtokitePlaytestVideoSettings settings, string finishedPath, string partPath, Action beforeEachEncodeForTesting, Func<bool> beforeEachWriteForTesting)
+        {
+            _source = source;
+            _encoder = encoder;
+            _file = file;
+            _settings = settings;
+            _schedule = new ProtokitePlaytestFrameSchedule(settings.FramesPerSecond, settings.MaxSeconds);
+            _finishedPath = finishedPath;
+            _partPath = partPath;
+            _beforeEachEncodeForTesting = beforeEachEncodeForTesting;
+            _beforeEachWriteForTesting = beforeEachWriteForTesting;
+            _bytesHandedToFile = file.BytesWritten;
+            _writingThread = new Thread(WriteLoop) { IsBackground = true, Name = "Protokite Playtest video writer" };
+            // Below the game's priority, so a busy processor runs the game first; the encoder itself works on the graphics card.
+            _encodingThread = new Thread(EncodeLoop) { IsBackground = true, Name = "Protokite Playtest video encoder", Priority = ThreadPriority.BelowNormal };
+            _writingThread.Start();
+            _encodingThread.Start();
+        }
+
+        public bool IsCapturing => _capturing;
+
+        /// <summary>True once the file is finished, after <see cref="StopCapturing"/>.</summary>
+        public bool HasFinishedWriting => _written;
+
+        /// <summary>Whether the encoder has started, so frames are captured; until then nothing is captured and no time counts.</summary>
+        internal bool EncoderHasStarted => _encoderStarted;
+
+        /// <summary>Frames asked of the source so far, so a caller can tell a recording that holds something from one that cannot yet. Main thread.</summary>
+        internal int FramesAskedFor => _framesAskedFor;
+
+        /// <summary>Waits up to the timeout for the encoder to start, as a test that counts frames must; true once it has.</summary>
+        internal bool WaitUntilTheEncoderHasStartedForTesting(TimeSpan timeout) => SpinWait.SpinUntil(() => _encoderStarted || _couldNotWrite, timeout) && _encoderStarted;
+
+        /// <summary>The file the recording is written to while it runs.</summary>
+        public string PartPath => _partPath;
+
+        /// <summary>The size the file stops before passing.</summary>
+        public long MaxBytes => _settings.MaxBytes;
+
+        public int Width => _source.Width;
+        public int Height => _source.Height;
+
+        /// <summary>The frames a second it records at when not slowed down for heat.</summary>
+        public int FramesPerSecond => _settings.FramesPerSecond;
+
+        /// <summary>Whether it records an Android player's screen, so the phone's heat and battery limits apply.</summary>
+        public bool RecordsAPhone => _settings.ForAndroid;
+
+        /// <summary>Whether it takes half its frame rate while the phone is warm and stops when it is too hot.</summary>
+        public bool SlowsDownWhenHot => _settings.SlowDownWhenHot;
+
+        /// <summary>The battery percentage below which it stops while the phone is not charging; 0 never.</summary>
+        public int StopsBelowBatteryPercent => _settings.StopBelowBatteryPercent;
+
+        /// <summary>Whether it records half its frames, for a phone that is warming up. Main thread.</summary>
+        public bool RecordsAtHalfTheFrameRate
+        {
+            get => _schedule.HalfTheFrameRate;
+            set => _schedule.HalfTheFrameRate = value;
+        }
+
+        /// <summary>
+        /// One frame's time, on the main thread at the end of the frame. Hands over the frames that arrived and asks for this one
+        /// when the schedule captures it. Answers why the recording has to stop, when it has to; nothing once capturing has stopped.
+        /// </summary>
+        public ProtokitePlaytestVideoStopReason? AddFrame(double frameSeconds)
+        {
+            if (!_capturing)
+                return null;
+
+            _source.TakeCapturedFrames(_arrived);
+            SendToEncoder(_arrived);
+
+            if (_couldNotWrite)
+                return ProtokitePlaytestVideoStopReason.CouldNotWrite;
+            if (_sizeLimitReached)
+                return ProtokitePlaytestVideoStopReason.ReachedSizeLimit;
+            // A graphics card's encoder takes 0.1 to 2.2 s to start (measured): the video begins once it has, rather than drop its first frames.
+            if (!_encoderStarted)
+                return null;
+
+            switch (_schedule.AddFrame(frameSeconds, out long timestampMs))
+            {
+                case ProtokitePlaytestFrameDecision.ReachedLengthLimit:
+                    return ProtokitePlaytestVideoStopReason.ReachedLengthLimit;
+                case ProtokitePlaytestFrameDecision.Capture:
+                    if (_source.IsReadyForAnotherFrame)
+                    {
+                        _source.CaptureFrame(timestampMs);
+                        _framesAskedFor++;
+                    }
+                    else
+                        _framesNotReadyInTime++;
+                    break;
+            }
+            return null;
+        }
+
+        /// <summary>The next frame's time is not recorded: the frame that carries time spent away from the game.</summary>
+        public void LeaveOutNextFrame() => _schedule.LeaveOutNextFrame();
+
+        /// <summary>The game went to the background: everything the recording holds is written out, so a game ended while away keeps it. Main thread.</summary>
+        public void WriteOutEverythingHeld()
+        {
+            if (!_capturing)
+                return;
+            Stopwatch clock = Stopwatch.StartNew();
+            _source.TakeFramesOnTheirWay(_arrived);
+            _longestWaitForFramesOnTheirWayMs = Math.Max(_longestWaitForFramesOnTheirWayMs, clock.Elapsed.TotalMilliseconds);
+            SendToEncoder(_arrived);
+            _timesInTheBackground++;
+            _toEncode.Add(EverythingHeldGoesOut);
+        }
+
+        /// <summary>Stops capturing for good and has the file finished on the recording's threads. Only the first call counts. Main thread.</summary>
+        public void StopCapturing(ProtokitePlaytestVideoStopReason reason)
+        {
+            if (!_capturing)
+                return;
+            _capturing = false;
+            _stopReason = reason;
+            _source.Stop(_arrived);
+            SendToEncoder(_arrived);
+            _source.Dispose();
+            _toEncode.CompleteAdding();
+        }
+
+        /// <summary>Waits up to <paramref name="timeout"/> for the file to be finished; true when it is.</summary>
+        public bool WaitUntilWritten(TimeSpan timeout) => _encodingThread.Join(timeout) && _written;
+
+        /// <summary>What became of the recording. Meaningful once <see cref="HasFinishedWriting"/> is true.</summary>
+        public ProtokitePlaytestVideoRecordingSummary Summary()
+        {
+            ProtokitePlaytestVideoRecordingSummary summary = new ProtokitePlaytestVideoRecordingSummary
+            {
+                StopReason = _stopReason,
+                FramesDroppedBecauseEncodingFellBehind = _framesDroppedBecauseEncodingFellBehind,
+                FramesNotReadyInTime = _framesNotReadyInTime,
+                FramesLostOnTheGraphicsCard = _source.FramesLostOnTheGraphicsCard,
+                FramesDroppedForWantOfABlock = _source.FramesDroppedForWantOfABlock,
+                TimesInTheBackground = _timesInTheBackground,
+                LongestWaitForFramesOnTheirWayMs = _longestWaitForFramesOnTheirWayMs
+            };
+            if (!_written)
+                return summary;
+            summary.FilePath = _keptPath;
+            summary.Error = _encodeError == null ? _writeError : _writeError == null ? _encodeError : _encodeError + "; " + _writeError;
+            summary.FramesWritten = _keptPath == null ? _file.FramesWritten : _framesInKeptFile;
+            summary.BytesWritten = _keptPath == null ? _file.BytesWritten : _bytesInKeptFile;
+            summary.FramesDroppedBecauseWritingFellBehind = _framesDroppedBecauseWritingFellBehind;
+            if (summary.FramesWritten > 0)
+                summary.VideoSeconds = (_file.LastTimestampMs + _settings.FrameDurationMs) / 1000.0;
+            if (_framesEncoded > 0)
+                summary.AverageEncodeMs = _encodeMsTotal / _framesEncoded;
+            summary.LongestEncodeMs = _longestEncodeMs;
+            summary.LongestWriteMs = _longestWriteMs;
+            summary.LongestHandOverMs = _longestHandOverMs;
+            summary.EncodedBy = _encoder.Description;
+            return summary;
+        }
+
+        private void SendToEncoder(List<ProtokitePlaytestCapturedFrame> frames)
+        {
+            foreach (ProtokitePlaytestCapturedFrame frame in frames)
+            {
+                if (Volatile.Read(ref _framesWaitingToEncode) >= MostFramesWaitingToEncode)
+                {
+                    _framesDroppedBecauseEncodingFellBehind++;
+                    _source.ReturnBlock(frame.Pixels);
+                    continue;
+                }
+                Interlocked.Increment(ref _framesWaitingToEncode);
+                _toEncode.Add(frame);
+            }
+            frames.Clear();
+        }
+
+        private void EncodeLoop()
+        {
+            try
+            {
+                if (_encoder.Start(out string startError))
+                    _encoderStarted = true;
+                else
+                    CouldNotEncode(startError);
+                List<ProtokitePlaytestEncodedFrame> encoded = new List<ProtokitePlaytestEncodedFrame>();
+                foreach (ProtokitePlaytestCapturedFrame frame in _toEncode.GetConsumingEnumerable())
+                {
+                    if (ReferenceEquals(frame, EverythingHeldGoesOut))
+                    {
+                        HandOverEverythingHeld(encoded);
+                        continue;
+                    }
+                    try
+                    {
+                        EncodeFrame(frame, encoded);
+                    }
+                    finally
+                    {
+                        _source.ReturnBlock(frame.Pixels);
+                        Interlocked.Decrement(ref _framesWaitingToEncode);
+                    }
+                }
+                if (!_couldNotWrite)
+                {
+                    encoded.Clear();
+                    if (_encoder.Finish(encoded, out string error))
+                        HandToFile(encoded);
+                    else
+                        CouldNotEncode(error);
+                }
+            }
+            catch (Exception ex)
+            {
+                CouldNotEncode(ex.Message);
+            }
+            FinishFile();
+        }
+
+        private void EncodeFrame(ProtokitePlaytestCapturedFrame frame, List<ProtokitePlaytestEncodedFrame> encoded)
+        {
+            if (_couldNotWrite)
+                return;
+            _beforeEachEncodeForTesting?.Invoke();
+            // A disk that has stopped for a while leaves frames waiting; past the limit they are dropped before encoding, never
+            // after, so everything written still decodes.
+            if (Volatile.Read(ref _framesWaitingToWrite) >= MostFramesWaitingToWrite)
+            {
+                _framesDroppedBecauseWritingFellBehind++;
+                return;
+            }
+            Stopwatch clock = Stopwatch.StartNew();
+            encoded.Clear();
+            if (!_encoder.Encode(frame.Pixels, frame.TimestampMs, _settings.FrameDurationMs, encoded, out string error))
+            {
+                CouldNotEncode(error);
+                return;
+            }
+            double ms = clock.Elapsed.TotalMilliseconds;
+            _encodeMsTotal += ms;
+            _longestEncodeMs = Math.Max(_longestEncodeMs, ms);
+            _framesEncoded++;
+            HandToFile(encoded);
+        }
+
+        // On the encoding thread, after every frame captured before the game left.
+        private void HandOverEverythingHeld(List<ProtokitePlaytestEncodedFrame> encoded)
+        {
+            if (_couldNotWrite)
+                return;
+            Stopwatch clock = Stopwatch.StartNew();
+            encoded.Clear();
+            if (!_encoder.HandOverEverythingAndLetGo(encoded, out string error))
+            {
+                CouldNotEncode(error);
+                return;
+            }
+            _longestHandOverMs = Math.Max(_longestHandOverMs, clock.Elapsed.TotalMilliseconds);
+            HandToFile(encoded);
+        }
+
+        // The one check of the size limit. Once a frame is refused no later one is written, so the video ends there.
+        private void HandToFile(List<ProtokitePlaytestEncodedFrame> encoded)
+        {
+            foreach (ProtokitePlaytestEncodedFrame frame in encoded)
+            {
+                long bytes = _file.BytesFor(frame);
+                if (_sizeLimitReached || _bytesHandedToFile + bytes > _settings.MaxBytes)
+                {
+                    _sizeLimitReached = true;
+                    return;
+                }
+                _bytesHandedToFile += bytes;
+                Interlocked.Increment(ref _framesWaitingToWrite);
+                _toWrite.Add(frame);
+            }
+        }
+
+        private void CouldNotEncode(string error)
+        {
+            _encodeError = "the video could not be encoded: " + error;
+            _couldNotWrite = true;
+        }
+
+        private void WriteLoop()
+        {
+            // Only a failed write stops the writing: frames encoded before an encoding failure are whole, and are kept.
+            bool writeFailed = false;
+            foreach (ProtokitePlaytestEncodedFrame frame in _toWrite.GetConsumingEnumerable())
+            {
+                if (!writeFailed)
+                {
+                    // A test's hook stands in for a disk that holds or refuses the write, so it is timed as part of the write.
+                    Stopwatch clock = Stopwatch.StartNew();
+                    string error = null;
+                    bool written;
+                    try
+                    {
+                        written = (_beforeEachWriteForTesting == null || _beforeEachWriteForTesting()) && _file.WriteFrame(frame, out error);
+                    }
+                    catch (Exception ex)
+                    {
+                        written = false;
+                        error = ex.Message;
+                    }
+                    _longestWriteMs = Math.Max(_longestWriteMs, clock.Elapsed.TotalMilliseconds);
+                    if (!written)
+                    {
+                        _writeError = $"a write to {_partPath} failed (is the disk full?)" + (string.IsNullOrEmpty(error) ? "" : ": " + error);
+                        writeFailed = true;
+                        _couldNotWrite = true;
+                    }
+                }
+                Interlocked.Decrement(ref _framesWaitingToWrite);
+            }
+        }
+
+        // On the encoding thread, as its last work. Whatever happens in it, the recording is then finished, so nothing waits on it for ever.
+        private void FinishFile()
+        {
+            try
+            {
+                FinishFileNow();
+            }
+            catch (Exception ex)
+            {
+                _writeError = (_writeError == null ? "" : _writeError + "; ") + $"{_partPath} could not be finished: {ex.Message}";
+            }
+            finally
+            {
+                _written = true;
+            }
+        }
+
+        private void FinishFileNow()
+        {
+            _toWrite.CompleteAdding();
+            _writingThread.Join();
+            try
+            {
+                _encoder.Dispose();
+            }
+            catch (Exception ex)
+            {
+                _encodeError = _encodeError ?? "the encoder could not be closed: " + ex.Message;
+            }
+
+            if (!_file.Close(out string closeError) && !_couldNotWrite)
+            {
+                _writeError = $"{_partPath} could not be saved: {closeError}";
+                _couldNotWrite = true;
+            }
+            try
+            {
+                if (!_couldNotWrite)
+                {
+                    if (_file.FramesWritten == 0)
+                    {
+                        File.Delete(_partPath);
+                    }
+                    else
+                    {
+                        File.Move(_partPath, _finishedPath);
+                        _keptPath = _finishedPath;
+                        _framesInKeptFile = _file.FramesWritten;
+                        _bytesInKeptFile = _file.BytesWritten;
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+            {
+                _writeError = $"{_partPath} could not be renamed to {_finishedPath}: {ex.Message}";
+                _couldNotWrite = true;
+            }
+
+            if (_couldNotWrite)
+            {
+                // What was recorded before the failure is kept: the file is finished with every whole frame it holds. One that
+                // cannot even be finished now stays as it is.
+                switch (_file.FinishInterruptedRecording(_partPath, _finishedPath, out int framesKept, out string finishError))
+                {
+                    case ProtokitePlaytestInterruptedRecordingResult.Finished:
+                        _keptPath = _finishedPath;
+                        _framesInKeptFile = framesKept;
+                        _bytesInKeptFile = new FileInfo(_finishedPath).Length;
+                        break;
+                    case ProtokitePlaytestInterruptedRecordingResult.CouldNotFinish:
+                        _writeError = _writeError == null ? finishError : _writeError + "; " + finishError;
+                        break;
+                }
+            }
+        }
+    }
+}

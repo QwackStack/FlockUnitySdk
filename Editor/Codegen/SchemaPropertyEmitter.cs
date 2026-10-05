@@ -116,7 +116,8 @@ namespace Flock.Editor.Codegen
             string contextLogName,
             FieldTypeOverride typeOverride)
         {
-            string typeLower = (field.Type ?? "").Trim().ToLowerInvariant();
+            // A nullable composite ("list?") is still a composite; only a primitive keeps its marker, in TypeMap.
+            string typeLower = TypedSchema.BaseTypeOf(field.Type);
 
             if (typeLower == "object")
             {
@@ -159,7 +160,7 @@ namespace Flock.Editor.Codegen
                 return $"Dictionary<string, {valueType}>";
             }
 
-            string mapped = TypeMap.MapPrimitiveTypeString(typeLower);
+            string mapped = TypeMap.MapPrimitiveTypeString(field.Type);
             if (mapped == null)
             {
                 Debug.LogWarning($"[Flock Codegen] {contextLogName}: unknown type '{field.Type}' for field '{field.FieldName}'.");

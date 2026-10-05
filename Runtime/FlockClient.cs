@@ -55,6 +55,8 @@ namespace Flock
         // Bumped on every successful refresh so queued waiters can detect "someone already refreshed" without
         // relying on the refresh token rotating (the backend may return the same one).
         private int _refreshGeneration;
+        // Moves on every sign-in and sign-out, never on a refresh, so a reply sent for one sign-in can tell that it ended.
+        private int _signInNumber;
         private string _accessToken;
         private string _refreshToken;
         private JwtTokenClaims _tokenClaims;
@@ -64,6 +66,12 @@ namespace Flock
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
         private static void ResetStaticState()
         {
+#if !FLOCK_NO_ANALYTICS
+            // Unity's log events are static, so the previous play session's capture would go on hearing this one's exceptions.
+            (_instance?._analytics as FlockAnalyticsProvider)?.StopListeningForExceptions();
+#endif
+            // The previous play session's launch lets go of its folder, so this one can take it over.
+            _instance?._analyticsLaunches?.Dispose();
             _instance = null;
             IsRestoringSession = false;
             InitializationError = null;
@@ -98,6 +106,7 @@ namespace Flock
         private FlockNotificationProvider _notification;
 #endif
         private FlockSession _session;
+        private FlockAnalyticsLaunches _analyticsLaunches;
 #if !FLOCK_NO_ANALYTICS
         private IAnalyticProvider _analytics;
 #endif
@@ -139,8 +148,12 @@ namespace Flock
                 // pruning it. A queue left where older builds put it would already be deleted by the time its
                 // provider went looking, which is how a game-version change used to lose a player's unsent
                 // offline writes.
+#if !FLOCK_NO_COMMANDS
+                // Only the commands queue was ever kept there; a build without commands has nothing to rescue.
                 client._snapshotStore?.MigrateLegacyState(FlockCommandProvider.SnapshotCategory);
+#endif
                 client._snapshotStore?.PruneOtherVersions(client._initConfig.GameVersionId);
+                client._snapshotStore?.DeleteLeftOverFiles();
                 client.InitializeServices();
                 _instance = client;
                 InitializationError = null;
@@ -166,12 +179,14 @@ namespace Flock
             InitializationError = null;
             if (_instance == null) return;
 #if !FLOCK_NO_ANALYTICS
-            (_instance._analytics as FlockAnalyticsProvider)?.UninstallGlobalExceptionHook();
+            (_instance._analytics as FlockAnalyticsProvider)?.StopForShutdown();
 #endif
 #if !FLOCK_NO_COMMANDS
             _instance._commands?.UnsubscribeFlushTriggers();
 #endif
             _instance.ClearTokens();
+            // After the session end is spooled: a later Create takes this launch's folder over.
+            _instance._analyticsLaunches?.Dispose();
             _instance = null;
             FlockEvents.InvokeShutdown();
             FlockEvents.ClearAll();
@@ -210,7 +225,15 @@ namespace Flock
 #if !FLOCK_NO_ANALYTICS
             if (_initConfig.AnalyticsConfig.Enabled)
             {
-                _session = new FlockSession(_initConfig.AnalyticsConfig, _logger);
+                // Each launch keeps its crash marker, live-session record and queues in a folder of its own, locked while it
+                // runs, and takes over the files of launches that have ended.
+                string testingFolder = FlockAnalyticsLaunches.FolderForTesting;
+                _analyticsLaunches = FlockAnalyticsLaunches.Start(
+                    testingFolder ?? FlockAnalyticsLaunches.DefaultFolder(),
+                    testingFolder == null ? FlockEarlierBuildFiles.OnThisMachine() : null);
+                if (!_analyticsLaunches.IsHoldingItsFolder)
+                    _logger.LogWarning("Could not lock a folder for this launch's analytics files, so launches that ended before this one are not reported this time.");
+                _session = new FlockSession(_initConfig.AnalyticsConfig, _logger, _analyticsLaunches.SessionStatePath);
                 _analytics = new FlockAnalyticsProvider(this);
             }
             else
@@ -261,17 +284,32 @@ namespace Flock
         public IAnalyticProvider Analytics => _analytics;
 #endif
         internal FlockSession Session => _session;
+        internal FlockAnalyticsLaunches AnalyticsLaunches => _analyticsLaunches;
         public bool HasActiveSession => _session?.IsActive ?? false;
         public string CurrentSessionId => _session?.ServerSessionId ?? _session?.SessionId;
 
+        /// <summary>The id the server gave the current analytics session; null until that session has reached the server.</summary>
+        public string ServerSessionId => _session != null && _session.IsActive ? _session.ServerSessionId : null;
+
         public string CurrentPlayerId => _tokenClaims?.PlayerId;
+
+        /// <summary>Which sign-in the tokens belong to: moves on every sign-in and sign-out, never on a refresh.</summary>
+        internal int SignInNumber => _signInNumber;
         public string GameId => _initConfig.GameId;
+        /// <summary>The Game Version name this client was initialized with; <see cref="GameVersionId"/> is the ID it resolved to.</summary>
+        public string GameVersion => _initConfig.GameVersion;
         public string GameVersionId => _initConfig.GameVersionId;
         public bool IsAuthenticated => !string.IsNullOrEmpty(_accessToken);
         public bool IsTokenExpired =>
             _tokenClaims?.ExpirationTime.HasValue == true &&
             _tokenClaims.ExpirationTime.Value <= DateTime.UtcNow;
         public JwtTokenClaims TokenClaims => _tokenClaims;
+
+        /// <summary>A new copy of the headers that identify this game to a Qwacks service: X-Flock-API-Key and X-Game-Version-ID. Never carries the player's sign-in.</summary>
+        public Dictionary<string, string> GetGameHeaders() => new Dictionary<string, string>(_initConfig.GetBaseHeaders());
+
+        /// <summary>A copy of the retry settings this client was initialized with, for a service that should retry the same way.</summary>
+        public RetryPolicy RetryPolicy => (_initConfig.RetryPolicy ?? new RetryPolicy()).Copy();
 
         internal Dictionary<string, string> GetBaseHeaders()
         {
@@ -297,7 +335,11 @@ namespace Flock
             return success;
         }
 
-        internal async Task<bool> TryRefreshTokenAsync(CancellationToken cancellationToken)
+        internal Task<bool> TryRefreshTokenAsync(CancellationToken cancellationToken)
+            => TryRefreshTokenAsync(_signInNumber, cancellationToken);
+
+        /// <summary>Refreshes the tokens of sign-in <paramref name="signInNumber"/>; false, changing nothing, once that sign-in has ended.</summary>
+        internal async Task<bool> TryRefreshTokenAsync(int signInNumber, CancellationToken cancellationToken)
         {
             if (string.IsNullOrEmpty(_refreshToken))
                 return false;
@@ -309,7 +351,8 @@ namespace Flock
             await _refreshSemaphore.WaitAsync(cancellationToken);
             try
             {
-                if (string.IsNullOrEmpty(_refreshToken))
+                // The sign-in ended before this got its turn: the tokens now held are another sign-in's, not this one's to refresh.
+                if (string.IsNullOrEmpty(_refreshToken) || signInNumber != _signInNumber)
                     return false;
 
                 // Someone refreshed while we waited — piggyback on their result instead of POSTing again.
@@ -326,6 +369,10 @@ namespace Flock
                     refreshRequest,
                     _initConfig.GetBaseHeaders(), cancellationToken);
 
+                // Applying a reply for an ended sign-in would sign that player back in, or sign the next one out.
+                if (IsSignInOver(signInNumber))
+                    return false;
+
                 if (response == null || string.IsNullOrEmpty(response.AccessToken))
                 {
                     ClearTokens();
@@ -334,7 +381,7 @@ namespace Flock
                     return false;
                 }
 
-                SetTokens(response.AccessToken, response.RefreshToken);
+                StoreTokens(response.AccessToken, response.RefreshToken);
                 _refreshGeneration++;
                 _logger.LogInfo("Token refresh successful");
                 FlockEvents.InvokeTokenRefreshed();
@@ -342,6 +389,8 @@ namespace Flock
             }
             catch (FlockAuthException e)
             {
+                if (IsSignInOver(signInNumber))
+                    return false;
                 _logger.LogWarning("Token refresh failed: session expired");
                 _logger.LogException(e);
                 ClearTokens();
@@ -360,6 +409,15 @@ namespace Flock
             }
         }
 
+        // True, and logged, when the sign-in a refresh was sent for has ended.
+        private bool IsSignInOver(int signInNumber)
+        {
+            if (signInNumber == _signInNumber)
+                return false;
+            _logger.LogDebug("Token refresh reply ignored: the player signed out or changed while it was on its way");
+            return true;
+        }
+
         internal void ClearTokens()
         {
             _logger.LogInfo("Clearing authentication tokens");
@@ -376,6 +434,7 @@ namespace Flock
             _accessToken = null;
             _refreshToken = null;
             _tokenClaims = null;
+            _signInNumber++;
 
             ClearPersistedTokens();
         }
@@ -396,13 +455,20 @@ namespace Flock
         }
 
         /// <summary>
-        /// Sets in-memory auth state from the given tokens and persists them via
+        /// Starts a new sign-in with the given tokens (a login or a restore, never a refresh) and persists them via
         /// <see cref="FlockInitConfig.TokenStore"/>.
         /// Throws <see cref="FlockAuthException"/> if the access token cannot be parsed
         /// as a JWT — the SDK can't operate without claims, and silent fallback would
         /// leave <see cref="CurrentPlayerId"/> null with no obvious cause.
         /// </summary>
         internal void SetTokens(string accessToken, string refreshToken)
+        {
+            StoreTokens(accessToken, refreshToken);
+            _signInNumber++;
+        }
+
+        // Keeps the tokens of the current sign-in; a refresh stores through here so its sign-in number stays.
+        private void StoreTokens(string accessToken, string refreshToken)
         {
             JwtTokenClaims claims = null;
             if (!string.IsNullOrEmpty(accessToken))

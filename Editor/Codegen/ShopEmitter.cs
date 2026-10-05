@@ -25,9 +25,7 @@ namespace Flock.Editor.Codegen
 
         public static int Emit(IList<Shop> shops, IList<PlayerTemplateSchema> playerTemplates, string outputDir)
         {
-            if (Directory.Exists(outputDir))
-                Directory.Delete(outputDir, recursive: true);
-            Directory.CreateDirectory(outputDir);
+            GeneratedFiles.ClearFolder(outputDir);
 
             List<Shop> ordered = (shops ?? new List<Shop>())
                 .Where(s => s != null && !string.IsNullOrEmpty(s.Id) && !string.IsNullOrEmpty(s.Name))

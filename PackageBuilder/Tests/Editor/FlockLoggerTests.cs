@@ -21,6 +21,22 @@ namespace Flock.Tests.Editor
                 FlockClient.Shutdown();
         }
 
+        // An exception whose Message getter throws, so its ToString throws too.
+        private sealed class MessageThrowsException : System.Exception
+        {
+            public override string Message => throw new System.FormatException("the Message getter threw");
+        }
+
+        [Test]
+        public void AnErrorLineNamesAnExceptionWhoseMessageThrowsInsteadOfThrowing()
+        {
+            LogAssert.Expect(LogType.Error, new System.Text.RegularExpressions.Regex(
+                @"Download failed\nException: MessageThrowsException: \(its message could not be read: FormatException\)"));
+
+            // Called from a catch that wraps the failure; a throw here would replace that wrap with the getter's exception.
+            Assert.DoesNotThrow(() => new UnityFlockLogger().LogError("Download failed", new MessageThrowsException()));
+        }
+
         // Records what actually reached Unity, so "was suppressed" is asserted rather than assumed.
         private static List<string> CaptureLogTypes(System.Action action)
         {

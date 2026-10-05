@@ -4,3 +4,5 @@ using System.Runtime.CompilerServices;
 [assembly: InternalsVisibleTo("Flock.Tests.Editor")]
 [assembly: InternalsVisibleTo("Flock.Tests.Support")]
 [assembly: InternalsVisibleTo("Flock.Tests.PlayMode")]
+// The settings window installs the playtest released with this exact version.
+[assembly: InternalsVisibleTo("Flock.Editor")]

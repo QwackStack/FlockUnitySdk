@@ -1,5 +1,4 @@
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
@@ -9,7 +8,6 @@ using Flock.Models;
 using Flock.Tests.Support;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
-using UnityEngine.TestTools;
 
 namespace Flock.Tests.Editor
 {
@@ -566,47 +564,35 @@ namespace Flock.Tests.Editor
             }
         }
 
-        // ---- CMD-16 (Known-bug, decisions.md §13): a player switch mid-flush must not replay A's writes under B.
-        // Real reproduction via the gated transport, as a non-blocking [UnityTest] (yields so the gated flush
-        // continuation pumps instead of dead-locking the main thread). Asserts the intended-correct behaviour
-        // (A's token), which currently fails -> stays [Ignore] until the bug is fixed.
-        [UnityTest]
-        [Ignore("exposes CMD-16: mid-flush player switch replays under the wrong player's auth (decisions.md §13)")]
-        public IEnumerator Flush_PlayerSwitchMidFlight_DoesNotReplayUnderWrongPlayer()
+        // ---- CMD-16: an online write never overtakes an older write still queued for the same player ----
+        // The reconnect flush fails once and halts; a save made online now would reach the server first, and the
+        // older write's replay would then put the old value back.
+        [Test]
+        public void AnOnlineWriteWaitsBehindOlderQueuedWritesInsteadOfOvertakingThem()
         {
             FlockFakeTransport transport = new FlockFakeTransport();
-            transport.On(FlockEndpoints.CommandUpdatePlayerData, FlockFakeTransport.Ok("{\"id\":\"pd-x\"}"));
-            transport.GateNext(FlockEndpoints.CommandUpdatePlayerData); // hold the first replay POST open
-            FlockTestClient h = FlockTestClient.Create(transport);
-            try
+            using (FlockTestClient h = FlockTestClient.Create(transport))
             {
                 h.LoginAs("player-a");
-                string bearerA = h.Client.GetBaseHeaders()["Authorization"];
-                EnqueueTwoOfflineUpdates(h); // player-a queues pd-1, pd-2 (leaves reachable=false)
+                PrimeCachedRow(h, "player-a", "tpl-1", "pd-1", new List<DataField> { Field("level", "4") });
+                h.SetReachable(false);
+                h.Run(() => h.Client.Commands.UpdatePlayerDataAsync("pd-1", new List<DataField> { Field("level", "5") }));
+
+                transport.OnSequence(FlockEndpoints.CommandUpdatePlayerData,
+                    FlockFakeTransport.Status(500, "{}"),
+                    FlockFakeTransport.Ok(RowJson("player-a", "tpl-1", "pd-1", new List<DataField> { Field("level", "5") })),
+                    FlockFakeTransport.Ok(RowJson("player-a", "tpl-1", "pd-1", new List<DataField> { Field("level", "6") })));
                 h.SetReachable(true);
+                h.Run(() => h.Client.Commands.FlushPendingWritesAsync());
+                Assert.AreEqual(1, transport.CountTo(FlockEndpoints.CommandUpdatePlayerData), "Precondition: the flush halted with level 5 queued");
 
-                Task flush = h.Client.Commands.FlushPendingWritesAsync();
-                int guard = 0;
-                while (transport.CountTo(FlockEndpoints.CommandUpdatePlayerData) < 1 && guard++ < 1000)
-                    yield return null;
+                PlayerData returned = h.Run(() => h.Client.Commands.UpdatePlayerDataAsync("pd-1", new List<DataField> { Field("level", "6") }));
 
-                // Switch player while the first write is in flight, then let the flush resume.
-                h.Client.Authentication.Logout();
-                h.LoginAs("player-b");
-                transport.ReleaseGate();
-
-                guard = 0;
-                while (!flush.IsCompleted && guard++ < 2000)
-                    yield return null;
-
-                Assert.IsTrue(flush.IsCompleted, "Flush completed.");
                 List<FlockHttpRequest> posts = transport.AllTo(FlockEndpoints.CommandUpdatePlayerData);
-                Assert.AreEqual(2, posts.Count, "Both queued writes were sent.");
-                Assert.AreEqual(bearerA, posts[1].Headers["Authorization"], "Player A's queued write must not replay under player B's auth.");
-            }
-            finally
-            {
-                h.Dispose();
+                Assert.AreEqual(3, posts.Count, "The older write and then the newer one, sent at once rather than at the next trigger");
+                Assert.AreEqual("5", (string)JObject.Parse(posts[1].JsonBody)["data"]["level"]);
+                Assert.AreEqual("6", (string)JObject.Parse(posts[2].JsonBody)["data"]["level"]);
+                Assert.AreEqual("6", returned.Data.Find(f => f.FieldName == "level").Value, "The cached row with this change applied");
             }
         }
 

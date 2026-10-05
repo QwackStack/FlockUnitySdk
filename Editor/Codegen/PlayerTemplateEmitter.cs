@@ -12,7 +12,7 @@ namespace Flock.Editor.Codegen
     {
         public static EmitResult Emit(IList<PlayerTemplateSchema> templates, string outputDir)
         {
-            ResetDirectory(outputDir);
+            GeneratedFiles.ClearFolder(outputDir);
 
             HashSet<string> used = new HashSet<string>();
             Dictionary<string, string> classNamesById = new Dictionary<string, string>();
@@ -137,13 +137,6 @@ namespace Flock.Editor.Codegen
 
             sb.Append(" }");
             return sb.ToString();
-        }
-
-        private static void ResetDirectory(string dir)
-        {
-            if (Directory.Exists(dir))
-                Directory.Delete(dir, recursive: true);
-            Directory.CreateDirectory(dir);
         }
     }
 }

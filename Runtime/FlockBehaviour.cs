@@ -64,7 +64,9 @@ namespace Flock
 
         internal event Action<bool> OnFocus;
         internal event Action OnQuit;
-        internal event Action<string, string> OnException;
+
+        /// <summary>Fires from Unity's <c>OnDisable</c>; at quit that comes after every script's <c>OnApplicationQuit</c>.</summary>
+        internal event Action OnDisabled;
 
         private void Awake()
         {
@@ -84,29 +86,6 @@ namespace Flock
             OnTick?.Invoke();
         }
 
-        private void OnEnable()
-        {
-            Application.logMessageReceived += HandleLog;
-        }
-
-        private void OnDisable()
-        {
-            Application.logMessageReceived -= HandleLog;
-        }
-
-        private void HandleLog(string logMessage, string stackTrace, LogType type)
-        {
-            if (type == LogType.Exception)
-            {
-                if (string.IsNullOrEmpty(stackTrace))
-                {
-                    stackTrace = StackTraceUtility.ExtractStackTrace();
-                }
-
-                OnException?.Invoke(logMessage, stackTrace);
-            }
-        }
-
         private void OnApplicationPause(bool paused)
         {
             OnAppBackgrounded?.Invoke(paused);
@@ -123,6 +102,11 @@ namespace Flock
             OnQuit?.Invoke();
         }
 
+        private void OnDisable()
+        {
+            OnDisabled?.Invoke();
+        }
+
         private void OnDestroy()
         {
             if (_instance == this)
@@ -131,7 +115,7 @@ namespace Flock
                 OnAppBackgrounded = null;
                 OnFocus = null;
                 OnQuit = null;
-                OnException = null;
+                OnDisabled = null;
                 _instance = null;
             }
         }

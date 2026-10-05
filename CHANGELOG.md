@@ -6,6 +6,329 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.68.0]
+
+Released together with the Protokite Playtest's Playtest ID setting (see its changelog). With a Playtest ID set, the Flock SDK
+keeps its own Game Version and every request it makes.
+
+### Added
+- `FlockClient.GameVersion`: the Game Version name the client was initialized with, beside `GameVersionId`.
+
+## [1.67.0]
+
+Released together with the Protokite Playtest's fix for the shader warnings an Android build logged (see its changelog).
+Nothing in the Flock SDK itself changed.
+
+## [1.66.0]
+
+Released together with the Protokite Playtest's question about which networks a phone's recordings upload on (see its
+changelog). Nothing in the Flock SDK itself changed.
+
+## [1.65.0]
+
+Released together with the Protokite Playtest's handling of a phone's background, heat, battery and free space (see its
+changelog). Nothing in the Flock SDK itself changed.
+
+## [1.64.0]
+
+Released together with the Protokite Playtest's video recording on Android (see its changelog).
+
+### Fixed
+- **Signing in on Android no longer logs Unity's "using Byte parameters is obsolete" warnings.** The Android token store passed
+  byte arrays to Java and read them back, which Unity 2022 and later warn about on every call: about 12 warnings, with their
+  stack traces, at each sign-in (measured on a Galaxy S23 Ultra). Bytes now cross to Java as Java's own signed type, bit for bit,
+  so tokens saved by an earlier version still read back: measured by installing this version over a build with the earlier store
+  that had signed in, and the same player was restored. The store also lets go of the Java class handles it used to leave to the garbage
+  collector.
+
+## [1.63.0]
+
+Released together with the Protokite Playtest's move to Windows' own video encoder, which ships no native file (see its
+changelog: a breaking change to the playtest's video settings only).
+
+### Fixed
+- **A Mono player stripped at High could not start the SDK.** The first request failed with "The type initializer for
+  'System.Net.HttpWebRequest' threw an exception": the linker removed .NET's configuration host and its `system.net` section types,
+  which .NET builds by reflection the first time a web request is used, so the SDK could make no request at all. Every player build
+  now keeps `System.Configuration.ExeConfigurationHost` and the `System.Net.Configuration` namespace. Measured in Mono players on
+  Unity 2021.3 and 6000.3, which now sign in and send their events at High; IL2CPP players at High were not affected.
+- The SDK's own tests compile on Unity 2021.3 again: two used `PlayerSettings.insecureHttpOption` (2022.1 and later) and NUnit's
+  `Assert.DoesNotThrowAsync`, which 2021.3's test framework does not have.
+
+## [1.62.0]
+
+No changes to the Flock SDK's code. The README's playtesting section links the Protokite Playtest's new step-by-step guide,
+released together with this version.
+
+## [1.61.0]
+
+No changes to the Flock SDK: this version is released together with the Protokite Playtest's live self-test.
+
+## [1.60.0]
+
+### Changed
+- **The SDK adds no Qwacks Dev menu to your project.** The Package Builder and the Protokite Playtest release builder are the
+  SDK maintainers' tools; a project installing the SDK from its git URL used to show them under **Qwacks Dev**. Nothing in a
+  studio's use of the SDK changes. Released together with the Protokite Playtest's C# surface and sample.
+
+## [1.59.0]
+
+### Added
+- **Check Playtest Setup** on the **Playtesting** tab of **Flock > Settings**, once the Protokite Playtest is installed:
+  opens its setup checks. Released together with the Protokite Playtest's setup checks and test videos.
+
+### Fixed
+- **Flock > Settings no longer logs "Invalid GUILayout state" when it opens after Game Version was changed elsewhere.** The
+  automatic Game Version resolve started while the window was laying itself out, after its status line had been laid out,
+  so the window drew a line its layout had no room for. It now starts before the status line is laid out.
+
+## [1.58.0]
+
+No changes to the Flock SDK: this version is released together with the Protokite Playtest's feedback form, and its fix that
+keeps the playtest's own files on WebGL.
+
+## [1.57.0]
+
+No changes to the Flock SDK: this version is released together with the Protokite Playtest's consent question.
+
+## [1.56.0]
+
+### Fixed
+- **An exception whose own `Message` getter throws no longer escapes exception capture.** A game's exception type can
+  throw from its getters, for example one whose `Message` reads a field that is null. With Unity's logging off, such an
+  exception left uncaught on a thread ended an IL2CPP player through the capture's hook, where without capture the player
+  kept running. From a faulted task nobody awaited, the capture threw on the finalizer thread, and that fault was lost. Such
+  an exception is now reported under its type name, with `(its message could not be read: ...)` in place of its message.
+  `LogDiagnosticException(Exception)` records it the same way instead of throwing back at the caller. A `FlockEvents`
+  subscriber that throws one is logged instead of throwing out of the SDK code that raised the event.
+
+### Changed
+- **A captured exception's message is cut to 4,096 characters and its stack to 8,192**, with the text's full length noted
+  at the cut. Up to 256 exceptions wait between frames. Before this change they were limited in number only, so a thread
+  logging exceptions with 64 KB messages while the main thread was busy held 18 MB until the next frame. Captured
+  exceptions are sent as cut; what a game reports itself through `LogDiagnosticException` is not cut.
+
+## [1.55.0]
+
+### Added
+- **The game's exceptions are captured from start-up and from every thread.** Capture used to start at sign-in and hear
+  only what Unity logged on the main thread. It now also hears exceptions logged or left uncaught on other threads and faulted
+  tasks nobody awaited; one raised before sign-in is kept and sent once a player signs in. `Debug.LogError` lines are still not reported, and neither are the SDK's own exceptions. Each entry names where
+  it came from in its extra data's `exception_source`.
+- **Repeats of an exception are counted rather than sent one by one.** The first occurrence is sent at once; its repeats
+  within 60 s are sent as one entry with `repeat_count` when the window closes. An exception thrown every frame used to
+  queue an entry per frame, 216,000 an hour at 60 frames a second, and now costs about two a minute.
+- **A launch reports at most 100 different faults.** Past that, a new fault is counted, and an
+  `exception_reports_held_back` entry says how many reports were held back, at most once a minute.
+- **Analytics Capture Exceptions** (on) and **Analytics Exception Repeat Window** (60 s) in Flock > Settings, and
+  `FlockAnalyticsConfig.CaptureExceptions` and `ExceptionRepeatWindowSeconds` in code. With capture off,
+  `LogDiagnosticException` still records.
+
+### Changed
+- **The crash marker is kept from start-up to a clean quit**, not only while a session runs, so a crash before sign-in or
+  after sign-out is reported on the next launch. Its `app_termination` entry leaves out `previous_session_id` when no
+  session was running, and `unhandled_exception_count` counts every captured exception, repeats and other threads included (none with
+  capture off).
+
+## [1.54.0]
+
+### Changed
+- The Playtesting tab will not install the Protokite Playtest into a Flock SDK exported without Analytics, and says why: the
+  playtest calls the Flock SDK's analytics and would not compile there.
+
+## [1.53.0]
+
+### Fixed
+- **WebGL: events recorded before sign-in were sent again on every later visit, credited to whoever signed in.** A WebGL
+  player keeps its files in memory and copies them to the browser's storage only when asked, and only the sign-in save
+  asked; so what the SDK sent and deleted afterwards came back on the next visit. Every change the SDK makes to its saved
+  files now asks for that copy, so queued events, session records and the rest survive a reload as they last stood.
+  A game that turns on `autoSyncPersistentDataPath` in its WebGL template keeps Unity's own copying. Two tabs of one game
+  share the browser's storage, and the last to save wins.
+- **`FlushAsync` could return without sending.** When another flush was already sending, an awaited `FlushAsync` returned
+  at once with its events still queued. It now waits for that flush and then sends what is left. Flushes the SDK starts
+  itself still leave the queue to the one already running.
+
+## [1.52.0]
+
+### Added
+- **`Analytics.TrackEvent(eventName, properties, eventCategory)`** records a gameplay event for the Game Metrics
+  dashboards. It never touches the network: the event is queued on disk and sent on the flush triggers while a player is
+  signed in, so it is safe on a hot path, offline and from any thread; one recorded while nobody is signed in is held and
+  credited to whoever signs in next. Properties keep their JSON types. It answers false, with a warning, for an empty name,
+  a name over 200 characters or a category over 100 (the server cannot store either and fails every event sent with it),
+  `session_started` (the server records it itself), properties that cannot be written as JSON, or no consent. With
+  `CacheFailedEvents` off it sends the event once, straight away, while a player is signed in.
+
+### Changed
+- **The diagnostics calls are named for the dashboard they write to**: `LogDiagnosticEvent`, `LogDiagnosticError` and
+  `LogDiagnosticException` replace `LogEvent`, `LogError` and `LogException`, which read like gameplay analytics while
+  writing under Diagnostics. The former names still work, forward to the new ones and are marked `[Obsolete]`, so the
+  compiler names the replacement. `IAnalyticProvider` gains the new members, so a class of your own implementing it needs them.
+- **The SDK records no gameplay events of its own.** The heartbeat sent an `sdk_heartbeat` event every interval, which
+  showed up on the Game Metrics dashboards among the game's own events; it no longer sends anything. The report of an
+  earlier crash, `app_termination`, is now a diagnostic (type debug, under Diagnostics → Events) with the same data.
+- **Gameplay events are sent only while a player is signed in.** `FlushAsync` called while signed out used to send events
+  still carrying the pre-sign-in placeholder, which the server refuses together with every event sent beside them.
+- The QuickStart sample's test event is a gameplay event (`TrackEvent`).
+
+### Fixed
+- **WebGL: analytics stopped after their first send, and a retry never came back.** WebGL runs everything on one thread
+  with no thread pool and no timers, and the analytics queues resumed on the thread pool after each send, so each queue
+  sent one batch per page and was then stuck; `FlushAsync` never finished; and on every visit after the first, the
+  previous visit's session end hung sign-in, so `await` on a sign-in call never returned. A request the SDK retried
+  waited on a timer that never fires. On WebGL the SDK now resumes on the main thread and waits between retries a frame
+  at a time. Other platforms are unchanged.
+
+## [1.51.0]
+
+### Fixed
+- **Nullable list, dict and object fields are generated, read and saved.** A player-template or game-config field typed
+  `list?`, `dict?` or `object?` (the dashboard's nullable marker, which the backend also writes itself when it converts an
+  older template) was skipped by codegen, so the generated class had no property for it and a typed `UpdateAsync` sent
+  `null` in its place; the update replaces the whole row, so every typed save erased that field. Such fields are now
+  generated as `List<T>`, `Dictionary<string, T>` or a nested class, like their non-nullable forms, read back as plain
+  values, and saved with what they hold. Run **Codegen > Sync** again to get the new properties.
+- **A write made online no longer overtakes an older write still queued.** After a reconnect the queued writes wait for a
+  flush; a save made online in the meantime went straight to the server, and the older write's replay then put the old
+  value back. `UpdatePlayerDataAsync`, `UpdatePlayerDataFieldAsync` and `UnlockAchievementAsync` now queue behind any write
+  of the same player still waiting, and start a flush. The call then returns the cached row with the change applied (null
+  when the row is not cached), as it does offline; with nothing waiting it goes straight to the server as before.
+- **A flush under way when the signed-in player changes no longer takes a write off the next player's queue.** It stops;
+  the write it was sending stays queued for its own player and is sent again when they next sign in (a queued write may
+  reach the server twice; money is never queued), and the next player's own queue is sent straight after.
+- **A token refresh answered after the player signed out, or after another player signed in, changes nothing.** It used to
+  sign the old player back in and save their tokens (so the next launch restored them), replace the new player's tokens,
+  or sign the new player out when it failed; and a request refused as one player could be sent again as the next. Each
+  sign-in (a login, a restored session) and each sign-out now ends the sign-in before it, and a refresh or a retry for one
+  that ended is dropped.
+- **An asset download whose link has expired fetches a fresh link and tries once more.** A download link is signed for a
+  few minutes, while an asset's record is kept for the whole session and reloaded on the next launch, so a download some
+  minutes after the list was read failed with 403 until `ClearCache()`. A 401 or 403 from storage now reads that asset's
+  record again, keeps it, and tries once more (`DownloadAsync` and `PreloadAsync`); when that read fails, the download's
+  own failure is reported.
+- **Codegen deletes only the files it wrote.** Sync deleted its `Player`, `Configs`, `Commands`, `Shops` and `Achievements`
+  folders whole, and **Delete Generated Code** the whole output folder, so an output path shared with the game (such as
+  `Assets/Scripts`) lost the game's own scripts. Both now delete only `.g.cs` files that carry codegen's header, with their
+  `.meta`, and only the folders that leaves empty. The `Catalog/` folder older versions wrote goes only when the catalog
+  was all that was in it, and the Codegen tab reads "generated" only when a sync's manifest is there.
+
+## [1.50.0]
+
+### Added
+- **`FlockHttpClient.UploadFileAsync(url, filePath, contentType)`** streams a file from disk to a URL with a PUT, the way a
+  presigned storage link wants it: the file is read as it is sent and is never whole in memory (measured: 1.5 GiB on Mono and
+  IL2CPP), the request carries the Content-Type it is given and no other header of the SDK's, and a whole upload has no time
+  limit, while one that sends nothing and gets no answer for 60 seconds is given up. It answers a `FlockFileUploadOutcome`:
+  the storage's status and body when it answered, and `IsUploaded` only for a 2xx. Cancelling throws; every other failure
+  comes back in the outcome, including a missing file and an upload Unity will not begin (an address it cannot parse, or a
+  file another program holds open to itself). Call it on the main thread. On WebGL, which cannot stream a file, it sends
+  nothing and says so, rather than reading the file into memory.
+- **`IFlockFileUploader`** is the seam behind it, kept apart from `IFlockHttpAdapter` so an adapter a studio wrote needs no
+  change; `FlockHttpClient.UseFileUploader` puts a stand-in in place for tests (null goes back to the platform's own
+  `UnityWebRequestFileUploader`).
+
+## [1.49.0]
+
+No changes to the Flock SDK: this version is released together with the Protokite Playtest package's recordings kept on disk
+across crashes, and its disk budget.
+
+## [1.48.0]
+
+### Fixed
+- **Two copies of one game on one machine no longer disturb each other's analytics.** Every copy of a game, and the Editor
+  beside a player, shares `Application.persistentDataPath` and PlayerPrefs, and the SDK kept one crash marker, one
+  live-session record and one set of event queues for all of them. A second copy read the first's live marker as a crash,
+  ended the first's session on the server, and sent the events the first had queued, a second time. Each launch now keeps
+  those files in a folder of its own under `Flock/analytics/launches/`, locked while it runs, and takes over only the
+  folders of launches that have ended, however they ended: their queued events are sent once and their crash and open
+  session are reported once. Consent and the saved sign-in stay one per install.
+- **Every file the SDK saves through a temporary file now has a temporary file of its own** (the event queues, the offline
+  snapshots, the asset cache), and only temporary files over a minute old are deleted as left over. Two copies saving the
+  same file no longer write, move or delete each other's, and a fresh temporary file (another copy still writing) survives.
+  The offline snapshots and the asset cache now delete their left-over temporary files at all.
+- **A package built without the Commands provider now compiles.** `FlockClient` named the commands queue's snapshot
+  category outside the Commands guard, so every such export failed with CS0103. Every other single provider left out, and
+  all of them at once, compiled already.
+
+### Changed
+- The crash marker and the live-session record are files in the launch's folder rather than PlayerPrefs keys. The first
+  launch of this version takes over what an earlier version left, once: its queued events, its crash marker and its open
+  session.
+- The Editor now reports a crash of a standalone player of the same game, since they share the folder. The Editor still
+  never records a crash marker of its own.
+
+## [1.47.0]
+
+No changes to the Flock SDK: this version is released together with the Protokite Playtest package's video recording.
+
+## [1.46.0]
+
+No changes to the Flock SDK: this version is released together with the Protokite Playtest package's recording files.
+
+## [1.45.0]
+
+No changes to the Flock SDK: this version is released together with the Protokite Playtest package's video encoder.
+
+## [1.44.0]
+
+### Added
+- **`FlockClient.ServerSessionId`**: the id the server gave the current analytics session, or null until that session has
+  reached the server (and once it has ended). `CurrentSessionId` still falls back to the local id; this one never does, so
+  a service that must name the server's session can tell the two apart.
+
+## [1.43.0]
+
+### Added
+- **`FlockClient.GetGameHeaders()`**: a copy of the headers that identify your game to another Qwacks service (your API
+  key and Game Version ID). It never carries the player's sign-in.
+- **`FlockClient.RetryPolicy`**: a copy of the retry settings the client was initialized with, so a service that calls its
+  own API can retry the way the SDK does. Changing the copy changes nothing in the client.
+
+## [1.42.0]
+
+### Added
+- **A Playtesting tab in Flock > Settings** that installs the Protokite Playtest package in one click: it downloads the
+  version released with your Flock SDK and imports it, with no Git needed and however you installed Flock. Once
+  installed, the tab opens its settings, warns when its version differs from Flock's (and updates it), and removes it.
+  The SDK's runtime never depends on the playtest; only the editor tab knows it exists.
+- **The Protokite Playtest package** ships in the same release, as its own `.unitypackage` and as a Package Manager
+  package (`?path=/ProtokitePlaytest~`). This first version sets it up: settings with playtesting off, and a status
+  that says what it is waiting for. See its own CHANGELOG.
+
+### Fixed
+- **Installing the SDK by git URL no longer warns that `Runtime/Docs` has no `.meta` file.** A `.gitignore` rule meant for a
+  folder at the repository root matched that file too, and Package Manager leaves out ignored files when it installs a git
+  package, so the folder's `.meta` never reached studios. The rule is anchored to the root, and CI now fails any tracked
+  file an ignore rule matches.
+
+## [1.41.0]
+
+### Fixed
+- **Games built with IL2CPP at Medium or High managed stripping can sign players in and send analytics again.**
+  At those levels the linker removed what only the JSON serializer reaches: the constructors and property getters of
+  the SDK's models. Every request reached the server without its fields (sign-in, session start and log events were
+  refused), responses could not be read, and queued log events were dropped as refused. The SDK now keeps its own
+  models in every player build, at every stripping level. Minimal and Low were never affected.
+  - **Code generated with Codegen is kept too**, with nothing to regenerate: the classes under `Flock.Generated` are
+    kept in whichever assembly they compile into, and the rest of your game is stripped as before.
+  - This happens in the build itself. A `link.xml` shipped inside a package is not read by Unity's linker, so the SDK
+    hands the linker its list on every player build instead.
+- **A success with nothing in its body is now a success.** A `204 No Content`, or a `200` with an empty body, from a
+  route that has nothing to return (analytics events, log events, transactions, ending a session) used to raise
+  `FlockSerializationException: Empty response from server`, and a batch of queued events answered that way was
+  deleted as unreadable. Reads that exist for their answer still fail on an empty body, as before.
+- **Queued events are kept when the answer is not the server's.** A `200` whose body is not JSON (a captive portal's
+  sign-in page, say) used to delete the batch it answered as unreadable, though the server never saw it. The batch now
+  stays queued and goes out on a later flush.
+
+### Added
+- **`FlockHttpClient.PostAsync`, `PutAsync`, `PatchAsync` and `DeleteAsync` without a type argument**, for a route
+  whose answer has nothing to read: a 2xx with no body or a JSON body is a success, a 204 included. A body that is
+  not JSON raises `FlockSerializationException`, and every refusal is raised exactly as the reading overloads raise it.
+- **`FlockProviderBase.ExecuteWithoutResultAsync`**, for a provider of your own: runs a call that returns nothing with
+  the same retry, token refresh and error rules as `ExecuteAsync`.
+
 ## [1.40.0]
 
 ### Fixed

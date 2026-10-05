@@ -29,6 +29,7 @@ namespace Flock.Providers
             _cache = new FlockAssetCache(
                 client.InitConfig.AssetCacheDirectory,
                 client.InitConfig.AssetCacheMaxSizeMB);
+            _cache.DeleteLeftOverFiles();
             int cap = client.InitConfig.AssetMaxConcurrentDownloads;
             _downloadSemaphore = cap > 0 ? new SemaphoreSlim(cap, cap) : null;
         }
@@ -105,18 +106,8 @@ namespace Flock.Providers
 
             try
             {
-                AssetSchema asset = await ExecuteAsync(async () =>
-                {
-                    string url = $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.AssetById(assetId)}";
-                    GenericResponse<AssetSchema> response = await FlockHttpClient.GetAsync<GenericResponse<AssetSchema>>(
-                        url, Client.GetBaseHeaders(), cancellationToken);
-                    ValidateResponse(response);
-                    return response.Result;
-                }, $"Fetch asset {assetId}", cancellationToken);
-
-                TryLoadDiskIndex();
-                IndexAsset(asset);
-                PersistIndex();
+                AssetSchema asset = await FetchRecordAsync(assetId, cancellationToken);
+                RememberRecord(asset);
                 return asset;
             }
             catch (FlockNetworkException e)
@@ -165,6 +156,21 @@ namespace Flock.Providers
         }
 
         public async Task<T> DownloadAsync<T>(AssetSchema asset, IProgress<float> progress, CancellationToken cancellationToken = default) where T : class
+        {
+            try
+            {
+                return await DownloadOnceAsync<T>(asset, progress, cancellationToken);
+            }
+            catch (FlockNetworkException refused) when (IsRefusedLink(refused))
+            {
+                AssetSchema fresh = await RefetchRecordAsync(asset, cancellationToken);
+                if (fresh == null)
+                    throw;
+                return await DownloadOnceAsync<T>(fresh, progress, cancellationToken);
+            }
+        }
+
+        private async Task<T> DownloadOnceAsync<T>(AssetSchema asset, IProgress<float> progress, CancellationToken cancellationToken) where T : class
         {
             if (asset == null)
                 throw new FlockValidationException("Asset cannot be null");
@@ -262,6 +268,51 @@ namespace Flock.Providers
             {
                 _downloadSemaphore.Release();
             }
+        }
+
+        // Storage refuses a signed link it no longer honours with 401 or 403; a link lasts minutes, a record is kept all session and between launches.
+        private static bool IsRefusedLink(FlockNetworkException ex) => ex.StatusCode == 401 || ex.StatusCode == 403;
+
+        // The record behind a refused link, fetched again for a fresh link and kept; null when that fails, so the caller reports its own refusal.
+        private async Task<AssetSchema> RefetchRecordAsync(AssetSchema stale, CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrEmpty(stale.Id))
+                return null;
+            Client.Logger.LogDebug($"Download link for asset '{stale.Name ?? stale.Id}' was refused; fetching a fresh one and trying once more");
+            try
+            {
+                AssetSchema fresh = await FetchRecordAsync(stale.Id, cancellationToken);
+                if (fresh == null || string.IsNullOrEmpty(fresh.S3DownloadUrl))
+                    return null;
+                RememberRecord(fresh);
+                return fresh;
+            }
+            catch (FlockException ex)
+            {
+                Client.Logger.LogWarning($"Download of asset '{stale.Name ?? stale.Id}' was refused, and fetching a fresh link failed: {ex.Message}");
+                return null;
+            }
+        }
+
+        // Straight to the network: this is the by-id read and the fresh-link fetch alike, and a kept record would defeat the second.
+        private Task<AssetSchema> FetchRecordAsync(string assetId, CancellationToken cancellationToken)
+        {
+            return ExecuteAsync(async () =>
+            {
+                string url = $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.AssetById(assetId)}";
+                GenericResponse<AssetSchema> response = await FlockHttpClient.GetAsync<GenericResponse<AssetSchema>>(
+                    url, Client.GetBaseHeaders(), cancellationToken);
+                ValidateResponse(response);
+                return response.Result;
+            }, $"Fetch asset {assetId}", cancellationToken);
+        }
+
+        // Keeps a record fetched on its own, merged over the saved list first so a partial run never shrinks it.
+        private void RememberRecord(AssetSchema asset)
+        {
+            TryLoadDiskIndex();
+            IndexAsset(asset);
+            PersistIndex();
         }
 
         public void ClearCache()
@@ -381,6 +432,21 @@ namespace Flock.Providers
         // Writes the asset to the disk cache without decoding bytes into a managed object.
         // Used by PreloadAsync to avoid a full byte[] allocation.
         private async Task DownloadToCacheAsync(AssetSchema asset, IProgress<float> progress, CancellationToken cancellationToken)
+        {
+            try
+            {
+                await DownloadToCacheOnceAsync(asset, progress, cancellationToken);
+            }
+            catch (FlockNetworkException refused) when (IsRefusedLink(refused))
+            {
+                AssetSchema fresh = await RefetchRecordAsync(asset, cancellationToken);
+                if (fresh == null)
+                    throw;
+                await DownloadToCacheOnceAsync(fresh, progress, cancellationToken);
+            }
+        }
+
+        private async Task DownloadToCacheOnceAsync(AssetSchema asset, IProgress<float> progress, CancellationToken cancellationToken)
         {
             if (asset == null)
                 throw new FlockValidationException("Asset cannot be null");

@@ -22,11 +22,26 @@ jobs:
             exit 1
           fi
 
-      - name: Pack UPM tarball
-        # Drop repo-only metadata from the package; the checkout is disposable.
+      - name: The playtest package is released at the same version
+        run: bash "Tooling~/check-playtest-package.sh" .
+
+      - name: Pack UPM tarballs
+        # The playtest is packed outside the checkout (packed inside, its tarball would end up in the Flock SDK's), then
+        # removed so the Flock SDK's tarball never carries it; the checkout is disposable. The listing is read whole
+        # before it is searched: a grep that stops early breaks tar's pipe, and pipefail would then read as "clean".
         run: |
-          rm -rf .github
+          set -euo pipefail
+          playtest_out=$(mktemp -d)
+          (cd "ProtokitePlaytest~" && npm pack --pack-destination "$playtest_out")
+          rm -rf .github "ProtokitePlaytest~"
           npm pack
+          core_entries=$(tar -tzf com.flock.sdk-*.tgz)
+          if grep -qi "protokite" <<< "$core_entries"; then
+            echo "::error::The Flock SDK tarball contains playtest files:" >&2
+            grep -i "protokite" <<< "$core_entries" >&2
+            exit 1
+          fi
+          mv "$playtest_out"/com.protokite.playtest-*.tgz .
 
       - name: Create GitHub release
         # A release may already exist when it was drafted in the web UI (publishing
@@ -35,9 +50,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" com.flock.sdk-*.tgz --clobber
+            gh release upload "$GITHUB_REF_NAME" com.flock.sdk-*.tgz com.protokite.playtest-*.tgz --clobber
           else
-            gh release create "$GITHUB_REF_NAME" com.flock.sdk-*.tgz \
+            gh release create "$GITHUB_REF_NAME" com.flock.sdk-*.tgz com.protokite.playtest-*.tgz \
               --title "$GITHUB_REF_NAME" \
               --generate-notes
           fi

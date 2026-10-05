@@ -11,6 +11,12 @@ using UnityEngine;
 
 namespace Flock.Analytics
 {
+    /// <summary>The file names every event queue uses, whatever it holds.</summary>
+    internal static class FlockEventCacheNames
+    {
+        internal const string Extension = ".evt";
+    }
+
     // Spool directory: one event = one JSON file. The filename starts with a
     // sortable timestamp so flushes go oldest-first, and the only commit step
     // is renaming a .tmp into place. A crash anywhere just leaves files on
@@ -26,15 +32,16 @@ namespace Flock.Analytics
             Drop, 
             Defer
         }
-        private const string Extension = ".evt";
-        private const string TmpExtension = ".evt.tmp";
+        private const string Extension = FlockEventCacheNames.Extension;
 
         private readonly string _dir;
         private readonly int _maxEvents;
         private readonly int _batchSize;
         private readonly IFlockLogger _logger;
 
-        private int _flushing;
+        // The flush now sending, or null: two flushes never send the same batch.
+        private readonly object _flushLock = new object();
+        private Task _runningFlush;
         private int _pendingCount;
         // Bumped by Clear(). A flush compares it before sending, so an erase abandons the batch in flight.
         private int _epoch;
@@ -53,7 +60,7 @@ namespace Flock.Analytics
             _batchSize = Math.Max(1, batchSize);
             _logger = logger;
 
-            Directory.CreateDirectory(_dir);
+            FlockSavedFiles.CreateFolder(_dir);
             _pendingCount = SweepStaleTempFilesAndCount();
         }
 
@@ -67,13 +74,23 @@ namespace Flock.Analytics
 
             string name = $"{DateTime.UtcNow.Ticks:D19}_{Guid.NewGuid():N}";
             string finalPath = Path.Combine(_dir, name + Extension);
-            string tmpPath = Path.Combine(_dir, name + TmpExtension);
+            string tmpPath = FlockTemporaryFiles.MakePath(finalPath);
 
             try
             {
+                string json = JsonConvert.SerializeObject(evt);
                 // Write to tmp then rename so a crash mid-write can never expose a partial event file.
-                File.WriteAllText(tmpPath, JsonConvert.SerializeObject(evt));
-                File.Move(tmpPath, finalPath);
+                try
+                {
+                    FlockSavedFiles.WriteText(tmpPath, json);
+                }
+                catch (DirectoryNotFoundException)
+                {
+                    // Made again if something deleted it while this launch runs, so the events that follow are not lost.
+                    FlockSavedFiles.CreateFolder(_dir);
+                    FlockSavedFiles.WriteText(tmpPath, json);
+                }
+                FlockSavedFiles.Move(tmpPath, finalPath);
                 Interlocked.Increment(ref _pendingCount);
                 TrimOldest();
                 return finalPath;
@@ -118,11 +135,8 @@ namespace Flock.Analytics
 
                         setAuthID(evt);
 
-                        // Atomic swap: write tmp, replace original. File.Replace is atomic on the local FS
-                        // and avoids the empty-file window that File.WriteAllText would leave behind.
-                        string tmpPath = path + TmpExtension;
-                        File.WriteAllText(tmpPath, JsonConvert.SerializeObject(evt));
-                        File.Replace(tmpPath, path, null);
+                        // Replaced only while it is still there, so a rewrite never brings back an entry erased meanwhile.
+                        FlockTemporaryFiles.Replace(path, JsonConvert.SerializeObject(evt));
                         rewritten++;
                     }
                     catch (Exception ex)
@@ -138,15 +152,67 @@ namespace Flock.Analytics
 
         public async Task FlushAsync(
             Func<IReadOnlyList<T>, CancellationToken, Task> sender,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            bool waitForARunningFlush = false)
         {
             if (sender == null)
                 return;
 
-            //  prevents two overlapping flushes from sending the same batch twice.
-            if (Interlocked.CompareExchange(ref _flushing, 1, 0) != 0)
-                return;
+            while (true)
+            {
+                // No RunContinuationsAsynchronously: Task.WhenAny over such a source never finished in a WebGL player (measured).
+                TaskCompletionSource<bool> ours = null;
+                Task running;
+                lock (_flushLock)
+                {
+                    if (_runningFlush == null)
+                    {
+                        ours = new TaskCompletionSource<bool>();
+                        _runningFlush = ours.Task;
+                    }
+                    running = _runningFlush;
+                }
 
+                if (ours != null)
+                {
+                    try
+                    {
+                        await SendEverythingQueuedAsync(sender, cancellationToken).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
+                    }
+                    finally
+                    {
+                        lock (_flushLock)
+                            _runningFlush = null;
+                        ours.SetResult(true);
+                    }
+                    return;
+                }
+
+                // A trigger leaves the queue to the running flush; an awaited flush waits for it, then sends what is left.
+                if (!waitForARunningFlush)
+                    return;
+                await WaitForAsync(running, cancellationToken).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
+            }
+        }
+
+        // Waits for the task, or until the token is cancelled, which throws.
+        private static async Task WaitForAsync(Task task, CancellationToken cancellationToken)
+        {
+            if (cancellationToken.CanBeCanceled)
+            {
+                TaskCompletionSource<bool> cancelled = new TaskCompletionSource<bool>();
+                using (cancellationToken.Register(() => cancelled.TrySetResult(true)))
+                    await Task.WhenAny(task, cancelled.Task).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
+            }
+            else
+            {
+                await task.ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+
+        private async Task SendEverythingQueuedAsync(Func<IReadOnlyList<T>, CancellationToken, Task> sender, CancellationToken cancellationToken)
+        {
             try
             {
                 int epoch = Volatile.Read(ref _epoch);
@@ -162,7 +228,7 @@ namespace Flock.Analytics
                     if (Volatile.Read(ref _epoch) != epoch)
                         return;
 
-                    FlushOutcome outcome = await TrySendBatch(sender, batch, cancellationToken).ConfigureAwait(false);
+                    FlushOutcome outcome = await TrySendBatch(sender, batch, cancellationToken).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
                     if (outcome == FlushOutcome.Defer)
                         return;
 
@@ -173,7 +239,6 @@ namespace Flock.Analytics
             {
                 lock (_inFlightLock)
                     _inFlightPaths = null;
-                Interlocked.Exchange(ref _flushing, 0);
             }
         }
 
@@ -185,7 +250,7 @@ namespace Flock.Analytics
             try
             {
                 List<T> list = batch.Select(b => b.Event).ToList();
-                await sender(list, cancellationToken).ConfigureAwait(false);
+                await sender(list, cancellationToken).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
 
                 _logger?.LogDebug($"Sent Pending {list.Count} events batch");
                 return FlushOutcome.Success;
@@ -199,10 +264,11 @@ namespace Flock.Analytics
                 _logger?.LogWarning($"Pending events batch dropped (validation): {ex.Message}");
                 return FlushOutcome.Drop;
             }
+            // A success that cannot be read was not the server's answer (a captive portal's page), so the batch is kept.
             catch (FlockSerializationException ex)
             {
-                _logger?.LogWarning($"Pending events batch dropped (unreadable response): {ex.Message}");
-                return FlushOutcome.Drop;
+                _logger?.LogDebug($"Pending events flush deferred (unreadable response): {ex.Message}");
+                return FlushOutcome.Defer;
             }
             catch (FlockNetworkException ex) when (FlockNetworkException.IsPermanentStatus(ex.StatusCode))
             {
@@ -296,17 +362,16 @@ namespace Flock.Analytics
             }
         }
 
-        // One pass: deletes tmp files left by a crash between WriteAllText and Move, and counts the live .evt files.
+        // Deletes temporary files a write that never finished left over a minute ago, and counts the live .evt files.
         private int SweepStaleTempFilesAndCount()
         {
+            FlockTemporaryFiles.DeleteLeftOverFiles(_dir, false);
             int count = 0;
             try
             {
                 foreach (string path in Directory.EnumerateFiles(_dir))
                 {
-                    if (path.EndsWith(TmpExtension, StringComparison.Ordinal))
-                        TryDelete(path);
-                    else if (path.EndsWith(Extension, StringComparison.Ordinal))
+                    if (path.EndsWith(Extension, StringComparison.Ordinal))
                         count++;
                 }
             }
@@ -332,7 +397,7 @@ namespace Flock.Analytics
             {
                 if (File.Exists(path))
                 {
-                    File.Delete(path);
+                    FlockSavedFiles.Delete(path);
                     return true;
                 }
             }

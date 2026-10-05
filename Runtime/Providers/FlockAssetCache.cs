@@ -10,7 +10,6 @@ namespace Flock.Providers
     {
         private const string DefaultFolder = "flock_assets";
         private const string CacheExt = ".cache";
-        private const string TempExt = ".tmp";
 
         public string Directory { get; }
         public long MaxSizeBytes { get; }
@@ -31,7 +30,7 @@ namespace Flock.Providers
             string path = GetCachePath(assetId, updatedAt);
             if (File.Exists(path))
             {
-                try { File.SetLastWriteTimeUtc(path, DateTime.UtcNow); }
+                try { FlockSavedFiles.SetLastWriteTime(path, DateTime.UtcNow); }
                 catch { }
 
                 fileUrl = new Uri(path).AbsoluteUri;
@@ -46,25 +45,25 @@ namespace Flock.Providers
             if (bytes == null || bytes.Length == 0)
                 return;
 
-            System.IO.Directory.CreateDirectory(Directory);
+            FlockSavedFiles.CreateFolder(Directory);
 
             string finalPath = GetCachePath(assetId, updatedAt);
 
             DeleteOtherVersions(assetId, finalPath);
 
-            string tmpPath = finalPath + TempExt;
-            File.WriteAllBytes(tmpPath, bytes);
-            if (File.Exists(finalPath))
-                File.Delete(finalPath);
-            File.Move(tmpPath, finalPath);
+            // A temporary file of its own per write: two downloads of one asset never share one.
+            FlockTemporaryFiles.Save(finalPath, bytes);
 
             EnforceMaxSize();
         }
 
+        /// <summary>Deletes temporary files a download that never finished left over a minute ago.</summary>
+        public int DeleteLeftOverFiles() => FlockTemporaryFiles.DeleteLeftOverFiles(Directory, false);
+
         public void Clear()
         {
             if (System.IO.Directory.Exists(Directory))
-                System.IO.Directory.Delete(Directory, true);
+                FlockSavedFiles.DeleteFolder(Directory, true);
         }
 
         private void DeleteOtherVersions(string assetId, string keepPath)
@@ -74,7 +73,7 @@ namespace Flock.Providers
             {
                 if (string.Equals(file, keepPath, StringComparison.Ordinal))
                     continue;
-                try { File.Delete(file); }
+                try { FlockSavedFiles.Delete(file); }
                 catch { }
             }
         }
@@ -96,7 +95,7 @@ namespace Flock.Providers
                 long len = files[i].Length;
                 try
                 {
-                    files[i].Delete();
+                    FlockSavedFiles.Delete(files[i].FullName);
                     total -= len;
                 }
                 catch { }

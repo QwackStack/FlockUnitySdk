@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Threading.Tasks;
@@ -5,6 +6,7 @@ using Flock;
 using Flock.Http;
 using Flock.Models;
 using Flock.Tests.Support;
+using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEngine.TestTools;
 
@@ -29,6 +31,8 @@ namespace Flock.Tests.PlayMode
         [TearDown]
         public void TearDown()
         {
+            // A test that failed while a request was held lets it go, so the run ends with that test's own failure.
+            _h?.Transport.ReleaseGate();
             _h?.Dispose();
             _h = null;
             if (FlockClient.IsInitialized)
@@ -79,6 +83,135 @@ namespace Flock.Tests.PlayMode
             Assert.IsTrue(all.IsCompleted, "Both flush calls completed.");
             Assert.AreEqual(2, transport.CountTo(FlockEndpoints.CommandUpdatePlayerData),
                 "Single-flight: each queued write is POSTed exactly once despite two concurrent flushes.");
+        }
+
+        private static List<DataField> Level(string value) => new List<DataField> { Field("level", value) };
+
+        private static List<string> RowsSent(FlockFakeTransport transport)
+            => transport.AllTo(FlockEndpoints.CommandUpdatePlayerData).ConvertAll(r => (string)JObject.Parse(r.JsonBody)["player_data_id"]);
+
+        // ---- CMD-16 (in flight): a write made while a flush is sending goes out after it, not beside it ----
+        [UnityTest]
+        public IEnumerator AWriteMadeWhileAFlushIsSendingGoesOutAfterIt()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.CommandUpdatePlayerData, FlockFakeTransport.Ok("{\"id\":\"pd-x\"}"));
+            _h = FlockTestClient.Create(transport);
+            _h.LoginAs("player-a");
+            _h.SetReachable(false);
+            _h.Run(() => _h.Client.Commands.UpdatePlayerDataAsync("pd-old", Level("5")));
+
+            transport.GateNext(FlockEndpoints.CommandUpdatePlayerData);
+            _h.SetReachable(true);
+            Task flush = _h.Client.Commands.FlushPendingWritesAsync();
+            yield return FlockTestWait.Until(() => transport.CountTo(FlockEndpoints.CommandUpdatePlayerData) >= 1, "The older write is on its way");
+
+            Task<PlayerData> newer = _h.Client.Commands.UpdatePlayerDataAsync("pd-new", Level("6"));
+            Assert.IsTrue(newer.IsCompleted, "Queued, so the call does not wait for the flush");
+            Assert.AreEqual(1, transport.CountTo(FlockEndpoints.CommandUpdatePlayerData), "Not sent beside the older write");
+
+            transport.ReleaseGate();
+            yield return FlockTestWait.Until(() => flush.IsCompleted && transport.CountTo(FlockEndpoints.CommandUpdatePlayerData) >= 2, "Both sent");
+            CollectionAssert.AreEqual(new[] { "pd-old", "pd-new" }, RowsSent(transport));
+        }
+
+        // ---- CMD-17: a player change mid-flush takes nothing off the next player's queue, and that queue is then sent ----
+        [UnityTest]
+        public IEnumerator APlayerChangeMidFlushTakesNothingOffTheNextPlayersQueue()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.CommandUpdatePlayerData, FlockFakeTransport.Ok("{\"id\":\"pd-x\"}"));
+            _h = FlockTestClient.Create(transport);
+            _h.SetReachable(false);
+            _h.LoginAs("player-b");
+            _h.Run(() => _h.Client.Commands.UpdatePlayerDataAsync("pd-b1", Level("1")));
+            _h.Client.Authentication.Logout();
+            _h.LoginAs("player-a");
+            _h.Run(() => _h.Client.Commands.UpdatePlayerDataAsync("pd-a1", Level("1")));
+            _h.Run(() => _h.Client.Commands.UpdatePlayerDataAsync("pd-a2", Level("2")));
+
+            transport.GateNext(FlockEndpoints.CommandUpdatePlayerData);
+            _h.SetReachable(true);
+            Task flush = _h.Client.Commands.FlushPendingWritesAsync();
+            yield return FlockTestWait.Until(() => transport.CountTo(FlockEndpoints.CommandUpdatePlayerData) >= 1, "A's first write is on its way");
+
+            _h.Client.Authentication.Logout();
+            _h.LoginAs("player-b");
+            Task<PlayerData> b2 = _h.Client.Commands.UpdatePlayerDataAsync("pd-b2", Level("2"));
+            Assert.IsTrue(b2.IsCompleted, "Queued behind B's older write, so the call does not wait");
+            transport.ReleaseGate();
+
+            yield return FlockTestWait.Until(() => flush.IsCompleted && transport.CountTo(FlockEndpoints.CommandUpdatePlayerData) >= 3, "B's queue was sent after A's flush stopped");
+            CollectionAssert.AreEqual(new[] { "pd-a1", "pd-b1", "pd-b2" }, RowsSent(transport), "Nothing of B's was taken off unsent");
+
+            _h.Client.Authentication.Logout();
+            _h.LoginAs("player-a");
+            _h.Run(() => _h.Client.Commands.FlushPendingWritesAsync());
+            CollectionAssert.AreEqual(new[] { "pd-a1", "pd-b1", "pd-b2", "pd-a1", "pd-a2" }, RowsSent(transport),
+                "A's writes stayed queued for A, the one in flight included, in order");
+        }
+
+        // ---- CMD-17b: after a player change mid-flush, none of the first player's writes goes out under the next one's sign-in ----
+        [UnityTest]
+        public IEnumerator APlayerChangeMidFlushSendsNothingMoreUnderTheNextPlayersSignIn()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.CommandUpdatePlayerData, FlockFakeTransport.Ok("{\"id\":\"pd-x\"}"));
+            _h = FlockTestClient.Create(transport);
+            _h.LoginAs("player-a");
+            string bearerA = _h.Client.GetBaseHeaders()["Authorization"];
+            _h.SetReachable(false);
+            _h.Run(() => _h.Client.Commands.UpdatePlayerDataAsync("pd-a1", Level("1")));
+            _h.Run(() => _h.Client.Commands.UpdatePlayerDataAsync("pd-a2", Level("2")));
+
+            transport.GateNext(FlockEndpoints.CommandUpdatePlayerData);
+            _h.SetReachable(true);
+            Task flush = _h.Client.Commands.FlushPendingWritesAsync();
+            yield return FlockTestWait.Until(() => transport.CountTo(FlockEndpoints.CommandUpdatePlayerData) >= 1, "A's first write is on its way");
+
+            // B signs in and writes nothing, so A's queue is still the one loaded.
+            _h.Client.Authentication.Logout();
+            _h.LoginAs("player-b");
+            transport.ReleaseGate();
+            yield return FlockTestWait.Until(() => flush.IsCompleted, "The flush ended");
+            DateTime settle = DateTime.UtcNow.AddSeconds(0.5);
+            while (DateTime.UtcNow < settle)
+                yield return null;
+
+            List<FlockHttpRequest> posts = transport.AllTo(FlockEndpoints.CommandUpdatePlayerData);
+            Assert.AreEqual(1, posts.Count, "A's second write waits for A");
+            Assert.AreEqual(bearerA, posts[0].Headers["Authorization"]);
+        }
+
+        // ---- CMD-18: the same player's queue reloaded mid-flush (signed out and back in) loses and reorders nothing ----
+        [UnityTest]
+        public IEnumerator AQueueReloadedMidFlushLosesAndReordersNothing()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.CommandUpdatePlayerData, FlockFakeTransport.Ok("{\"id\":\"pd-x\"}"));
+            _h = FlockTestClient.Create(transport);
+            _h.LoginAs("player-a");
+            _h.SetReachable(false);
+            _h.Run(() => _h.Client.Commands.UpdatePlayerDataAsync("pd-a1", Level("1")));
+            _h.Run(() => _h.Client.Commands.UpdatePlayerDataAsync("pd-a2", Level("2")));
+
+            transport.GateNext(FlockEndpoints.CommandUpdatePlayerData);
+            _h.SetReachable(true);
+            Task flush = _h.Client.Commands.FlushPendingWritesAsync();
+            yield return FlockTestWait.Until(() => transport.CountTo(FlockEndpoints.CommandUpdatePlayerData) >= 1, "The first write is on its way");
+
+            // Signed out, a write loads the signed-out queue; signing back in, the next write reloads A's from disk.
+            _h.Client.Authentication.Logout();
+            _h.SetReachable(false);
+            _h.Run(() => _h.Client.Commands.UpdatePlayerDataAsync("pd-nobody", Level("0")));
+            _h.SetReachable(true);
+            _h.LoginAs("player-a");
+            Task<PlayerData> a3 = _h.Client.Commands.UpdatePlayerDataAsync("pd-a3", Level("3"));
+            Assert.IsTrue(a3.IsCompleted, "Queued behind the reloaded writes, so the call does not wait");
+            transport.ReleaseGate();
+
+            yield return FlockTestWait.Until(() => flush.IsCompleted && transport.CountTo(FlockEndpoints.CommandUpdatePlayerData) >= 4, "The reloaded queue was sent");
+            CollectionAssert.AreEqual(new[] { "pd-a1", "pd-a1", "pd-a2", "pd-a3" }, RowsSent(transport));
         }
     }
 }

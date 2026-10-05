@@ -22,6 +22,9 @@ namespace Flock.Http
 
         /// <summary>Adds ±25% randomness to each delay to avoid thundering herd.</summary>
         public bool UseJitter { get; set; } = true;
+
+        /// <summary>A separate copy with every setting, including any added later.</summary>
+        internal RetryPolicy Copy() => (RetryPolicy)MemberwiseClone();
     }
 
     public class RetryHandler
@@ -78,7 +81,7 @@ namespace Flock.Http
                     TimeSpan wait = ResolveDelay(ex, delay);
                     string note = ex is FlockNetworkException ? " Can't reach the server (connectivity) — retries keep failing until it's back." : string.Empty;
                     _logger?.LogWarning($"Attempt {attempt} failed: {ex.Message}.{note} Retrying in {wait.TotalSeconds:F1}s...");
-                    await Task.Delay(wait, cancellationToken);
+                    await FlockWaiting.DelayAsync(wait, cancellationToken);
 
                     delay = TimeSpan.FromSeconds(Math.Min(
                         delay.TotalSeconds * _policy.BackoffMultiplier,

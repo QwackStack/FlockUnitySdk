@@ -17,6 +17,21 @@ namespace Flock.Http
             Client = client ?? throw new ArgumentNullException(nameof(client));
         }
 
+        /// <summary>Runs an <paramref name="operation"/> that has nothing to return, with the same retry, refresh and error rules as <see cref="ExecuteAsync{T}"/>.</summary>
+        protected Task ExecuteWithoutResultAsync(
+            Func<Task> operation,
+            string context,
+            CancellationToken cancellationToken,
+            bool idempotent = true,
+            int? maxRetriesOverride = null)
+        {
+            return ExecuteAsync(async () =>
+            {
+                await operation();
+                return true;
+            }, context, cancellationToken, idempotent, maxRetriesOverride);
+        }
+
         /// <summary>Runs <paramref name="operation"/> via the retry handler. Pass idempotent=false for non-idempotent mutations (e.g. currency grants): ambiguous failures surface instead of being re-sent, and only provably-not-processed failures (408/429) are retried.</summary>
         protected async Task<T> ExecuteAsync<T>(
             Func<Task<T>> operation,
@@ -25,6 +40,8 @@ namespace Flock.Http
             bool idempotent = true,
             int? maxRetriesOverride = null)
         {
+            // The sign-in this request goes out under; once it ends, the request is never re-sent as whoever signed in next.
+            int signInNumber = Client.SignInNumber;
             try
             {
                 return await Client.RetryHandler.ExecuteAsync(operation, cancellationToken, retryAmbiguousFailures: idempotent, maxRetriesOverride: maxRetriesOverride);
@@ -33,7 +50,7 @@ namespace Flock.Http
             catch (FlockAuthException) when (Client.IsAuthenticated)
             {
                 Client.Logger.LogDebug("Access token expired, attempting silent refresh");
-                bool refreshed = await Client.TryRefreshTokenAsync(cancellationToken);
+                bool refreshed = await Client.TryRefreshTokenAsync(signInNumber, cancellationToken);
                 if (!refreshed)
                     throw;
 
