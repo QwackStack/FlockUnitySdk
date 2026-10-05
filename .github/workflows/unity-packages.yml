@@ -1,0 +1,119 @@
+name: Unity packages
+
+# Builds the two .unitypackage files every release carries, with the SDK's own builders in a Unity editor, and reads them back:
+# FlockSDK-<version>.unitypackage, and ProtokitePlaytest-<version>.unitypackage, which the Playtesting tab in Flock > Settings
+# downloads from the release. release.yml calls this before it publishes and attaches what it builds, so a release is never
+# published without them. A pull request that touches the builders or these workflows runs it too, so a broken release build
+# shows before a tag does. Either way the packages are kept as the run's artifact, unity-packages.
+#
+# Requires the Unity licence, like tests.yml, so a pull request from a fork skips it: GitHub withholds secrets there.
+
+on:
+  workflow_call:
+  pull_request:
+    # The builders and these workflows, and every kind of file that changes what a package carries or names: a new .meta comes
+    # with every new file, and an .asset can name another file by GUID.
+    paths:
+      - "Editor/FlockPackageBuilder.cs"
+      - "Editor/FlockPlaytestPackageBuilder.cs"
+      - "Editor/FlockProviderManifest.cs"
+      - "Tooling~/check_release_unitypackages.py"
+      - "Tooling~/check-unity-licence-secrets.sh"
+      - ".github/workflows/unity-packages.yml"
+      - ".github/workflows/release.yml"
+      - "**/*.meta"
+      - "**/*.asset"
+      - "**/*.asmdef"
+      - "**/package.json"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and read back the release packages
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the package
+        uses: actions/checkout@v4
+        with:
+          path: package
+
+      - name: The licence secrets are present and well-formed
+        env:
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        run: bash "package/Tooling~/check-unity-licence-secrets.sh"
+
+      - name: Turn the workspace into a project with both packages installed
+        # The same layout as tests.yml: the project at the workspace root, the package beside it. The playtest builder builds
+        # only an installed playtest, so both are installed. Unity links no script to its class under a path with a "~" in it,
+        # so the playtest is copied out of ProtokitePlaytest~ first.
+        run: |
+          set -euo pipefail
+
+          cp -R "package/ProtokitePlaytest~" protokite-playtest
+          mkdir -p Packages ProjectSettings Assets
+
+          cat > Packages/manifest.json <<'JSON'
+          {
+            "dependencies": {
+              "com.flock.sdk": "file:../package",
+              "com.protokite.playtest": "file:../protokite-playtest",
+              "com.unity.nuget.newtonsoft-json": "3.2.2",
+              "com.unity.test-framework": "1.6.0",
+              "com.unity.modules.androidjni": "1.0.0",
+              "com.unity.modules.animation": "1.0.0",
+              "com.unity.modules.assetbundle": "1.0.0",
+              "com.unity.modules.audio": "1.0.0",
+              "com.unity.modules.imageconversion": "1.0.0",
+              "com.unity.modules.imgui": "1.0.0",
+              "com.unity.modules.jsonserialize": "1.0.0",
+              "com.unity.modules.screencapture": "1.0.0",
+              "com.unity.modules.ui": "1.0.0",
+              "com.unity.modules.uielements": "1.0.0",
+              "com.unity.modules.unitywebrequest": "1.0.0",
+              "com.unity.modules.unitywebrequestassetbundle": "1.0.0",
+              "com.unity.modules.unitywebrequestaudio": "1.0.0",
+              "com.unity.modules.unitywebrequesttexture": "1.0.0",
+              "com.unity.modules.unitywebrequestwww": "1.0.0"
+            }
+          }
+          JSON
+
+          cat > ProjectSettings/ProjectVersion.txt <<'TXT'
+          m_EditorVersion: 6000.3.16f1
+          TXT
+
+          echo "Generated a project at the workspace root, with package/ and protokite-playtest/ installed:"
+          cat Packages/manifest.json
+
+      - name: Build both packages
+        # The builder action runs the method in the editor image; the method exits 0 only when both packages were built.
+        # Pinned, as tests.yml pins the test runner: a moving major version has changed what a workspace must hold before.
+        # Versioning None: the packages take package.json's version, and the action then needs no git history.
+        uses: game-ci/unity-builder@v4.8.2
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          unityVersion: 6000.3.16f1
+          targetPlatform: StandaloneLinux64
+          versioning: None
+          buildMethod: Flock.Editor.FlockPackageBuilder.BuildReleaseFromCommandLine
+          customParameters: -releaseOut /github/workspace/release-packages
+
+      - name: Read both packages back
+        run: python3 "package/Tooling~/check_release_unitypackages.py" release-packages package
+
+      - name: Keep the packages
+        # overwrite: a re-run of a failed release uploads again under the same name, which upload-artifact@v4 otherwise refuses.
+        uses: actions/upload-artifact@v4
+        with:
+          name: unity-packages
+          path: release-packages/*.unitypackage
+          if-no-files-found: error
+          overwrite: true

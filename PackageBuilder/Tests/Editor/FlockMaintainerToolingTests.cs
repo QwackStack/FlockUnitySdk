@@ -28,6 +28,32 @@ namespace Flock.Tests
         }
 
         [Test]
+        public void TheReleaseCarriesEveryProviderTheEditorTheSamplesAndTheDocs()
+        {
+            FlockPackageBuilder.PackageContents release = FlockPackageBuilder.ReleaseContents("9.8.7", "release-out");
+
+            Assert.AreEqual("9.8.7", release.Version);
+            Assert.AreEqual("release-out", release.OutputFolder);
+            Assert.IsTrue(release.IncludeEditor, "The editor ships");
+            Assert.IsTrue(release.IncludeSamples, "The samples ship");
+            Assert.IsTrue(release.IncludeDocs, "The docs ship");
+            Assert.IsNotEmpty(FlockProviderManifest.Providers, "Control: there are providers to ship");
+            foreach (FlockProviderManifest.Entry entry in FlockProviderManifest.Providers)
+                Assert.IsTrue(release.SelectedProviders.TryGetValue(entry.Id, out bool selected) && selected, entry.Id + " ships in the release");
+        }
+
+        [Test]
+        public void TheReleaseFolderIsTheArgumentAfterReleaseOut()
+        {
+            Assert.AreEqual("/github/workspace/out", FlockPackageBuilder.ReleaseFolderFromArguments(
+                new[] { "Unity", "-batchmode", "-releaseOut", "/github/workspace/out", "-quit" }));
+            Assert.IsNull(FlockPackageBuilder.ReleaseFolderFromArguments(new[] { "Unity", "-batchmode" }), "No flag, no folder");
+            Assert.IsNull(FlockPackageBuilder.ReleaseFolderFromArguments(new[] { "Unity", "-releaseOut" }), "A flag with nothing after it");
+            Assert.IsNull(FlockPackageBuilder.ReleaseFolderFromArguments(new[] { "Unity", "-releaseOut", " " }), "A blank folder");
+            Assert.IsNull(FlockPackageBuilder.ReleaseFolderFromArguments(new[] { "Unity", "-releaseOut", "-quit" }), "Another flag is not a folder");
+        }
+
+        [Test]
         public void ThePlaytestReleaseShipsItsSampleAndNotItsTests()
         {
             PackageInfo package = PackageInfo.FindForAssetPath("Packages/" + FlockPlaytestInstaller.PackageName);

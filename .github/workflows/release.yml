@@ -1,5 +1,10 @@
 name: Release
 
+# Publishes a release when a version tag is pushed (git tag v1.69.0 && git push origin v1.69.0), carrying four files:
+# com.flock.sdk-<version>.tgz and com.protokite.playtest-<version>.tgz (Package Manager tarballs), and
+# FlockSDK-<version>.unitypackage and ProtokitePlaytest-<version>.unitypackage, built by unity-packages.yml. The Playtesting tab in
+# Flock > Settings installs the playtest from the last of these, so the release is published only once all four exist.
+
 on:
   push:
     tags: ["v*"]
@@ -8,22 +13,28 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  # Cheap checks first, so a wrong tag fails in seconds rather than after the Unity build.
+  checks:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Verify tag matches package.json version
-        run: |
-          PKG_VERSION=$(node -p "require('./package.json').version")
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
-            echo "Tag $GITHUB_REF_NAME does not match package.json version $PKG_VERSION" >&2
-            exit 1
-          fi
+      - name: The tag is v<the package version>
+        run: bash "Tooling~/check-release-tag.sh" "$GITHUB_REF_NAME" .
 
       - name: The playtest package is released at the same version
         run: bash "Tooling~/check-playtest-package.sh" .
+
+  unity-packages:
+    needs: checks
+    uses: ./.github/workflows/unity-packages.yml
+    secrets: inherit
+
+  release:
+    needs: unity-packages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
       - name: Pack UPM tarballs
         # The playtest is packed outside the checkout (packed inside, its tarball would end up in the Flock SDK's), then
@@ -43,16 +54,26 @@ jobs:
           fi
           mv "$playtest_out"/com.protokite.playtest-*.tgz .
 
+      - name: Fetch the .unitypackage files the Unity job built
+        # Outside the checkout, after the pack above, so no tarball can carry them.
+        uses: actions/download-artifact@v4
+        with:
+          name: unity-packages
+          path: ${{ runner.temp }}/unity-packages
+
       - name: Create GitHub release
         # A release may already exist when it was drafted in the web UI (publishing
-        # there pushes the tag, which triggers this run) — attach the tarball to it.
+        # there pushes the tag, which triggers this run) — attach the files to it.
         env:
           GH_TOKEN: ${{ github.token }}
+          UNITY_PACKAGES: ${{ runner.temp }}/unity-packages
         run: |
+          set -euo pipefail
+          files=(com.flock.sdk-*.tgz com.protokite.playtest-*.tgz "$UNITY_PACKAGES"/*.unitypackage)
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" com.flock.sdk-*.tgz com.protokite.playtest-*.tgz --clobber
+            gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber
           else
-            gh release create "$GITHUB_REF_NAME" com.flock.sdk-*.tgz com.protokite.playtest-*.tgz \
+            gh release create "$GITHUB_REF_NAME" "${files[@]}" \
               --title "$GITHUB_REF_NAME" \
               --generate-notes
           fi

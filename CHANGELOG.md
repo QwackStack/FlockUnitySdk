@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.69.0]
+
+No changes for games. Every release now carries `FlockSDK-<version>.unitypackage` and `ProtokitePlaytest-<version>.unitypackage`
+from the moment it is published: the release builds them itself, in a Unity editor, and reads them back before it publishes. So
+**Install Protokite Playtest** on the **Playtesting** tab of **Flock > Settings** can install the playtest from the first minute
+of a release. A release is published only under a tag of the form `v<version>`, the address the tab downloads from.
+
 ## [1.68.0]
 
 Released together with the Protokite Playtest's Playtest ID setting (see its changelog). With a Playtest ID set, the Flock SDK
