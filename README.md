@@ -176,6 +176,7 @@ Per-feature usage and examples live in their own guides:
 | [SDK Events](Docs~/events.md) | The `FlockEvents` hub — lifecycle, auth, and session events |
 | [Codegen](Docs~/codegen.md) | Sync Schemas, generated templates/configs/shops/achievements, content catalog |
 | [Error handling](Docs~/errors.md) | The `FlockException` hierarchy, `.ErrorCode`, and the full coded-error list |
+| [HTTP and your own providers](Docs~/http.md) | Your game's identity for another Qwacks service, requests with or without an answer to read, retrying the way the SDK does, streamed file uploads, a provider of your own |
 
 ## Playtesting with Protokite
 

@@ -19,4 +19,16 @@ var version = await FlockClient.Instance.Game.GetGameVersionAsync();
 var versionByName = await FlockClient.Instance.Game.GetGameVersionByNameAsync("v1.0.0");
 ```
 
+## This build's game and version
+
+```csharp
+string gameId = FlockClient.Instance.GameId;
+string versionName = FlockClient.Instance.GameVersion;     // "1.0.0", as set in Flock > Settings
+string versionId = FlockClient.Instance.GameVersionId;     // the ID the editor resolved that name to
+```
+
+These say which game and Game Version the client was initialized with, so reading them makes no call: `GameVersion` is the
+name set in Flock > Settings, and `GameVersionId` the ID the editor resolved it to and baked into the build.
+`GetGameVersionAsync()` fetches that version's record from the server.
+
 See also: [Codegen](codegen.md) for how the typed config accessors are generated and kept in sync.

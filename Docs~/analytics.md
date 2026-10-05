@@ -112,6 +112,12 @@ await FlockClient.Instance.Analytics.RecordTransactionAsync(new AnalyticsTransac
 FlockClient.Instance.Analytics.RecordScreenView("MainMenu");
 ```
 
+**Session ids.** `FlockClient.Instance.CurrentSessionId` has an id from the moment a session starts: the server's once the
+server has the session, the SDK's own local id until then (the one `FlockEvents.OnSessionStarted` hands over).
+`FlockClient.Instance.ServerSessionId` is only ever the server's: null until the session's start has reached the server
+(offline, for one), and null again once the session has ended. Read `ServerSessionId` when another service must name the
+session, and read it again later while it is null; there is no event for its arrival.
+
 ## Consent
 
 By default, analytics behaves as it always has — collection runs once a player is authenticated. Turn on **Analytics Require Explicit Consent** (Flock > Settings, or `FlockAnalyticsConfig.RequireExplicitConsent`) for a real opt-in gate: no session, no event tracking, no device/FPS/screen-view capture until the game calls `SetConsent(true)`.
