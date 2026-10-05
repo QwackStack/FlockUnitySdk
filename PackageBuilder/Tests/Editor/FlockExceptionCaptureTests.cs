@@ -112,7 +112,7 @@ namespace Flock.Tests.Editor
             {
                 // Unity may log it as the finalizer runs; the capture is what this test is about.
                 LogAssert.ignoreFailingMessages = true;
-                FaultATaskNobodyAwaits(Named("a task nobody awaited"));
+                FaultATaskNobodyAwaits(() => new InvalidOperationException(Named("a task nobody awaited")));
                 for (int attempt = 0; attempt < 5 && QueuedExceptions(sdk).Count == 0; attempt++)
                 {
                     GC.Collect();
@@ -126,13 +126,24 @@ namespace Flock.Tests.Editor
             }
         }
 
-        // Out of line, so nothing in the test keeps the faulted task reachable once it has finished.
+        // Faulted on a thread that ends before the collection, so no leftover pointer on any thread's stack keeps the task alive.
         [MethodImpl(MethodImplOptions.NoInlining)]
-        private static void FaultATaskNobodyAwaits(string message)
+        private static void FaultATaskNobodyAwaits(Func<Exception> makeException)
         {
-            Task faulted = Task.Run(() => throw new InvalidOperationException(message));
-            while (!faulted.IsCompleted)
-                Thread.Sleep(1);
+            Thread thread = new Thread(() =>
+            {
+                TaskCompletionSource<bool> source = new TaskCompletionSource<bool>();
+                try
+                {
+                    throw makeException();
+                }
+                catch (Exception thrown)
+                {
+                    source.SetException(thrown);
+                }
+            });
+            thread.Start();
+            thread.Join();
         }
 
         [Test]
@@ -284,7 +295,7 @@ namespace Flock.Tests.Editor
             using (FlockTestClient sdk = Create())
             {
                 LogAssert.ignoreFailingMessages = true;
-                FaultATaskWithAnUnreadableMessage();
+                FaultATaskNobodyAwaits(() => new MessageThrowsException());
                 for (int attempt = 0; attempt < 5 && QueuedExceptions(sdk).Count == 0; attempt++)
                 {
                     GC.Collect();
@@ -296,14 +307,6 @@ namespace Flock.Tests.Editor
                 Assert.AreEqual(UnreadableMessage, (string)queued["message"]);
                 Assert.AreEqual(FlockRepeatedExceptionCounter.SourceUnobservedTask, (string)Extra(queued)["exception_source"]);
             }
-        }
-
-        [MethodImpl(MethodImplOptions.NoInlining)]
-        private static void FaultATaskWithAnUnreadableMessage()
-        {
-            Task faulted = Task.Run(() => throw new MessageThrowsException());
-            while (!faulted.IsCompleted)
-                Thread.Sleep(1);
         }
 
         [Test]
