@@ -27,6 +27,8 @@ namespace Protokite.Playtest
         private readonly int _frameBytes;
         private readonly List<ProtokitePlaytestCapturedFrame> _arrived = new List<ProtokitePlaytestCapturedFrame>();
         private RenderTexture _screen;
+        private int _pictureLeft;
+        private int _pictureTop;
         private int _framesOnTheirWay;
         private bool _stopped;
 
@@ -106,13 +108,14 @@ namespace Protokite.Playtest
             _convert.SetTexture(_chromaKernel, "Source", _video);
             _convert.SetBuffer(_lumaKernel, "Output", _pixels);
             _convert.SetBuffer(_chromaKernel, "Output", _pixels);
+            PlaceThePicture(0, 0);
         }
 
         public void CaptureFrame(long timestampMs)
         {
             if (!IsReadyForAnotherFrame)
                 return;
-            // A window resized mid-recording is recorded in the same video size, stretched to it.
+            // A window resized or a phone turned mid-recording is recorded in the same video size, at its own shape (see CaptureFromTexture).
             if (_screen == null || _screen.width != Screen.width || _screen.height != Screen.height)
             {
                 if (Screen.width <= 0 || Screen.height <= 0)
@@ -130,12 +133,43 @@ namespace Protokite.Playtest
         {
             if (!IsReadyForAnotherFrame)
                 return;
-            Graphics.Blit(source, _video);
+            PictureMargins(source.width, source.height, Width, Height, out int left, out int top);
+            if (left != _pictureLeft || top != _pictureTop)
+                PlaceThePicture(left, top);
+            // The picture fills the space between the margins; the shader makes the margins black, so what the scale puts there never shows.
+            Vector2 scale = new Vector2((float)Width / (Width - 2 * left), (float)Height / (Height - 2 * top));
+            Graphics.Blit(source, _video, scale, new Vector2(-left * scale.x / Width, -top * scale.y / Height));
             _convert.Dispatch(_lumaKernel, (Width * Height / 4 + 63) / 64, 1, 1);
             // Two chroma samples a thread: a quarter of the pixels each have one, so an eighth of them is the count of threads.
             _convert.Dispatch(_chromaKernel, (Width * Height / 8 + 63) / 64, 1, 1);
             _framesOnTheirWay++;
             AsyncGPUReadback.Request(_pixels, request => HandleReadback(timestampMs, request));
+        }
+
+        /// <summary>The black margins (each side alike, even) that keep a picture at its own shape in the video; none for a difference under 16 pixels.</summary>
+        internal static void PictureMargins(int pictureWidth, int pictureHeight, int videoWidth, int videoHeight, out int left, out int top)
+        {
+            left = 0;
+            top = 0;
+            if (pictureWidth <= 0 || pictureHeight <= 0)
+                return;
+            double scale = System.Math.Min((double)videoWidth / pictureWidth, (double)videoHeight / pictureHeight);
+            int fittedWidth = (int)System.Math.Round(pictureWidth * scale);
+            int fittedHeight = (int)System.Math.Round(pictureHeight * scale);
+            if (videoWidth - fittedWidth >= ProtokitePlaytestVideoSettings.SideMultiple)
+                left = (videoWidth - fittedWidth) / 4 * 2;
+            if (videoHeight - fittedHeight >= ProtokitePlaytestVideoSettings.SideMultiple)
+                top = (videoHeight - fittedHeight) / 4 * 2;
+        }
+
+        private void PlaceThePicture(int left, int top)
+        {
+            _pictureLeft = left;
+            _pictureTop = top;
+            _convert.SetInt("PictureLeft", left);
+            _convert.SetInt("PictureTop", top);
+            _convert.SetInt("PictureRight", Width - left);
+            _convert.SetInt("PictureBottom", Height - top);
         }
 
         private void HandleReadback(long timestampMs, AsyncGPUReadbackRequest request)
@@ -183,6 +217,14 @@ namespace Protokite.Playtest
                 // Hands back every frame still on its way, running their callbacks, so the last captures are not lost.
                 AsyncGPUReadback.WaitAllRequests();
             }
+            TakeCapturedFrames(frames);
+        }
+
+        public void TakeFramesOnTheirWay(List<ProtokitePlaytestCapturedFrame> frames)
+        {
+            // The wait finishes the game's own readbacks too, so it is made only when frames of ours are on their way.
+            if (!_stopped && _framesOnTheirWay > 0)
+                AsyncGPUReadback.WaitAllRequests();
             TakeCapturedFrames(frames);
         }
 

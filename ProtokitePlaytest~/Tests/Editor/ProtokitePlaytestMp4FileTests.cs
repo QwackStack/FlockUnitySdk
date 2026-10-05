@@ -280,6 +280,13 @@ namespace Protokite.Playtest.Tests
                 bytes.AddRange(Frame(3, 100));
                 return bytes.ToArray();
             }, 2);
+            yield return Case("A fragment whose frame is not where its data offset says", folder =>
+            {
+                List<byte> bytes = new List<byte>(ProtokitePlaytestMp4TestFiles.MakeVideoBytes(folder, 2, 100, false));
+                ProtokitePlaytestMp4TestFiles.AppendFragmentHeader(bytes, 3, 2 * 33, 100, false, dataOffset: 100);
+                bytes.AddRange(Frame(2, 100));
+                return bytes.ToArray();
+            }, 2);
             yield return Case("The file's type and no frame", folder => ProtokitePlaytestMp4TestFiles.MakeVideoBytes(folder, 0, 0, false), 0);
             yield return Case("The movie's header cut off part-way", folder => ProtokitePlaytestMp4TestFiles.MakeVideoBytes(folder, 3, 100, false).Take(200).ToArray(), 0);
             yield return Case("No video at all", folder => Encoding.ASCII.GetBytes("Only some words, and no video header before them."), 0);
@@ -343,7 +350,7 @@ namespace Protokite.Playtest.Tests
             string unfinished = Path.Combine(_folder, "other.mp4.part");
             byte[] bytes = ProtokitePlaytestMp4TestFiles.MakeVideoBytes(_folder, 3, 100, false);
             // The box the length is stamped into, made a box of padding of the same size: another program's MP4.
-            int lengthBox = Encoding.ASCII.GetString(bytes).IndexOf("mehd", StringComparison.Ordinal);
+            int lengthBox = ProtokitePlaytestMp4TestFiles.FindBoxType(bytes, 0, "mehd");
             Assert.Greater(lengthBox, 0, "Precondition: the length's box is in the file");
             Encoding.ASCII.GetBytes("free").CopyTo(bytes, lengthBox);
             File.WriteAllBytes(unfinished, bytes);
@@ -426,6 +433,131 @@ namespace Protokite.Playtest.Tests
             Assert.AreEqual(ProtokitePlaytestInterruptedRecordingResult.HeldNoFrame,
                 new ProtokitePlaytestMp4File().FinishInterruptedRecording(Path.Combine(_folder, "gone.mp4.part"), Path.Combine(_folder, "gone.mp4"), out int framesKept, out _));
             Assert.AreEqual(0, framesKept);
+        }
+
+        // A phone's recording: frames of thousands of bytes, captured at uneven times, with a keyframe after the first
+
+        [Test]
+        public void APhonesRecordingIsWrittenWithEachFrameWhereItsFragmentSaysAndItsRealLength()
+        {
+            (long TimestampMs, int Bytes, bool Keyframe)[] phone = ProtokitePlaytestMp4TestFiles.PhoneFrames;
+            Assert.IsTrue(phone.Any(frame => frame.Bytes > ushort.MaxValue), "Precondition: a frame whose size two bytes cannot hold");
+            Assert.Greater(phone.Skip(1).Select((frame, index) => frame.TimestampMs - phone[index].TimestampMs).Distinct().Count(), 1,
+                "Precondition: frames captured at uneven times, as a game's are");
+            Assert.IsTrue(phone.Skip(1).Any(frame => frame.Keyframe), "Precondition: a keyframe after the first");
+            string path = Path.Combine(_folder, "phone.mp4");
+            File.WriteAllBytes(path, ProtokitePlaytestMp4TestFiles.MakePhoneRecordingBytes(_folder, closed: true));
+
+            Assert.IsTrue(ProtokitePlaytestMp4TestFiles.Read(path, out Mp4FileRead read), "It reads back with every frame where its fragment says: " + read.Problem);
+            Assert.AreEqual((1280, 592), (read.Width, read.Height));
+            CollectionAssert.AreEqual(ProtokitePlaytestMp4TestFiles.PhoneDecoderSettings, read.DecoderSettings, "The phone's own settings");
+            CollectionAssert.AreEqual(phone.Select(frame => frame.TimestampMs).ToArray(), read.Frames.Select(frame => frame.TimestampMs).ToArray(), "Each frame at the time it was captured");
+            CollectionAssert.AreEqual(phone.Select(frame => (long)frame.Bytes).ToArray(), read.Frames.Select(frame => frame.SampleBytes).ToArray(), "Each frame's size as its fragment states it");
+            CollectionAssert.AreEqual(phone.Select(frame => frame.Keyframe).ToArray(), read.Frames.Select(frame => frame.IsKeyframe).ToArray(), "Each keyframe marked as one");
+            for (int index = 0; index < phone.Length; index++)
+                CollectionAssert.AreEqual(ProtokitePlaytestMp4TestFiles.MakePhoneFrame(index).Data, read.Frames[index].Bytes, $"Frame {index}'s bytes");
+            Assert.AreEqual(phone[phone.Length - 1].TimestampMs + ProtokitePlaytestMp4TestFiles.PhoneFrameDurationMs, read.DurationMs,
+                "The length is the last frame's time and how long it shows, not the frames counted at one length");
+        }
+
+        [Test]
+        public void APhonesRecordingCutOffAnywhereIsFinishedUpToItsLastWholeFragment()
+        {
+            (long TimestampMs, int Bytes, bool Keyframe)[] phone = ProtokitePlaytestMp4TestFiles.PhoneFrames;
+            byte[] leftByAKill = ProtokitePlaytestMp4TestFiles.MakePhoneRecordingBytes(_folder, closed: false);
+            List<long> fragmentStarts = ProtokitePlaytestMp4TestFiles.FragmentStarts(leftByAKill);
+            Assert.AreEqual(phone.Length, fragmentStarts.Count, "Precondition: one fragment a frame");
+            List<long> fragmentEnds = fragmentStarts.Skip(1).Concat(new[] { (long)leftByAKill.Length }).ToList();
+            int lengthValueAt = ProtokitePlaytestMp4TestFiles.FindBoxType(leftByAKill, 0, "mehd") + 8;
+            Assert.Greater(lengthValueAt, 8, "Precondition: the length's box is in the file");
+
+            // Cut inside the file's type and the movie's header, then through every part of every fragment: header, frame start, frame, end.
+            SortedSet<long> cuts = new SortedSet<long> { 0, 10, 32, 100, fragmentStarts[0] - 1, fragmentStarts[0] };
+            for (int fragment = 0; fragment < fragmentStarts.Count; fragment++)
+            {
+                foreach (long bytesIn in new long[] { 1, 4, 8, 24, 50, 84, 100, 107, 108, 111, 112, 113 })
+                    cuts.Add(fragmentStarts[fragment] + bytesIn);
+                cuts.Add((fragmentStarts[fragment] + fragmentEnds[fragment]) / 2);
+                cuts.Add(fragmentEnds[fragment] - 1);
+                cuts.Add(fragmentEnds[fragment]);
+            }
+
+            HashSet<int> wholeFragmentCountsSeen = new HashSet<int>();
+            foreach (long cut in cuts)
+            {
+                string at = $"Cut at byte {cut}";
+                string unfinished = Path.Combine(_folder, $"cut-{cut}.mp4.part");
+                string finished = Path.Combine(_folder, $"cut-{cut}.mp4");
+                byte[] cutFile = new byte[cut];
+                Array.Copy(leftByAKill, cutFile, cut);
+                File.WriteAllBytes(unfinished, cutFile);
+                int wholeFragments = fragmentEnds.Count(end => end <= cut);
+                wholeFragmentCountsSeen.Add(wholeFragments);
+
+                ProtokitePlaytestInterruptedRecordingResult result = new ProtokitePlaytestMp4File().FinishInterruptedRecording(unfinished, finished, out int framesKept, out string error);
+
+                Assert.IsFalse(File.Exists(unfinished), at + ": no unfinished file is left");
+                if (wholeFragments == 0)
+                {
+                    Assert.AreEqual(ProtokitePlaytestInterruptedRecordingResult.HeldNoFrame, result, at + ": " + error);
+                    Assert.IsFalse(File.Exists(finished), at + ": and no finished one is made");
+                    continue;
+                }
+                Assert.AreEqual(ProtokitePlaytestInterruptedRecordingResult.Finished, result, at + ": " + error);
+                Assert.AreEqual(wholeFragments, framesKept, at);
+                byte[] kept = File.ReadAllBytes(finished);
+                Assert.AreEqual(fragmentEnds[wholeFragments - 1], kept.Length, at + ": nothing after the last whole fragment");
+                for (int index = 0; index < kept.Length; index++)
+                {
+                    if ((index < lengthValueAt || index >= lengthValueAt + 8) && kept[index] != leftByAKill[index])
+                        Assert.Fail($"{at}: byte {index} is not what the cut file held; only the length is stamped in");
+                }
+                Assert.IsTrue(ProtokitePlaytestMp4TestFiles.Read(finished, out Mp4FileRead read), at + ": it reads back: " + read.Problem);
+                CollectionAssert.AreEqual(phone.Take(wholeFragments).Select(frame => frame.TimestampMs).ToArray(), read.Frames.Select(frame => frame.TimestampMs).ToArray(), at);
+                Assert.AreEqual(phone[wholeFragments - 1].TimestampMs + ProtokitePlaytestMp4TestFiles.PhoneFrameDurationMs, read.DurationMs,
+                    at + ": its length is its last whole frame's time and how long that shows");
+                File.Delete(finished);
+            }
+            CollectionAssert.AreEquivalent(Enumerable.Range(0, phone.Length + 1).ToArray(), wholeFragmentCountsSeen.ToArray(),
+                "Positive control: the cuts left every number of whole fragments, from none to all");
+        }
+
+        [Test]
+        public void AFragmentThatSendsAPlayerToTheWrongBytesIsCaughtByReadingTheFileBack()
+        {
+            byte[] closed = ProtokitePlaytestMp4TestFiles.MakePhoneRecordingBytes(_folder, closed: true);
+            long thirdFragment = ProtokitePlaytestMp4TestFiles.FragmentStarts(closed)[2];
+            // Each field found by its box's name, not by the writer's own offsets.
+            int runBox = ProtokitePlaytestMp4TestFiles.FindBoxType(closed, thirdFragment, "trun");
+            int fragmentHeaderBox = ProtokitePlaytestMp4TestFiles.FindBoxType(closed, thirdFragment, "tfhd");
+            int dataBox = ProtokitePlaytestMp4TestFiles.FindBoxType(closed, thirdFragment, "mdat");
+            Assert.IsTrue(runBox > thirdFragment && fragmentHeaderBox > thirdFragment && dataBox > runBox, "Precondition: the third fragment's boxes are found");
+            Assert.IsTrue(ReadWithChange(closed, bytes => { }, out Mp4FileRead control), "Control: the file as written reads back. " + control.Problem);
+            Assert.IsFalse(control.Frames[2].IsKeyframe, "Precondition: the third frame is not a keyframe as written");
+
+            Assert.IsFalse(ReadWithChange(closed, bytes => ProtokitePlaytestMp4TestFiles.AddToNumber(bytes, runBox + 20, 1), out Mp4FileRead read), "A frame stated a byte longer than its data box holds");
+            StringAssert.Contains("fragment 3 says its frame is 6084 bytes, and its data box holds 6083", read.Problem);
+            Assert.IsFalse(ReadWithChange(closed, bytes => ProtokitePlaytestMp4TestFiles.AddToNumber(bytes, runBox + 12, -8), out read), "A data offset pointing at the data box's own header");
+            StringAssert.Contains($"fragment 3 says its frame starts at byte {thirdFragment + 100}, where its data box puts it at byte {thirdFragment + 108}", read.Problem);
+            Assert.IsFalse(ReadWithChange(closed, bytes => bytes[fragmentHeaderBox + 7] |= 1, out read), "A fragment counting its frame's position from a base of its own");
+            StringAssert.Contains("fragment 3 names a base or default flags of its own", read.Problem);
+            Assert.IsFalse(ReadWithChange(closed, bytes => bytes[runBox + 6] |= 0x08, out read), "A run box whose flags state a field it does not hold");
+            StringAssert.Contains("fragment 3's run box is shorter than its flags say", read.Problem);
+            Assert.IsFalse(ReadWithChange(closed, bytes => ProtokitePlaytestMp4TestFiles.AddToNumber(bytes, dataBox - 4, 1), out read), "A data box a byte longer than its frame");
+            StringAssert.Contains("fragment 3 says its frame is 6083 bytes, and its data box holds 6084", read.Problem);
+
+            // A fragment stating no frame flags takes the movie's defaults (here, a keyframe), as a player does.
+            Assert.IsTrue(ReadWithChange(closed, bytes => bytes[runBox + 6] &= 0xFB, out read), "Leaving the frame's flags out moves nothing. " + read.Problem);
+            Assert.IsTrue(read.Frames[2].IsKeyframe, "The movie's default flags mark every frame a keyframe");
+        }
+
+        private bool ReadWithChange(byte[] original, Action<byte[]> change, out Mp4FileRead read)
+        {
+            byte[] bytes = (byte[])original.Clone();
+            change(bytes);
+            string path = Path.Combine(_folder, "changed-" + Guid.NewGuid().ToString("N") + ".mp4");
+            File.WriteAllBytes(path, bytes);
+            return ProtokitePlaytestMp4TestFiles.Read(path, out read);
         }
 
 #if UNITY_EDITOR_WIN

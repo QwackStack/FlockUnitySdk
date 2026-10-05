@@ -38,6 +38,8 @@ namespace Protokite.Playtest
         public int FilesSent;
         /// <summary>Whether the uploaded recording's files were all deleted; a later launch deletes what is left, but never uploads it again.</summary>
         public bool Deleted;
+        /// <summary>Stopped because the device left Wi-Fi under a Wi-Fi only answer: kept, and sent again once it is back on Wi-Fi.</summary>
+        public bool StoppedWhenTheDeviceLeftWiFi;
     }
 
     public static partial class ProtokitePlaytest
@@ -46,45 +48,61 @@ namespace Protokite.Playtest
         private const int MostUploadTries = 2;
 
         private static CancellationTokenSource _uploadsCancel = new CancellationTokenSource();
-        private static bool _thisLaunchsUploadStarted;
         private static bool _earlierUploadsStarted;
         private static string _recordingContentType;
 
         /// <summary>This launch's recording's upload, which the self-test waits for; null until one starts.</summary>
         internal static Task<ProtokitePlaytestRecordingUploadOutcome> ThisLaunchsUpload { get; private set; }
 
-        /// <summary>The upload of what earlier launches left, for tests; null until it starts. Answers how many went and how many are kept.</summary>
-        internal static Task<(int Uploaded, int Kept)> EarlierUploadsForTesting { get; private set; }
+        /// <summary>The latest pass over what earlier launches left; null until one starts. Answers how many went, how many are kept, and whether the device leaving Wi-Fi stopped it.</summary>
+        internal static Task<(int Uploaded, int Kept, bool StoppedWhenTheDeviceLeftWiFi)> EarlierUploads { get; private set; }
 
-        // This launch's recording goes once its file is finished and its session has started, whichever comes second. At quit
-        // the session is no longer Started, so a recording finished then is kept for the next launch.
+        // Once a frame: this launch's recording goes once its file is finished, its session has started and the player's answer allows the
+        // network. At quit the session is no longer Started, so a recording finished then is kept for the next launch.
         private static void UploadThisLaunchsRecordingWhenReady()
         {
-            if (_thisLaunchsUploadStarted || _recordingRun == null || FinishedVideo == null)
+            if (_recordingRun == null || FinishedVideo == null || ThisLaunchsUploadIsUnderWayOrDone())
                 return;
-            // Before the session check: a recording kept through quitting is one a later launch sends, so only deleting it honours the answer.
+            // Before the other checks: a recording kept through quitting, or after an upload that did not go, is one a later launch
+            // sends, so only deleting it honours the answer.
             if (!ProtokitePlaytestConsent.AllowsVideoRecording(EffectiveConsent()))
             {
                 DeleteWithdrawnRecording();
                 return;
             }
+            // One upload a launch, but one the device leaving Wi-Fi stopped starts again once it is back on Wi-Fi. Its result is read only
+            // once it has one: the main thread never waits for an upload.
+            if (ThisLaunchsUpload != null
+                && (ThisLaunchsUpload.Status != TaskStatus.RanToCompletion || !ThisLaunchsUpload.Result.StoppedWhenTheDeviceLeftWiFi))
+                return;
             if (FinishedVideo.FilePath == null || _sessionState != ProtokitePlaytestSessionState.Started)
                 return;
-            _thisLaunchsUploadStarted = true;
-
+            if (UploadsWaitForWiFi())
+            {
+                SayUploadsWaitForWiFi();
+                return;
+            }
             // The address, key and version the session started with, as its end uses: a Flock restart since changes none of them.
             Dictionary<string, string> headers = new Dictionary<string, string>(_sessionHeaders);
             Debug.Log(LogPrefix + $"Uploading this launch's playtest recording to Protokite session {_playtestSessionId}.");
             ThisLaunchsUpload = UploadThisLaunchsRecordingAsync(_recordingRun, FinishedVideo.FilePath, _recordingContentType, _sessionApiUrl,
-                headers, _playtestSessionId, _sessionRetryPolicy, _uploadsCancel.Token);
+                headers, _playtestSessionId, _sessionRetryPolicy, _uploadsCancel.Token, BeginUploadOnAnAllowedNetwork());
         }
+
+        // An upload still being sent goes on whatever the player answers meanwhile, and an uploaded recording is sent; anything else of this
+        // launch's (not begun, refused, or stopped on leaving Wi-Fi) is still the player's to take back.
+        private static bool ThisLaunchsUploadIsUnderWayOrDone()
+            => ThisLaunchsUpload != null && (ThisLaunchsUpload.Status != TaskStatus.RanToCompletion || ThisLaunchsUpload.Result.Uploaded);
 
         private static async Task<ProtokitePlaytestRecordingUploadOutcome> UploadThisLaunchsRecordingAsync(ProtokitePlaytestRecordingRun run,
             string videoPath, string contentType, string apiUrl, Dictionary<string, string> headers, string sessionId, RetryPolicy retryPolicy,
-            CancellationToken cancellationToken)
+            CancellationToken launchEnds, CancellationToken deviceLeavesWiFi)
         {
             ProtokitePlaytestRecordingUploadOutcome outcome = await UploadRecordingOrKeepItAsync(run, videoPath, contentType, apiUrl, headers, sessionId,
-                retryPolicy, cancellationToken);
+                retryPolicy, launchEnds, deviceLeavesWiFi);
+            // Said when it stopped; a later frame starts it again on Wi-Fi.
+            if (outcome.StoppedWhenTheDeviceLeftWiFi)
+                return outcome;
             if (outcome.Uploaded && outcome.Deleted && ReferenceEquals(_recordingRun, run))
                 _recordingRun = null;
             if (outcome.Uploaded)
@@ -95,30 +113,45 @@ namespace Protokite.Playtest
             return outcome;
         }
 
-        // What earlier launches left goes once their recordings are gone through and Flock runs, for its API key; one at a
-        // time, oldest first, each held while it is sent so no other launch sends it too.
+        // What earlier launches left goes once their recordings are gone through, Flock runs (for its API key) and the player's answer
+        // allows the network; one at a time, oldest first, each held while it is sent so no other launch sends it too.
         private static void UploadEarlierRecordingsWhenReady(FlockClient running)
         {
-            if (_earlierUploadsStarted || running == null || _uploadsCancel.IsCancellationRequested || _earlierRecordings == null || !_earlierRecordings.IsCompleted)
+            // One pass a launch, but one the device leaving Wi-Fi stopped goes through again once it is back on Wi-Fi.
+            bool stoppedOffWiFi = EarlierUploads != null && EarlierUploads.Status == TaskStatus.RanToCompletion && EarlierUploads.Result.StoppedWhenTheDeviceLeftWiFi;
+            if ((_earlierUploadsStarted && !stoppedOffWiFi) || running == null || _uploadsCancel.IsCancellationRequested || _earlierRecordings == null
+                || !_earlierRecordings.IsCompleted)
                 return;
             // Waits rather than giving up for the launch, so a change of mind sends them in the same launch.
             if (HoldingBackEarlierRecordings())
                 return;
+            if (UploadsWaitForWiFi())
+            {
+                SayUploadsWaitForWiFi();
+                return;
+            }
             _earlierUploadsStarted = true;
-            EarlierUploadsForTesting = UploadEarlierRecordingsAsync(RecordingsFolder, running.GetGameHeaders(), running.RetryPolicy, _uploadsCancel.Token);
+            EarlierUploads = UploadEarlierRecordingsAsync(RecordingsFolder, running.GetGameHeaders(), running.RetryPolicy, _uploadsCancel.Token,
+                BeginUploadOnAnAllowedNetwork());
         }
 
-        private static async Task<(int Uploaded, int Kept)> UploadEarlierRecordingsAsync(string folder, Dictionary<string, string> launchHeaders,
-            RetryPolicy retryPolicy, CancellationToken cancellationToken)
+        private static async Task<(int Uploaded, int Kept, bool StoppedWhenTheDeviceLeftWiFi)> UploadEarlierRecordingsAsync(string folder, Dictionary<string, string> launchHeaders,
+            RetryPolicy retryPolicy, CancellationToken launchEnds, CancellationToken deviceLeavesWiFi)
         {
             int uploaded = 0;
             int kept = 0;
+            bool stoppedWhenTheDeviceLeftWiFi = false;
             try
             {
                 foreach (string runFolder in ProtokitePlaytestRecordingsFolder.FindRuns(folder, ProtokitePlaytestRecordingKind.Playtest))
                 {
-                    if (cancellationToken.IsCancellationRequested)
+                    if (launchEnds.IsCancellationRequested)
                         break;
+                    if (deviceLeavesWiFi.IsCancellationRequested)
+                    {
+                        stoppedWhenTheDeviceLeftWiFi = true;
+                        break;
+                    }
                     using (ProtokitePlaytestRecordingRun run = ProtokitePlaytestRecordingRun.ClaimEnded(runFolder, ProtokitePlaytestRecordingKind.Playtest))
                     {
                         // Still recording, or another launch is sending it.
@@ -131,10 +164,15 @@ namespace Protokite.Playtest
                             continue;
 
                         ProtokitePlaytestRecordingUploadOutcome outcome = await UploadWaitingRecordingAsync(run, videoPath, session, launchHeaders,
-                            retryPolicy, cancellationToken);
+                            retryPolicy, launchEnds, deviceLeavesWiFi);
                         if (outcome.Uploaded)
                         {
                             uploaded++;
+                        }
+                        else if (outcome.StoppedWhenTheDeviceLeftWiFi)
+                        {
+                            stoppedWhenTheDeviceLeftWiFi = true;
+                            break;
                         }
                         else
                         {
@@ -151,17 +189,18 @@ namespace Protokite.Playtest
             }
             if (uploaded + kept > 0)
                 Debug.Log(LogPrefix + $"Recordings earlier launches left: {uploaded} uploaded, {kept} kept for a later launch.");
-            return (uploaded, kept);
+            return (uploaded, kept, stoppedWhenTheDeviceLeftWiFi);
         }
 
         private static Task<ProtokitePlaytestRecordingUploadOutcome> UploadWaitingRecordingAsync(ProtokitePlaytestRecordingRun run, string videoPath,
-            ProtokitePlaytestSavedSession session, Dictionary<string, string> launchHeaders, RetryPolicy retryPolicy, CancellationToken cancellationToken)
+            ProtokitePlaytestSavedSession session, Dictionary<string, string> launchHeaders, RetryPolicy retryPolicy, CancellationToken launchEnds,
+            CancellationToken deviceLeavesWiFi)
         {
             if (string.IsNullOrWhiteSpace(session.ProtokiteApiUrl))
                 return Task.FromResult(new ProtokitePlaytestRecordingUploadOutcome { WhyNot = "its saved session names no Protokite API URL." });
             // By the file's ending, the one thing an earlier launch's recording still says about what kind it is.
             return UploadRecordingOrKeepItAsync(run, videoPath, ProtokitePlaytestRecordingFiles.ContentTypeFor(videoPath), session.ProtokiteApiUrl,
-                HeadersForTheSession(launchHeaders, session.FlockGameVersionId), session.PlaytestSessionId, retryPolicy, cancellationToken);
+                HeadersForTheSession(launchHeaders, session.FlockGameVersionId), session.PlaytestSessionId, retryPolicy, launchEnds, deviceLeavesWiFi);
         }
 
         /// <summary>This launch's API key with the Game Version ID the session started with, which is how Protokite finds its playtest; none when it had none.</summary>
@@ -176,54 +215,71 @@ namespace Protokite.Playtest
         }
 
         // Asks for a link only now that the file is finished, counts the recording uploaded only on the storage's own 2xx, and
-        // tries once more with a fresh link. A cancelled upload (the launch ended) keeps everything.
+        // tries once more with a fresh link. A cancelled upload (the launch ended, or the device left Wi-Fi) keeps everything.
         private static async Task<ProtokitePlaytestRecordingUploadOutcome> UploadRecordingOrKeepItAsync(ProtokitePlaytestRecordingRun run, string videoPath,
-            string contentType, string apiUrl, Dictionary<string, string> headers, string sessionId, RetryPolicy retryPolicy, CancellationToken cancellationToken)
+            string contentType, string apiUrl, Dictionary<string, string> headers, string sessionId, RetryPolicy retryPolicy, CancellationToken launchEnds,
+            CancellationToken deviceLeavesWiFi)
         {
             ProtokitePlaytestRecordingUploadOutcome outcome = new ProtokitePlaytestRecordingUploadOutcome();
             ProtokiteClient client = new ProtokiteClient(retryPolicy);
-            try
+            using (CancellationTokenSource either = CancellationTokenSource.CreateLinkedTokenSource(launchEnds, deviceLeavesWiFi))
             {
-                for (int attempt = 1; ; attempt++)
+                CancellationToken cancellationToken = either.Token;
+                try
                 {
-                    ProtokitePlaytestRecordingLink link;
-                    try
-                    {
-                        outcome.LinksAskedFor++;
-                        link = await client.RequestRecordingUploadLinkAsync(apiUrl, headers, sessionId, contentType, cancellationToken);
-                    }
-                    catch (Exception ex) when (!(ex is OperationCanceledException))
-                    {
-                        outcome.WhyNot = DescribeLinkFailure(ex);
-                        return outcome;
-                    }
-
-                    outcome.FilesSent++;
-                    FlockFileUploadOutcome sent = await FlockHttpClient.UploadFileAsync(link.UploadUrl, videoPath, contentType, cancellationToken);
-                    outcome.BytesSent = sent.BytesSent;
-                    if (sent.IsUploaded)
-                    {
-                        outcome.Uploaded = true;
-                        // Every file is tried, so the recording is never sent again once either it or its session is gone.
-                        outcome.Deleted = run.DeleteEverything();
-                        return outcome;
-                    }
-
-                    outcome.WhyNot = DescribeUploadFailure(sent);
-                    if (attempt >= MostUploadTries || !AFreshLinkCouldHelp(sent))
-                        return outcome;
-                    Debug.Log(LogPrefix + outcome.WhyNot + " Asking for a fresh link and trying once more.");
+                    return await SendRecordingAsync(client, run, videoPath, contentType, apiUrl, headers, sessionId, outcome, cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    // The launch ending wins: what it was sending is the next launch's to send.
+                    outcome.StoppedWhenTheDeviceLeftWiFi = !launchEnds.IsCancellationRequested && deviceLeavesWiFi.IsCancellationRequested;
+                    outcome.WhyNot = outcome.StoppedWhenTheDeviceLeftWiFi
+                        ? "the device left Wi-Fi, and the player chose Wi-Fi only."
+                        : "the launch ended before the upload finished.";
+                    return outcome;
+                }
+                catch (Exception ex)
+                {
+                    outcome.WhyNot = "the upload failed: " + ex.Message;
+                    return outcome;
                 }
             }
-            catch (OperationCanceledException)
+        }
+
+        private static async Task<ProtokitePlaytestRecordingUploadOutcome> SendRecordingAsync(ProtokiteClient client, ProtokitePlaytestRecordingRun run,
+            string videoPath, string contentType, string apiUrl, Dictionary<string, string> headers, string sessionId,
+            ProtokitePlaytestRecordingUploadOutcome outcome, CancellationToken cancellationToken)
+        {
+            for (int attempt = 1; ; attempt++)
             {
-                outcome.WhyNot = "the launch ended before the upload finished.";
-                return outcome;
-            }
-            catch (Exception ex)
-            {
-                outcome.WhyNot = "the upload failed: " + ex.Message;
-                return outcome;
+                cancellationToken.ThrowIfCancellationRequested();
+                ProtokitePlaytestRecordingLink link;
+                try
+                {
+                    outcome.LinksAskedFor++;
+                    link = await client.RequestRecordingUploadLinkAsync(apiUrl, headers, sessionId, contentType, cancellationToken);
+                }
+                catch (Exception ex) when (!(ex is OperationCanceledException))
+                {
+                    outcome.WhyNot = DescribeLinkFailure(ex);
+                    return outcome;
+                }
+
+                outcome.FilesSent++;
+                FlockFileUploadOutcome sent = await FlockHttpClient.UploadFileAsync(link.UploadUrl, videoPath, contentType, cancellationToken);
+                outcome.BytesSent = sent.BytesSent;
+                if (sent.IsUploaded)
+                {
+                    outcome.Uploaded = true;
+                    // Every file is tried, so the recording is never sent again once either it or its session is gone.
+                    outcome.Deleted = run.DeleteEverything();
+                    return outcome;
+                }
+
+                outcome.WhyNot = DescribeUploadFailure(sent);
+                if (attempt >= MostUploadTries || !AFreshLinkCouldHelp(sent))
+                    return outcome;
+                Debug.Log(LogPrefix + outcome.WhyNot + " Asking for a fresh link and trying once more.");
             }
         }
 
@@ -284,11 +340,10 @@ namespace Protokite.Playtest
         {
             StopUploads();
             _uploadsCancel = new CancellationTokenSource();
-            _thisLaunchsUploadStarted = false;
             _earlierUploadsStarted = false;
             _recordingContentType = null;
             ThisLaunchsUpload = null;
-            EarlierUploadsForTesting = null;
+            EarlierUploads = null;
         }
     }
 }

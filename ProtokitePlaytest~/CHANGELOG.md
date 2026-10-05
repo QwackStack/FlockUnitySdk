@@ -7,6 +7,166 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 It is released with the Flock SDK, at the Flock SDK's version.
 
 
+## [1.67.0]
+
+### Fixed
+- **An Android build no longer logs shader warnings from the package** (6 for Vulkan alone, 13 with Unity's default graphics
+  APIs, measured). Building for OpenGL ES and Vulkan, the capture's colour conversion warned of a power that could be handed a
+  negative value and of a value it could leave unset. Neither could change a recording, and the conversion now gives neither
+  reason: what it records is unchanged.
+
+### Verified
+- On a Galaxy S23 Ultra (Android 16), against the same game built without the package, in IL2CPP (64-bit) and Mono (32-bit)
+  players at 60 frames a second: recording at the default settings cost no frame rate (60.01 and 59.95 frames a second against
+  60.01), and collecting play data alone nothing measurable; the frames captured took about 1 to 3.5 ms more of the graphics
+  card's time. The package adds 7.0 MB to an IL2CPP build and 1.4 MB to a Mono one.
+- Installed from its git URL into a new Unity 6000.3 project with that project's own defaults (at 1.66.0, before this release's
+  shader change), a live playtest on the phone, answered by taps, recorded, uploaded its recording, and the recording played in
+  a browser's video player from the link Protokite gives its dashboard.
+- No shader warnings in Android builds (IL2CPP and Mono, Vulkan and OpenGL ES), and on the phone the recordings are unchanged on
+  Vulkan and OpenGL ES, a phone turned upright mid-recording included (black bars beside the picture); the Unity 6000.3 and 2021.3
+  test suites.
+
+## [1.66.0]
+
+### Added
+- **On a phone, the player chooses which networks recordings upload on.** On an Android player that records video, an answer to
+  the consent question that lets the screen be recorded is followed, on the same panel, by a second question: upload on Wi-Fi
+  only, or on Wi-Fi or mobile data (it says about how many MB a minute of play takes, at the recording's bitrate). The answer
+  holds back uploads, never the recording: a Wi-Fi only player's recordings wait on the phone and upload the next time it is on
+  Wi-Fi, in the same launch or a later one, and an upload under way stops when the phone leaves Wi-Fi and is sent again on Wi-Fi.
+  The answer is kept beside the consent answer (`ProtokitePlaytest/playtest_upload_network.json`), counts in a build that stops
+  asking, and is asked again by `AskForPlaytestConsent`. Nothing is asked on Windows, and nothing waits there.
+- `ProtokitePlaytest.PlayersUploadNetworkAnswer` and `ProtokitePlaytest.SetPlaytestUploadNetwork(choice)`, with
+  `ProtokitePlaytestUploadNetworkChoice` (`NotAnswered`, `WiFiOnly`, `WiFiAndMobileData`), for a game that asks in its own menu.
+- Each session start carries the answer in its debug facts as `playtest_upload_network` (`wifi_only`, `wifi_and_mobile_data` or
+  `not_asked`). On a phone that asks, the session starts once the question is answered, so it always carries the answer; the
+  screen is recorded meanwhile.
+
+### Changed
+- **A recording waiting to upload is never deleted for a new one while the player's answer holds uploads back** (Wi-Fi only and
+  the phone off Wi-Fi, or the question still to be answered): the new recording records into the room left in the disk budget,
+  and with less than 1 MB records nothing that launch and says why. Otherwise a Wi-Fi only player who played again on mobile data
+  would lose the last session's video once about 20 minutes of it waited (Android Recordings Disk Budget Mb 1024, with a new
+  recording making room for 810 MB). At 1024 MB, about 94 minutes of play can wait for Wi-Fi in full.
+- **Forget This Machine's Answer** in the setup window forgets the answer about upload networks too.
+- The live self-test skips its upload step, saying why, when the player chose Wi-Fi only and the device is not on Wi-Fi, and its
+  session steps while the session waits for that answer.
+
+### Fixed
+- **A recording the player took the screen back from is deleted even when its upload had failed.** Since 1.57.0, once this
+  launch's upload had ended without going (refused, or no connection), an answer that no longer lets the screen be recorded left
+  the recording and its session on disk, and the next launch uploaded it. Only an upload still under way, or one that went, is
+  left alone now.
+
+### Verified
+- On a Galaxy S23 Ultra (Android 16, IL2CPP, Vulkan, High managed stripping), with the questions answered by taps on the panel:
+  "Wi-Fi only" off Wi-Fi asked for no upload link and sent nothing, and back on Wi-Fi the recording uploaded in the same launch,
+  whole; "Wi-Fi or mobile data" uploaded off Wi-Fi; "play data only" was never followed by the question about networks; and each
+  session start carried its answer. Unity reported the phone's Wi-Fi as a local network, and no network once it was off (mobile
+  data was off on that phone, so a mobile data reading was not measured). Reading the network costs about 2 µs.
+- Unity 6000.3 and 2021.3 test suites, and every deliberate break of the new rules caught by a test (48 breaks).
+
+## [1.65.0]
+
+### Added
+- **A phone's recording follows the phone's heat, battery and free space**, with three new settings in **Video recording
+  (Android)**, each with a property of the same name on `ProtokitePlaytestSettings`; a settings asset saved by an earlier
+  version starts with these defaults:
+  - **Slow Down The Recording When The Phone Is Hot** (on): when Android says it has started to slow the phone down for heat
+    (thermal status moderate), the recording takes half its frame rate until the phone cools; when Android says it is slowing
+    the phone down enough for the player to notice (severe or above), the recording stops for the launch, and what it holds is
+    kept and uploaded as usual. Phones before Android 10 do not report their heat, record as set, and the log says so once.
+  - **Stop The Recording Below Battery Percent** (15): the recording stops for the launch, kept and uploaded as usual, when the
+    battery falls below it while the phone is not charging. 0 never stops it.
+  - **Android Recordings Disk Budget Mb** (1024): Android players' recordings are held to it in place of Recordings Disk Budget
+    Mb, and never take the phone's free space below the line where Android warns that storage is running out (500 MB, or a
+    twentieth of the storage when that is less). A fuller phone gives a recording less room, and the log says so.
+  - The phone is asked about its heat and battery every 5 seconds of play while a recording runs, and at once when one starts;
+    only what a setting uses is asked. Every change of rate, and a stop, is logged once.
+
+### Changed
+- **Going to the background writes out everything a recording holds**: the frames still on their way from the graphics card,
+  and those the encoder has not handed back, so a game Android ends while it is away keeps every frame recorded before it left
+  (measured on the earlier version: about two frames were lost). On a phone the encoder is given back to the phone while the
+  game is away, and the first frame after the return starts a new stream on a keyframe, in the same file; the time away is
+  still left out of the video, with nothing filling it. A phone whose new stream would not match the video's ends the video
+  where the game left, keeping what was recorded, and says why. The log of a finished recording says how many times the game
+  went to the background.
+- **Frames encoded before an encoding failure are written.** A recording whose encoder failed used to stop writing at once, so
+  frames already encoded and waiting for the disk were dropped; only a failed write stops the writing now.
+- A recording's start line names a budget or the phone's free space as cutting it short only when that room can stop it before its
+  length limit.
+
+### Verified
+- On a Galaxy S23 Ultra (Android 16) with Unity 6000.3 players, High managed stripping: **five minutes in the background and back**
+  (IL2CPP, Vulkan) gave one recording of 451 frames, read back by the phone's own decoder and played by Chrome at 30 s, with the
+  time away left out (longest step between frames 83 ms), the first frame after the return a keyframe and no error; waiting for the
+  frames on their way took 2.6 ms on the main thread and the encoder's hand-over 33.4 ms. The same 30 seconds away on OpenGL ES
+  (13.2 ms and 41.4 ms) and on a 32-bit Mono player passed every check. A live playtest sent to the background for five minutes
+  against a local Protokite and Flock kept one session, ended at quit, and its recording was stored as MP4 that Chrome plays at
+  its 13.7 s of play, not five minutes more.
+- **Killed 10 seconds into the background** (`am force-stop`), the file the kill left held every frame captured before the game
+  left (IL2CPP and Mono), where the earlier version lost 135 ms; the next launch finished it whole.
+- Heat, battery and free space, driven by the package's test stand-ins on the phone (ten minutes of encoding raised no heat on
+  this phone): severe heat at 8 s stopped the recording at the next question (9.8 s kept, Chrome plays it); moderate heat from 5 s
+  to 15 s halved the rate for 75 frames, then full rate again; no heat left it at 15 frames a second throughout; 10% battery not
+  charging stopped it, 10% charging did not; 50 MB free recorded no test video and said why, and with an earlier test video kept,
+  deleting it made the room. The package's own readers, called in the stripped player, read thermal status 0, the battery the
+  phone reports and the free space `df` reports.
+- The package's tests pass on Unity 2021.3 and 6000.3.
+
+## [1.64.0]
+
+### Added
+- **Android players record the game's screen**, with the phone's own hardware H.264 encoder, into the same MP4 file Windows
+  writes, uploaded as `video/mp4`. Android's media library is called from C#, so the package still ships no native file. The
+  capture is the one Windows uses: copied, scaled and converted on the graphics card, read back without waiting for it.
+  - A new **Video recording (Android)** section in **Protokite > Playtest > Settings**: **Record Video On Android** (on),
+    **Android Video Long Side** (1280), **Android Video Frames Per Second** (15), **Android Video Bitrate Kbps** (1500) and
+    **Android Allow Software Encoder** (off), with properties of the same names on `ProtokitePlaytestSettings`. A settings
+    asset saved by an earlier version starts with these defaults.
+  - The long side is the limit whichever way the phone is held, so a game held upright records upright: on a 20:9 phone,
+    1280x592 sideways and 592x1280 upright.
+  - The bitrate is held as a constant rate where the phone's encoder says it takes one (measured: 1,520 kbps against 1,500
+    asked, where the phone's default mode wrote 1,895 on a busy scene).
+  - A phone whose encoder does not take the video's size or rate records at the next size down it does (three quarters, a
+    half, three eighths of the long side), then at 15 and 10 frames a second, and the log says which.
+  - A phone with no hardware H.264 encoder that takes the capture's frames records no video and says why once; **Android
+    Allow Software Encoder** has it record with Android's software encoder on the processor instead, which costs frame rate
+    and battery. An encoder that refuses to start ends the recording, and the log gives its status.
+  - With **Record Video On Android** off as the game starts, an Android player records no video and never asks the phone for
+    its encoders; everything else in the playtest still runs. Turned on later in a launch, it takes effect from the next one.
+  - The setup window's Video check passes for an Android build target with Record Video On Android on, and says how to turn
+    it back on when it is off.
+- The settings are now grouped as **Video recording (64-bit Windows)**, **Video recording (Android)**, **Recordings (every
+  platform)** (length, size and disk budget) and **Heavy analytics**. The editor, whatever it builds for, reads the Windows
+  section, so a test video in the editor records with it.
+
+### Changed
+- **A window resized, or a phone turned, during a recording keeps its shape** inside the video's size, with black bars, where it
+  used to be stretched to fill it. The video's size is still set when the recording starts.
+
+### Verified
+- On a Galaxy S23 Ultra (Android 16), in Unity 6000.3 players built with High managed stripping: IL2CPP 64-bit on Vulkan and
+  OpenGL ES, and Mono 32-bit on Vulkan. Each recorded a 20 second test video through the phone's hardware encoder
+  (`c2.qti.avc.encoder`): 300 frames read back by the phone's own decoder, played and sought by Chrome, at 1,511 to 1,517 kbps
+  against 1,500 asked, while the game kept 60 frames a second. Held sideways it recorded 1280x592, held upright 592x1280.
+- Counter-cases on the same phone: with Record Video On Android off, the test video was refused with the setting named and the
+  phone was never asked for its encoders; with OpenGL ES 3.0 forced (no compute shaders), it was refused with that reason, said once.
+- Turned upright 8 seconds into a sideways recording, the game was recorded at its own shape in the middle of the 1280x592 video,
+  with black bars beside it, as Chrome showed 15 seconds in, on Vulkan and OpenGL ES; a Windows player whose window was made tall
+  mid-recording did the same.
+- Unity 2021.3 Android players on the same phone: every case above passed (IL2CPP on Vulkan and OpenGL ES, Mono 32-bit).
+- A live playtest on the phone, against a local Protokite and Flock: the player signed in, its session started and recorded,
+  the recording uploaded (stored as MP4 that Chrome plays), the session ended when the game quit, and its playtest event reached
+  Flock once.
+- The package's tests pass on Unity 2021.3 and 6000.3, the capture's new margins checked on the editor's own graphics card.
+- Not yet measured: other phones (a flagship's costs are a best case), and x86 Android devices (some Chromebooks and emulators).
+- On that phone, a 32-bit Mono player built with Unity 6000.3 sometimes stayed paused before its first scene until it was left and
+  reopened, with or without this package (measured: 1 of 3 and 2 of 3 cold starts reached the scene unaided); IL2CPP players always
+  started, and a 2021.3 Mono player started unaided.
+
 ## [1.63.0]
 
 ### Changed (breaking)

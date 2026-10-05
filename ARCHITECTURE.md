@@ -60,7 +60,7 @@ PackageBuilder/Tests/Editor/   EditMode tests (asmdef Flock.Tests.Editor)
 ## Runtime/Auth
 - **JwtTokenParser** / **JwtTokenClaims** — decode token + read claims (expiry, player id).
 - **TokenStoreFactory** — picks the secure store per platform at compile time.
-- **TokenStore/** — **ITokenStore** + `StoredTokens`, with **Android/Ios/Mac/Windows/WebGl/Other** secure-storage impls.
+- **TokenStore/** — **ITokenStore** + `StoredTokens`, with **Android/Ios/Mac/Windows/WebGl/Other** secure-storage impls. Android's hands bytes to and from Java as `sbyte[]` through **FlockJavaBytes** (bit for bit, so earlier files still read): Unity warns on every byte array at its Java boundary, and `FlockJavaBytesTests` fails a Java call that reads a `byte[]` back.
 
 ## Runtime/Analytics
 - **FlockSession** — tracks the current play session (start/end/ids); its live-session record is `session_state.json` in the launch's folder.
@@ -153,16 +153,33 @@ script.
   session check in `UploadThisLaunchsRecordingWhenReady`); `SaveSessionBesideRecording` never gives one a session. Earlier
   launches' uploads wait for an answer of nothing, and while nobody has answered in a build whose config is on its way or
   loaded. Tests point the file elsewhere with `ConsentFilePathForTesting` (the settings fixtures set it, asking off unless a
-  test turns it on).
+  test turns it on). The file's save, read and forget are `ProtokitePlaytestAnswerFile<TChoice>`'s, shared with the next answer.
+- **Upload networks (`ProtokitePlaytestUploadNetwork.cs`)** — the phone's second question (1.66.0): `ProtokitePlaytestUploadNetworkChoice`
+  (`NotAnswered`, `WiFiOnly`, `WiFiAndMobileData`), the inert rule `AllowsUploadOn` (Wi-Fi only uploads only on what Unity reports
+  as a local network; Unity's Android player reports a default network with the cellular transport as carrier data and any other
+  as local, read in its classes), the spellings `wifi_only` / `wifi_and_mobile_data` / `not_asked`, and
+  `ProtokitePlaytestUploadNetworkFile` (`playtest_upload_network.json` beside the consent file). Put only where a build that asks
+  records a phone's screen (`OnAndroid`, Record Video On Android) after an answer that lets the screen be recorded, and only when
+  the loaded config turns video on (`UploadNetworkAnswerIsDue`); the session start waits for it (`SessionCanStart`) and sends it
+  as `playtest_upload_network`; the recording never waits. `UploadsWaitForWiFi()` is the one gate both uploads read (the network
+  is read only for a Wi-Fi only answer, through `NetworkForTesting` in tests, the form's network check included);
+  `StopUploadsTheNetworkNoLongerAllows` cancels an upload under way when the device leaves Wi-Fi (a token of its own beside the
+  launch's), and the next frame's `Upload...WhenReady` starts again a pass whose result says it stopped for that. An answer that
+  cannot be saved holds for the launch. `RecordingsWaitForThePlayersNetwork()` (that gate closed, or the question still to come)
+  has `MakeRoom` keep every recording waiting to upload (owner, 2026-10-04).
 - **Panels (`Runtime/Panels/`)** — **ProtokitePlaytestPanel**: a full-screen UI Toolkit panel built from code (a `UIDocument`
   and a copy of `Runtime/Resources/ProtokitePlaytestPanelSettings.asset`, which holds the empty imported theme
   `ProtokitePlaytestPanelTheme.tss`: settings or a theme made in code warn and throw on Unity 2021.3, measured 1.63.0; the built-in
   font given at the root, sorting order 30000), one view at a
   time so a second question can follow, the view itself focused so no button is; it keeps the cursor free while open, notes a
   game that locks it again, gives the game's cursor back when closed (not an ended launch's), and is drawn only while playing,
-  not in batch mode, with graphics. **ProtokitePlaytestConsentQuestionView**: the words and the four buttons from one options
-  table the tests read too; a press in the first half second is ignored, and a mouse press while the game keeps the cursor
-  locked. **Forget This Machine's Answer** in the setup window (editor) forgets the saved answer. **ProtokitePlaytestFormView**: the
+  not in batch mode, with graphics. The panel's `DeliberateAnswers`, `AnswerButton` and `QuestionView` build every question:
+  a press in the first half second is ignored (`SecondsBeforeAnAnswerCounts`, read by the form too), and a mouse press while
+  the game keeps the cursor locked. **ProtokitePlaytestConsentQuestionView**: the words and the four buttons from one options
+  table the tests read too. **ProtokitePlaytestUploadNetworkQuestionView**: the phone's second question, shown in the same panel
+  after a consent answer that lets the screen be recorded (`UpdateConsentQuestion` picks the question due, so the cursor the panel
+  freed stays free between them), with the megabytes a minute at the recording's bitrate. **Forget This Machine's Answer** in the
+  setup window (editor) forgets both saved answers. **ProtokitePlaytestFormView**: the
   feedback form built from the published form (text, many-line text, a 1-5 rating and options as buttons, a checkbox recorded
   unticked when drawn, unknown kinds as text), text boxes styled in code (with no theme their input box has no size), Escape
   stopped before a text field puts back its old text, select-all on click off, problems shown once Send is tried; Send, Close
@@ -209,12 +226,27 @@ script.
   through a stand-in that keeps those rules (`StandInEventEncoder`, via `TransformForTesting`). Each frame goes in with its own time and comes out in order
   (B-frames off by low latency); output that is not an H.264 byte stream fails the recording rather than vanish, and the
   units are stored after their lengths, the first frame carrying the stream's sequence and picture settings
-  (`ProtokitePlaytestH264`, which also checks a stored frame). **ProtokitePlaytestVideoEncoders** asks Windows once a launch,
-  on a thread of its own started with the finishing pass when playtesting is on, whether this PC records (64-bit Windows,
-  Media Foundation present, a graphics card encoder or the software one allowed); a recording or test video becomes due only
-  once that answer is in or its 10 s are up, so the main thread never waits for it, and a check an earlier launch started
-  never answers a later one. It logs the first "no video" (Warning on 64-bit Windows, Log elsewhere). Only these three files
-  name Media Foundation (a test scans for it).
+  (`ProtokitePlaytestH264`, which also checks a stored frame). **ProtokitePlaytestAndroidVideoEncoder** drives Android's
+  MediaCodec through `libmediandk` from C# (`ProtokitePlaytestMediaCodec`), so Android needs no native file either. It codes
+  against `IProtokitePlaytestAndroidCodec`, so tests run it through a stand-in codec that hands back frames late, in buffers
+  of their own, past their buffer or without start codes (`ProtokitePlaytestStandInAndroidCodec`). It asks for constant
+  bitrate where the phone takes it (the default overshot a busy scene by 26%, measured), no B-frames, a keyframe every 10
+  seconds (as on Windows) and BT.709 limited range; copies NV12 at the stride and slice height the codec's input format gives; and sends the
+  stream's sequence and picture settings with the first frame, from their own buffer or the output format. A configure or
+  start the codec refuses ends the recording with the status. When the game goes to the background
+  (`HandOverEverythingAndLetGo`, an encoder interface call) it ends the stream, hands over every frame the codec held and gives
+  the codec back to the phone; the next frame makes a new one with the same settings, which must start on a keyframe with the
+  stream settings the file's header already holds, or the video ends where the game left. Windows keeps its encoder (the call
+  does nothing there). **ProtokitePlaytestVideoEncoders** asks the platform once a
+  launch, on a thread of its own started with the finishing pass when playtesting is on (and, on Android, Record Video On
+  Android is on), which encoders it has: Windows (64-bit, Media Foundation present, a graphics card encoder or the software
+  one allowed), or the phone's codec list read through Java on that thread attached to it (hardware encoders that take NV12
+  first, the software one only when allowed; each keeps its capabilities object, released at the next launch). A recording
+  or test video becomes due only once that answer is in or its 10 s are up, so the main thread never waits for it, and a
+  check an earlier launch started never answers a later one. On a phone, `FitTheEncoder` asks the chosen encoder whether it
+  takes the video's size and rate and steps down when not (the box at 8, 6, 4 and 3 eighths at the asked rate, then 15 and
+  10 frames a second), logging which. It logs the first "no video" (Warning where video is built, Log elsewhere). Only
+  these three files name Media Foundation (a test scans for it).
 - **Recording file (`Runtime/Video/`)** — `IProtokitePlaytestRecordingFile` (open, write an encoded frame, close, finish a
   file a dead run left; `BytesFor` says exactly what a frame adds, header included, for the size limit) is the seam a
   recording's frames go through, and names its own content type for the upload; **ProtokitePlaytestMp4File** writes
@@ -226,7 +258,7 @@ script.
   the WebM recordings earlier versions left (read off the file itself), and **ProtokitePlaytestRecordingFiles** picks the
   file a recording is written to and, by ending, the finisher and content type of a kept one.
   **ProtokitePlaytestFrameSchedule** decides which game frames are captured and when each is shown (the frame nearest each
-  capture time, background time left out, times always rising, a length limit).
+  capture time, background time left out, times always rising, a length limit, and `HalfTheFrameRate` for a warm phone).
 - **Video capture (`Runtime/Video/`, `Runtime/ProtokitePlaytestVideo.cs`)** — `UpdateVideo` runs at the end of every
   frame from the driver's coroutine (a batchmode editor never gets there, so its tests run in a windowed editor). It starts
   the launch's one recording when the loaded config turns video on, before sign-in; a Flock restart (config fetched again)
@@ -234,14 +266,34 @@ script.
   schedule, an encoding thread (below the game's priority) and a writing thread, each fed by a bounded queue
   (8 and 300); frames are dropped before encoding and counted, the size limit is checked where a frame is handed to be
   written, the file is written as `.part` and renamed when finished, and a failure keeps every whole frame.
+  `WriteOutEverythingHeld` (the driver's `OnApplicationPause(true)`, through `HandleGameWentToTheBackground`, for the
+  playtest's recording and a test video) waits for the frames on their way (`TakeFramesOnTheirWay`), sends them, and queues a
+  marker behind them that has the encoding thread call the encoder's `HandOverEverythingAndLetGo` and write what comes out, so
+  a game Android ends while away keeps everything recorded; the marker takes no frame's room and returns no block.
   **ProtokitePlaytestScreenFrameSource** is the one GPU class: `ScreenCapture.CaptureScreenshotIntoRenderTexture`, a blit to
   the video size, the `ProtokitePlaytestRgbaToNv12` compute shader (BT.709, limited range; in the package's `Resources`), and
   `AsyncGPUReadback` with at most 3 frames on their way, into a pool of blocks (`ProtokitePlaytestFrameBlocks`). Rows flip
-  only where textures start at the bottom (OpenGL); Linear projects convert back to sRGB before conversion. The capture
+  only where textures start at the bottom (OpenGL); Linear projects convert back to sRGB before conversion. A screen whose
+  shape no longer matches the video (a window resized, a phone turned) is scaled to its own shape in the middle, and the
+  shader writes black outside it (centred, so no row order matters); a difference under 16 pixels, the sides' rounding, fills. The capture
   is asked for the encoder's pixel layout (the Android seam); `ProtokitePlaytestVideoEncoders` and
   `ProtokitePlaytestRecordingFiles` are the only places that pick the encoder and the file. **ProtokitePlaytestVideoSettings**
-  reads the settings asset's video values in range and fits the video to the screen, each side a multiple of 16. Quitting
+  reads the settings asset's video values in range, from the Android section in an Android player (the long side as a
+  square box, so an upright game records upright) and from the Windows one everywhere else, the editor included; with
+  Record Video On Android off an Android player records nothing and never asks the phone. It fits the video to the screen,
+  each side a multiple of 16. Quitting
   stops the capture first and waits for the file within the session end's 3 seconds.
+- **The phone's limits (`Runtime/ProtokitePlaytestPhoneLimits.cs`, `Runtime/Video/ProtokitePlaytestPhoneConditions.cs`)** —
+  `UpdateVideo` first calls `KeepRecordingsWithinThePhonesLimits`: while a recording of an Android player captures, the phone is
+  asked every 5 seconds of play (and at the first frame after any recording starts, `AskThePhoneAtTheNextFrame`) only what its
+  settings use: Android's thermal status (`PowerManager.getCurrentThermalStatus` through Java, Android 10+; a phone that does not
+  say is said once a launch) and the battery (`SystemInfo`). **ProtokitePlaytestPhoneConditions** holds the inert rules
+  (`HeatStep`: moderate halves the frame rate, severe and above stop; `BatteryTooLow`: below the percentage and neither charging
+  nor full; `LowStorageLine`: 500 MB or 5% of the storage, Android's `StorageManager` defaults) and the readers, each answering "not known" outside an Android
+  player, with `...ForTesting` stand-ins the tests and the phone probes set. Every change of rate and every stop
+  (`PhoneTooHot`, `BatteryLow`) is logged once. `StartRecordingRun` reads an Android player's free space (`StatFs` through
+  Java: .NET's `DriveInfo` throws in an IL2CPP player, measured) and `MakeRoom` holds the budget to the other runs' files plus
+  the free space above the low-storage line, so a deleted run counts as freed space.
 - **Recording files on disk (`Runtime/Video/ProtokitePlaytestRecordingsFolder.cs`)** — self-contained (it does not use core's
   launch folders). **ProtokitePlaytestRecordingRun** is one recording's folder, `Recordings/Playtest/` or
   `Recordings/TestVideos/` + `<UTC time>-<8 hex>`: the video, `session.json` (session id, API URL, the session's Game
@@ -265,7 +317,7 @@ script.
   `MakeRoom` reads the new run's kind, so room for a test video deletes older test videos only, never a waiting upload.
 - **Test videos (`Runtime/ProtokitePlaytestTestVideo.cs`)** — `RecordTestVideo(seconds, out whyNot)` (public since 1.60.0, with
   `TestVideoState`, `FinishedTestVideoPath` and `TestVideoProblem`; the editor window calls it too) asks the running game for one; `UpdateVideo` starts it at the end of a frame once the finishing pass
-  is done. Its own fields (`_testVideo`, `_testVideoRun`), never the launch's recording slot, so no session is saved beside
+  is done (and is held to the phone's limits like the playtest's). Its own fields (`_testVideo`, `_testVideoRun`), never the launch's recording slot, so no session is saved beside
   it and nothing uploads it; its run is let go as soon as its file is written. The launch's recording belongs to the
   playtest: a test video is refused while the playtest records or is due to, and when the config turns video on,
   `MakeTheTestVideoGiveWay` drops one waiting and stops one recording (`PlaytestRecordingStarts`), and the playtest's starts
@@ -279,11 +331,14 @@ script.
   enveloped `upload_url`) only now, then core's `UploadFileAsync` with the file's own content type (this launch's from its
   writer, an earlier one's from its ending through `ContentTypeFor`, a test holding the two equal); uploaded only on the
   storage's 2xx; one more try with a fresh link unless S3 said `SignatureDoesNotMatch`; uploaded → `DeleteEverything`. One
-  `CancellationTokenSource` a launch, cancelled at quit, by `Stop` and on a new launch.
+  `CancellationTokenSource` a launch, cancelled at quit, by `Stop` and on a new launch, and one cancelled when the device leaves
+  Wi-Fi under a Wi-Fi only answer (the outcome's `StoppedWhenTheDeviceLeftWiFi`); both kinds wait for `UploadsWaitForWiFi()`,
+  checked every frame from `Refresh`.
 - **ProtokitePlaytestDriver** — a hidden `DontDestroyOnLoad` object started `BeforeSceneLoad` (`StartWithTheGame`) in every
   launch, playtesting on or off: with it off the status stays `TurnedOff` (no config, no session, no recording) and the
   driver only finishes and uploads what earlier launches kept, so a build with it off never strands a recording.
-  Calls `Refresh()` every frame and `Stop()` when destroyed. Feeds heavy analytics (from `Update`) and the video (at the end
+  Calls `Refresh()` every frame and `Stop()` when destroyed; `OnApplicationPause(true)` writes out what the recordings hold, and
+  coming back (pause off or focus on) leaves out the frame that carries the time away. Feeds heavy analytics (from `Update`) and the video (at the end
   of the frame) the real time since its last call, never `Time.unscaledDeltaTime`: a player reports a stall there 1 to 6
   frames late (measured), too late to leave out the frame that carries it.
 - **Heavy analytics (`Runtime/ProtokitePlaytestHeavyAnalytics.cs`, `ProtokitePlaytestPerformanceTimeline.cs`)** — measures
@@ -339,10 +394,17 @@ script.
   its own, decoded frame for frame by Windows' own reader, the keyframe interval, the software encoder only when allowed;
   every "no video" reason through a stand-in for what Windows offers; scans for Media Foundation and for any native file; a
   fake encoder held to the same contract), **ProtokitePlaytestMp4FileTests** (written files read back by a reader of their
-  own, cut off every way and finished, a real recording decoded by Windows; a fake recording file held to the same
-  contract), **ProtokitePlaytestH264Tests**, **ProtokitePlaytestWebmFinisherTests** (earlier versions' WebM, cut off and
+  own that finds each frame from its fragment's own fields, as a player does, and names a fragment that points elsewhere;
+  cut off every way and finished; a recording shaped like a phone's, with frames of thousands of bytes at uneven times and a
+  later keyframe, cut through every part of every fragment; a real recording decoded by Windows; a fake recording file held
+  to the same contract), **ProtokitePlaytestAndroidVideoEncoderTests** (the Android encoder through the stand-in codec, a new
+  codec of its own after the background, and a new stream described otherwise refused) and
+  **ProtokitePlaytestPhoneEncoderTests** (the phone encoder's choice, its reasons, the size and rate step-down),
+  **ProtokitePlaytestH264Tests**, **ProtokitePlaytestWebmFinisherTests** (earlier versions' WebM, cut off and
   finished), **ProtokitePlaytestFrameScheduleTests**, **ProtokitePlaytestVideoRecordingTests** (fake frames and a fake encoder
-  through the real file: limits, drops, failures, the bounded wait), **ProtokitePlaytestScreenFrameSourceTests** (the real
+  through the real file: limits, drops, failures, the bounded wait, what is on disk while the game is in the background),
+  **ProtokitePlaytestPhoneLimitsTests** (heat, battery and free space through the phone's stand-ins, on a test video, the
+  playtest's recording and the real driver), **ProtokitePlaytestScreenFrameSourceTests** (the real
   shader and readback on known colours), **ProtokitePlaytestVideoSettingsTests**, **ProtokitePlaytestVideoTests** (when the
   playtest records and what stops it), **ProtokitePlaytestPerformanceTimelineTests**, **ProtokitePlaytestHeavyAnalyticsTests**
   (through core's real event queue, each test in a launch folder of its own), and in PlayMode
@@ -354,7 +416,10 @@ script.
   for late replies), **ProtokitePlaytestDriverTests** (PlayMode, the real driver), **ProtokitePlaytestSetupChecksTests** (each
   check failing and passing from real settings objects, the project's own read, core's menu paths),
   **ProtokitePlaytestGameVersionLookupTests** (a fake Flock answering by name and by the ID header, held answers) and
-  **ProtokitePlaytestTestVideoTests**, and **ProtokitePlaytestSelfTestTests** (a fake Protokite that refuses for the server's
+  **ProtokitePlaytestTestVideoTests**, **ProtokitePlaytestUploadNetworkTests** (the answer's rules, spellings and file, when a
+  phone asks, and what the session start carries) with the upload and disk budget cases in **ProtokitePlaytestUploadTests**
+  (a held upload stopped by leaving Wi-Fi and sent again), **ProtokitePlaytestUploadNetworkPanelTests** (PlayMode, windowed:
+  the second question on the same panel, through its own buttons), and **ProtokitePlaytestSelfTestTests** (a fake Protokite that refuses for the server's
   reasons, reading the key, version, body and session, with each probe read back); the windowed PlayMode pass records a real test
   video. Live `[Explicit]` checks live in FlockUnityProject: `ProtokitePlaytestLiveConfigTests`, and
   `ProtokitePlaytestLiveSelfTest` (PlayMode, windowed), which `Libraries/Unity/playtest-self-test/run_p15_live.py` runs and

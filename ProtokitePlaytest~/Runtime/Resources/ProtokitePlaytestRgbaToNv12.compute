@@ -10,19 +10,32 @@ uint Width;
 uint Height;
 uint FlipVertically;
 uint SourceIsLinear;
+// Where the picture lies in the video, top first, right and bottom outside it; black around it when the screen's shape changed.
+uint PictureLeft;
+uint PictureTop;
+uint PictureRight;
+uint PictureBottom;
 
 float3 LinearToSrgb(float3 c)
 {
-    return c <= 0.0031308 ? c * 12.92 : 1.055 * pow(c, 1.0 / 2.4) - 0.055;
+    // Used only above the straight part of the curve, where abs changes nothing and keeps compilers from warning of negatives.
+    return c <= 0.0031308 ? c * 12.92 : 1.055 * pow(abs(c), 1.0 / 2.4) - 0.055;
 }
 
 // Whether the source's first row is the top of the picture depends on the graphics API; the video's first row is the top.
+// The source is read only inside the picture, and black is left around it; one return, since an early one makes the Vulkan and
+// OpenGL ES compilers warn of an unset value.
 float3 Pixel(uint x, uint y)
 {
-    uint row = FlipVertically != 0 ? Height - 1 - y : y;
-    // A linear-colour project reads its sRGB texture back as linear values; a gamma project reads the stored values as they are.
-    float3 c = Source.Load(int3(x, row, 0)).rgb;
-    return saturate(SourceIsLinear != 0 ? LinearToSrgb(c) : c);
+    float3 picture = float3(0, 0, 0);
+    if (x >= PictureLeft && x < PictureRight && y >= PictureTop && y < PictureBottom)
+    {
+        uint row = FlipVertically != 0 ? Height - 1 - y : y;
+        // A linear-colour project reads its sRGB texture back as linear values; a gamma project reads the stored values as they are.
+        float3 c = Source.Load(int3(x, row, 0)).rgb;
+        picture = saturate(SourceIsLinear != 0 ? LinearToSrgb(c) : c);
+    }
+    return picture;
 }
 
 uint Luma(float3 c) { return (uint)round(16.0 + 46.559 * c.r + 156.629 * c.g + 15.812 * c.b); }

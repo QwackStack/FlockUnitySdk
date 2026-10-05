@@ -146,9 +146,10 @@ namespace Protokite.Playtest.Editor
         {
             EditorGUILayout.LabelField("While testing", EditorStyles.boldLabel);
 
-            EditorGUILayout.LabelField("This machine's answer to the consent question: " + ObjectNames.NicifyVariableName(ProtokitePlaytest.PlayersConsentAnswer.ToString()) + ".",
+            EditorGUILayout.LabelField("This machine's answer to the consent question: " + ObjectNames.NicifyVariableName(ProtokitePlaytest.PlayersConsentAnswer.ToString()) +
+                ". To the question about upload networks, asked on a phone: " + UploadNetworkAnswerAsRead(ProtokitePlaytest.PlayersUploadNetworkAnswer) + ".",
                 EditorStyles.wordWrappedMiniLabel);
-            if (GUILayout.Button(new GUIContent("Forget This Machine's Answer", "The answer is kept on this machine and counts in every later Play; forgetting it makes the next Play ask again.")))
+            if (GUILayout.Button(new GUIContent("Forget This Machine's Answer", "Both answers are kept on this machine and count in every later Play; forgetting them makes the next Play ask again.")))
             {
                 ProtokitePlaytestSettingsMenu.ForgetThePlayersConsentAnswer();
                 GUIUtility.ExitGUI();
@@ -168,6 +169,16 @@ namespace Protokite.Playtest.Editor
         }
 
         /// <summary>The line under Open Feedback Form, saying when it can open.</summary>
+        internal static string UploadNetworkAnswerAsRead(ProtokitePlaytestUploadNetworkChoice answer)
+        {
+            switch (answer)
+            {
+                case ProtokitePlaytestUploadNetworkChoice.WiFiOnly: return "Wi-Fi only";
+                case ProtokitePlaytestUploadNetworkChoice.WiFiAndMobileData: return "Wi-Fi and mobile data";
+                default: return "Not answered";
+            }
+        }
+
         internal static string FeedbackFormNote(bool playing, bool canOpen, bool isOpen, bool consentQuestionOpen)
         {
             if (!playing)

@@ -1,5 +1,5 @@
 using System;
-using UnityEngine;
+using System.Collections.Generic;
 using UnityEngine.UIElements;
 
 namespace Protokite.Playtest
@@ -31,12 +31,6 @@ namespace Protokite.Playtest
 
         internal const string Footnote = "Your answer is kept on this device and used every time you play.";
 
-        /// <summary>
-        /// A press this soon after the question appears is ignored: a player still clicking at the game (firing, say) would
-        /// otherwise answer a question they never read, with whichever button sits under a centred cursor.
-        /// </summary>
-        internal const float SecondsBeforeAnAnswerCounts = 0.5f;
-
         /// <summary>The four answers in the order offered: everything, each half on its own, then nothing. Read by the buttons and the tests alike.</summary>
         internal static readonly Option[] Options =
         {
@@ -59,69 +53,14 @@ namespace Protokite.Playtest
         /// </summary>
         internal static VisualElement Build(Action<ProtokitePlaytestConsentChoice> chosen, Func<bool> theGameKeepsTheCursorLocked, Action pressIgnoredForALockedCursor)
         {
-            double shownAt = Time.realtimeSinceStartupAsDouble;
-            Action<ProtokitePlaytestConsentChoice, EventBase> deliberate = (choice, press) =>
-            {
-                if (Time.realtimeSinceStartupAsDouble - shownAt < SecondsBeforeAnAnswerCounts)
-                    return;
-                if ((press is IPointerEvent || press is IMouseEvent) && theGameKeepsTheCursorLocked())
-                {
-                    pressIgnoredForALockedCursor();
-                    return;
-                }
-                chosen(choice);
-            };
-            VisualElement view = new VisualElement { name = "protokite-consent-question" };
-            view.Add(ProtokitePlaytestPanel.Text(Heading, 22, ProtokitePlaytestPanel.TextColour, bold: true));
-
-            Label introduction = ProtokitePlaytestPanel.Text(Introduction, 13, ProtokitePlaytestPanel.HelpColour);
-            introduction.style.marginTop = 8;
-            introduction.style.marginBottom = 18;
-            view.Add(introduction);
-
+            Action<ProtokitePlaytestConsentChoice, EventBase> deliberate = ProtokitePlaytestPanel.DeliberateAnswers(chosen, theGameKeepsTheCursorLocked, pressIgnoredForALockedCursor);
+            List<Button> answers = new List<Button>();
             foreach (Option option in Options)
-                view.Add(BuildOption(option, deliberate));
-
-            Label footnote = ProtokitePlaytestPanel.Text(Footnote, 12, ProtokitePlaytestPanel.HelpColour);
-            footnote.style.marginTop = 6;
-            view.Add(footnote);
-            return view;
-        }
-
-        private static Button BuildOption(Option option, Action<ProtokitePlaytestConsentChoice, EventBase> chosen)
-        {
-            ProtokitePlaytestConsentChoice choice = option.Choice;
-            Button button = new Button { name = ButtonName(choice), text = "" };
-            // With the press that made it, so a mouse press is told from a key or pad press.
-            button.clickable.clickedWithEventInfo += press => chosen(choice, press);
-            button.style.flexDirection = FlexDirection.Column;
-            button.style.alignItems = Align.Stretch;
-            button.style.marginLeft = 0;
-            button.style.marginRight = 0;
-            button.style.marginTop = 0;
-            button.style.marginBottom = 10;
-            button.style.paddingLeft = 14;
-            button.style.paddingRight = 14;
-            button.style.paddingTop = 11;
-            button.style.paddingBottom = 11;
-            button.style.backgroundColor = ProtokitePlaytestPanel.OptionColour;
-            ProtokitePlaytestPanel.SetBorder(button.style, 1, ProtokitePlaytestPanel.OptionBorderColour);
-            ProtokitePlaytestPanel.SetRadius(button.style, 6);
-
-            Label title = ProtokitePlaytestPanel.Text(option.Title, 15, ProtokitePlaytestPanel.TextColour, bold: true);
-            title.pickingMode = PickingMode.Ignore;
-            Label explanation = ProtokitePlaytestPanel.Text(option.Explanation, 12, ProtokitePlaytestPanel.HelpColour);
-            explanation.pickingMode = PickingMode.Ignore;
-            explanation.style.marginTop = 3;
-            button.Add(title);
-            button.Add(explanation);
-
-            // No theme gives hover or focus a look, so the button gives itself one.
-            button.RegisterCallback<PointerEnterEvent>(_ => button.style.backgroundColor = ProtokitePlaytestPanel.OptionHighlightColour);
-            button.RegisterCallback<PointerLeaveEvent>(_ => button.style.backgroundColor = ProtokitePlaytestPanel.OptionColour);
-            button.RegisterCallback<FocusInEvent>(_ => ProtokitePlaytestPanel.SetBorder(button.style, 2, ProtokitePlaytestPanel.OptionFocusBorderColour));
-            button.RegisterCallback<FocusOutEvent>(_ => ProtokitePlaytestPanel.SetBorder(button.style, 1, ProtokitePlaytestPanel.OptionBorderColour));
-            return button;
+            {
+                ProtokitePlaytestConsentChoice choice = option.Choice;
+                answers.Add(ProtokitePlaytestPanel.AnswerButton(ButtonName(choice), option.Title, option.Explanation, press => deliberate(choice, press)));
+            }
+            return ProtokitePlaytestPanel.QuestionView("protokite-consent-question", Heading, Introduction, answers, Footnote);
         }
     }
 }

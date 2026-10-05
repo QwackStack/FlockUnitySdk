@@ -119,7 +119,7 @@ namespace Protokite.Playtest.Tests
         // A player reads before answering: a press in the question's first moment is ignored.
         private static IEnumerator ReadTheQuestion()
         {
-            DateTime until = DateTime.UtcNow.AddSeconds(ProtokitePlaytestConsentQuestionView.SecondsBeforeAnAnswerCounts + 0.2);
+            DateTime until = DateTime.UtcNow.AddSeconds(ProtokitePlaytestPanel.SecondsBeforeAnAnswerCounts + 0.2);
             while (DateTime.UtcNow < until)
                 yield return null;
         }

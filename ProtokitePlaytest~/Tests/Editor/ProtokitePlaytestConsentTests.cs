@@ -301,15 +301,18 @@ namespace Protokite.Playtest.Tests
         }
 
         [Test]
-        public void TheEditorsAskThePlayerAgainForgetsTheSavedAnswer()
+        public void TheEditorsAskThePlayerAgainForgetsTheSavedAnswers()
         {
             Assert.IsTrue(new ProtokitePlaytestConsentFile(_settings.ConsentFilePath).Save(ProtokitePlaytestConsentChoice.Nothing));
-            LogAssert.Expect(LogType.Log, new Regex("is forgotten; the question is put again"));
+            Assert.IsTrue(new ProtokitePlaytestUploadNetworkFile(_settings.UploadNetworkFilePath).Save(ProtokitePlaytestUploadNetworkChoice.WiFiOnly));
+            LogAssert.Expect(LogType.Log, new Regex("The answers this machine gave the playtest's questions are forgotten; the questions are put again"));
 
             Protokite.Playtest.Editor.ProtokitePlaytestSettingsMenu.ForgetThePlayersConsentAnswer();
 
             Assert.IsFalse(File.Exists(_settings.ConsentFilePath), "So a developer sees the question again on the next Play");
+            Assert.IsFalse(File.Exists(_settings.UploadNetworkFilePath), "And the question about upload networks after it, on a phone");
             Assert.AreEqual(ProtokitePlaytestConsentChoice.NotAnswered, ProtokitePlaytest.PlaytestConsent);
+            Assert.AreEqual(ProtokitePlaytestUploadNetworkChoice.NotAnswered, ProtokitePlaytest.PlayersUploadNetworkAnswer);
         }
 
         [Test]

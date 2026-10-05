@@ -21,7 +21,7 @@ namespace Protokite.Playtest
         [SerializeField] private string protokiteApiUrl = DefaultProtokiteApiUrl;
 
         [Header("Player consent")]
-        [Tooltip("On by default: the player is asked what this playtest may collect (the screen, play data, both or nothing), and nothing is collected until they answer. The answer is kept on their machine for later launches. Turn it off only where players were asked another way, or for a test run with nobody to answer; everything the playtest turns on is then collected, and each session says nobody was asked.")]
+        [Tooltip("On by default: the player is asked what this playtest may collect (the screen, play data, both or nothing), and nothing is collected until they answer; on a phone that records, an answer that lets the screen be recorded is followed by which networks recordings may upload on (Wi-Fi only, or Wi-Fi and mobile data). The answers are kept on their machine for later launches. Turn it off only where players were asked another way, or for a test run with nobody to answer; everything the playtest turns on is then collected, and each session says nobody was asked.")]
         [SerializeField] private bool askThePlayerForPlaytestConsent = true;
 
         [Header("Feedback form")]
@@ -47,15 +47,42 @@ namespace Protokite.Playtest
         [Tooltip("Off by default: video is encoded on the graphics card's own video engine, and a PC whose graphics card has none records no video. On: such a PC records with Windows' own encoder on the processor instead, which costs the game frame rate.")]
         [SerializeField] private bool allowSoftwareEncoder;
 
+        [Header("Video recording (Android)")]
+        [Tooltip("On by default: Android players record the screen when the playtest's config turns video on and the player agrees. Off: Android players record no video and never ask the phone for its encoders; everything else in the playtest still runs. Read as the game starts: turned on later in a launch, it takes effect from the next one.")]
+        [SerializeField] private bool recordVideoOnAndroid = true;
+
+        [Tooltip("The longer side of the video, in pixels, whichever way the phone is held: on a 20:9 phone, 1280 records a game held sideways at 1280x592 and one held upright at 592x1280. A smaller screen is not enlarged, and each side is rounded down to a multiple of 16. A phone whose encoder does not take the size records at the next size down it does, and says so.")]
+        [SerializeField, Range(320, 1920)] private int androidVideoLongSide = 1280;
+
+        [Tooltip("Frames recorded each second of play. 30 doubles the phone's encoding work and the frames the capture copies from the screen.")]
+        [SerializeField, Range(1, 30)] private int androidVideoFramesPerSecond = 15;
+
+        [Tooltip("The video's bitrate, in kilobits a second.")]
+        [SerializeField, Range(100, 20000)] private int androidVideoBitrateKbps = 1500;
+
+        [Tooltip("Off by default: video is encoded by the phone's hardware encoder, and a phone without one records no video. On: such a phone records with Android's software encoder on the processor instead, which costs the game frame rate and battery.")]
+        [SerializeField] private bool androidAllowSoftwareEncoder;
+
+        [Tooltip("On by default: when Android says the phone has started to slow itself down for heat (thermal status moderate), video is recorded at half its frame rate until the phone cools; when Android says it is slowing the phone down enough for the player to notice (severe or above), the recording stops for the launch and what it holds is kept and uploaded as usual. Phones before Android 10 do not report their heat, and record as set.")]
+        [SerializeField] private bool slowDownTheRecordingWhenThePhoneIsHot = true;
+
+        [Tooltip("The recording stops for the launch, and what it holds is kept and uploaded as usual, when the phone's battery falls below this percentage while it is not charging. 0: never.")]
+        [SerializeField, Range(0, 100)] private int stopTheRecordingBelowBatteryPercent = 15;
+
+        [Tooltip("The most every recording kept on the phone may take together, in megabytes, in place of Recordings Disk Budget Mb. Recordings never take the phone's free space below the line where Android warns that storage is running out (500 MB, or a twentieth of the storage when that is less), so a fuller phone gives them less.")]
+        [SerializeField, Min(1)] private int androidRecordingsDiskBudgetMb = 1024;
+
+        [Header("Recordings (every platform)")]
         [Tooltip("A recording stops for good after this many minutes of play.")]
         [SerializeField, Min(0.1f)] private float maxRecordingMinutes = 60f;
 
         [Tooltip("A recording stops for good before its file passes this many megabytes.")]
         [SerializeField, Min(1)] private int maxRecordingSizeMb = 1536;
 
-        [Tooltip("The most every recording kept on this machine may take together, in megabytes. To make room for a new recording, those whose game has closed are deleted, the oldest first.")]
+        [Tooltip("The most every recording kept on this machine may take together, in megabytes (on Android, Android Recordings Disk Budget Mb instead). To make room for a new recording, those whose game has closed are deleted, the oldest first.")]
         [SerializeField, Min(1)] private int recordingsDiskBudgetMb = 4096;
 
+        [Header("Heavy analytics")]
         [Tooltip("With heavy analytics on, a frame that takes this many milliseconds or longer is counted as a hitch.")]
         [SerializeField, Min(1f)] private float hitchFrameTimeMs = 60f;
 
@@ -100,6 +127,30 @@ namespace Protokite.Playtest
 
         /// <summary>Whether a PC whose graphics card has no video encoder records with Windows' software encoder, at a cost to the game's frame rate.</summary>
         public bool AllowSoftwareEncoder { get => allowSoftwareEncoder; set => allowSoftwareEncoder = value; }
+
+        /// <summary>Whether Android players record video at all; off, the phone is never asked for its encoders.</summary>
+        public bool RecordVideoOnAndroid { get => recordVideoOnAndroid; set => recordVideoOnAndroid = value; }
+
+        /// <summary>The longer side of an Android player's video, in pixels, whichever way the phone is held.</summary>
+        public int AndroidVideoLongSide { get => androidVideoLongSide; set => androidVideoLongSide = value; }
+
+        /// <summary>Frames an Android player records each second of play.</summary>
+        public int AndroidVideoFramesPerSecond { get => androidVideoFramesPerSecond; set => androidVideoFramesPerSecond = value; }
+
+        /// <summary>An Android player's video bitrate, in kilobits a second.</summary>
+        public int AndroidVideoBitrateKbps { get => androidVideoBitrateKbps; set => androidVideoBitrateKbps = value; }
+
+        /// <summary>Whether a phone with no hardware video encoder records with Android's software encoder, at a cost to frame rate and battery.</summary>
+        public bool AndroidAllowSoftwareEncoder { get => androidAllowSoftwareEncoder; set => androidAllowSoftwareEncoder = value; }
+
+        /// <summary>Whether an Android player's recording takes half its frame rate while the phone is warm, and stops for the launch when it is too hot.</summary>
+        public bool SlowDownTheRecordingWhenThePhoneIsHot { get => slowDownTheRecordingWhenThePhoneIsHot; set => slowDownTheRecordingWhenThePhoneIsHot = value; }
+
+        /// <summary>The battery percentage below which an Android player's recording stops for the launch while the phone is not charging; 0 never stops it.</summary>
+        public int StopTheRecordingBelowBatteryPercent { get => stopTheRecordingBelowBatteryPercent; set => stopTheRecordingBelowBatteryPercent = value; }
+
+        /// <summary>The most every recording kept on a phone may take together, in megabytes; the phone's free space can make it less.</summary>
+        public int AndroidRecordingsDiskBudgetMb { get => androidRecordingsDiskBudgetMb; set => androidRecordingsDiskBudgetMb = value; }
 
         /// <summary>Minutes of play after which a recording stops for good.</summary>
         public float MaxRecordingMinutes { get => maxRecordingMinutes; set => maxRecordingMinutes = value; }

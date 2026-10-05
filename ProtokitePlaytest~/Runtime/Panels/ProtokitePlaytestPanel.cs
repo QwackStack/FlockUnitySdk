@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.UIElements;
@@ -149,6 +150,90 @@ namespace Protokite.Playtest
                 return;
             Cursor.lockState = _cursorLockBefore;
             Cursor.visible = _cursorVisibleBefore;
+        }
+
+        /// <summary>
+        /// A press this soon after a question appears is ignored: a player still clicking at the game (firing, say), or clicking twice on
+        /// the question before, would otherwise answer one they never read, with whichever button sits under the cursor.
+        /// </summary>
+        internal const float SecondsBeforeAnAnswerCounts = 0.5f;
+
+        /// <summary>
+        /// Hands <paramref name="chosen"/> only a deliberate answer: none in the question's first half second, and no mouse press while
+        /// <paramref name="theGameKeepsTheCursorLocked"/> says so (it lands at the centre, not where the player aimed), which
+        /// <paramref name="pressIgnoredForALockedCursor"/> is told of. Made as the question is shown.
+        /// </summary>
+        internal static System.Action<TChoice, EventBase> DeliberateAnswers<TChoice>(System.Action<TChoice> chosen, System.Func<bool> theGameKeepsTheCursorLocked,
+            System.Action pressIgnoredForALockedCursor)
+        {
+            double shownAt = Time.realtimeSinceStartupAsDouble;
+            return (choice, press) =>
+            {
+                if (Time.realtimeSinceStartupAsDouble - shownAt < SecondsBeforeAnAnswerCounts)
+                    return;
+                if ((press is IPointerEvent || press is IMouseEvent) && theGameKeepsTheCursorLocked())
+                {
+                    pressIgnoredForALockedCursor();
+                    return;
+                }
+                chosen(choice);
+            };
+        }
+
+        /// <summary>A question's heading and introduction, its answers, and a footnote, as one view.</summary>
+        internal static VisualElement QuestionView(string name, string heading, string introduction, IEnumerable<Button> answers, string footnote)
+        {
+            VisualElement view = new VisualElement { name = name };
+            view.Add(Text(heading, 22, TextColour, bold: true));
+
+            Label introductionLabel = Text(introduction, 13, HelpColour);
+            introductionLabel.style.marginTop = 8;
+            introductionLabel.style.marginBottom = 18;
+            view.Add(introductionLabel);
+
+            foreach (Button answer in answers)
+                view.Add(answer);
+
+            Label footnoteLabel = Text(footnote, 12, HelpColour);
+            footnoteLabel.style.marginTop = 6;
+            view.Add(footnoteLabel);
+            return view;
+        }
+
+        /// <summary>An answer as a button, found by its name: its title over its explanation, with a look of its own for hover and focus.</summary>
+        internal static Button AnswerButton(string name, string title, string explanation, System.Action<EventBase> pressed)
+        {
+            Button button = new Button { name = name, text = "" };
+            // With the press that made it, so a mouse press is told from a key or pad press.
+            button.clickable.clickedWithEventInfo += pressed;
+            button.style.flexDirection = FlexDirection.Column;
+            button.style.alignItems = Align.Stretch;
+            button.style.marginLeft = 0;
+            button.style.marginRight = 0;
+            button.style.marginTop = 0;
+            button.style.marginBottom = 10;
+            button.style.paddingLeft = 14;
+            button.style.paddingRight = 14;
+            button.style.paddingTop = 11;
+            button.style.paddingBottom = 11;
+            button.style.backgroundColor = OptionColour;
+            SetBorder(button.style, 1, OptionBorderColour);
+            SetRadius(button.style, 6);
+
+            Label titleLabel = Text(title, 15, TextColour, bold: true);
+            titleLabel.pickingMode = PickingMode.Ignore;
+            Label explanationLabel = Text(explanation, 12, HelpColour);
+            explanationLabel.pickingMode = PickingMode.Ignore;
+            explanationLabel.style.marginTop = 3;
+            button.Add(titleLabel);
+            button.Add(explanationLabel);
+
+            // No theme gives hover or focus a look, so the button gives itself one.
+            button.RegisterCallback<PointerEnterEvent>(_ => button.style.backgroundColor = OptionHighlightColour);
+            button.RegisterCallback<PointerLeaveEvent>(_ => button.style.backgroundColor = OptionColour);
+            button.RegisterCallback<FocusInEvent>(_ => SetBorder(button.style, 2, OptionFocusBorderColour));
+            button.RegisterCallback<FocusOutEvent>(_ => SetBorder(button.style, 1, OptionBorderColour));
+            return button;
         }
 
         internal static Label Text(string text, int size, Color colour, bool bold = false)

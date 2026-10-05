@@ -317,6 +317,7 @@ namespace Protokite.Playtest.Tests
 
             public void ReturnBlock(byte[] pixels) { }
             public void Stop(System.Collections.Generic.List<ProtokitePlaytestCapturedFrame> frames) => TakeCapturedFrames(frames);
+            public void TakeFramesOnTheirWay(System.Collections.Generic.List<ProtokitePlaytestCapturedFrame> frames) => TakeCapturedFrames(frames);
             public void Dispose() { }
         }
     }

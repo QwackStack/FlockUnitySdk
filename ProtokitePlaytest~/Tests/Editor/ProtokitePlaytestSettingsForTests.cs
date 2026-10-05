@@ -6,7 +6,7 @@ using UnityEditor;
 
 namespace Protokite.Playtest.Tests
 {
-    /// <summary>Sets the project's playtest settings to a test's values, with a consent file of the test's own, and puts them back when disposed, saving nothing.</summary>
+    /// <summary>Sets the project's playtest settings to a test's values, with answer files of the test's own, and puts them back when disposed, saving nothing.</summary>
     internal sealed class ProtokitePlaytestSettingsForTests : IDisposable
     {
         public const string ProtokiteApiUrl = "http://protokite.test/";
@@ -22,6 +22,9 @@ namespace Protokite.Playtest.Tests
 
         /// <summary>The file this test's consent answer is kept in.</summary>
         public string ConsentFilePath { get; }
+
+        /// <summary>The file this test's answer about upload networks is kept in, beside the consent answer's.</summary>
+        public string UploadNetworkFilePath { get; }
 
         public ProtokitePlaytestSettingsForTests(bool playtestingEnabled = true, string protokiteApiUrl = ProtokiteApiUrl, bool askThePlayerForPlaytestConsent = false)
         {
@@ -41,12 +44,15 @@ namespace Protokite.Playtest.Tests
             _consentFolder = Path.Combine(Path.GetTempPath(), "protokite_consent_" + Guid.NewGuid().ToString("N"));
             ConsentFilePath = Path.Combine(_consentFolder, "playtest_consent.json");
             ProtokitePlaytest.ConsentFilePathForTesting = ConsentFilePath;
+            UploadNetworkFilePath = Path.Combine(_consentFolder, "playtest_upload_network.json");
+            ProtokitePlaytest.UploadNetworkFilePathForTesting = UploadNetworkFilePath;
         }
 
         // Nothing is saved: a save writes every unsaved asset in the project, a developer's edits included.
         public void Dispose()
         {
             ProtokitePlaytest.ConsentFilePathForTesting = null;
+            ProtokitePlaytest.UploadNetworkFilePathForTesting = null;
             try
             {
                 if (Directory.Exists(_consentFolder))

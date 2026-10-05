@@ -53,6 +53,24 @@ namespace Protokite.Playtest.Tests
         }
 
         [Test]
+        public void HalfTheFrameRateCapturesHalfAsOftenAndGoesBack()
+        {
+            ProtokitePlaytestFrameSchedule schedule = new ProtokitePlaytestFrameSchedule(15, 3600);
+            Assert.AreEqual(15, Captured(schedule, Repeated(1.0 / 60.0, 60)).Count, "Precondition: 15 a second");
+
+            schedule.HalfTheFrameRate = true;
+            List<KeyValuePair<int, long>> halved = Captured(schedule, Repeated(1.0 / 60.0, 120));
+            Assert.AreEqual(15, halved.Count, "Two seconds at half the rate give 15 frames");
+            for (int i = 1; i < halved.Count; i++)
+                Assert.AreEqual(133, halved[i].Value - halved[i - 1].Value, 1, "Each shown two frame times after the one before");
+
+            schedule.HalfTheFrameRate = false;
+            List<KeyValuePair<int, long>> back = Captured(schedule, Repeated(1.0 / 60.0, 60));
+            Assert.AreEqual(15, back.Count, 1, "Back to 15 a second");
+            Assert.AreEqual(4.0, schedule.RecordedSeconds, 1e-9, "Every second of play is recorded at either rate");
+        }
+
+        [Test]
         public void LeavesOutTheFrameAfterTheBackground()
         {
             ProtokitePlaytestFrameSchedule schedule = new ProtokitePlaytestFrameSchedule(30, 3600);

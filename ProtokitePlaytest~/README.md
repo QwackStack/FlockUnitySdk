@@ -4,7 +4,7 @@ Playtesting for games built with the Flock SDK: each play session, gameplay reco
 reported to your Protokite playtest.
 
 It asks the player what the playtest may collect, runs one Protokite session per launch, records the game's screen on 64-bit
-Windows and uploads it to that session, sends performance and scene events through the Flock SDK, and shows your playtest's
+Windows and Android and uploads it to that session, sends performance and scene events through the Flock SDK, and shows your playtest's
 feedback form. In the editor it checks your setup, records test videos and runs a live self-test. A sample shows every call a
 game can make.
 
@@ -51,7 +51,7 @@ the place to change it:
 | Playtesting | the playtest settings exist and **Playtesting Enabled** is on |
 | Protokite API URL | it is an http or https address with a host and no spaces, by the same rule the game uses |
 | Game Version | Flock's **Game Version** is a playtest's name, `pt-<test id>`, resolved to the ID a build sends |
-| Video | the build target is 64-bit Windows, x64 |
+| Video | the build target is 64-bit Windows, x64, or Android with **Record Video On Android** on |
 
 - **Set Game Version by its name, never by pasting an ID.** Protokite's test page shows the playtest version's ID, but Flock
   resolves Game Version by name: an ID pasted into Game Version resolves to nothing, so a build keeps sending the ID resolved
@@ -61,10 +61,12 @@ the place to change it:
   offered.
 - The Game Version is checked with Flock when the window opens and when the Flock settings change; **Check Again** asks again.
   When Flock cannot be asked, the check goes by what the settings hold and says so.
-- Under **While testing**, **Forget This Machine's Answer** makes the next Play ask the consent question again, and in Play Mode
+- Under **While testing**, **Forget This Machine's Answer** makes the next Play ask the consent question again (and, on a phone,
+  the question about upload networks after it), and in Play Mode
   **Open Feedback Form** opens the form the way its key does.
 - The Video check reads the active build target: players built for another platform, or for 32-bit or ARM64 Windows, record
-  no video, and everything else in the playtest still runs there.
+  no video, and everything else in the playtest still runs there. An Android build records with the phone's own hardware
+  encoder; the check cannot see the phones your players use, so a test video on a phone shows whether it records there.
 - Game Version is read from the `FlockConfig` asset in a Resources folder, where the Flock SDK's own start-up reads it.
 
 ## Is it running?
@@ -115,7 +117,7 @@ debug facts as `playtest_consent` (`video_and_play_data`, `video_only`, `play_da
 
 | Setting | Default | |
 |---|---|---|
-| Ask The Player For Playtest Consent | on | Put the question, and collect nothing until it is answered. Turn it off only where players were asked another way, or for a test run with nobody to answer; everything the playtest turns on is then collected, and each session says nobody was asked |
+| Ask The Player For Playtest Consent | on | Put the question, and collect nothing until it is answered; on a phone that records, the question about upload networks follows (below). Turn it off only where players were asked another way, or for a test run with nobody to answer; everything the playtest turns on is then collected, and each session says nobody was asked |
 
 ```csharp
 ProtokitePlaytest.PlaytestConsent                 // the answer in force
@@ -135,6 +137,31 @@ ProtokitePlaytest.IsConsentQuestionOpen
   answer with `SetPlaytestConsent`, or turn asking off.
 - In the editor, **Forget This Machine's Answer** in **Protokite > Playtest > Setup Checks And Test Video** forgets the answer,
   so the next Play asks again.
+
+### On a phone: which networks recordings upload on
+
+On an Android player that records video (**Record Video On Android** on, and the playtest turns video on), an answer that lets
+the screen be recorded is followed, on the same panel, by a second question: upload recordings **on Wi-Fi only**, or **on
+Wi-Fi or mobile data**. The second answer says what uploading on mobile data costs at the recording's own bitrate (about 11 MB
+for each minute played at the default 1500 kbps). The answer decides only when recordings upload, never whether the screen is
+recorded: a Wi-Fi only player's recordings wait on the phone and upload the next time it is on Wi-Fi, in the same launch or a
+later one. Unity reports any network that is not the phone's mobile data (Wi-Fi, Ethernet, tethering) as a local one, and that
+counts as Wi-Fi. An upload under way stops when the phone leaves Wi-Fi, and its recording is kept and sent again, from the
+start, on Wi-Fi.
+
+The answer is kept beside the consent answer, in `ProtokitePlaytest/playtest_upload_network.json`, and like it counts in a build
+that stops asking. The Protokite session waits for it, so each session start carries it in its debug facts as
+`playtest_upload_network`: `wifi_only`, `wifi_and_mobile_data`, or `not_asked` when no answer is saved (a desktop, a build that
+asks nobody, or an answer that records nothing, unless the player answered in an earlier launch). The screen is recorded
+meanwhile; a game closed while the question is open has no session for what it recorded, so the next launch deletes it. A phone
+that has already said it can record no video is not asked. Recordings earlier launches kept wait while the question may
+still be put. Asking the consent question again (`AskForPlaytestConsent`) puts this one again after an answer that lets the
+screen be recorded. Nothing is asked on Windows, and nothing waits there.
+
+```csharp
+ProtokitePlaytest.PlayersUploadNetworkAnswer         // WiFiOnly, WiFiAndMobileData, or NotAnswered (uploads on any network)
+ProtokitePlaytest.SetPlaytestUploadNetwork(choice)   // your own menu answers it; NotAnswered asks again on a phone
+```
 
 ## What the playtest turns on
 
@@ -261,11 +288,15 @@ install it there.
 ## Video
 
 When the playtest's config turns **video_recording** on, the game's screen is recorded from the moment the config loads,
-before anyone signs in: one recording a launch, encoded as H.264 by the graphics card's own video encoder and written as it
+before anyone signs in: one recording a launch, encoded as H.264 by the graphics card's (or the phone's) own video encoder and written as it
 records as an MP4 file a browser plays with nothing installed. Each frame is written whole as it comes, so a recording cut
 off by a crash keeps every frame before the cut. It stops for good at the length or size limit, or when the game quits;
 quitting waits for the file within the same 3 seconds as the session end, and a file not finished by then stays as its
-`.part` file, which the next launch finishes. Time the game spends in the background is left out.
+`.part` file, which the next launch finishes. Time the game spends in the background is left out, and nothing fills it: the
+video goes on from the moment the player left. As the game goes to the background, everything the recording holds (frames on
+their way from the graphics card, and those the encoder has not handed back) is written to its file, so a game Android ends
+while it is away keeps every frame recorded before. On a phone the encoder is given back to the phone meanwhile, and the first
+frame after the return starts a new stream on a keyframe in the same file.
 
 ```csharp
 ProtokitePlaytest.IsRecordingVideo       // this launch's recording is capturing (a test video does not count)
@@ -289,7 +320,7 @@ room for a later recording deletes it; the window shows where it went.
 - It starts at the end of a frame, once the recordings earlier launches left are gone through. Quitting finishes it, as it does
   the playtest's.
 - A playtest collecting play data in the same Play session measures the test video's cost with the game's.
-- 64-bit Windows only, as video recording is.
+- On 64-bit Windows and Android, as video recording is; on a phone, from code (below).
 
 A game can record one itself, a debug menu's "record a clip" button for instance. It records in Play Mode or a player; in the editor
 outside Play Mode it is refused, with the reason:
@@ -315,7 +346,9 @@ the next launch. When a launch starts, the recordings earlier launches kept go o
 the Flock SDK is running, one at a time and the oldest first, with this build's API key and the Game Version ID each
 recording's session started with. **This happens with Playtesting Enabled off too**, so a release build of the game never
 strands what a playtest build recorded; with it off, nothing else is recorded or sent. They wait while the player's answer is
-**nothing**, or while the consent question may still be put (see [The player's consent](#the-players-consent)).
+**nothing**, or while the consent question may still be put (see [The player's consent](#the-players-consent)). On a phone whose
+player chose Wi-Fi only, every upload waits for Wi-Fi (see
+[On a phone: which networks recordings upload on](#on-a-phone-which-networks-recordings-upload-on)).
 
 Every refusal keeps the recording, including Protokite saying the session belongs to another playtest (403) or no longer
 exists (404): a later launch asks again. Such a recording goes only when a launch that records needs its room in the disk
@@ -342,11 +375,15 @@ When a later launch starts, a thread of its own goes through the folders whose g
 This runs in every launch, Playtesting Enabled or not. Files an earlier version left straight in `ProtokitePlaytest/Recordings/`
 are left where they are and not counted below.
 
-**Recordings Disk Budget Mb** is the most every recording kept on the machine may take together. Before a recording starts,
+**Recordings Disk Budget Mb** (on Android, **Android Recordings Disk Budget Mb**) is the most every recording kept on the
+machine may take together. Before a recording starts,
 recordings whose game has closed are deleted until it fits: test videos first, then recordings waiting to upload, the oldest
-first. A recording starts once the folders above have
+first. **While a phone's uploads wait on the player's answer** (Wi-Fi only and the phone off Wi-Fi, or the question still to be
+answered), a recording waiting to upload is never deleted for a new one: the new one records into the room left, and with less
+than 1 MB that launch records no video and the log says why, not as a warning, since it is the player's choice. At the default
+1024 MB, about 94 minutes of play can wait for Wi-Fi in full. A recording starts once the folders above have
 been gone through (usually milliseconds, at most 10 seconds), so nothing is deleted for room a cut-off file only seems to
-take. A recording makes room only for what its length limit records at its bitrate, with a quarter to spare (about 845 MB
+take. A recording makes room only for what its length limit records at its bitrate, with a quarter to spare (about 810 MB
 at the defaults), so a short recording never deletes one waiting to be uploaded that it would fit beside; it may then grow
 into all the room left, up to Max Recording Size Mb, and the log says so when the budget cuts it shorter. A recording still
 being written counts at the most it may grow to and is never deleted, so two copies of the game recording at once never
@@ -354,12 +391,24 @@ take each other's room. One that is finished but in use (being uploaded, or its 
 either, and counts at what it takes. With less than 1 MB left, that launch records no video, and a warning names the
 setting to raise.
 
+On a phone, recordings also never take its free space below the line where Android warns that storage is running out (500 MB,
+or 5% of the storage when that is less), read when each recording starts: a fuller phone gives a recording less room, the
+log says when the phone's free space cut it shorter, and with less than 1 MB the warning says to free some of the phone's
+storage. A recording deleted to make room counts as free space again.
+
+The video's size is set when the recording starts. A window resized, or a phone turned between upright and sideways, later
+on is recorded at its own shape inside that size, with black bars beside or above it, rather than stretched.
+
 The frame is copied, scaled and converted on the graphics card and read back without waiting for it, then encoded on the
-graphics card too; handing frames to the encoder and writing the file each run on a thread of their own, and a frame that
+graphics card's (or the phone's) video encoder; handing frames to the encoder and writing the file each run on a thread of their own, and a frame that
 cannot keep up is dropped rather than stalling the game. The log says where the recording goes when it starts, and what it
 holds, which encoder made it, and how many frames were dropped and why, when it ends.
 
-The settings are in **Protokite > Playtest > Settings**, under **Video recording**:
+The settings are in **Protokite > Playtest > Settings**. An Android player reads **Video recording (Android)**; every other
+build, the editor included whatever it builds for, reads **Video recording (64-bit Windows)**. A test video in the editor
+therefore records with the Windows settings.
+
+**Video recording (64-bit Windows)**
 
 | Setting | Default | |
 |---|---|---|
@@ -367,9 +416,34 @@ The settings are in **Protokite > Playtest > Settings**, under **Video recording
 | Video Frames Per Second | 15 | |
 | Video Bitrate Kbps | 1500 | The most the video uses; a still picture uses far less |
 | Allow Software Encoder | off | On: a PC whose graphics card has no H.264 encoder records with Windows' own encoder on the processor instead, which costs the game frame rate (measured at the defaults: 11% of a processor core on a desktop, against 3% on the graphics card; about 30% of a core on a slow laptop, where capturing the screen took 2 to 4% and the game kept its 60 frames a second) |
+
+**Video recording (Android)**
+
+| Setting | Default | |
+|---|---|---|
+| Record Video On Android | on | Off: Android players record no video and never ask the phone for its encoders; everything else in the playtest still runs. Read as the game starts: turned on later in a launch, it takes effect from the next one |
+| Android Video Long Side | 1280 | The longer side of the video, whichever way the phone is held: on a 20:9 phone, a game held sideways records at 1280x592 and one held upright at 592x1280. A smaller screen is not enlarged, and each side is rounded down to a multiple of 16 |
+| Android Video Frames Per Second | 15 | 30 doubles the phone's encoding work and the frames copied from the screen (measured) |
+| Android Video Bitrate Kbps | 1500 | Held as a constant rate where the phone's encoder says it takes one (1,520 kbps measured against 1,500 asked); on an encoder that does not, a busy picture can run over (26% measured in the phone's default mode) |
+| Android Allow Software Encoder | off | On: a phone with no hardware H.264 encoder records with Android's software encoder on the processor instead, which costs frame rate and battery (about 6.5 times the hardware encoder's processor time, measured) |
+| Slow Down The Recording When The Phone Is Hot | on | When Android says it has started to slow the phone down for heat (thermal status moderate), the recording takes half its frame rate until the phone cools; when Android says it is slowing the phone down enough for the player to notice (severe or above), the recording stops for the launch, and what it holds is kept and uploaded as usual. Phones before Android 10 do not report their heat, and record as set; the log says so once |
+| Stop The Recording Below Battery Percent | 15 | The recording stops for the launch, and what it holds is kept and uploaded as usual, when the battery falls below this percentage while the phone is not charging. 0: never |
+| Android Recordings Disk Budget Mb | 1024 | The most every recording kept on the phone may take together, in place of Recordings Disk Budget Mb, and never past the phone's own low-storage line (above) |
+
+A phone whose encoder does not take the video's size or rate records at the next size down it does (three quarters, a half,
+three eighths of the long side), then at 15 and 10 frames a second, and the log says which.
+
+While an Android player records, the phone is asked about its heat and battery every 5 seconds of play (0.14 ms for the heat and
+0.07 ms for the battery on the main thread, measured on a Galaxy S23 Ultra), and at once when a recording starts; only what a setting uses is asked. Each change of rate, and a stop, is
+logged once.
+
+**Recordings (every platform)**
+
+| Setting | Default | |
+|---|---|---|
 | Max Recording Minutes | 60 | |
 | Max Recording Size Mb | 1536 | |
-| Recordings Disk Budget Mb | 4096 | The most every recording kept on the machine may take together (above) |
+| Recordings Disk Budget Mb | 4096 | The most every recording kept on the machine may take together (above); Android players use Android Recordings Disk Budget Mb |
 
 ## The sample
 
@@ -421,8 +495,8 @@ sends, so you can find them in Flock and Protokite. The session's end is sent wh
 ## Platforms
 
 Everything above runs wherever the Flock SDK runs. Measured in 64-bit Windows players built with Unity 2021.3 and 6000.3, Mono (Minimal
-stripping) and IL2CPP (High stripping): each records, uploads and ends its session. **Video is recorded on 64-bit Windows only** (the Editor and players,
-Mono and IL2CPP), through Windows' own H.264 encoder on the graphics card (Media Foundation). The package ships no native
+stripping) and IL2CPP (High stripping): each records, uploads and ends its session. **Video is recorded on 64-bit Windows** (the Editor and players,
+Mono and IL2CPP), through Windows' own H.264 encoder on the graphics card (Media Foundation), **and on Android** (below). The package ships no native
 file, so there is nothing of its own for Windows 11's Smart App Control, which refuses unsigned native files it does not
 recognise, to refuse. A PC whose graphics card has no H.264 encoder records no video and says why once in the log, unless
 **Allow Software Encoder** is on; so does a Windows N edition without its Media Feature Pack, which has no Media Foundation.
@@ -431,6 +505,27 @@ recording runs on Direct3D 11 and 12, Vulkan and OpenGL, in the Built-in Render 
 colour. It needs a graphics card that runs compute shaders; a game that draws nothing (a server build, or one started with
 `-nographics` or `-batchmode`) records nothing. The setup window names the encoder Windows offers first on the PC you work
 on, and a test video shows whether it records.
+
+**On Android** the screen is recorded with the phone's own hardware H.264 encoder, called through Android's media library from
+C#, so the package ships no native file there either. Measured on a Galaxy S23 Ultra (Android 16) in Unity 2021.3 and 6000.3 players, IL2CPP
+64-bit and Mono 32-bit, both built with High managed stripping, on Vulkan and OpenGL ES, held sideways and upright: each recorded 20 seconds at 15
+frames a second that the phone's own decoder read back frame for frame and Chrome plays, at 1,511 to 1,517 kbps against the 1,500
+asked, while the game kept its 60 frames a second. That is a flagship phone, so treat its costs as a best case. Measured against the
+same game built without the package (400 moving lit cubes at the phone's full 3088x1440, 60 frames a second, three rounds each,
+IL2CPP and Mono, High stripping): recording at the defaults cost no frame rate (60.01 frames a second against 60.01 in IL2CPP,
+59.95 against 60.01 in Mono), and collecting play data alone nothing measurable. On the one frame in four that is captured,
+recording took about 1 to 3.5 ms more of the graphics card's time (95th and 99th percentile) and 1.3 to 1.8 ms more of the render
+thread, and the phone's media service took about 6% of a processor core; a Mono build's main thread spent about 3 ms more on those
+frames. The package adds 7.0 MB to an IL2CPP APK and 1.4 MB to a Mono one. Unity builds Mono for 32-bit ARM only. Installed from its
+git URL into a new Unity 6000.3 project with that project's own defaults (IL2CPP, Minimal stripping), a live playtest answered by
+taps on the phone recorded, uploaded its recording and played it back. A phone whose
+graphics cannot run compute shaders (OpenGL ES 3.0, measured by forcing it) or read the screen back without waiting records no
+video and says why once. A phone with no hardware H.264 encoder records no video unless **Android Allow Software Encoder** is on.
+A live playtest on that phone signed in, recorded, uploaded its recording (stored as MP4 that Chrome plays) and ended its session
+when the game quit. Sent to the home screen for five minutes and brought back, a recording on that phone went on in the same file
+from a keyframe, with the time away left out, and a game Android ended while it was away kept every frame recorded before it left.
+Heat and a low battery were measured through the package's stand-ins, since ten minutes of encoding raised no heat on that phone.
+Not yet measured: other phones, and x86 Android devices (some Chromebooks and emulators).
 
 Recordings an earlier version of the package kept as WebM files are still finished after a crash and uploaded as they are.
 

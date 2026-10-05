@@ -108,6 +108,46 @@ namespace Protokite.Playtest.Tests
         }
 
         [Test]
+        public void APictureTurnedOnItsSideKeepsItsShapeBetweenBlackMargins()
+        {
+            // A phone turned upright mid-recording: the video stays sideways, and the upright picture keeps its shape in the middle.
+            ProtokitePlaytestScreenFrameSource source = Source(256, 128);
+            ProtokitePlaytestCapturedFrame frame = CaptureOne(source, Picture(64, 128, (x, y) => Quadrants(x, y, 64, 128)));
+            AssertColourAt(frame.Pixels, 256, 128, 112, 32, Red, "The picture's top left, 96 pixels in");
+            AssertColourAt(frame.Pixels, 256, 128, 144, 32, Green, "Its top right");
+            AssertColourAt(frame.Pixels, 256, 128, 112, 96, SlateBlue, "Its bottom left");
+            AssertColourAt(frame.Pixels, 256, 128, 144, 96, White, "Its bottom right");
+            AssertColourAt(frame.Pixels, 256, 128, 20, 64, Black, "The left margin");
+            AssertColourAt(frame.Pixels, 256, 128, 236, 64, Black, "The right margin");
+
+            // Control: turned back, the same source fills the video again.
+            frame = CaptureOne(Source(256, 128), Picture(256, 128, (x, y) => Quadrants(x, y, 256, 128)));
+            AssertColourAt(frame.Pixels, 256, 128, 20, 32, Red, "No margin once the shapes match");
+        }
+
+        [Test]
+        public void APictureOfNearlyTheVideosShapeFillsItWithoutMargins()
+        {
+            // The video's sides are rounded down to multiples of 16, so a screen's own shape is never exactly the video's.
+            ProtokitePlaytestScreenFrameSource source = Source(256, 128);
+            ProtokitePlaytestCapturedFrame frame = CaptureOne(source, Picture(250, 128, (x, y) => Red));
+            AssertColourAt(frame.Pixels, 256, 128, 0, 64, Red, "The left edge");
+            AssertColourAt(frame.Pixels, 256, 128, 255, 64, Red, "The right edge");
+        }
+
+        [TestCase(3088, 1440, 1280, 592, 0, 0)]
+        [TestCase(1440, 3088, 1280, 592, 502, 0)]
+        [TestCase(3088, 1440, 592, 1280, 0, 502)]
+        [TestCase(1280, 720, 1280, 592, 114, 0)]
+        [TestCase(1290, 720, 1280, 720, 0, 0)]
+        public void MarginsKeepThePicturesShapeAndAreLeftOutForRoundingAlone(int pictureWidth, int pictureHeight, int videoWidth, int videoHeight, int left, int top)
+        {
+            ProtokitePlaytestScreenFrameSource.PictureMargins(pictureWidth, pictureHeight, videoWidth, videoHeight, out int foundLeft, out int foundTop);
+            Assert.AreEqual(left, foundLeft, "Left and right");
+            Assert.AreEqual(top, foundTop, "Top and bottom");
+        }
+
+        [Test]
         public void EveryRowOfAFrameNotAMultipleOf64WideLinesUp()
         {
             // 848 is the width 854 is recorded at. An edge down the middle must sit at the same pixel on every row.
@@ -157,6 +197,26 @@ namespace Protokite.Playtest.Tests
             List<ProtokitePlaytestCapturedFrame> frames = new List<ProtokitePlaytestCapturedFrame>();
             source.Stop(frames);
             CollectionAssert.AreEqual(new long[] { 0, 1, 2 }, frames.ConvertAll(frame => frame.TimestampMs), "The fourth was never asked for");
+        }
+
+        [Test]
+        public void FramesOnTheirWayAreHandedOverWhenAskedAndCapturingGoesOn()
+        {
+            ProtokitePlaytestScreenFrameSource source = Source(64, 32, 8);
+            Texture2D picture = Picture(64, 32, (x, y) => Red);
+            source.CaptureFromTexture(picture, 0);
+            source.CaptureFromTexture(picture, 1);
+            List<ProtokitePlaytestCapturedFrame> frames = new List<ProtokitePlaytestCapturedFrame>();
+            source.TakeCapturedFrames(frames);
+            Assert.AreEqual(0, frames.Count, "Precondition: both are still on their way from the graphics card");
+
+            source.TakeFramesOnTheirWay(frames);
+            CollectionAssert.AreEqual(new long[] { 0, 1 }, frames.ConvertAll(frame => frame.TimestampMs), "Waited for, as the game leaves for the background");
+            Assert.IsTrue(source.IsReadyForAnotherFrame, "And the capture goes on when the game comes back");
+            source.CaptureFromTexture(picture, 2);
+            frames.Clear();
+            source.Stop(frames);
+            CollectionAssert.AreEqual(new long[] { 2 }, frames.ConvertAll(frame => frame.TimestampMs));
         }
 
         [Test]

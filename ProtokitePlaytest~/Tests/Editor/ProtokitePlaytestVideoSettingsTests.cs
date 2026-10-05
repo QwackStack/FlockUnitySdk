@@ -171,5 +171,156 @@ namespace Protokite.Playtest.Tests
             Assert.IsFalse(ProtokitePlaytestVideoSettings.FitVideoSize(0, 1080, 1280, 720, out _, out _));
             Assert.IsFalse(ProtokitePlaytestVideoSettings.FitVideoSize(1920, -1, 1280, 720, out _, out _));
         }
+
+        // The Android section
+
+        private static ProtokitePlaytestSettings WithEveryVideoSettingDifferent()
+        {
+            // Every value differs from every other, so a setting read from its neighbour, or from the other section, shows.
+            ProtokitePlaytestSettings asset = NewSettings();
+            asset.VideoWidth = 1024;
+            asset.VideoHeight = 576;
+            asset.VideoFramesPerSecond = 24;
+            asset.VideoBitrateKbps = 900;
+            asset.AllowSoftwareEncoder = true;
+            asset.RecordVideoOnAndroid = false;
+            asset.AndroidVideoLongSide = 960;
+            asset.AndroidVideoFramesPerSecond = 20;
+            asset.AndroidVideoBitrateKbps = 1200;
+            asset.AndroidAllowSoftwareEncoder = false;
+            asset.SlowDownTheRecordingWhenThePhoneIsHot = false;
+            asset.StopTheRecordingBelowBatteryPercent = 19;
+            asset.AndroidRecordingsDiskBudgetMb = 17;
+            asset.MaxRecordingMinutes = 7f;
+            asset.MaxRecordingSizeMb = 11;
+            asset.RecordingsDiskBudgetMb = 13;
+            return asset;
+        }
+
+        [Test]
+        public void AnAndroidPlayerReadsTheAndroidSection()
+        {
+            ProtokitePlaytestSettings asset = WithEveryVideoSettingDifferent();
+            ProtokitePlaytestVideoSettings video = ProtokitePlaytestVideoSettings.From(asset, true);
+            Assert.IsTrue(video.ForAndroid);
+            Assert.AreEqual(960, video.MaxVideoWidth, "The longer side, whichever way the phone is held");
+            Assert.AreEqual(960, video.MaxVideoHeight);
+            Assert.AreEqual(20, video.FramesPerSecond);
+            Assert.AreEqual(1200, video.BitrateKbps);
+            Assert.IsFalse(video.AllowSoftwareEncoder);
+            Assert.IsFalse(video.RecordVideo);
+            Assert.IsFalse(video.SlowDownWhenHot);
+            Assert.AreEqual(19, video.StopBelowBatteryPercent);
+            Assert.AreEqual(420.0, video.MaxSeconds, 1e-9, "The recordings' own limits are every platform's");
+            Assert.AreEqual(11L * 1024 * 1024, video.MaxBytes);
+            Assert.AreEqual(17L * 1024 * 1024, video.DiskBudgetBytes, "A phone's recordings have a budget of their own");
+            Object.DestroyImmediate(asset);
+        }
+
+        [Test]
+        public void EverythingElseReadsTheOtherSectionAndIgnoresAndroidsSwitch()
+        {
+            ProtokitePlaytestSettings asset = WithEveryVideoSettingDifferent();
+            ProtokitePlaytestVideoSettings video = ProtokitePlaytestVideoSettings.From(asset, false);
+            Assert.IsFalse(video.ForAndroid);
+            Assert.AreEqual(1024, video.MaxVideoWidth);
+            Assert.AreEqual(576, video.MaxVideoHeight);
+            Assert.AreEqual(24, video.FramesPerSecond);
+            Assert.AreEqual(900, video.BitrateKbps);
+            Assert.IsTrue(video.AllowSoftwareEncoder);
+            Assert.IsTrue(video.RecordVideo, "Record Video On Android turns off Android's video alone");
+            Assert.AreEqual(13L * 1024 * 1024, video.DiskBudgetBytes, "Android's budget is Android's alone");
+            Object.DestroyImmediate(asset);
+        }
+
+        [Test]
+        public void TheEditorReadsTheOtherSectionWhateverItBuildsFor()
+        {
+            // The editor records with this PC's encoder, so a project building for Android still records editor test videos by the PC's settings.
+            ProtokitePlaytestSettings asset = WithEveryVideoSettingDifferent();
+            ProtokitePlaytestVideoSettings video = ProtokitePlaytestVideoSettings.From(asset);
+            Assert.IsFalse(video.ForAndroid);
+            Assert.AreEqual(1024, video.MaxVideoWidth);
+            Object.DestroyImmediate(asset);
+        }
+
+        [Test]
+        public void AndroidValuesOutOfRangeAreMovedIntoIt()
+        {
+            ProtokitePlaytestSettings asset = NewSettings();
+            asset.AndroidVideoLongSide = 99999;
+            asset.AndroidVideoFramesPerSecond = 99;
+            asset.AndroidVideoBitrateKbps = 1;
+            ProtokitePlaytestVideoSettings video = ProtokitePlaytestVideoSettings.From(asset, true);
+            Assert.AreEqual(1920, video.MaxVideoWidth);
+            Assert.AreEqual(30, video.FramesPerSecond);
+            Assert.AreEqual(100, video.BitrateKbps);
+
+            asset.AndroidVideoLongSide = 0;
+            asset.AndroidVideoFramesPerSecond = 0;
+            asset.AndroidVideoBitrateKbps = 999999;
+            video = ProtokitePlaytestVideoSettings.From(asset, true);
+            Assert.AreEqual(320, video.MaxVideoWidth);
+            Assert.AreEqual(1, video.FramesPerSecond);
+            Assert.AreEqual(20000, video.BitrateKbps);
+
+            asset.StopTheRecordingBelowBatteryPercent = 150;
+            asset.AndroidRecordingsDiskBudgetMb = 0;
+            video = ProtokitePlaytestVideoSettings.From(asset, true);
+            Assert.AreEqual(100, video.StopBelowBatteryPercent);
+            Assert.AreEqual(1024L * 1024, video.DiskBudgetBytes, "A budget of nothing is a megabyte, as on every platform");
+            asset.StopTheRecordingBelowBatteryPercent = -5;
+            Assert.AreEqual(0, ProtokitePlaytestVideoSettings.From(asset, true).StopBelowBatteryPercent);
+            Object.DestroyImmediate(asset);
+        }
+
+        [Test]
+        public void AnAndroidPlayerWithNoSettingsAssetReadsTheApprovedDefaults()
+        {
+            ProtokitePlaytestVideoSettings video = ProtokitePlaytestVideoSettings.From(null, true);
+            Assert.AreEqual(1280, video.MaxVideoWidth);
+            Assert.AreEqual(1280, video.MaxVideoHeight);
+            Assert.AreEqual(15, video.FramesPerSecond);
+            Assert.AreEqual(1500, video.BitrateKbps);
+            Assert.IsFalse(video.AllowSoftwareEncoder);
+            Assert.IsTrue(video.RecordVideo);
+            Assert.IsTrue(video.SlowDownWhenHot);
+            Assert.AreEqual(15, video.StopBelowBatteryPercent);
+            Assert.AreEqual(1024L * 1024 * 1024, video.DiskBudgetBytes);
+        }
+
+        [Test]
+        public void ANewAssetAndOneSavedBeforeTheAndroidSectionBothStartAtTheApprovedDefaults()
+        {
+            ProtokitePlaytestSettings fresh = NewSettings();
+            string earlier = "{\"MonoBehaviour\":{\"playtestingEnabled\":true,\"videoWidth\":1024,\"videoBitrateKbps\":900,\"allowSoftwareEncoder\":true}}";
+            ProtokitePlaytestSettings loaded = NewSettings();
+            EditorJsonUtility.FromJsonOverwrite(earlier, loaded);
+            foreach (ProtokitePlaytestSettings asset in new[] { fresh, loaded })
+            {
+                Assert.IsTrue(asset.RecordVideoOnAndroid);
+                Assert.AreEqual(1280, asset.AndroidVideoLongSide);
+                Assert.AreEqual(15, asset.AndroidVideoFramesPerSecond);
+                Assert.AreEqual(1500, asset.AndroidVideoBitrateKbps);
+                Assert.IsFalse(asset.AndroidAllowSoftwareEncoder, "Windows' switch on does not turn Android's on");
+                Assert.IsTrue(asset.SlowDownTheRecordingWhenThePhoneIsHot);
+                Assert.AreEqual(15, asset.StopTheRecordingBelowBatteryPercent);
+                Assert.AreEqual(1024, asset.AndroidRecordingsDiskBudgetMb);
+            }
+            Object.DestroyImmediate(fresh);
+            Object.DestroyImmediate(loaded);
+        }
+
+        [TestCase(3088, 1440, 1280, 592, TestName = "A 20 by 9 phone held sideways")]
+        [TestCase(1440, 3088, 592, 1280, TestName = "The same phone held upright records as many pixels")]
+        [TestCase(2400, 1080, 1280, 576, TestName = "A 1080p phone held sideways")]
+        [TestCase(800, 480, 800, 480, TestName = "A small screen is not enlarged")]
+        public void APhonesScreenIsFittedByItsLongerSide(int screenWidth, int screenHeight, int width, int height)
+        {
+            ProtokitePlaytestVideoSettings video = ProtokitePlaytestVideoSettings.From(null, true);
+            Assert.IsTrue(ProtokitePlaytestVideoSettings.FitVideoSize(screenWidth, screenHeight, video.MaxVideoWidth, video.MaxVideoHeight, out int fittedWidth, out int fittedHeight));
+            Assert.AreEqual(width, fittedWidth, "Width");
+            Assert.AreEqual(height, fittedHeight, "Height");
+        }
     }
 }

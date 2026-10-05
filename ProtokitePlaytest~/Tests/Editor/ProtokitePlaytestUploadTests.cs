@@ -35,6 +35,7 @@ namespace Protokite.Playtest.Tests
         private ProtokitePlaytestSettingsForTests _settings;
         private string _folder;
         private FakeUploader _uploader;
+        private NetworkReachability _network;
 
         private string Recordings => Path.Combine(_folder, "Recordings");
 
@@ -60,6 +61,8 @@ namespace Protokite.Playtest.Tests
             ProtokitePlaytest.VideoFrameSourceForTesting = (settings, format) => new FakeFrameSource();
             _uploader = new FakeUploader();
             FlockHttpClient.UseFileUploader(_uploader);
+            _network = NetworkReachability.ReachableViaLocalAreaNetwork;
+            ProtokitePlaytest.NetworkForTesting = () => _network;
         }
 
         [TearDown]
@@ -75,6 +78,10 @@ namespace Protokite.Playtest.Tests
             ProtokitePlaytest.VideoFrameSourceForTesting = null;
             ProtokitePlaytest.RecordingsFolderForTesting = null;
             ProtokitePlaytest.DeviceIdFilePathForTesting = null;
+            ProtokitePlaytest.NetworkForTesting = null;
+            ProtokitePlaytestVideoEncoders.ActAsAndroidForTesting = false;
+            // A phone test's finishing pass asks the phone for its encoders; the answer is the launch's, never the next test's.
+            ProtokitePlaytestVideoEncoders.ResetForNewLaunch();
             FlockHttpClient.UseFileUploader(null);
             FlockHttpClient.Configure(TimeSpan.FromSeconds(30));
             _settings.Dispose();
@@ -326,7 +333,7 @@ namespace Protokite.Playtest.Tests
                 LogAssert.Expect(LogType.Log, new Regex(@"was not uploaded, so it is kept: Protokite has no such session.* \(HTTP 404\)"));
                 yield return EarlierUploads();
 
-                Assert.AreEqual((0, 1), ProtokitePlaytest.EarlierUploadsForTesting.Result);
+                Assert.AreEqual((0, 1, false), ProtokitePlaytest.EarlierUploads.Result);
                 Assert.AreEqual(0, _uploader.Count, "No link, no upload");
                 Assert.IsNotNull(ProtokitePlaytestRecordingRun.FinishedVideoPath(run), "The recording is kept");
                 Assert.IsTrue(File.Exists(Path.Combine(run, "session.json")), "With its session, to be asked for again");
@@ -486,12 +493,12 @@ namespace Protokite.Playtest.Tests
                 ProtokitePlaytest.Refresh();
                 Assert.AreEqual(ProtokitePlaytestStatus.WaitingForPlayerConsent, ProtokitePlaytest.Status, "Precondition: the question waits");
                 yield return ForAWhile(1f, ProtokitePlaytest.Refresh);
-                Assert.IsNull(ProtokitePlaytest.EarlierUploadsForTesting, "A player about to ask for nothing has nothing sent while they read");
+                Assert.IsNull(ProtokitePlaytest.EarlierUploads, "A player about to ask for nothing has nothing sent while they read");
                 Assert.AreEqual(0, flock.Transport.CountTo("/pk-9/recording-upload"));
 
                 Assert.IsTrue(ProtokitePlaytest.SetPlaytestConsent(ProtokitePlaytestConsentChoice.PlayDataOnly));
                 yield return EarlierUploads();
-                Assert.AreEqual((1, 0), ProtokitePlaytest.EarlierUploadsForTesting.Result, "An earlier launch recorded it with that launch's permission");
+                Assert.AreEqual((1, 0, false), ProtokitePlaytest.EarlierUploads.Result, "An earlier launch recorded it with that launch's permission");
             }
         }
 
@@ -506,12 +513,12 @@ namespace Protokite.Playtest.Tests
             {
                 LogAssert.Expect(LogType.Log, new Regex("Nothing an earlier launch recorded is being sent: the player has asked this playtest to collect nothing"));
                 yield return ForAWhile(1f, ProtokitePlaytest.Refresh);
-                Assert.IsNull(ProtokitePlaytest.EarlierUploadsForTesting, "The answer outlives a build that stops asking, or playtests at all");
+                Assert.IsNull(ProtokitePlaytest.EarlierUploads, "The answer outlives a build that stops asking, or playtests at all");
                 Assert.IsTrue(Directory.Exists(run), "Kept, not given up on");
 
                 Assert.IsTrue(ProtokitePlaytest.SetPlaytestConsent(ProtokitePlaytestConsentChoice.VideoOnly));
                 yield return EarlierUploads();
-                Assert.AreEqual((1, 0), ProtokitePlaytest.EarlierUploadsForTesting.Result, "Sent in the same launch the player changed their mind");
+                Assert.AreEqual((1, 0, false), ProtokitePlaytest.EarlierUploads.Result, "Sent in the same launch the player changed their mind");
             }
         }
 
@@ -525,7 +532,7 @@ namespace Protokite.Playtest.Tests
             using (StartFlock(EarlierTransport()))
             {
                 yield return EarlierUploads();
-                Assert.AreEqual((1, 0), ProtokitePlaytest.EarlierUploadsForTesting.Result, "No question is ever put here, so waiting for one would strand them");
+                Assert.AreEqual((1, 0, false), ProtokitePlaytest.EarlierUploads.Result, "No question is ever put here, so waiting for one would strand them");
             }
         }
 
@@ -543,7 +550,7 @@ namespace Protokite.Playtest.Tests
             {
                 yield return EarlierUploads();
                 Assert.AreEqual(ProtokitePlaytestStatus.PlaytestNotLinked, ProtokitePlaytest.Status, "Precondition: no question is ever put");
-                Assert.AreEqual((1, 0), ProtokitePlaytest.EarlierUploadsForTesting.Result, "Held only while a question may still come");
+                Assert.AreEqual((1, 0, false), ProtokitePlaytest.EarlierUploads.Result, "Held only while a question may still come");
             }
         }
 
@@ -652,7 +659,7 @@ namespace Protokite.Playtest.Tests
             yield return Settled(() =>
             {
                 ProtokitePlaytest.Refresh();
-                return ProtokitePlaytest.EarlierUploadsForTesting != null && ProtokitePlaytest.EarlierUploadsForTesting.IsCompleted;
+                return ProtokitePlaytest.EarlierUploads != null && ProtokitePlaytest.EarlierUploads.IsCompleted;
             }, 10f, "Earlier launches' uploads ended");
         }
 
@@ -670,7 +677,7 @@ namespace Protokite.Playtest.Tests
                 LogAssert.Expect(LogType.Log, new Regex("Recordings earlier launches left: 1 uploaded, 0 kept for a later launch"));
                 yield return EarlierUploads();
 
-                Assert.AreEqual((1, 0), ProtokitePlaytest.EarlierUploadsForTesting.Result);
+                Assert.AreEqual((1, 0, false), ProtokitePlaytest.EarlierUploads.Result);
                 FlockHttpRequest asked = flock.Transport.LastTo("/pk-9/recording-upload");
                 Assert.AreEqual("http://protokite.test/game/sdk/playtest-session/pk-9/recording-upload", asked.Url);
                 Assert.AreEqual("session-gvid", asked.Headers["X-Game-Version-ID"], "The version its session started with, which is how Protokite finds that session's playtest");
@@ -688,7 +695,7 @@ namespace Protokite.Playtest.Tests
             using (FlockTestClient flock = StartFlock(EarlierTransport()))
             {
                 yield return EarlierUploads();
-                Assert.AreEqual((1, 0), ProtokitePlaytest.EarlierUploadsForTesting.Result);
+                Assert.AreEqual((1, 0, false), ProtokitePlaytest.EarlierUploads.Result);
                 Assert.AreEqual("video/webm", (string)JObject.Parse(flock.Transport.LastTo("/pk-9/recording-upload").JsonBody)["content_type"],
                     "Asked for as what it is, though this version records MP4");
                 Assert.AreEqual("video/webm", _uploader.Single().ContentType);
@@ -757,7 +764,7 @@ namespace Protokite.Playtest.Tests
             using (FlockTestClient flock = StartFlock(EarlierTransport()))
             {
                 yield return EarlierUploads();
-                Assert.AreEqual((1, 0), ProtokitePlaytest.EarlierUploadsForTesting.Result);
+                Assert.AreEqual((1, 0, false), ProtokitePlaytest.EarlierUploads.Result);
                 Assert.AreEqual(0, flock.Transport.CountTo("/pk-8/recording-upload"), "Another launch is sending it, or still recording it");
                 Assert.IsTrue(Directory.Exists(held));
                 Assert.IsFalse(Directory.Exists(free));
@@ -785,7 +792,7 @@ namespace Protokite.Playtest.Tests
                 _uploader.HoldEach = false;
                 _uploader.ReleaseEverything();
                 yield return EarlierUploads();
-                Assert.AreEqual((2, 0), ProtokitePlaytest.EarlierUploadsForTesting.Result);
+                Assert.AreEqual((2, 0, false), ProtokitePlaytest.EarlierUploads.Result);
             }
         }
 
@@ -799,7 +806,7 @@ namespace Protokite.Playtest.Tests
             using (FlockTestClient flock = StartFlock(EarlierTransport()))
             {
                 yield return EarlierUploads();
-                Assert.AreEqual((1, 0), ProtokitePlaytest.EarlierUploadsForTesting.Result);
+                Assert.AreEqual((1, 0, false), ProtokitePlaytest.EarlierUploads.Result);
                 StringAssert.EndsWith(".mp4", _uploader.Single().FilePath, "The recording, not the stray file");
             }
         }
@@ -853,7 +860,7 @@ namespace Protokite.Playtest.Tests
                 LogAssert.Expect(LogType.Log, new Regex("was not uploaded, so it is kept: the launch ended before the upload finished"));
                 ProtokitePlaytest.HandleGameQuitting();
                 yield return EarlierUploads();
-                Assert.AreEqual((0, 1), ProtokitePlaytest.EarlierUploadsForTesting.Result);
+                Assert.AreEqual((0, 1, false), ProtokitePlaytest.EarlierUploads.Result);
                 Assert.IsTrue(File.Exists(Path.Combine(run, "session.json")));
             }
         }
@@ -867,7 +874,7 @@ namespace Protokite.Playtest.Tests
             {
                 ProtokitePlaytest.HandleGameQuitting();
                 yield return ForAWhile(1f, ProtokitePlaytest.Refresh);
-                Assert.IsNull(ProtokitePlaytest.EarlierUploadsForTesting, "The launch is over, so the next one sends them");
+                Assert.IsNull(ProtokitePlaytest.EarlierUploads, "The launch is over, so the next one sends them");
                 Assert.AreEqual(0, flock.Transport.CountTo("/recording-upload"));
             }
         }
@@ -880,8 +887,420 @@ namespace Protokite.Playtest.Tests
             using (FlockTestClient flock = StartFlock(EarlierTransport()))
             {
                 yield return ForAWhile(1f, ProtokitePlaytest.Refresh);
-                Assert.IsNull(ProtokitePlaytest.EarlierUploadsForTesting);
+                Assert.IsNull(ProtokitePlaytest.EarlierUploads);
                 Assert.AreEqual(0, flock.Transport.CountTo("/recording-upload"));
+            }
+        }
+
+        // The player's network
+
+        private const NetworkReachability OnWiFi = NetworkReachability.ReachableViaLocalAreaNetwork;
+        private const NetworkReachability OnMobileData = NetworkReachability.ReachableViaCarrierDataNetwork;
+
+        private void PlayerChooses(ProtokitePlaytestUploadNetworkChoice choice)
+            => Assert.IsTrue(new ProtokitePlaytestUploadNetworkFile(_settings.UploadNetworkFilePath).Save(choice));
+
+        // Each frame drives the playtest, as the driver would.
+        private static IEnumerator SettledWithRefresh(Func<bool> done, float seconds, string what)
+            => Settled(() =>
+            {
+                ProtokitePlaytest.Refresh();
+                return done();
+            }, seconds, what);
+
+        private static bool ThisLaunchsUploadEnded() => ProtokitePlaytest.ThisLaunchsUpload != null && ProtokitePlaytest.ThisLaunchsUpload.IsCompleted;
+
+        [UnityTest]
+        public IEnumerator WiFiOnlyOnMobileDataUploadsNothingAndOnWiFiTheWaitingRecordingGoesUp()
+        {
+            PlayerChooses(ProtokitePlaytestUploadNetworkChoice.WiFiOnly);
+            _network = OnMobileData;
+            using (FlockTestClient flock = StartFlock(Transport()))
+            {
+                ProtokitePlaytest.Refresh();
+                Frames(1);
+                yield return TheSessionStarts(flock);
+                string runFolder = ProtokitePlaytest.RecordingRunForTesting.FolderPath;
+
+                LogAssert.Expect(LogType.Log, new Regex("Recordings wait on this device before they upload: the player chose Wi-Fi only, and the device is on mobile data"));
+                yield return RecordAndStop();
+                yield return ForAWhile(1f, ProtokitePlaytest.Refresh);
+                Assert.IsNull(ProtokitePlaytest.ThisLaunchsUpload, "Not begun on mobile data");
+                Assert.AreEqual(0, flock.Transport.CountTo(LinkRoute), "No link is asked for either");
+                Assert.AreEqual(0, _uploader.Count);
+                Assert.IsTrue(File.Exists(Path.Combine(runFolder, "session.json")), "Kept on the device, with its session");
+
+                _network = OnWiFi;
+                yield return SettledWithRefresh(ThisLaunchsUploadEnded, 10f, "The upload went once the device was on Wi-Fi");
+                Assert.IsTrue(ProtokitePlaytest.ThisLaunchsUpload.Result.Uploaded);
+                Assert.AreEqual(1, _uploader.Count);
+                Assert.IsFalse(Directory.Exists(runFolder), "Uploaded, so no longer kept");
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator WiFiAndMobileDataUploadsOnMobileData()
+        {
+            PlayerChooses(ProtokitePlaytestUploadNetworkChoice.WiFiAndMobileData);
+            _network = OnMobileData;
+            using (FlockTestClient flock = StartFlock(Transport()))
+            {
+                ProtokitePlaytest.Refresh();
+                Frames(1);
+                yield return TheSessionStarts(flock);
+                yield return RecordAndStop();
+                yield return ThisLaunchsUpload();
+                Assert.IsTrue(ProtokitePlaytest.ThisLaunchsUpload.Result.Uploaded);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator WithNoAnswerUploadsAreNotHeldAndTheNetworkIsNeverAsked()
+        {
+            // Windows, and a build that asks nobody: no answer, so nothing waits for Wi-Fi.
+            int asked = 0;
+            ProtokitePlaytest.NetworkForTesting = () =>
+            {
+                asked++;
+                return OnMobileData;
+            };
+            using (FlockTestClient flock = StartFlock(Transport()))
+            {
+                ProtokitePlaytest.Refresh();
+                Frames(1);
+                yield return TheSessionStarts(flock);
+                yield return RecordAndStop();
+                yield return ThisLaunchsUpload();
+                Assert.IsTrue(ProtokitePlaytest.ThisLaunchsUpload.Result.Uploaded);
+                Assert.AreEqual(0, asked, "Only a Wi-Fi only answer has the network read");
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator EarlierRecordingsWaitOnMobileDataAndGoOnWiFi()
+        {
+            PlayerChooses(ProtokitePlaytestUploadNetworkChoice.WiFiOnly);
+            _network = OnMobileData;
+            string run = PlantWaitingRecording("20260101-000000-00000001", "pk-9", "session-gvid");
+            yield return TheEarlierRecordingsAreGoneThrough();
+            using (FlockTestClient flock = StartFlock(EarlierTransport()))
+            {
+                yield return ForAWhile(1f, ProtokitePlaytest.Refresh);
+                Assert.IsNull(ProtokitePlaytest.EarlierUploads, "Not gone through on mobile data");
+                Assert.AreEqual(0, flock.Transport.CountTo("/recording-upload"));
+                Assert.IsTrue(Directory.Exists(run));
+
+                _network = OnWiFi;
+                yield return EarlierUploads();
+                Assert.AreEqual((1, 0, false), ProtokitePlaytest.EarlierUploads.Result, "Sent in the same launch, once on Wi-Fi");
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator AnUploadStopsWhenTheDeviceLeavesWiFiAndGoesAgainOnWiFi()
+        {
+            PlayerChooses(ProtokitePlaytestUploadNetworkChoice.WiFiOnly);
+            _uploader.HoldEach = true;
+            int keptForALaterLaunch = 0;
+            Application.LogCallback heard = (message, stack, type) =>
+            {
+                if (message.Contains("kept for a later launch"))
+                    keptForALaterLaunch++;
+            };
+            Application.logMessageReceived += heard;
+            try
+            {
+                using (FlockTestClient flock = StartFlock(Transport()))
+                {
+                    ProtokitePlaytest.Refresh();
+                    Frames(1);
+                    yield return TheSessionStarts(flock);
+                    string runFolder = ProtokitePlaytest.RecordingRunForTesting.FolderPath;
+                    yield return RecordAndStop();
+                    yield return SettledWithRefresh(() => _uploader.Count == 1, 10f, "The upload began on Wi-Fi");
+
+                    LogAssert.Expect(LogType.Log, new Regex("A recording's upload stopped: the player allows Wi-Fi only, and the device is not on Wi-Fi now"));
+                    _network = OnMobileData;
+                    yield return SettledWithRefresh(ThisLaunchsUploadEnded, 10f, "The upload stopped");
+                    Assert.IsTrue(_uploader.WasCancelled, "The upload under way was told to stop");
+                    ProtokitePlaytestRecordingUploadOutcome stopped = ProtokitePlaytest.ThisLaunchsUpload.Result;
+                    Assert.IsTrue(stopped.StoppedWhenTheDeviceLeftWiFi);
+                    Assert.IsFalse(stopped.Uploaded);
+                    Assert.IsTrue(File.Exists(Path.Combine(runFolder, "session.json")), "Kept, with its session");
+
+                    yield return ForAWhile(1f, ProtokitePlaytest.Refresh);
+                    Assert.AreEqual(1, _uploader.Count, "Not begun again on mobile data");
+
+                    _uploader.HoldEach = false;
+                    _network = OnWiFi;
+                    yield return SettledWithRefresh(() => _uploader.Count == 2 && ThisLaunchsUploadEnded(), 10f, "Sent again once back on Wi-Fi");
+                    Assert.IsTrue(ProtokitePlaytest.ThisLaunchsUpload.Result.Uploaded);
+                    Assert.IsFalse(Directory.Exists(runFolder));
+                    Assert.AreEqual(0, keptForALaterLaunch, "Waiting for Wi-Fi is not a failed upload");
+                }
+            }
+            finally
+            {
+                Application.logMessageReceived -= heard;
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator AnEarlierRecordingsUploadStopsWhenTheDeviceLeavesWiFiAndGoesAgainOnWiFi()
+        {
+            PlayerChooses(ProtokitePlaytestUploadNetworkChoice.WiFiOnly);
+            string run = PlantWaitingRecording("20260101-000000-00000001", "pk-9", "session-gvid");
+            yield return TheEarlierRecordingsAreGoneThrough();
+            _uploader.HoldEach = true;
+            using (FlockTestClient flock = StartFlock(EarlierTransport()))
+            {
+                yield return SettledWithRefresh(() => _uploader.Count == 1, 10f, "The upload began on Wi-Fi");
+                _network = OnMobileData;
+                yield return SettledWithRefresh(() => ProtokitePlaytest.EarlierUploads.IsCompleted, 10f, "The pass stopped");
+                Assert.IsTrue(_uploader.WasCancelled);
+                Assert.AreEqual((0, 0, true), ProtokitePlaytest.EarlierUploads.Result);
+                Assert.IsTrue(File.Exists(Path.Combine(run, "session.json")), "Kept, with its session");
+
+                yield return ForAWhile(1f, ProtokitePlaytest.Refresh);
+                Assert.AreEqual(1, _uploader.Count, "Not gone through again on mobile data");
+
+                _uploader.HoldEach = false;
+                _network = OnWiFi;
+                yield return SettledWithRefresh(() => _uploader.Count == 2 && ProtokitePlaytest.EarlierUploads.IsCompleted, 10f, "Gone through again on Wi-Fi");
+                Assert.AreEqual((1, 0, false), ProtokitePlaytest.EarlierUploads.Result);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator ARecordingWhoseUploadFailedIsDeletedWhenTheScreenIsTakenBackNotSentByALaterLaunch()
+        {
+            // Refused twice: the first try and the one more with a fresh link.
+            _uploader.Answers.Enqueue(FakeUploader.Status(500, "<Error><Code>InternalError</Code></Error>"));
+            _uploader.Answers.Enqueue(FakeUploader.Status(500, "<Error><Code>InternalError</Code></Error>"));
+            using (FlockTestClient flock = StartFlock(Transport()))
+            {
+                ProtokitePlaytest.Refresh();
+                Frames(1);
+                yield return TheSessionStarts(flock);
+                string runFolder = ProtokitePlaytest.RecordingRunForTesting.FolderPath;
+                LogAssert.Expect(LogType.Warning, new Regex("was not uploaded, so it is kept for a later launch"));
+                yield return RecordAndStop();
+                yield return ThisLaunchsUpload();
+                Assert.IsFalse(ProtokitePlaytest.ThisLaunchsUpload.Result.Uploaded, "Precondition: the storage refused it, so it was kept");
+                Assert.IsTrue(File.Exists(Path.Combine(runFolder, "session.json")));
+
+                Assert.IsTrue(ProtokitePlaytest.SetPlaytestConsent(ProtokitePlaytestConsentChoice.PlayDataOnly));
+                Assert.IsFalse(Directory.Exists(runFolder), "Deleted at once: a later launch would otherwise send what the player took back");
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator ARecordingStoppedForWiFiIsDeletedWhenTheScreenIsTakenBack()
+        {
+            PlayerChooses(ProtokitePlaytestUploadNetworkChoice.WiFiOnly);
+            _uploader.HoldEach = true;
+            using (FlockTestClient flock = StartFlock(Transport()))
+            {
+                ProtokitePlaytest.Refresh();
+                Frames(1);
+                yield return TheSessionStarts(flock);
+                string runFolder = ProtokitePlaytest.RecordingRunForTesting.FolderPath;
+                yield return RecordAndStop();
+                yield return SettledWithRefresh(() => _uploader.Count == 1, 10f, "The upload began on Wi-Fi");
+                _network = OnMobileData;
+                yield return SettledWithRefresh(ThisLaunchsUploadEnded, 10f, "The upload stopped");
+
+                Assert.IsTrue(ProtokitePlaytest.SetPlaytestConsent(ProtokitePlaytestConsentChoice.Nothing));
+                Assert.IsFalse(Directory.Exists(runFolder), "Nothing is being sent, so taking the screen back deletes it");
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator AnUploadUnderWayGoesOnWhenTheScreenIsTakenBack()
+        {
+            _uploader.HoldEach = true;
+            using (FlockTestClient flock = StartFlock(Transport()))
+            {
+                ProtokitePlaytest.Refresh();
+                Frames(1);
+                yield return TheSessionStarts(flock);
+                string runFolder = ProtokitePlaytest.RecordingRunForTesting.FolderPath;
+                yield return RecordAndStop();
+                yield return SettledWithRefresh(() => _uploader.Count == 1, 10f, "The upload began");
+
+                Assert.IsTrue(ProtokitePlaytest.SetPlaytestConsent(ProtokitePlaytestConsentChoice.PlayDataOnly));
+                yield return ForAWhile(0.3f, ProtokitePlaytest.Refresh);
+                Assert.IsTrue(File.Exists(Path.Combine(runFolder, "session.json")), "Its files are not deleted while they are being sent");
+                Assert.IsFalse(_uploader.WasCancelled, "Mostly sent already, so it is let finish");
+                _uploader.ReleaseEverything();
+                yield return SettledWithRefresh(ThisLaunchsUploadEnded, 10f, "The upload ended");
+                Assert.IsTrue(ProtokitePlaytest.ThisLaunchsUpload.Result.Uploaded);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator NothingStoppedForWiFiStartsAgainOnceTheGameHasQuit()
+        {
+            PlayerChooses(ProtokitePlaytestUploadNetworkChoice.WiFiOnly);
+            _uploader.HoldEach = true;
+            using (FlockTestClient flock = StartFlock(Transport()))
+            {
+                ProtokitePlaytest.Refresh();
+                Frames(1);
+                yield return TheSessionStarts(flock);
+                yield return RecordAndStop();
+                yield return SettledWithRefresh(() => _uploader.Count == 1, 10f, "The upload began on Wi-Fi");
+                _network = OnMobileData;
+                yield return SettledWithRefresh(ThisLaunchsUploadEnded, 10f, "The upload stopped");
+                Task<ProtokitePlaytestRecordingUploadOutcome> stopped = ProtokitePlaytest.ThisLaunchsUpload;
+
+                ProtokitePlaytest.HandleGameQuitting();
+                _uploader.HoldEach = false;
+                _network = OnWiFi;
+                yield return ForAWhile(1f, ProtokitePlaytest.Refresh);
+                Assert.AreSame(stopped, ProtokitePlaytest.ThisLaunchsUpload, "No upload began once the game had quit");
+                Assert.AreEqual(1, _uploader.Count, "The launch is over, so the next one sends it");
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator NothingEarlierLaunchesLeftGoesWhileTheQuestionAboutNetworksMayStillComeAndItGoesOnceAnswered()
+        {
+            ProtokitePlaytestVideoEncoders.ActAsAndroidForTesting = true;
+            _settings.Settings.RecordVideoOnAndroid = true;
+            _settings.Settings.AskThePlayerForPlaytestConsent = true;
+            Assert.IsTrue(new ProtokitePlaytestConsentFile(_settings.ConsentFilePath).Save(ProtokitePlaytestConsentChoice.VideoOnly));
+            PlantWaitingRecording("20260101-000000-00000001", "pk-9", "session-gvid");
+            yield return TheEarlierRecordingsAreGoneThrough();
+            using (FlockTestClient flock = StartFlock(Transport(true, transport => transport
+                .On("/playtest-session/pk-9/recording-upload", FlockFakeTransport.Ok(Link(FirstLink))))))
+            {
+                yield return ForAWhile(1f, ProtokitePlaytest.Refresh);
+                Assert.AreEqual(ProtokitePlaytestStatus.Ready, ProtokitePlaytest.Status, "Precondition: loaded, with the question about networks due");
+                Assert.IsNull(ProtokitePlaytest.EarlierUploads, "Its answer says on which networks they go");
+
+                Assert.IsTrue(ProtokitePlaytest.SetPlaytestUploadNetwork(ProtokitePlaytestUploadNetworkChoice.WiFiAndMobileData));
+                yield return EarlierUploads();
+                Assert.AreEqual((1, 0, false), ProtokitePlaytest.EarlierUploads.Result);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator AnAnswerThatDoesNotLetTheScreenBeRecordedNeverHoldsEarlierRecordingsForTheQuestionAboutNetworks()
+        {
+            ProtokitePlaytestVideoEncoders.ActAsAndroidForTesting = true;
+            _settings.Settings.RecordVideoOnAndroid = true;
+            _settings.Settings.AskThePlayerForPlaytestConsent = true;
+            Assert.IsTrue(new ProtokitePlaytestConsentFile(_settings.ConsentFilePath).Save(ProtokitePlaytestConsentChoice.PlayDataOnly));
+            PlantWaitingRecording("20260101-000000-00000001", "pk-9", "session-gvid");
+            yield return TheEarlierRecordingsAreGoneThrough();
+            // The config is refused once and its one retry waits a minute, so the playtest is still fetching it while they go.
+            FlockFakeTransport transport = Transport(true, routes => routes
+                    .On("/playtest-session/pk-9/recording-upload", FlockFakeTransport.Ok(Link(FirstLink))))
+                .On(ConfigRoute, FlockFakeTransport.Status(503, "{}"));
+            using (FlockTestClient flock = FlockTestClient.Create(transport, config => config.RetryPolicy = new RetryPolicy
+                   { MaxRetries = 1, InitialDelay = TimeSpan.FromMinutes(1), MaxDelay = TimeSpan.FromMinutes(1), UseJitter = false }))
+            {
+                yield return EarlierUploads();
+                Assert.AreEqual(ProtokitePlaytestStatus.FetchingPlaytestConfig, ProtokitePlaytest.Status, "Precondition: the config is still on its way");
+                Assert.AreEqual((1, 0, false), ProtokitePlaytest.EarlierUploads.Result,
+                    "No question about networks follows an answer without the screen, so nothing waits for one");
+            }
+        }
+
+        // The disk budget while uploads wait for the player's network (owner, 2026-10-04)
+
+        // Planted runs take a few KB, and a new recording reserves an hour at its bitrate, so a 3 MB budget can never fit one: today's
+        // rule deletes every earlier recording it may, and the room left (over a megabyte) is what the new recording records into.
+        private string PlantARecordingTheBudgetWouldDelete()
+        {
+            _settings.Settings.RecordingsDiskBudgetMb = 3;
+            _settings.Settings.AndroidRecordingsDiskBudgetMb = 3;
+            return PlantWaitingRecording("20260101-000000-00000001", "pk-9", "session-gvid");
+        }
+
+        [Test]
+        public void ARecordingWaitingForWiFiIsNeverDeletedForANewOneWhileTheDeviceIsOffWiFi()
+        {
+            PlayerChooses(ProtokitePlaytestUploadNetworkChoice.WiFiOnly);
+            _network = OnMobileData;
+            string waiting = PlantARecordingTheBudgetWouldDelete();
+            using (StartFlock(Transport(true, transport => { })))
+            {
+                ProtokitePlaytest.Refresh();
+                LogAssert.Expect(LogType.Log, new Regex("Recordings Disk Budget Mb, beside the recordings kept until the player's answer lets them upload, leaves only this much"));
+                Frames(1);
+                Assert.IsNotNull(ProtokitePlaytest.RecordingRunForTesting, "This launch records into the room left");
+                Assert.IsTrue(Directory.Exists(waiting), "Kept until it can upload on Wi-Fi");
+            }
+        }
+
+        [Test]
+        public void OnWiFiAWaitingRecordingIsDeletedForANewOneAsBefore()
+        {
+            PlayerChooses(ProtokitePlaytestUploadNetworkChoice.WiFiOnly);
+            _network = OnWiFi;
+            string waiting = PlantARecordingTheBudgetWouldDelete();
+            using (StartFlock(Transport(true, transport => { })))
+            {
+                ProtokitePlaytest.Refresh();
+                LogAssert.Expect(LogType.Warning, new Regex("Deleted 1 recording\\(s\\) earlier launches kept to be uploaded"));
+                Frames(1);
+                Assert.IsNotNull(ProtokitePlaytest.RecordingRunForTesting);
+                Assert.IsFalse(Directory.Exists(waiting), "Nothing holds it back from uploading, so the oldest first goes for room as it always has");
+            }
+        }
+
+        [Test]
+        public void TestVideosStillGoFirstWhileRecordingsWaitForWiFi()
+        {
+            PlayerChooses(ProtokitePlaytestUploadNetworkChoice.WiFiOnly);
+            _network = OnMobileData;
+            string waiting = PlantARecordingTheBudgetWouldDelete();
+            string testVideo = ProtokitePlaytestPlantedRuns.Plant(Recordings, ProtokitePlaytestRecordingKind.TestVideo, "20260101-000000-00000002", 1000,
+                finishedVideo: ProtokitePlaytestPlantedRuns.FinishedVideo(_folder, 3), videoEnding: ".mp4");
+            using (StartFlock(Transport(true, transport => { })))
+            {
+                ProtokitePlaytest.Refresh();
+                LogAssert.Expect(LogType.Log, new Regex("Deleted 1 test video\\(s\\)"));
+                Frames(1);
+                Assert.IsFalse(Directory.Exists(testVideo), "A test video is never kept for the network");
+                Assert.IsTrue(Directory.Exists(waiting));
+            }
+        }
+
+        [Test]
+        public void ARecordingWaitingIsKeptWhileThePhonesQuestionAboutNetworksMayStillCome()
+        {
+            ProtokitePlaytestVideoEncoders.ActAsAndroidForTesting = true;
+            _settings.Settings.RecordVideoOnAndroid = true;
+            _settings.Settings.AskThePlayerForPlaytestConsent = true;
+            Assert.IsTrue(new ProtokitePlaytestConsentFile(_settings.ConsentFilePath).Save(ProtokitePlaytestConsentChoice.VideoOnly));
+            _network = OnWiFi;
+            string waiting = PlantARecordingTheBudgetWouldDelete();
+            using (StartFlock(Transport(true, transport => { })))
+            {
+                ProtokitePlaytest.Refresh();
+                Frames(1);
+                Assert.IsNotNull(ProtokitePlaytest.RecordingRunForTesting, "Precondition: the recording started while the question is due");
+                Assert.IsTrue(Directory.Exists(waiting), "Kept: the player may yet choose Wi-Fi only");
+            }
+        }
+
+        [Test]
+        public void ARecordingThatFindsNoRoomBesideRecordingsWaitingForWiFiSaysWhyWithoutAWarning()
+        {
+            PlayerChooses(ProtokitePlaytestUploadNetworkChoice.WiFiOnly);
+            _network = OnMobileData;
+            _settings.Settings.RecordingsDiskBudgetMb = 1;
+            string waiting = PlantWaitingRecording("20260101-000000-00000001", "pk-9", "session-gvid");
+            using (StartFlock(Transport(true, transport => { })))
+            {
+                ProtokitePlaytest.Refresh();
+                LogAssert.Expect(LogType.Log, new Regex("This launch records no playtest video: the recordings in .* take .* MB of Recordings Disk Budget Mb \\(1 MB\\), and those waiting to upload are kept"));
+                Frames(1);
+                Assert.IsNull(ProtokitePlaytest.RecordingRunForTesting, "Under a megabyte is left");
+                Assert.IsTrue(Directory.Exists(waiting));
             }
         }
 
