@@ -20,6 +20,14 @@ namespace Protokite.Playtest
         [Tooltip("The Protokite API this game reports to.")]
         [SerializeField] private string protokiteApiUrl = DefaultProtokiteApiUrl;
 
+        [Tooltip("The playtest this build joins: paste the ID from the playtest's page in Protokite (the test's ID, or the Flock version ID its SDK block shows). The editor finds the playtest's version through Flock when it changes, and only the playtest's requests to Protokite carry it; the Flock SDK keeps its own Game Version and everything set up under it. Empty: a build joins the game's newest playtest, whichever is newest when it starts (or, when the Flock SDK's Game Version is a playtest's own name, pt-<test id>, that one).")]
+        [SerializeField, ProtokitePlaytestIdField] private string playtestId = "";
+
+        // Written by the editor when Playtest ID resolves: the version ID, the Playtest ID and a fingerprint of the Flock URL and key it was resolved with.
+        [SerializeField, HideInInspector] private string resolvedPlaytestVersionId = "";
+        [SerializeField, HideInInspector] private string resolvedFromPlaytestId = "";
+        [SerializeField, HideInInspector] private string resolvedWithFlockSettings = "";
+
         [Header("Player consent")]
         [Tooltip("On by default: the player is asked what this playtest may collect (the screen, play data, both or nothing), and nothing is collected until they answer; on a phone that records, an answer that lets the screen be recorded is followed by which networks recordings may upload on (Wi-Fi only, or Wi-Fi and mobile data). The answers are kept on their machine for later launches. Turn it off only where players were asked another way, or for a test run with nobody to answer; everything the playtest turns on is then collected, and each session says nobody was asked.")]
         [SerializeField] private bool askThePlayerForPlaytestConsent = true;
@@ -100,6 +108,39 @@ namespace Protokite.Playtest
             set => protokiteApiUrl = value;
         }
 
+        /// <summary>The playtest this build joins, as pasted from Protokite (empty: the game's newest); only the editor resolves it, so a value set in a player turns playtesting off.</summary>
+        public string PlaytestId
+        {
+            get => playtestId;
+            set => playtestId = value;
+        }
+
+        // A Flock ID is a ULID: 26 characters.
+        private const int FlockIdLength = 26;
+
+        /// <summary>Whether a Playtest ID chooses the playtest, rather than the Flock SDK's Game Version.</summary>
+        internal bool ChoosesAPlaytest => !string.IsNullOrWhiteSpace(playtestId);
+
+        /// <summary>The playtest's version ID resolved for the Playtest ID as it is now, or null when it chooses none or is not resolved for this value.</summary>
+        internal string PlaytestVersionId
+            => ChoosesAPlaytest && string.Equals(resolvedFromPlaytestId, playtestId, System.StringComparison.Ordinal)
+               && ProtokitePlaytestIds.IsUsable(resolvedPlaytestVersionId, FlockIdLength)
+                ? resolvedPlaytestVersionId
+                : null;
+
+        /// <summary>What the editor last kept, whatever Playtest ID it was for; for the editor to show and compare.</summary>
+        internal string ResolvedPlaytestVersionId => resolvedPlaytestVersionId;
+        internal string ResolvedFromPlaytestId => resolvedFromPlaytestId;
+        internal string ResolvedWithFlockSettings => resolvedWithFlockSettings;
+
+        /// <summary>Keeps what the editor resolved a Playtest ID to (an empty version ID: none), and a fingerprint of the Flock settings asked with.</summary>
+        internal void KeepResolvedPlaytestVersion(string fromPlaytestId, string versionId, string withFlockSettings = "")
+        {
+            resolvedFromPlaytestId = fromPlaytestId ?? "";
+            resolvedPlaytestVersionId = versionId ?? "";
+            resolvedWithFlockSettings = withFlockSettings ?? "";
+        }
+
         /// <summary>Whether the player is asked what this playtest may collect before anything is. An answer already given counts either way.</summary>
         public bool AskThePlayerForPlaytestConsent
         {
@@ -170,6 +211,11 @@ namespace Protokite.Playtest
 
     /// <summary>Draws a key setting with a Detect Key button that sets it from the next key pressed, beside the list of every key.</summary>
     internal sealed class ProtokitePlaytestKeyFieldAttribute : PropertyAttribute
+    {
+    }
+
+    /// <summary>Draws the Playtest ID with the version it resolved to and what Flock said about it.</summary>
+    internal sealed class ProtokitePlaytestIdFieldAttribute : PropertyAttribute
     {
     }
 }

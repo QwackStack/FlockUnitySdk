@@ -200,17 +200,17 @@ namespace Protokite.Playtest
                 return Task.FromResult(new ProtokitePlaytestRecordingUploadOutcome { WhyNot = "its saved session names no Protokite API URL." });
             // By the file's ending, the one thing an earlier launch's recording still says about what kind it is.
             return UploadRecordingOrKeepItAsync(run, videoPath, ProtokitePlaytestRecordingFiles.ContentTypeFor(videoPath), session.ProtokiteApiUrl,
-                HeadersForTheSession(launchHeaders, session.FlockGameVersionId), session.PlaytestSessionId, retryPolicy, launchEnds, deviceLeavesWiFi);
+                HeadersNamingTheVersion(launchHeaders, session.FlockGameVersionId), session.PlaytestSessionId, retryPolicy, launchEnds, deviceLeavesWiFi);
         }
 
-        /// <summary>This launch's API key with the Game Version ID the session started with, which is how Protokite finds its playtest; none when it had none.</summary>
-        internal static Dictionary<string, string> HeadersForTheSession(Dictionary<string, string> launchHeaders, string sessionGameVersionId)
+        /// <summary>This launch's API key with the Game Version ID of a playtest, which is how Protokite finds the playtest; none when it is empty.</summary>
+        internal static Dictionary<string, string> HeadersNamingTheVersion(Dictionary<string, string> launchHeaders, string playtestGameVersionId)
         {
             Dictionary<string, string> headers = new Dictionary<string, string>(launchHeaders);
-            if (string.IsNullOrEmpty(sessionGameVersionId))
+            if (string.IsNullOrEmpty(playtestGameVersionId))
                 headers.Remove(GameVersionHeader);
             else
-                headers[GameVersionHeader] = sessionGameVersionId;
+                headers[GameVersionHeader] = playtestGameVersionId;
             return headers;
         }
 

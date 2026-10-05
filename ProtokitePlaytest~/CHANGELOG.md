@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 It is released with the Flock SDK, at the Flock SDK's version.
 
 
+## [1.68.0]
+
+### Added
+- **Playtest ID** in Protokite > Playtest > Settings chooses the playtest a build joins, so the game keeps its own Game Version
+  and everything set up under it in Flock (player templates, configs, the shop). Paste the ID from the playtest's page in
+  Protokite: the test's ID, or the Flock version ID its SDK block shows (`pt-<test id>` works too). While the playtest settings
+  or the setup window are open, the editor finds the playtest's version through Flock whenever the ID, the Flock API URL or the
+  API key has changed, shows it under Resolved Version ID, and says what Flock found. Only the playtest's own requests to
+  Protokite carry that version; the Flock SDK's requests keep the game's Game Version.
+- `ProtokitePlaytestSettings.PlaytestId`, and the status `PlaytestIdNotResolved`: a Playtest ID set but not resolved to a
+  playtest leaves playtesting off and says so once, at warning. It never falls back to the Game Version, nor to sending no
+  version, which Protokite answers with the game's newest playtest.
+- A build with Playtesting Enabled on is refused, naming the ID and the fix, when its Playtest ID has not been resolved or was
+  resolved with other Flock settings (another API URL or key, whose versions the build's Flock does not have).
+- Protokite > Playtest > Setup Checks And Test Video checks the Playtest ID, with a Resolve Playtest ID button.
+
+### Changed
+- **With Playtest ID empty, a build joins the game's newest playtest** (Protokite's answer when no version is sent), and keeps
+  that playtest for the whole launch, so one created meanwhile never takes the rest of it. A Flock Game Version that is a
+  playtest's own name (`pt-<test id>`) still joins that playtest, as before. Until now the Game Version alone chose, and a
+  game's own version found no playtest. The Ready line says when the playtest is the newest, and the setup window passes it
+  as "The game's newest playtest".
+- The session, its recording, its end and the feedback forms of a launch all go to the playtest its config was loaded for;
+  a Playtest ID changed in Play Mode afterwards does not move them.
+
 ## [1.67.0]
 
 ### Fixed

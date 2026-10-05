@@ -42,8 +42,8 @@ namespace Protokite.Playtest.Tests
         private string Recordings => Path.Combine(_folder, "Recordings");
         private string KeptForms => Path.Combine(_folder, "FeedbackForms");
 
-        private static string Config(bool video, bool heavyAnalytics, bool form)
-            => "{\"result\":{\"session_started_event\":\"session_started\",\"test_id\":\"t\",\"flock_game_version_id\":\"test-gvid\",\"features\":{" +
+        private static string Config(bool video, bool heavyAnalytics, bool form, string playtestVersion = "test-gvid")
+            => "{\"result\":{\"session_started_event\":\"session_started\",\"test_id\":\"t\",\"flock_game_version_id\":\"" + playtestVersion + "\",\"features\":{" +
                $"\"video_recording\":{(video ? "true" : "false")},\"heavy_analytics\":{(heavyAnalytics ? "true" : "false")},\"exception_capturing\":true}},\"form\":" +
                (form ? Form : "null") + "}}";
 
@@ -210,6 +210,35 @@ namespace Protokite.Playtest.Tests
                 Assert.AreEqual("pk-1", ProtokitePlaytest.PlaytestSessionId);
                 Assert.AreEqual(flockSessionsBefore, flock.Transport.CountTo(FlockSessionRoute));
                 Assert.IsFalse(Directory.Exists(KeptForms) && Directory.GetFiles(KeptForms).Length > 0, "The good form went through the self-test's own client, not the game's kept forms");
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator WithAPlaytestIdEveryProbeAsksForThePlaytestsVersion()
+        {
+            string playtestVersion = ProtokitePlaytestSetupChecksTests.PlaytestVersionId;
+            _settings.Settings.PlaytestId = ProtokitePlaytestSetupChecksTests.TestId;
+            _settings.Settings.KeepResolvedPlaytestVersion(ProtokitePlaytestSetupChecksTests.TestId, playtestVersion);
+            // This Protokite takes only the playtest's version: a probe sent with the Flock SDK's own is refused for it.
+            FakeProtokite protokite = new FakeProtokite(Config(video: true, heavyAnalytics: true, form: true, playtestVersion), playtestVersion);
+            using (FlockTestClient flock = StartFlock(protokite))
+            {
+                yield return AReadyPlaytestWithASession(flock);
+                for (int frame = 0; frame < 30; frame++)
+                    AFrame();
+
+                ExpectTheRaisedExceptions();
+                Task<ProtokitePlaytestSelfTestReport> run = ProtokitePlaytestSelfTest.RunAsync(ClosedVersion);
+                yield return TheRunEnds(run);
+                ProtokitePlaytestSelfTestReport report = run.Result;
+                string failures = string.Join("\n", report.Steps.Where(s => s.Outcome != ProtokitePlaytestSelfTestOutcome.Passed).Select(s => s.Name + ": " + s.Detail));
+                Assert.AreEqual(16, report.Passed, failures);
+
+                List<FlockHttpRequest> configs = flock.Transport.AllTo(ConfigRoute);
+                Assert.AreEqual(playtestVersion, configs[configs.Count - 3].Headers["X-Game-Version-ID"], "The wrong-key probe swaps the key alone");
+                Assert.AreEqual(playtestVersion, protokite.SessionStarts[0].Headers["X-Game-Version-ID"], "The launch's own session");
+                Assert.AreEqual(playtestVersion, protokite.SessionStarts[1].Headers["X-Game-Version-ID"], "The probe naming no player");
+                Assert.AreEqual("test-gvid", flock.Transport.LastTo(FlockSessionRoute).Headers["X-Game-Version-ID"], "The Flock SDK keeps its own");
             }
         }
 
@@ -621,7 +650,7 @@ namespace Protokite.Playtest.Tests
         private sealed class FakeProtokite
         {
             private const string RealKey = "test-key";
-            private const string PlaytestVersion = "test-gvid";
+            private readonly string _playtestVersion;
             private readonly string _config;
             private readonly JObject _form;
             private readonly List<string> _sessions = new List<string>();
@@ -635,8 +664,9 @@ namespace Protokite.Playtest.Tests
             public readonly List<string> EndsAsked = new List<string>();
             public readonly List<JObject> FormsStored = new List<JObject>();
 
-            public FakeProtokite(string config)
+            public FakeProtokite(string config, string playtestVersion = "test-gvid")
             {
+                _playtestVersion = playtestVersion;
                 _config = config;
                 _form = JObject.Parse(config)["result"]["form"] as JObject;
             }
@@ -664,7 +694,7 @@ namespace Protokite.Playtest.Tests
                     return Refuse(401, "\"Invalid API Key\"");
                 request.Headers.TryGetValue("X-Game-Version-ID", out string version);
                 bool closed = version == ClosedVersion;
-                if (version != null && version != PlaytestVersion && !closed)
+                if (version != null && version != _playtestVersion && !closed)
                     return Refuse(404, "\"No playtest is linked to this Flock SDK version\"");
 
                 JObject body = string.IsNullOrEmpty(request.JsonBody) ? new JObject() : JObject.Parse(request.JsonBody);

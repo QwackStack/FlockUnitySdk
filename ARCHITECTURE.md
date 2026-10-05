@@ -127,6 +127,9 @@ beside every file outside `~` folders, the version constant sessions report, and
 script.
 - **ProtokitePlaytestSettings** — the `ScriptableObject` at `Assets/Resources/ProtokitePlaytestSettings.asset`: playtesting off,
   Protokite API URL `https://api-protokite.qwacks.com` (production) and Ask The Player For Playtest Consent on by default.
+  **Playtest ID** (1.68.0) chooses the playtest: the editor keeps the playtest's version ID it resolved and the Playtest ID it was
+  resolved for in two hidden fields, and `PlaytestVersionId` answers only while they match letter for letter (`ChoosesAPlaytest`
+  is false for a blank one, which leaves the playtest to Flock's Game Version as before).
 - **ProtokitePlaytest** — the entry point. `Status` is worked out on every read from the settings, the running `FlockClient`
   and the config fetched **under that client** (a config fetched under a client that has since shut down reads as none,
   before any refresh). `Refresh()` follows Flock by comparing the running client instance (Flock clears event subscriptions
@@ -359,9 +362,9 @@ script.
 - **Setup checks (Editor)** — **ProtokitePlaytestSetupChecks** decides four checks with no editor and no network, from a
   **ProtokitePlaytestSetupInput** read once (`FromProject`: `ProtokitePlaytestSettings.Load()`, `Resources/FlockConfig`, the
   active build target and `GetPlatformSettings("Win64", "Architecture")`, measured to read `x64`/`ARM64`): the switch, the URL
-  (the runtime's `IsUsableApiUrl` and `Describe` words, made internal for it), the Game Version (a `pt-` name, resolved;
-  an ID-shaped value is a pasted ID) and video on the target (Win64 on x64 only, as the runtime). A Flock answer counts only
-  for the settings it was asked with (`AskedFor`, one owner). **ProtokitePlaytestGameVersionLookup** asks Flock through core's
+  (the runtime's `IsUsableApiUrl` and `Describe` words, made internal for it), which playtest (the Playtest ID resolved; with
+  it empty, the Game Version: a `pt-` name, resolved, an ID-shaped value being a pasted ID) and video on the target (Win64 on
+  x64 and Android, as the runtime). A Flock answer counts only for the settings it was asked with (`AskedFor`, one owner). **ProtokitePlaytestGameVersionLookup** asks Flock through core's
   `FlockHttpClient`: `by-name` for the name, then for a pasted ID `GET /v1/game_version` with it as `X-Game-Version-ID` (the
   route names an ID of any game), then that name `by-name` again, so only a name that resolves back to the ID in this game,
   and only a playtest's, is suggested. Only the routes' own coded 404s mean "no such version". **ProtokitePlaytestGameVersionQuestions**
@@ -372,6 +375,19 @@ script.
   records test videos in Play Mode; under **While testing** it forgets this machine's consent answer and opens the feedback
   form (the menu holds only Settings and this window). A button that changes what is drawn below it ends the event
   (`GUIUtility.ExitGUI`), so no event draws what its Layout did not count; nothing in it waits across a script reload.
+- **Playtest ID (Editor, 1.68.0)** — **ProtokitePlaytestIdLookup** finds a playtest's version from what was pasted (trimmed, a
+  leading `pt-` dropped, upper-cased): `by-name pt-<id>` for a test's ID, else `GET /v1/game_version` for a version ID, proven
+  by its name resolving back to it in this game, and refused when the name is no playtest's. **ProtokitePlaytestIdResolver**,
+  one for the editor, asks once per change of the Playtest ID, Flock URL or key and `Keep`s the answer in the settings asset with
+  a fingerprint of the Flock settings asked with (`IsResolvedWith`), saving that asset alone, only while the settings still hold
+  what was asked; a question a newer one replaced is dropped; failing to reach Flock keeps what was resolved, and "no playtest"
+  clears it. Views call `ResolveForAView`, which resolves only the settings a build loads and nothing while a test owns the
+  resolver. **ProtokitePlaytestIdFieldDrawer** draws the field, the Resolved Version ID and what Flock said (`WhatToSay`).
+  **ProtokitePlaytestBuildCheck** refuses a build with Playtesting Enabled on and a Playtest ID not resolved, or resolved with
+  other Flock settings. At runtime `VersionThatNamesThePlaytest` is the version the config is fetched with, and only Protokite is
+  sent it: the Playtest ID's; with none, a `pt-` Game Version's own ID (core's `FlockClient.GameVersion`); else none, which
+  Protokite answers with the game's newest playtest. `_configGameVersionId` (the answering playtest's version when none was
+  sent) owns every later request about the launch's playtest.
 - **Live self-test (`Runtime/ProtokitePlaytestSelfTest.cs`, `ProtokitePlaytestSelfTestReport.cs`)** — the public front is
   `ProtokitePlaytestSelfTest.RunAsync(closedPlaytestGameVersionId)` and `IsRunning`; the steps are private members of the
   `ProtokitePlaytest` partial class, so they read the session's own URL and headers and the game's identity. Refused in a

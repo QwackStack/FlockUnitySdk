@@ -174,7 +174,8 @@ namespace Protokite.Playtest.Tests
         [TestCase("test-gvid", "test-gvid", "Loaded")]
         [TestCase("TEST-GVID", "test-gvid", "ForAnotherVersion")]
         [TestCase("other", "test-gvid", "ForAnotherVersion")]
-        [TestCase("newest", null, "ForAnotherVersion")]
+        [TestCase("newest", null, "Loaded")]
+        [TestCase("newest", "", "Loaded")]
         [TestCase(null, "test-gvid", "Loaded")]
         public void AConfigForAnotherVersionIsRefused(string answeredVersion, string sentVersion, string expected)
         {
@@ -196,7 +197,7 @@ namespace Protokite.Playtest.Tests
                 Assert.AreEqual("http://protokite.test/game/sdk/playtest-config", sent.Url, "Joined onto the settings' URL, trailing slash and all");
                 Assert.AreEqual("GET", sent.Method);
                 Assert.AreEqual("test-key", sent.Headers["X-Flock-API-Key"]);
-                Assert.AreEqual("test-gvid", sent.Headers["X-Game-Version-ID"]);
+                Assert.IsFalse(sent.Headers.ContainsKey("X-Game-Version-ID"), "No Playtest ID and the game's own Game Version: the newest playtest is asked for");
                 Assert.IsFalse(sent.Headers.ContainsKey("Authorization"), "Protokite never sees the player's sign-in");
 
                 Assert.AreEqual(ProtokitePlaytestStatus.Ready, ProtokitePlaytest.Status);
@@ -209,7 +210,7 @@ namespace Protokite.Playtest.Tests
         }
 
         [TestCase(401, ProtokitePlaytestStatus.ProtokiteRefusedApiKey, "refused the Flock API key")]
-        [TestCase(404, ProtokitePlaytestStatus.PlaytestNotLinked, "No Protokite playtest is linked")]
+        [TestCase(404, ProtokitePlaytestStatus.PlaytestNotLinked, "Protokite has no playtest for this build")]
         [TestCase(403, ProtokitePlaytestStatus.PlaytestConfigUnavailable, "Could not fetch")]
         [TestCase(503, ProtokitePlaytestStatus.PlaytestConfigUnavailable, "Could not fetch")]
         public void EachAnswerSetsItsStatusAndLogsItOnce(int status, ProtokitePlaytestStatus expected, string logged)

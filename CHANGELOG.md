@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.68.0]
+
+Released together with the Protokite Playtest's Playtest ID setting (see its changelog). With a Playtest ID set, the Flock SDK
+keeps its own Game Version and every request it makes.
+
+### Added
+- `FlockClient.GameVersion`: the Game Version name the client was initialized with, beside `GameVersionId`.
+
 ## [1.67.0]
 
 Released together with the Protokite Playtest's fix for the shader warnings an Android build logged (see its changelog).

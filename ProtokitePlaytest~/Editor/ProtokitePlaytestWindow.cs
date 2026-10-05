@@ -29,6 +29,9 @@ namespace Protokite.Playtest.Editor
         [NonSerialized] private string _testVideoRefused;
         // Read at each Layout event and kept for the events after it, so a layout and what it draws agree.
         [NonSerialized] private ProtokitePlaytestSetupInput _input;
+        [NonSerialized] private List<ProtokitePlaytestSetupCheck> _checks;
+        [NonSerialized] private string _playtestIdSaid;
+        [NonSerialized] private bool _playtestIdAsking;
         private Vector2 _scroll;
 
         [MenuItem(MenuPath)]
@@ -52,10 +55,13 @@ namespace Protokite.Playtest.Editor
         {
             _flock = new ProtokitePlaytestGameVersionQuestions();
             _flock.Answered += RepaintIfOpen;
+            ProtokitePlaytestIdResolver.Answered += RepaintIfOpen;
         }
 
         private void OnDisable()
         {
+            // The Playtest ID's question is the editor's, shared with the settings inspector, so it is left to land.
+            ProtokitePlaytestIdResolver.Answered -= RepaintIfOpen;
             if (_flock == null)
                 return;
             _flock.Answered -= RepaintIfOpen;
@@ -77,13 +83,23 @@ namespace Protokite.Playtest.Editor
 
         private void OnGUI()
         {
-            if (_input == null || Event.current.type == EventType.Layout)
+            if (_input == null || _checks == null || Event.current.type == EventType.Layout)
+            {
                 _input = ProtokitePlaytestSetupInput.FromProject();
+                // Asked once a typed value is committed, not for every letter.
+                if (!EditorGUIUtility.editingTextField)
+                {
+                    if (_input.ChoosesAPlaytest)
+                        ProtokitePlaytestIdResolver.ResolveForAView(ProtokitePlaytestSettings.Load(), ProtokitePlaytestSetupInput.LoadFlockSettings());
+                    else
+                        _flock.AskIfChanged(_input);
+                }
+                _checks = ProtokitePlaytestSetupChecks.Evaluate(_input, _flock.Answer, ProtokitePlaytestIdResolver.Answer);
+                _playtestIdAsking = ProtokitePlaytestIdResolver.IsAsking;
+                _playtestIdSaid = PlaytestIdQuestionSaid(_input, ProtokitePlaytestIdResolver.Answer, _playtestIdAsking);
+            }
             ProtokitePlaytestSetupInput input = _input;
-            // Asked once a typed value is committed, not for every letter.
-            if (!EditorGUIUtility.editingTextField)
-                _flock.AskIfChanged(input);
-            List<ProtokitePlaytestSetupCheck> checks = ProtokitePlaytestSetupChecks.Evaluate(input, _flock.Answer);
+            List<ProtokitePlaytestSetupCheck> checks = _checks;
 
             _scroll = EditorGUILayout.BeginScrollView(_scroll);
             EditorGUILayout.LabelField("Setup checks", EditorStyles.boldLabel);
@@ -92,8 +108,13 @@ namespace Protokite.Playtest.Editor
             foreach (ProtokitePlaytestSetupCheck check in checks)
             {
                 DrawCheck(check);
-                if (check.Id == ProtokitePlaytestSetupChecks.GameVersionCheck)
-                    DrawFlockQuestion(input);
+                if (check.Id == ProtokitePlaytestSetupChecks.WhichPlaytestCheck)
+                {
+                    if (input.ChoosesAPlaytest)
+                        DrawPlaytestIdQuestion();
+                    else
+                        DrawFlockQuestion(input);
+                }
                 EditorGUILayout.Space();
             }
 
@@ -190,7 +211,7 @@ namespace Protokite.Playtest.Editor
             return canOpen ? "Opens the form the playtest published, over the game." : "This build's playtest is not loaded, or publishes no form. " + ProtokitePlaytest.Describe(ProtokitePlaytest.Status);
         }
 
-        private static void DrawCheck(ProtokitePlaytestSetupCheck check)
+        private void DrawCheck(ProtokitePlaytestSetupCheck check)
         {
             EditorGUILayout.BeginVertical(EditorStyles.helpBox);
             GUIContent icon = EditorGUIUtility.IconContent(check.Passed ? "TestPassed" : "TestFailed");
@@ -213,6 +234,17 @@ namespace Protokite.Playtest.Editor
                 case ProtokitePlaytestSetupFix.OpenBuildProfiles:
                     if (GUILayout.Button("Open Build Settings"))
                         BuildPlayerWindow.ShowBuildPlayerWindow();
+                    break;
+                case ProtokitePlaytestSetupFix.ResolveThePlaytestId:
+                    using (new EditorGUI.DisabledScope(_playtestIdAsking))
+                    {
+                        if (GUILayout.Button("Resolve Playtest ID"))
+                        {
+                            ProtokitePlaytestIdResolver.ResolveForAView(ProtokitePlaytestSettings.Load(), ProtokitePlaytestSetupInput.LoadFlockSettings(), askAgain: true);
+                            // What is drawn below changed after this event was laid out: the next Layout draws it.
+                            GUIUtility.ExitGUI();
+                        }
+                    }
                     break;
             }
             EditorGUILayout.EndVertical();
@@ -238,6 +270,31 @@ namespace Protokite.Playtest.Editor
             {
                 if (GUILayout.Button("Check Again", GUILayout.Width(100)))
                     _flock.AskIfChanged(input, askAgain: true);
+            }
+            EditorGUILayout.EndHorizontal();
+        }
+
+        /// <summary>The line under the Playtest ID's check: whether Flock is being asked, has not been, or what came of it.</summary>
+        internal static string PlaytestIdQuestionSaid(ProtokitePlaytestSetupInput input, ProtokitePlaytestIdAnswer answer, bool asking)
+        {
+            if (asking)
+                return "Checking with Flock...";
+            if (answer == null || answer.AskedFor != ProtokitePlaytestIdLookup.KeyFor(input.FlockApiUrl, input.FlockApiKey, input.PlaytestId))
+                return "Not checked with Flock in this editor session yet.";
+            return answer.Problem != null ? "Could not check with Flock: " + answer.Problem : "Checked with Flock.";
+        }
+
+        private void DrawPlaytestIdQuestion()
+        {
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField(_playtestIdSaid, EditorStyles.wordWrappedMiniLabel);
+            using (new EditorGUI.DisabledScope(_playtestIdAsking))
+            {
+                if (GUILayout.Button("Check Again", GUILayout.Width(100)))
+                {
+                    ProtokitePlaytestIdResolver.ResolveForAView(ProtokitePlaytestSettings.Load(), ProtokitePlaytestSetupInput.LoadFlockSettings(), askAgain: true);
+                    GUIUtility.ExitGUI();
+                }
             }
             EditorGUILayout.EndHorizontal();
         }

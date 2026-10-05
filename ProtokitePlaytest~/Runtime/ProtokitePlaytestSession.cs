@@ -138,7 +138,8 @@ namespace Protokite.Playtest
 
             // Kept for the end, which goes to the same place with the same headers even after the Flock SDK has shut down.
             _sessionApiUrl = protokiteApiUrl;
-            _sessionHeaders = running.GetGameHeaders();
+            // The version the config was loaded for, not the settings read again: a Playtest ID changed in Play Mode since names another playtest.
+            _sessionHeaders = HeadersForTheLoadedPlaytest(running);
             _sessionRetryPolicy = running.RetryPolicy;
             _sessionState = ProtokitePlaytestSessionState.Starting;
 

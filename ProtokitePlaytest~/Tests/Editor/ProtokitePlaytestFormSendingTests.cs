@@ -321,7 +321,7 @@ namespace Protokite.Playtest.Tests
             using (FlockTestClient flock = StartFlock(new FlockFakeTransport()
                        .On(ConfigRoute, FlockFakeTransport.Status(404, "{\"detail\":\"No playtest is linked to this Flock SDK version\"}"))))
             {
-                LogAssert.Expect(LogType.Warning, new Regex("No Protokite playtest is linked"));
+                LogAssert.Expect(LogType.Warning, new Regex("Protokite has no playtest for this build"));
                 ProtokitePlaytest.Refresh();
                 ProtokitePlaytest.Refresh();
                 Assert.AreEqual(ProtokitePlaytestStatus.PlaytestNotLinked, ProtokitePlaytest.Status);

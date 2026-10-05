@@ -97,11 +97,11 @@ namespace Protokite.Playtest.Editor
         }
 
         // Null when the route answers 404: no such version.
-        private static Task<GameVersionSchema> FindByNameAsync(string apiUrl, string apiKey, string name, CancellationToken cancellationToken)
+        internal static Task<GameVersionSchema> FindByNameAsync(string apiUrl, string apiKey, string name, CancellationToken cancellationToken)
             => FindAsync($"{apiUrl}/{FlockClient.ApiVersion}/game_version/by-name/{Uri.EscapeDataString(name)}",
                 new Dictionary<string, string> { { ApiKeyHeader, apiKey } }, cancellationToken);
 
-        private static Task<GameVersionSchema> FindByIdAsync(string apiUrl, string apiKey, string id, CancellationToken cancellationToken)
+        internal static Task<GameVersionSchema> FindByIdAsync(string apiUrl, string apiKey, string id, CancellationToken cancellationToken)
             => FindAsync($"{apiUrl}/{FlockClient.ApiVersion}/game_version",
                 new Dictionary<string, string> { { ApiKeyHeader, apiKey }, { GameVersionIdHeader, id } }, cancellationToken);
 
@@ -124,7 +124,7 @@ namespace Protokite.Playtest.Editor
         }
 
         // Judged by the status alone: the Flock SDK raises a 403 as an authentication failure, but these routes refuse a key with 401 only.
-        private static string DescribeProblem(Exception ex)
+        internal static string DescribeProblem(Exception ex)
         {
             int? status = (ex as FlockException)?.StatusCode;
             if (status == 401)

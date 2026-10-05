@@ -128,7 +128,7 @@ namespace Protokite.Playtest.Tests
             Assert.AreEqual("key-1", byId.Headers["X-Flock-API-Key"]);
             Assert.IsTrue(_flock.Requests.Any(request => request.Url.EndsWith(ByName + PlaytestVersionName, StringComparison.Ordinal)), "The name was resolved back");
 
-            ProtokitePlaytestSetupCheck check = ProtokitePlaytestSetupChecks.Evaluate(input, answer).Single(c => c.Id == ProtokitePlaytestSetupChecks.GameVersionCheck);
+            ProtokitePlaytestSetupCheck check = ProtokitePlaytestSetupChecks.Evaluate(input, answer).Single(c => c.Id == ProtokitePlaytestSetupChecks.WhichPlaytestCheck);
             Assert.AreEqual(PlaytestVersionName, check.SuggestedGameVersion);
             Assert.AreEqual(PlaytestVersionId, check.SuggestedGameVersionId);
         }
@@ -185,7 +185,7 @@ namespace Protokite.Playtest.Tests
             Assert.AreEqual("1.0.0", answer.NameOfPastedId);
             Assert.IsFalse(answer.NameOfPastedIdResolvesBack, "1.0.0 in this game is another version, so the name is not this ID's here");
             StringAssert.Contains("belongs to another game",
-                ProtokitePlaytestSetupChecks.Evaluate(input, answer).Single(c => c.Id == ProtokitePlaytestSetupChecks.GameVersionCheck).Detail);
+                ProtokitePlaytestSetupChecks.Evaluate(input, answer).Single(c => c.Id == ProtokitePlaytestSetupChecks.WhichPlaytestCheck).Detail);
         }
 
         [Test]
@@ -197,7 +197,7 @@ namespace Protokite.Playtest.Tests
             Assert.IsFalse(answer.PastedIdFound);
             Assert.IsNull(answer.SuggestedName);
             StringAssert.Contains("Flock has no version with that ID",
-                ProtokitePlaytestSetupChecks.Evaluate(input, answer).Single(c => c.Id == ProtokitePlaytestSetupChecks.GameVersionCheck).Detail);
+                ProtokitePlaytestSetupChecks.Evaluate(input, answer).Single(c => c.Id == ProtokitePlaytestSetupChecks.WhichPlaytestCheck).Detail);
         }
 
         [Test]

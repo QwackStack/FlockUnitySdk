@@ -36,7 +36,9 @@ namespace Protokite.Playtest
         /// <summary>The playtest is loaded, and nothing is collected until the player says what it may collect.</summary>
         WaitingForPlayerConsent,
         /// <summary>The player asked the playtest to collect nothing: it behaves as with playtesting off, except that a feedback form the player sends still goes.</summary>
-        PlayerRefusedPlaytest
+        PlayerRefusedPlaytest,
+        /// <summary>A Playtest ID is set, but the editor has not resolved it to a playtest's version, so no playtest is asked for.</summary>
+        PlaytestIdNotResolved
     }
 
     /// <summary>Where fetching the playtest config has got to, for the Flock client it was fetched under.</summary>
@@ -64,6 +66,8 @@ namespace Protokite.Playtest
         private static ProtokitePlaytestConfig _config;
         private static string _configProblem = "";
         private static string _configGameVersionId;
+        // Whether the loaded playtest is the game's newest, asked for with no version as no Playtest ID chose one.
+        private static bool _configIsTheNewest;
         private static int _timesConfigForgotten;
         private static CancellationTokenSource _configFetchCancel;
         private static ProtokitePlaytestStatus? _statusLastReported;
@@ -95,6 +99,9 @@ namespace Protokite.Playtest
                 return ProtokitePlaytestStatus.ProtokiteApiUrlMissing;
             if (!IsUsableApiUrl(url))
                 return ProtokitePlaytestStatus.ProtokiteApiUrlUnusable;
+            // Never the Flock SDK's version instead, and never none: Protokite answers a request naming no version with the game's newest playtest.
+            if (settings.ChoosesAPlaytest && settings.PlaytestVersionId == null)
+                return ProtokitePlaytestStatus.PlaytestIdNotResolved;
             if (playtestNoLongerCollecting)
                 return ProtokitePlaytestStatus.PlaytestNoLongerCollecting;
             if (!flockIsRunning)
@@ -124,10 +131,11 @@ namespace Protokite.Playtest
         {
             if (failure == null)
             {
-                // Compared letter for letter, as the server matches the id it is sent. The server leaves the version out
-                // only when the playtest has none, and then there is nothing to compare.
+                // Compared letter for letter, as the server matches the id it is sent. Nothing to compare when none was sent (the
+                // game's newest playtest was asked for) or the playtest has none.
                 string answered = config.FlockGameVersionId;
-                return !string.IsNullOrEmpty(answered) && !string.Equals(answered, sentGameVersionId ?? "", StringComparison.Ordinal)
+                return !string.IsNullOrEmpty(answered) && !string.IsNullOrEmpty(sentGameVersionId)
+                       && !string.Equals(answered, sentGameVersionId, StringComparison.Ordinal)
                     ? ProtokitePlaytestConfigState.ForAnotherVersion
                     : ProtokitePlaytestConfigState.Loaded;
             }
@@ -177,7 +185,7 @@ namespace Protokite.Playtest
             // A fetch already on its way never gets here: its state has not changed, so the early return above skipped it.
             if (StatusFor(settings, running != null, consent, _configState, _playtestNoLongerCollecting) == ProtokitePlaytestStatus.FetchingPlaytestConfig)
             {
-                StartPlaytestConfigFetch(running, settings.ProtokiteApiUrl);
+                StartPlaytestConfigFetch(running, settings);
             }
 
             // One session per launch: whatever became of it, a later sign-in or Flock session never starts another.
@@ -232,17 +240,38 @@ namespace Protokite.Playtest
             Refresh();
         }
 
-        private static void StartPlaytestConfigFetch(FlockClient flock, string protokiteApiUrl)
+        private static void StartPlaytestConfigFetch(FlockClient flock, ProtokitePlaytestSettings settings)
         {
-            // Exactly the key and version the Flock SDK initialized with, so the playtest found is this build's.
-            Dictionary<string, string> headers = flock.GetGameHeaders();
-            headers.TryGetValue(GameVersionHeader, out string sentGameVersionId);
+            // The key the Flock SDK initialized with, and the version that names this build's playtest.
+            string sentGameVersionId = VersionThatNamesThePlaytest(flock, settings);
+            Dictionary<string, string> headers = HeadersNamingTheVersion(flock.GetGameHeaders(), sentGameVersionId);
 
             _configState = ProtokitePlaytestConfigState.Fetching;
             _configFetchCancel = new CancellationTokenSource();
             ProtokiteClient client = new ProtokiteClient(flock.RetryPolicy);
-            _ = FetchPlaytestConfigAsync(client, protokiteApiUrl, headers, sentGameVersionId, _timesConfigForgotten, _configFetchCancel.Token);
+            _ = FetchPlaytestConfigAsync(client, settings.ProtokiteApiUrl, headers, sentGameVersionId, _timesConfigForgotten, _configFetchCancel.Token);
         }
+
+        /// <summary>The version Protokite alone is asked by: the Playtest ID's; with none, a pt- Game Version's own ID; else none, which Protokite answers with the game's newest playtest.</summary>
+        internal static string VersionThatNamesThePlaytest(FlockClient flock, ProtokitePlaytestSettings settings)
+        {
+            if (settings != null && settings.ChoosesAPlaytest)
+                return settings.PlaytestVersionId;
+            if (!IsAPlaytestVersionName(flock.GameVersion))
+                return null;
+            flock.GetGameHeaders().TryGetValue(GameVersionHeader, out string flockGameVersionId);
+            return flockGameVersionId;
+        }
+
+        /// <summary>How Protokite names a playtest's Flock version: this, then the test's id.</summary>
+        internal const string PlaytestVersionPrefix = "pt-";
+
+        /// <summary>Whether a Game Version name is one Protokite gives a playtest: "pt-", letter for letter, then the test's id.</summary>
+        internal static bool IsAPlaytestVersionName(string name)
+            => name != null && name.Length > PlaytestVersionPrefix.Length && name.StartsWith(PlaytestVersionPrefix, StringComparison.Ordinal);
+
+        /// <summary>The headers every later request about this launch's playtest goes with: the Flock SDK's key, and the version the playtest was loaded for.</summary>
+        private static Dictionary<string, string> HeadersForTheLoadedPlaytest(FlockClient flock) => HeadersNamingTheVersion(flock.GetGameHeaders(), _configGameVersionId);
 
         private static async Task FetchPlaytestConfigAsync(ProtokiteClient client, string protokiteApiUrl, Dictionary<string, string> headers,
             string sentGameVersionId, int timesForgottenWhenSent, CancellationToken cancellationToken)
@@ -268,8 +297,11 @@ namespace Protokite.Playtest
 
             _configState = ConfigStateFor(config, failure, sentGameVersionId);
             _config = _configState == ProtokitePlaytestConfigState.Loaded ? config : null;
-            // The version a feedback form filled in before any session is sent under, so Protokite finds this playtest.
-            _configGameVersionId = _configState == ProtokitePlaytestConfigState.Loaded ? sentGameVersionId : null;
+            // The version every later request about this launch's playtest is sent with (the session, its recording, a form): the newest
+            // playtest's own when none was sent, so a playtest created later never takes the rest of this launch.
+            _configIsTheNewest = _configState == ProtokitePlaytestConfigState.Loaded && string.IsNullOrEmpty(sentGameVersionId);
+            _configGameVersionId = _configState != ProtokitePlaytestConfigState.Loaded ? null
+                : _configIsTheNewest ? config.FlockGameVersionId : sentGameVersionId;
             _configProblem = failure != null
                 ? failure.Message
                 : _configState == ProtokitePlaytestConfigState.ForAnotherVersion
@@ -286,6 +318,7 @@ namespace Protokite.Playtest
             _config = null;
             _configProblem = "";
             _configGameVersionId = null;
+            _configIsTheNewest = false;
 
             // Its retries would otherwise keep sending an ended Flock client's key. Cancelled after the count has moved,
             // so whatever the cancelled request still answers is already stale. Not disposed: the request may still read its token.
@@ -303,7 +336,8 @@ namespace Protokite.Playtest
             switch (status)
             {
                 case ProtokitePlaytestStatus.Ready:
-                    Debug.Log(LogPrefix + $"Playtesting is ready: playtest {_config.TestId} is loaded, with {DescribeFeatures(_config)}.");
+                    Debug.Log(LogPrefix + $"Playtesting is ready: playtest {_config.TestId} is loaded, with {DescribeFeatures(_config)}." +
+                              (_configIsTheNewest ? " It is the game's newest playtest, as Playtest ID is empty in Protokite > Playtest > Settings; paste a playtest's ID there to choose it." : ""));
                     break;
                 case ProtokitePlaytestStatus.ProtokiteApiUrlMissing:
                 case ProtokitePlaytestStatus.ProtokiteApiUrlUnusable:
@@ -313,6 +347,9 @@ namespace Protokite.Playtest
                 case ProtokitePlaytestStatus.PlaytestConfigForAnotherVersion:
                 case ProtokitePlaytestStatus.PlaytestNoLongerCollecting:
                     Debug.LogWarning(LogPrefix + Describe(status) + (string.IsNullOrEmpty(_configProblem) ? "" : " " + _configProblem));
+                    break;
+                case ProtokitePlaytestStatus.PlaytestIdNotResolved:
+                    Debug.LogWarning(LogPrefix + Describe(status) + $" Playtest ID is '{ProtokitePlaytestSettings.Load()?.PlaytestId}'.");
                     break;
                 // The player's own choice or a question on its way: nothing for the studio to fix.
                 case ProtokitePlaytestStatus.WaitingForPlayerConsent:
@@ -338,7 +375,7 @@ namespace Protokite.Playtest
                 case ProtokitePlaytestStatus.FetchingPlaytestConfig:
                     return "Playtesting is set up and fetching this build's playtest from Protokite.";
                 case ProtokitePlaytestStatus.PlaytestNotLinked:
-                    return "No Protokite playtest is linked to this build's Game Version ID, so playtesting stays off. Point the Game Version in Flock > Settings at the playtest's version (Protokite names it pt-<test id>) and resolve it.";
+                    return "Protokite has no playtest for this build, so playtesting stays off: none is linked to the version it asks for or, with Playtest ID empty, the game has no playtest at all. Paste the ID from the playtest's page in Protokite into Playtest ID in Protokite > Playtest > Settings.";
                 case ProtokitePlaytestStatus.ProtokiteRefusedApiKey:
                     return "Protokite refused the Flock API key, so playtesting stays off. Check the API key in Flock > Settings.";
                 case ProtokitePlaytestStatus.PlaytestConfigUnavailable:
@@ -348,11 +385,13 @@ namespace Protokite.Playtest
                 case ProtokitePlaytestStatus.Ready:
                     return "Playtesting is ready: this build's playtest is loaded.";
                 case ProtokitePlaytestStatus.PlaytestNoLongerCollecting:
-                    return "This playtest has closed and takes no more sessions (Protokite answered HTTP 400), so playtesting is off until the game is launched again. Reopen the playtest in Protokite, or point the Game Version at a playtest that is still running.";
+                    return "This playtest has closed and takes no more sessions (Protokite answered HTTP 400), so playtesting is off until the game is launched again. Reopen the playtest in Protokite, or set Playtest ID to a playtest that is still running.";
                 case ProtokitePlaytestStatus.WaitingForPlayerConsent:
                     return "This build's playtest is loaded, and nothing is collected until the player says what it may collect. The question is put on screen; a game can put it again with ProtokitePlaytest.AskForPlaytestConsent, or answer it with ProtokitePlaytest.SetPlaytestConsent. Turn off Ask The Player For Playtest Consent in Protokite > Playtest > Settings to collect without asking.";
                 case ProtokitePlaytestStatus.PlayerRefusedPlaytest:
                     return "The player asked this playtest to collect nothing, so nothing is recorded, no play data is sent and no session is started, as with playtesting off; a feedback form the player sends themselves still goes. They can be asked again with ProtokitePlaytest.AskForPlaytestConsent.";
+                case ProtokitePlaytestStatus.PlaytestIdNotResolved:
+                    return "Playtest ID in Protokite > Playtest > Settings has not been resolved to a playtest, so no playtest is asked for and playtesting stays off. Open the settings in the editor while Flock can be reached: the Playtest ID is resolved there, and the settings say what Flock found for it.";
             }
             return "";
         }

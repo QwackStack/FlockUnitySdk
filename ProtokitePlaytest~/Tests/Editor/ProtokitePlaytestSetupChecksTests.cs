@@ -79,7 +79,7 @@ namespace Protokite.Playtest.Tests
             List<ProtokitePlaytestSetupCheck> checks = ProtokitePlaytestSetupChecks.Evaluate(input, AnswerFor(input, true, PlaytestVersionId));
             CollectionAssert.AreEqual(new[]
             {
-                ProtokitePlaytestSetupChecks.PlaytestingCheck, ProtokitePlaytestSetupChecks.ProtokiteApiUrlCheck, ProtokitePlaytestSetupChecks.GameVersionCheck,
+                ProtokitePlaytestSetupChecks.PlaytestingCheck, ProtokitePlaytestSetupChecks.ProtokiteApiUrlCheck, ProtokitePlaytestSetupChecks.WhichPlaytestCheck,
                 ProtokitePlaytestSetupChecks.VideoCheck
             }, checks.Select(check => check.Id).ToArray(), "The four checks, in the order they are fixed");
             foreach (ProtokitePlaytestSetupCheck check in checks)
@@ -182,13 +182,13 @@ namespace Protokite.Playtest.Tests
         private ProtokitePlaytestSetupCheck GameVersion(string name, string id, Func<ProtokitePlaytestSetupInput, ProtokitePlaytestGameVersionAnswer> answer = null)
         {
             ProtokitePlaytestSetupInput input = ProtokitePlaytestSetupInput.From(Playtest(), Flock(name, id), BuildTarget.StandaloneWindows64, "");
-            return Check(input, ProtokitePlaytestSetupChecks.GameVersionCheck, answer?.Invoke(input));
+            return Check(input, ProtokitePlaytestSetupChecks.WhichPlaytestCheck, answer?.Invoke(input));
         }
 
         [Test]
         public void NoFlockSettingsFailsTheGameVersion()
         {
-            ProtokitePlaytestSetupCheck check = Check(ProtokitePlaytestSetupInput.From(Playtest(), null, BuildTarget.StandaloneWindows64, ""), ProtokitePlaytestSetupChecks.GameVersionCheck);
+            ProtokitePlaytestSetupCheck check = Check(ProtokitePlaytestSetupInput.From(Playtest(), null, BuildTarget.StandaloneWindows64, ""), ProtokitePlaytestSetupChecks.WhichPlaytestCheck);
             Assert.IsFalse(check.Passed);
             Assert.AreEqual("No Flock settings", check.Title);
             Assert.AreEqual(ProtokitePlaytestSetupFix.OpenFlockSettings, check.Fix);
@@ -201,7 +201,7 @@ namespace Protokite.Playtest.Tests
             ProtokitePlaytestSetupCheck check = GameVersion(name, PlaytestVersionId);
             Assert.IsFalse(check.Passed);
             Assert.AreEqual("Game Version is empty", check.Title);
-            StringAssert.Contains("pt-<test id>", check.Detail);
+            StringAssert.Contains("Playtest ID in Protokite > Playtest > Settings", check.Detail, "Naming where the playtest is chosen now");
         }
 
         [Test]
@@ -249,22 +249,32 @@ namespace Protokite.Playtest.Tests
         public void ANameThatLooksLikeAnIdButResolvesIsTreatedAsAName()
         {
             ProtokitePlaytestSetupCheck check = GameVersion(PlaytestVersionId, ReleaseVersionId, input => AnswerFor(input, true, ReleaseVersionId));
-            Assert.AreEqual("Game Version is not a playtest's version", check.Title, "A real name, only not a playtest's");
+            Assert.AreEqual("The game's newest playtest", check.Title, "A real name, only not a playtest's");
         }
 
-        [TestCase("1.0.0")]
+        [Test]
+        public void TheGamesOwnVersionWithNoPlaytestIdJoinsTheNewestPlaytest()
+        {
+            ProtokitePlaytestSetupCheck check = GameVersion("1.0.0", ReleaseVersionId);
+            Assert.IsTrue(check.Passed, check.Detail);
+            Assert.AreEqual("The game's newest playtest", check.Title);
+            StringAssert.Contains("Playtest ID in Protokite > Playtest > Settings is empty", check.Detail, "Saying why");
+            StringAssert.Contains("joins the game's newest playtest", check.Detail);
+            StringAssert.Contains("Paste a playtest's ID into Playtest ID to choose it", check.Detail, "and how to choose another");
+            Assert.AreEqual(ProtokitePlaytestSetupFix.None, check.Fix);
+        }
+
         [TestCase("PT-01KX0000000000000000007E")]
         [TestCase(" pt-01KX0000000000000000007E")]
         [TestCase("pt-")]
-        public void AGameVersionThatIsNotAPlaytestsFails(string name)
+        public void AGameVersionMeantAsAPlaytestsNameThatIsNotOneFails(string name)
         {
             ProtokitePlaytestSetupCheck check = GameVersion(name, ReleaseVersionId);
-            Assert.IsFalse(check.Passed);
-            Assert.AreEqual("Game Version is not a playtest's version", check.Title);
+            Assert.IsFalse(check.Passed, "It would join the newest playtest, not the one meant");
+            Assert.AreEqual("Game Version is not a playtest's name, letter for letter", check.Title);
             StringAssert.Contains($"'{name}'", check.Detail, "Quoted as it is, so a space or the letter case shows");
-            StringAssert.Contains("pt-<test id>", check.Detail);
-            StringAssert.Contains("not the version ID Protokite's test page shows", check.Detail, "The test page shows the ID, which is the trap");
-            Assert.AreEqual(ProtokitePlaytestSetupFix.OpenFlockSettings, check.Fix);
+            StringAssert.Contains("joins the game's newest playtest instead", check.Detail);
+            Assert.AreEqual(ProtokitePlaytestSetupFix.OpenPlaytestSettings, check.Fix);
         }
 
         [Test]
@@ -327,9 +337,8 @@ namespace Protokite.Playtest.Tests
             // A release's ID held under a newer release's name: its name resolves back, and is no playtest's.
             ProtokitePlaytestSetupCheck staleRelease = GameVersion("1.0.1", ReleaseVersionId,
                 input => AnswerFor(input, true, Id("11"), ReleaseVersionId, "1.0.0", resolvesBack: true));
-            Assert.IsFalse(staleRelease.Passed);
             Assert.IsNull(staleRelease.SuggestedGameVersion);
-            Assert.AreEqual(ProtokitePlaytestSetupFix.OpenFlockSettings, staleRelease.Fix);
+            Assert.AreEqual("The game's newest playtest", staleRelease.Title, "A release's name with no Playtest ID joins the newest playtest; Flock's own window flags the drift");
             StringAssert.DoesNotContain("set Game Version to 1.0.0", staleRelease.Detail);
 
             // A release's ID pasted into Game Version.
@@ -355,10 +364,127 @@ namespace Protokite.Playtest.Tests
             ProtokitePlaytestGameVersionAnswer answer = AnswerFor(before, false, null, PlaytestVersionId, PlaytestVersionName, resolvesBack: true);
             // The developer typed another ID since Flock was asked.
             ProtokitePlaytestSetupInput after = ProtokitePlaytestSetupInput.From(Playtest(), Flock(Id("EF"), ReleaseVersionId), BuildTarget.StandaloneWindows64, "");
-            ProtokitePlaytestSetupCheck check = Check(after, ProtokitePlaytestSetupChecks.GameVersionCheck, answer);
+            ProtokitePlaytestSetupCheck check = Check(after, ProtokitePlaytestSetupChecks.WhichPlaytestCheck, answer);
             Assert.IsFalse(check.Passed);
             Assert.IsNull(check.SuggestedGameVersion, "An old answer's name is never offered for new settings");
             Assert.AreEqual(ProtokitePlaytestSetupFix.OpenFlockSettings, check.Fix);
+        }
+
+        // ---- The Playtest ID
+
+        private ProtokitePlaytestSetupInput WithPlaytestId(string typed, string resolvedFrom, string resolvedVersionId, string gameVersion = "1.0.0",
+            bool resolvedWithTheseFlockSettings = true)
+        {
+            ProtokitePlaytestSettings settings = Playtest();
+            FlockConfigAsset flock = Flock(gameVersion, ReleaseVersionId);
+            settings.PlaytestId = typed;
+            settings.KeepResolvedPlaytestVersion(resolvedFrom, resolvedVersionId,
+                resolvedWithTheseFlockSettings ? ProtokitePlaytestIdLookup.FlockSettingsFingerprint(flock.apiUrl, flock.apiKey) : "another environment");
+            return ProtokitePlaytestSetupInput.From(settings, flock, BuildTarget.StandaloneWindows64, "");
+        }
+
+        private static ProtokitePlaytestSetupCheck WhichPlaytest(ProtokitePlaytestSetupInput input, ProtokitePlaytestIdAnswer answer = null)
+            => ProtokitePlaytestSetupChecks.Evaluate(input, null, answer).Single(check => check.Id == ProtokitePlaytestSetupChecks.WhichPlaytestCheck);
+
+        private static ProtokitePlaytestIdAnswer PlaytestIdAnswer(ProtokitePlaytestSetupInput input, string versionId, string whyNot = null, string problem = null)
+            => new ProtokitePlaytestIdAnswer
+            {
+                AskedFor = ProtokitePlaytestIdLookup.KeyFor(input.FlockApiUrl, input.FlockApiKey, input.PlaytestId),
+                VersionId = versionId,
+                VersionName = versionId != null ? PlaytestVersionName : null,
+                WhyNoPlaytest = whyNot,
+                Problem = problem
+            };
+
+        [Test]
+        public void AResolvedPlaytestIdPassesWhateverTheGameVersion()
+        {
+            ProtokitePlaytestSetupInput input = WithPlaytestId(TestId, TestId, PlaytestVersionId);
+            ProtokitePlaytestSetupCheck notAsked = WhichPlaytest(input);
+            Assert.IsTrue(notAsked.Passed, notAsked.Detail);
+            Assert.AreEqual("Playtest ID chooses this build's playtest", notAsked.Title);
+            StringAssert.Contains(PlaytestVersionId, notAsked.Detail);
+            StringAssert.Contains("the Flock SDK keeps Game Version '1.0.0'", notAsked.Detail, "Saying the game keeps its own version");
+            StringAssert.Contains("has not been checked with Flock again", notAsked.Detail);
+
+            ProtokitePlaytestSetupCheck confirmed = WhichPlaytest(input, PlaytestIdAnswer(input, PlaytestVersionId));
+            Assert.IsTrue(confirmed.Passed, confirmed.Detail);
+            StringAssert.Contains("Flock names it " + PlaytestVersionName, confirmed.Detail);
+
+            // Control: the same Game Version with no Playtest ID is the newest playtest's pass, so this pass is the Playtest ID's.
+            Assert.AreEqual("The game's newest playtest", GameVersion("1.0.0", ReleaseVersionId).Title);
+            Assert.IsTrue(WhichPlaytest(WithPlaytestId(TestId, TestId, PlaytestVersionId, gameVersion: "")).Passed, "The Game Version is not judged here");
+        }
+
+        [Test]
+        public void APlaytestIdResolvedForAnotherValueIsNotResolved()
+        {
+            ProtokitePlaytestSetupCheck check = WhichPlaytest(WithPlaytestId(TestId, Id("01"), PlaytestVersionId));
+            Assert.IsFalse(check.Passed);
+            Assert.AreEqual("Playtest ID is not resolved yet", check.Title);
+            StringAssert.Contains("a build with Playtesting Enabled on is refused", check.Detail);
+            Assert.AreEqual(ProtokitePlaytestSetupFix.ResolveThePlaytestId, check.Fix);
+        }
+
+        [Test]
+        public void APlaytestIdThatFindsNoPlaytestFails()
+        {
+            ProtokitePlaytestSetupInput input = WithPlaytestId(TestId, TestId, "");
+            ProtokitePlaytestSetupCheck check = WhichPlaytest(input, PlaytestIdAnswer(input, null, whyNot: "No playtest of this game has the ID X."));
+            Assert.IsFalse(check.Passed);
+            Assert.AreEqual("No playtest has this ID", check.Title);
+            StringAssert.StartsWith("No playtest of this game has the ID X.", check.Detail);
+            Assert.AreEqual(ProtokitePlaytestSetupFix.OpenPlaytestSettings, check.Fix);
+        }
+
+        [Test]
+        public void FlockNotAnsweringKeepsAResolvedPlaytestIdAndSaysSo()
+        {
+            ProtokitePlaytestSetupInput resolved = WithPlaytestId(TestId, TestId, PlaytestVersionId);
+            ProtokitePlaytestSetupCheck kept = WhichPlaytest(resolved, PlaytestIdAnswer(resolved, null, problem: "Flock could not be reached."));
+            Assert.IsTrue(kept.Passed, "No answer is not a failure of the settings");
+            StringAssert.Contains("could not be checked with Flock again: Flock could not be reached.", kept.Detail);
+
+            ProtokitePlaytestSetupInput unresolved = WithPlaytestId(TestId, "", "");
+            ProtokitePlaytestSetupCheck notYet = WhichPlaytest(unresolved, PlaytestIdAnswer(unresolved, null, problem: "Flock could not be reached."));
+            Assert.IsFalse(notYet.Passed);
+            Assert.AreEqual("Playtest ID is not resolved", notYet.Title);
+            Assert.AreEqual(ProtokitePlaytestSetupFix.ResolveThePlaytestId, notYet.Fix);
+        }
+
+        [Test]
+        public void APlaytestIdResolvedWithOtherFlockSettingsFails()
+        {
+            ProtokitePlaytestSetupInput input = WithPlaytestId(TestId, TestId, PlaytestVersionId, resolvedWithTheseFlockSettings: false);
+            ProtokitePlaytestSetupCheck check = WhichPlaytest(input);
+            Assert.IsFalse(check.Passed, check.Detail);
+            Assert.AreEqual("Playtest ID was resolved with other Flock settings", check.Title);
+            StringAssert.Contains("is refused until it is resolved with these", check.Detail);
+            Assert.AreEqual(ProtokitePlaytestSetupFix.ResolveThePlaytestId, check.Fix);
+            ProtokitePlaytestSetupCheck offline = WhichPlaytest(input, PlaytestIdAnswer(input, null, problem: "Flock could not be reached."));
+            Assert.IsFalse(offline.Passed, "Flock not answering never makes another environment's version this one's");
+        }
+
+        [Test]
+        public void APlaytestIdWithNoFlockSettingsToAskWithFails()
+        {
+            ProtokitePlaytestSettings settings = Playtest();
+            settings.PlaytestId = TestId;
+            ProtokitePlaytestSetupCheck check = WhichPlaytest(ProtokitePlaytestSetupInput.From(settings, null, BuildTarget.StandaloneWindows64, ""));
+            Assert.IsFalse(check.Passed);
+            Assert.AreEqual("Playtest ID cannot be resolved", check.Title);
+            Assert.AreEqual(ProtokitePlaytestSetupFix.OpenFlockSettings, check.Fix);
+        }
+
+        [Test]
+        public void AnAnswerForAnotherPlaytestIdIsNotUsed()
+        {
+            ProtokitePlaytestSetupInput before = WithPlaytestId(Id("01"), "", "");
+            ProtokitePlaytestIdAnswer answer = PlaytestIdAnswer(before, PlaytestVersionId);
+            ProtokitePlaytestSetupInput after = WithPlaytestId(TestId, "", "");
+            ProtokitePlaytestSetupCheck check = WhichPlaytest(after, answer);
+            Assert.AreEqual("Playtest ID is not resolved yet", check.Title);
+            StringAssert.Contains("Checking it with Flock", check.Detail, "An old answer's playtest is never said to be this ID's");
         }
 
         [TestCase("01KX0000000000000000007EAB", true)]
@@ -577,14 +703,14 @@ namespace Protokite.Playtest.Tests
         {
             FlockConfigAsset flock = Flock(PlaytestVersionId, ReleaseVersionId);
             ProtokitePlaytestSetupInput input = ProtokitePlaytestSetupInput.From(Playtest(), flock, BuildTarget.StandaloneWindows64, "x64");
-            ProtokitePlaytestSetupCheck check = Check(input, ProtokitePlaytestSetupChecks.GameVersionCheck,
+            ProtokitePlaytestSetupCheck check = Check(input, ProtokitePlaytestSetupChecks.WhichPlaytestCheck,
                 AnswerFor(input, false, null, PlaytestVersionId, PlaytestVersionName, resolvesBack: true));
 
             Assert.IsTrue(ProtokitePlaytestSetupChecks.UseTheSuggestedGameVersion(flock, check));
             Assert.AreEqual(PlaytestVersionName, flock.gameVersion);
             Assert.AreEqual(PlaytestVersionId, flock.gameVersionId, "The ID a build sends is the one the name resolves to, not the one resolved before");
             ProtokitePlaytestSetupInput after = ProtokitePlaytestSetupInput.From(Playtest(), flock, BuildTarget.StandaloneWindows64, "x64");
-            Assert.IsTrue(Check(after, ProtokitePlaytestSetupChecks.GameVersionCheck, AnswerFor(after, true, PlaytestVersionId)).Passed, "And the check then passes");
+            Assert.IsTrue(Check(after, ProtokitePlaytestSetupChecks.WhichPlaytestCheck, AnswerFor(after, true, PlaytestVersionId)).Passed, "And the check then passes");
         }
 
         [Test]
@@ -610,7 +736,7 @@ namespace Protokite.Playtest.Tests
                 EditorUtility.SetDirty(other);
 
                 ProtokitePlaytestSetupInput input = ProtokitePlaytestSetupInput.From(Playtest(), flock, BuildTarget.StandaloneWindows64, "x64");
-                ProtokitePlaytestSetupCheck check = Check(input, ProtokitePlaytestSetupChecks.GameVersionCheck,
+                ProtokitePlaytestSetupCheck check = Check(input, ProtokitePlaytestSetupChecks.WhichPlaytestCheck,
                     AnswerFor(input, false, null, PlaytestVersionId, PlaytestVersionName, resolvesBack: true));
                 Assert.IsTrue(ProtokitePlaytestSetupChecks.UseTheSuggestedGameVersion(flock, check));
 
@@ -628,7 +754,7 @@ namespace Protokite.Playtest.Tests
         public void ACheckWithNoSuggestionChangesNothing()
         {
             FlockConfigAsset flock = Flock("1.0.0", ReleaseVersionId);
-            ProtokitePlaytestSetupCheck check = Check(ProtokitePlaytestSetupInput.From(Playtest(), flock, BuildTarget.StandaloneWindows64, ""), ProtokitePlaytestSetupChecks.GameVersionCheck);
+            ProtokitePlaytestSetupCheck check = Check(ProtokitePlaytestSetupInput.From(Playtest(), flock, BuildTarget.StandaloneWindows64, ""), ProtokitePlaytestSetupChecks.WhichPlaytestCheck);
             Assert.IsFalse(ProtokitePlaytestSetupChecks.UseTheSuggestedGameVersion(flock, check));
             Assert.AreEqual("1.0.0", flock.gameVersion);
             Assert.AreEqual(ReleaseVersionId, flock.gameVersionId);

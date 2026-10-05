@@ -15,7 +15,8 @@ namespace Protokite.Playtest.Editor
         OpenPlaytestSettings,
         OpenFlockSettings,
         UseTheSuggestedGameVersion,
-        OpenBuildProfiles
+        OpenBuildProfiles,
+        ResolveThePlaytestId
     }
 
     /// <summary>One setup check, as it stands for the project.</summary>
@@ -44,6 +45,18 @@ namespace Protokite.Playtest.Editor
         public bool PlaytestSettingsFound;
         public bool PlaytestingEnabled;
         public string ProtokiteApiUrl;
+
+        /// <summary>The Playtest ID as the playtest settings hold it; empty leaves the playtest to the Game Version.</summary>
+        public string PlaytestId = "";
+
+        /// <summary>The playtest's version ID resolved for that Playtest ID, or null.</summary>
+        public string PlaytestVersionId;
+
+        /// <summary>Whether that version was resolved with these Flock settings, rather than another environment's or game's.</summary>
+        public bool PlaytestResolvedWithTheseFlockSettings;
+
+        /// <summary>Whether a Playtest ID chooses the playtest, as the settings decide it.</summary>
+        public bool ChoosesAPlaytest;
         public bool FlockSettingsFound;
         public string FlockApiUrl;
         public string FlockApiKey;
@@ -75,6 +88,10 @@ namespace Protokite.Playtest.Editor
                 PlaytestSettingsFound = playtest != null,
                 PlaytestingEnabled = playtest != null && playtest.PlaytestingEnabled,
                 ProtokiteApiUrl = playtest != null ? playtest.ProtokiteApiUrl : null,
+                PlaytestId = playtest != null ? playtest.PlaytestId ?? "" : "",
+                PlaytestVersionId = playtest != null ? playtest.PlaytestVersionId : null,
+                PlaytestResolvedWithTheseFlockSettings = ProtokitePlaytestIdLookup.IsResolvedWith(playtest, flock),
+                ChoosesAPlaytest = playtest != null && playtest.ChoosesAPlaytest,
                 FlockSettingsFound = flock != null,
                 FlockApiUrl = flock != null ? flock.apiUrl : null,
                 FlockApiKey = flock != null ? flock.apiKey : null,
@@ -112,24 +129,28 @@ namespace Protokite.Playtest.Editor
     {
         public const string PlaytestingCheck = "playtesting";
         public const string ProtokiteApiUrlCheck = "protokite_api_url";
-        public const string GameVersionCheck = "game_version";
+        public const string WhichPlaytestCheck = "which_playtest";
         public const string VideoCheck = "video_on_build_target";
 
-        /// <summary>How Protokite names a playtest's Game Version: this, then the test's id.</summary>
-        public const string PlaytestVersionPrefix = "pt-";
+        /// <summary>How Protokite names a playtest's Game Version: this, then the test's id (the runtime's rule).</summary>
+        public const string PlaytestVersionPrefix = ProtokitePlaytest.PlaytestVersionPrefix;
 
         // Flock's IDs are ULIDs: 26 letters and digits of Crockford's base 32, which has no I, L, O or U.
         private static readonly Regex IdShape = new Regex("^[0-9A-HJKMNP-TV-Z]{26}$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
         /// <summary>The four checks, in the order they are fixed. An answer from Flock counts only when it was given for these same settings.</summary>
-        public static List<ProtokitePlaytestSetupCheck> Evaluate(ProtokitePlaytestSetupInput input, ProtokitePlaytestGameVersionAnswer flockAnswer)
+        public static List<ProtokitePlaytestSetupCheck> Evaluate(ProtokitePlaytestSetupInput input, ProtokitePlaytestGameVersionAnswer flockAnswer,
+            ProtokitePlaytestIdAnswer playtestIdAnswer = null)
         {
             ProtokitePlaytestGameVersionAnswer answer = flockAnswer != null && flockAnswer.AskedFor == ProtokitePlaytestGameVersionLookup.KeyFor(input) ? flockAnswer : null;
+            ProtokitePlaytestIdAnswer playtestAnswer = playtestIdAnswer != null
+                && playtestIdAnswer.AskedFor == ProtokitePlaytestIdLookup.KeyFor(input.FlockApiUrl, input.FlockApiKey, input.PlaytestId) ? playtestIdAnswer : null;
             return new List<ProtokitePlaytestSetupCheck>
             {
                 CheckPlaytesting(input),
                 CheckProtokiteApiUrl(input),
-                CheckGameVersion(input, answer),
+                // With a Playtest ID, the Game Version is the game's own and is not judged here.
+                input.ChoosesAPlaytest ? CheckPlaytestId(input, playtestAnswer) : CheckGameVersion(input, answer),
                 CheckVideo(input)
             };
         }
@@ -138,8 +159,7 @@ namespace Protokite.Playtest.Editor
         public static bool LooksLikeAnId(string value) => value != null && IdShape.IsMatch(value.Trim());
 
         /// <summary>Whether a Game Version name is one Protokite gives a playtest: "pt-", letter for letter, then the test's id.</summary>
-        public static bool IsAPlaytestVersionName(string name)
-            => name != null && name.Length > PlaytestVersionPrefix.Length && name.StartsWith(PlaytestVersionPrefix, StringComparison.Ordinal);
+        public static bool IsAPlaytestVersionName(string name) => ProtokitePlaytest.IsAPlaytestVersionName(name);
 
         /// <summary>Whether players built for this target record video: Android, and 64-bit Windows on x64, as the runtime decides.</summary>
         public static bool RecordsVideo(BuildTarget target, string windowsArchitecture)
@@ -179,10 +199,51 @@ namespace Protokite.Playtest.Editor
             return Passed(ProtokiteApiUrlCheck, "Protokite API URL is usable", $"The playtest reports to {url}.");
         }
 
+        private static ProtokitePlaytestSetupCheck CheckPlaytestId(ProtokitePlaytestSetupInput input, ProtokitePlaytestIdAnswer answer)
+        {
+            string typed = input.PlaytestId.Trim();
+            string resolved = input.PlaytestVersionId;
+            string gameVersion = string.IsNullOrWhiteSpace(input.GameVersion) ? "its own Game Version" : $"Game Version '{input.GameVersion}'";
+            // An answer naming another version than the one held is kept the moment it lands, so the two differ only in between.
+            if (resolved != null && input.PlaytestResolvedWithTheseFlockSettings
+                && (answer == null || answer.Problem != null || string.Equals(answer.VersionId, resolved, StringComparison.Ordinal)))
+            {
+                string checkedWithFlock = answer == null ? " It has not been checked with Flock again in this editor session."
+                    : answer.Problem != null ? " It could not be checked with Flock again: " + answer.Problem
+                    : $" Flock names it {answer.VersionName}.";
+                return Passed(WhichPlaytestCheck, "Playtest ID chooses this build's playtest",
+                    $"Playtest ID {typed} is resolved to the playtest's version {resolved}, which only the playtest's requests to Protokite carry; the Flock SDK " +
+                    $"keeps {gameVersion} and everything set up under it.{checkedWithFlock}");
+            }
+
+            const string staysOff = " Until it is resolved, playtesting stays off, and a build with Playtesting Enabled on is refused.";
+            if (resolved != null && !input.PlaytestResolvedWithTheseFlockSettings && (answer == null || answer.Problem != null))
+                return Failed(WhichPlaytestCheck, "Playtest ID was resolved with other Flock settings",
+                    $"Playtest ID {typed} was resolved to {resolved} with another Flock API URL or key, whose versions a build with these Flock settings " +
+                    "does not have, so a build with Playtesting Enabled on is refused until it is resolved with these." +
+                    (answer?.Problem != null ? " It could not be checked with Flock: " + answer.Problem : ""),
+                    ProtokitePlaytestSetupFix.ResolveThePlaytestId);
+            if (!input.FlockSettingsFound || string.IsNullOrWhiteSpace(input.FlockApiUrl) || string.IsNullOrWhiteSpace(input.FlockApiKey))
+                return Failed(WhichPlaytestCheck, "Playtest ID cannot be resolved",
+                    "The Playtest ID is resolved through Flock, and Flock > Settings has no API URL or API key to ask with." + staysOff,
+                    ProtokitePlaytestSetupFix.OpenFlockSettings);
+            if (answer == null)
+                return Failed(WhichPlaytestCheck, "Playtest ID is not resolved yet", $"Playtest ID is {typed}. Checking it with Flock." + staysOff,
+                    ProtokitePlaytestSetupFix.ResolveThePlaytestId);
+            if (answer.Problem != null)
+                return Failed(WhichPlaytestCheck, "Playtest ID is not resolved", $"Playtest ID is {typed}, and it could not be checked with Flock: {answer.Problem}" + staysOff,
+                    ProtokitePlaytestSetupFix.ResolveThePlaytestId);
+            if (answer.VersionId == null)
+                return Failed(WhichPlaytestCheck, "No playtest has this ID", answer.WhyNoPlaytest + staysOff, ProtokitePlaytestSetupFix.OpenPlaytestSettings);
+            return Failed(WhichPlaytestCheck, "Playtest ID is not resolved yet",
+                $"Flock names {typed} the playtest {answer.VersionName} ({answer.VersionId}), and the playtest settings do not hold it yet." + staysOff,
+                ProtokitePlaytestSetupFix.ResolveThePlaytestId);
+        }
+
         private static ProtokitePlaytestSetupCheck CheckGameVersion(ProtokitePlaytestSetupInput input, ProtokitePlaytestGameVersionAnswer answer)
         {
             if (!input.FlockSettingsFound)
-                return Failed(GameVersionCheck, "No Flock settings",
+                return Failed(WhichPlaytestCheck, "No Flock settings",
                     $"No {ProtokitePlaytestSetupInput.FlockSettingsResourceName} asset is in a Resources folder, so there is no Game Version to check. Set up the Flock SDK in Flock > Settings.",
                     ProtokitePlaytestSetupFix.OpenFlockSettings);
 
@@ -196,38 +257,55 @@ namespace Protokite.Playtest.Editor
             ProtokitePlaytestSetupFix fixWithSuggestion = suggested != null ? ProtokitePlaytestSetupFix.UseTheSuggestedGameVersion : ProtokitePlaytestSetupFix.OpenFlockSettings;
 
             if (name.Trim().Length == 0)
-                return Failed(GameVersionCheck, "Game Version is empty",
-                    $"Set Game Version in Flock > Settings to the playtest's version, which Protokite names {PlaytestVersionPrefix}<test id>.",
+                return Failed(WhichPlaytestCheck, "Game Version is empty",
+                    "Set Game Version in Flock > Settings to the game's own version, then paste the ID from the playtest's page in Protokite into " +
+                    "Playtest ID in Protokite > Playtest > Settings.",
                     ProtokitePlaytestSetupFix.OpenFlockSettings);
 
             // A name that happens to look like an ID, and that Flock does resolve, is a name.
             if (LooksLikeAnId(name) && !(answer != null && answer.Problem == null && answer.NameFound))
-                return WithSuggestion(Failed(GameVersionCheck, "Game Version holds an ID, not a name",
+                return WithSuggestion(Failed(WhichPlaytestCheck, "Game Version holds an ID, not a name",
                     $"Game Version is '{name}', which looks like a Game Version ID pasted from Protokite's test page. Flock resolves Game Version by name, so no version " +
                     $"is found for it and the build keeps sending the ID resolved before ({(baked.Length > 0 ? baked : "none")})." +
-                    (suggested != null ? useSuggestion : answer == null ? " Checking with Flock for the name that resolves to it." : NoNameFoundFor(answer)),
+                    (suggested != null ? useSuggestion : answer == null ? " Checking with Flock for the name that resolves to it." : NoNameFoundFor(answer)) +
+                    " Or paste it into Playtest ID in Protokite > Playtest > Settings, and set Game Version back to the game's own version.",
                     fixWithSuggestion), suggested, suggestedId);
 
             if (!IsAPlaytestVersionName(name))
-                return WithSuggestion(Failed(GameVersionCheck, "Game Version is not a playtest's version",
-                    $"Game Version is '{name}'. A playtest runs only in builds whose Game Version matches the version it was created for on Protokite. " +
-                    $"Set Game Version in Flock > Settings to that version's name, {PlaytestVersionPrefix}<test id>, not the version ID Protokite's test page shows." + useSuggestion,
-                    fixWithSuggestion), suggested, suggestedId);
+            {
+                // Meant as a playtest's name and not one letter for letter: the build would join the newest playtest instead of that one.
+                if (name.Trim().StartsWith(PlaytestVersionPrefix, StringComparison.OrdinalIgnoreCase))
+                    return Failed(WhichPlaytestCheck, "Game Version is not a playtest's name, letter for letter",
+                        $"Game Version is '{name}'. Protokite names a playtest's version {PlaytestVersionPrefix} followed by the test's id, letter for letter, so " +
+                        "with Playtest ID empty a build joins the game's newest playtest instead. Paste the playtest's ID into Playtest ID in Protokite > " +
+                        "Playtest > Settings, and set Game Version to the game's own version.",
+                        ProtokitePlaytestSetupFix.OpenPlaytestSettings);
+                // The name is the game's own, but the ID held is a playtest's: Flock's own requests would go to that playtest's empty version.
+                if (suggested != null)
+                    return WithSuggestion(Failed(WhichPlaytestCheck, "The build sends a playtest's version ID",
+                        $"Game Version is '{name}', but the Flock settings hold {answer.PastedId}, a playtest's version, which every Flock request of a build " +
+                        "would carry. Resolve Game Version in Flock > Settings, and paste the playtest's ID into Playtest ID to join it." + useSuggestion,
+                        ProtokitePlaytestSetupFix.UseTheSuggestedGameVersion), suggested, suggestedId);
+                return Passed(WhichPlaytestCheck, "The game's newest playtest",
+                    $"Playtest ID in Protokite > Playtest > Settings is empty and Game Version '{name}' is the game's own, so a build joins the game's newest " +
+                    "playtest in Protokite, whichever is newest when it starts (one created later is joined from the next launch). Paste a playtest's ID into " +
+                    "Playtest ID to choose it.");
+            }
 
             if (baked.Length == 0)
-                return Failed(GameVersionCheck, "Game Version is not resolved",
+                return Failed(WhichPlaytestCheck, "Game Version is not resolved",
                     $"Game Version is {name}, but no ID has been resolved for it, so a build of this project sends none. Resolve Game Version in Flock > Settings.",
                     ProtokitePlaytestSetupFix.OpenFlockSettings);
 
             if (answer != null && answer.Problem == null)
             {
                 if (!answer.NameFound)
-                    return Failed(GameVersionCheck, "No version has this name",
+                    return Failed(WhichPlaytestCheck, "No version has this name",
                         $"Flock has no version named {name} in this game. Check the test id against Protokite's test page, letter for letter.",
                         ProtokitePlaytestSetupFix.OpenFlockSettings);
                 // The name is what the developer set, so resolving it is the fix; the held ID's playtest is only named.
                 if (!string.Equals(answer.NameResolvesTo, baked, StringComparison.Ordinal))
-                    return Failed(GameVersionCheck, "The build sends another version's ID",
+                    return Failed(WhichPlaytestCheck, "The build sends another version's ID",
                         $"Flock resolves {name} to {answer.NameResolvesTo}, but the Flock settings hold {baked}, which a build sends, and which the next resolve " +
                         "replaces. Resolve Game Version in Flock > Settings." +
                         (suggested != null ? $" {baked} is the ID of {suggested}: if that is the playtest meant, set Game Version to {suggested} instead." : ""),
@@ -237,7 +315,8 @@ namespace Protokite.Playtest.Editor
             string checkedWithFlock = answer == null ? " It has not been checked with Flock yet."
                 : answer.Problem != null ? " It could not be checked with Flock: " + answer.Problem
                 : " Flock resolves it to that ID.";
-            return Passed(GameVersionCheck, "Game Version is a playtest's version", $"Game Version is {name}, and a build sends its ID {baked}.{checkedWithFlock}");
+            return Passed(WhichPlaytestCheck, "Game Version is a playtest's version", $"Game Version is {name}, and a build sends its ID {baked}.{checkedWithFlock} " +
+                "Pasting the playtest's ID into Playtest ID in Protokite > Playtest > Settings instead lets the game keep its own Game Version.");
         }
 
         private static string NoNameFoundFor(ProtokitePlaytestGameVersionAnswer answer)

@@ -34,11 +34,26 @@ Use the same `<version>` as your Flock SDK. This route needs Git installed on yo
 1. **Protokite > Playtest > Settings** (or **Open Playtest Settings** on Flock's Playtesting tab). The settings are created
    the first time, at `Assets/Resources/ProtokitePlaytestSettings.asset`, with playtesting **off**.
 2. Tick **Playtesting Enabled**.
-3. Set your Flock **Game Version** to your playtest's version name (it starts with `pt-`).
+3. Paste the ID from your playtest's page in Protokite into **Playtest ID**: the test's ID, or the Flock version ID the
+   page's SDK block shows. The editor finds the playtest's version through Flock and shows it under **Resolved Version ID**.
+   **Leave it empty and a build joins your game's newest playtest**, whichever is newest in Protokite when it starts.
 
 The Protokite API URL is filled in for you (`https://api-protokite.qwacks.com`); change it only to point at a local
-Protokite, such as `http://localhost:8020`. Your Flock API key and Game Version are used as they are; there is
-nothing else to enter.
+Protokite, such as `http://localhost:8020`. Your Flock API key is used as it is, and your Flock **Game Version** stays your
+game's own: only the playtest's requests to Protokite carry the playtest's version, so everything you set up in Flock under
+your Game Version (player templates, configs, the shop) keeps working in a playtest build.
+
+- The Playtest ID is resolved when it, the Flock API URL or the API key changes, while the settings are open, and **Resolve
+  Again** asks again. The line under it says what Flock found: the playtest, an ID no playtest of your game has, a release
+  version's ID, another game's playtest, or that Flock could not be reached (a build then asks for the version resolved before).
+- A Playtest ID that is set but not resolved leaves playtesting off, with a warning, and a build with **Playtesting Enabled**
+  on is refused until it is resolved. It never falls back to the Game Version. A build is refused too when the Playtest ID was
+  resolved with other Flock settings (another API URL or key, such as a development Flock before a release build): open the
+  playtest settings once with the new Flock settings, and it is resolved again.
+- **With Playtest ID empty, a build joins the game's newest playtest** in Protokite, whichever is newest when the build starts
+  (even one you have closed, which then takes no sessions); a playtest created later is joined from the next launch, never in
+  the middle of one. The one exception keeps earlier projects as they were: a Flock **Game Version** that is a playtest's own
+  name, `pt-<test id>`, still joins that playtest. Fill in Playtest ID to choose.
 
 ## Check your setup
 
@@ -50,17 +65,17 @@ the place to change it:
 |---|---|
 | Playtesting | the playtest settings exist and **Playtesting Enabled** is on |
 | Protokite API URL | it is an http or https address with a host and no spaces, by the same rule the game uses |
-| Game Version | Flock's **Game Version** is a playtest's name, `pt-<test id>`, resolved to the ID a build sends |
+| Which playtest | **Playtest ID** is resolved to a playtest's version; or, with it empty, the build joins the game's newest playtest (passes, and says so), or the one a `pt-<test id>` Game Version names |
 | Video | the build target is 64-bit Windows, x64, or Android with **Record Video On Android** on |
 
-- **Set Game Version by its name, never by pasting an ID.** Protokite's test page shows the playtest version's ID, but Flock
-  resolves Game Version by name: an ID pasted into Game Version resolves to nothing, so a build keeps sending the ID resolved
-  before, and an ID pasted over the resolved ID is replaced the next time Game Version is resolved. The window asks Flock,
-  with your API key, which version the ID is, and when that version is a playtest's whose name resolves back to it in your
-  game, offers **Set Game Version To pt-...**, which sets the name and the ID it resolves to. Only a playtest's name is ever
-  offered.
-- The Game Version is checked with Flock when the window opens and when the Flock settings change; **Check Again** asks again.
-  When Flock cannot be asked, the check goes by what the settings hold and says so.
+- **Paste an ID into Playtest ID, never into Game Version.** Flock resolves Game Version by name: an ID pasted into Game
+  Version resolves to nothing, so a build keeps sending the ID resolved before. With Playtest ID empty and such an ID in Game
+  Version, the window asks Flock, with your API key, which version the ID is, and when that version is a playtest's whose
+  name resolves back to it in your game, offers **Set Game Version To pt-...**, which sets the name and the ID it resolves to.
+  Only a playtest's name is ever offered.
+- The Playtest ID, or with it empty the Game Version, is checked with Flock when the window opens and when the settings
+  change; **Check Again** asks again, and **Resolve Playtest ID** resolves it. When Flock cannot be asked, the check goes by
+  what the settings hold and says so.
 - Under **While testing**, **Forget This Machine's Answer** makes the next Play ask the consent question again (and, on a phone,
   the question about upload networks after it), and in Play Mode
   **Open Feedback Form** opens the form the way its key does.
@@ -71,8 +86,9 @@ the place to change it:
 
 ## Is it running?
 
-Once the Flock SDK is running, the playtest asks Protokite for this build's playtest, using your Flock API key and Game
-Version ID. `ProtokitePlaytest.Status` says whether the playtest can run, and if not, why. Each status that stops it is
+Once the Flock SDK is running, the playtest asks Protokite for this build's playtest, using your Flock API key and the
+playtest's version (the one **Playtest ID** resolved to; with it empty none, so Protokite answers with the game's newest
+playtest, or a `pt-` Game Version's ID). With no Playtest ID, the playtest that answers is kept for the whole launch. `ProtokitePlaytest.Status` says whether the playtest can run, and if not, why. Each status that stops it is
 logged once, as a warning that says what to change, and `ProtokitePlaytest.Describe(status)` gives the same words.
 
 | Status | Meaning |
@@ -82,7 +98,7 @@ logged once, as a warning that says what to change, and `ProtokitePlaytest.Descr
 | `ProtokiteApiUrlUnusable` | The Protokite API URL is not an http or https address, or has a space in it |
 | `WaitingForFlock` | Everything is set; the Flock SDK has not started yet |
 | `FetchingPlaytestConfig` | Asking Protokite for this build's playtest |
-| `PlaytestNotLinked` | No playtest is linked to this build's Game Version ID. Set the Game Version to the playtest's (`pt-...`) |
+| `PlaytestNotLinked` | Protokite has no playtest for this build: none for the version it asks for, or, with Playtest ID empty, none in the game at all |
 | `ProtokiteRefusedApiKey` | Protokite did not accept the Flock API key |
 | `PlaytestConfigUnavailable` | Protokite could not be reached. The game carries on, and it is asked again when the next Flock session starts |
 | `PlaytestConfigForAnotherVersion` | Protokite answered with another version's playtest (a proxy dropping the version header does this) |
@@ -90,6 +106,7 @@ logged once, as a warning that says what to change, and `ProtokitePlaytest.Descr
 | `PlaytestNoLongerCollecting` | The playtest has closed and takes no more sessions, so playtesting is off until the game is launched again |
 | `WaitingForPlayerConsent` | The playtest is loaded, and nothing is collected until the player answers the consent question |
 | `PlayerRefusedPlaytest` | The player asked the playtest to collect nothing, so it behaves as with playtesting off, except that a feedback form they send still goes |
+| `PlaytestIdNotResolved` | **Playtest ID** is set but not resolved to a playtest, so no playtest is asked for. Open the settings while Flock can be reached |
 
 A refusal (`PlaytestNotLinked`, `ProtokiteRefusedApiKey`, `PlaytestConfigForAnotherVersion`) is not asked again until the Flock SDK
 is started again (or the game relaunched), since the answer would be the same.

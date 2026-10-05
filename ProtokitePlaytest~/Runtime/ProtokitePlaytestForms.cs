@@ -361,7 +361,7 @@ namespace Protokite.Playtest
             try
             {
                 // This launch's API key, with the Game Version ID the form was filled in under: Protokite finds the playtest from it.
-                string storedAs = await client.SubmitFeedbackFormAsync(submission.ProtokiteApiUrl, HeadersForTheSession(launchHeaders, submission.FlockGameVersionId),
+                string storedAs = await client.SubmitFeedbackFormAsync(submission.ProtokiteApiUrl, HeadersNamingTheVersion(launchHeaders, submission.FlockGameVersionId),
                     submission, cancellationToken);
                 if (!ProtokitePlaytestKeptForms.ForgetClaimed(claim, path))
                     Debug.LogWarning(LogPrefix + $"A feedback form was sent to Protokite (stored as {storedAs}) but its file {path} could not be deleted, so it is sent again later; Protokite keeps one answer per session, so one naming a session is replaced, not added.");

@@ -133,8 +133,8 @@ namespace Protokite.Playtest
             if (status != ProtokitePlaytestStatus.Ready && status != ProtokitePlaytestStatus.WaitingForPlayerConsent && status != ProtokitePlaytestStatus.PlayerRefusedPlaytest)
                 return run.Fail(Describe(status) + (string.IsNullOrEmpty(_configProblem) ? "" : " " + _configProblem));
 
-            run.TakeTheLoadedConfig(_config);
-            string loaded = $"playtest {_config.TestId} for Game Version ID {_configGameVersionId}, with {DescribeFeatures(_config)}";
+            run.TakeTheLoadedConfig(_config, HeadersForTheLoadedPlaytest(run.Flock));
+            string loaded = $"playtest {_config.TestId}, asked for by its version ID {_configGameVersionId}, with {DescribeFeatures(_config)}";
             if (status == ProtokitePlaytestStatus.WaitingForPlayerConsent)
                 run.NoSessionBecause = "the player has not said what the playtest may collect, so no session starts. Answer the question on screen, call " +
                                        "ProtokitePlaytest.SetPlaytestConsent, or turn off Ask The Player For Playtest Consent in Protokite > Playtest > Settings.";
@@ -533,7 +533,8 @@ namespace Protokite.Playtest
             // Each refusal is asked for once, and one Protokite wrongly takes is never sent a second time.
             internal readonly ProtokiteClient Client = new ProtokiteClient(new RetryPolicy { MaxRetries = 0 });
             internal readonly string ApiUrl;
-            internal readonly Dictionary<string, string> GameHeadersAsStarted;
+            // The Flock SDK's key with the version this launch's playtest was loaded for, once it has loaded; every step that sends it needs the config.
+            internal Dictionary<string, string> GameHeadersAsStarted;
 
             internal ProtokitePlaytestForm Form;
             internal string NoConfigBecause = "the playtest config did not load.";
@@ -552,16 +553,16 @@ namespace Protokite.Playtest
                 ClosedPlaytestGameVersionId = closedPlaytestGameVersionId;
                 Report = new ProtokitePlaytestSelfTestReport(Guid.NewGuid().ToString("N").Substring(0, 12), null);
                 ApiUrl = ProtokitePlaytestSettings.Load()?.ProtokiteApiUrl?.Trim() ?? "";
-                GameHeadersAsStarted = flock.GetGameHeaders();
             }
 
             // A fresh copy for each request, so no probe's swap reaches another.
             internal Dictionary<string, string> GameHeaders => new Dictionary<string, string>(GameHeadersAsStarted);
             internal Dictionary<string, string> SessionHeaders => new Dictionary<string, string>(SessionHeadersAsStarted);
 
-            internal void TakeTheLoadedConfig(ProtokitePlaytestConfig config)
+            internal void TakeTheLoadedConfig(ProtokitePlaytestConfig config, Dictionary<string, string> headers)
             {
                 Form = config.Form;
+                GameHeadersAsStarted = new Dictionary<string, string>(headers);
                 NoConfigBecause = null;
             }
 

@@ -296,6 +296,8 @@ namespace Flock
         /// <summary>Which sign-in the tokens belong to: moves on every sign-in and sign-out, never on a refresh.</summary>
         internal int SignInNumber => _signInNumber;
         public string GameId => _initConfig.GameId;
+        /// <summary>The Game Version name this client was initialized with; <see cref="GameVersionId"/> is the ID it resolved to.</summary>
+        public string GameVersion => _initConfig.GameVersion;
         public string GameVersionId => _initConfig.GameVersionId;
         public bool IsAuthenticated => !string.IsNullOrEmpty(_accessToken);
         public bool IsTokenExpired =>

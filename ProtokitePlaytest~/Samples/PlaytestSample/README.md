@@ -6,9 +6,9 @@ that wants its own menus or buttons around it.
 
 ## Setup
 
-1. Set up the Flock SDK in **Flock > Settings**, with **Game Version** set to your playtest's version name, `pt-<test id>`.
-2. Turn on **Playtesting Enabled** in **Protokite > Playtest > Settings**. **Protokite > Playtest > Setup Checks And Test
-   Video** says what else a build needs.
+1. Set up the Flock SDK in **Flock > Settings**, with your game's own **Game Version**.
+2. Turn on **Playtesting Enabled** in **Protokite > Playtest > Settings**, and paste the ID from your playtest's page in Protokite
+   into **Playtest ID**. **Protokite > Playtest > Setup Checks And Test Video** says what else a build needs.
 3. Leave **Auto-Initialize On Load** on in **Flock > Settings**, or add a **FlockBootstrap** to the scene, so the Flock SDK
    starts when you press Play.
 4. Create an empty GameObject, add the **ProtokitePlaytestSample** component, and press **Play**.
