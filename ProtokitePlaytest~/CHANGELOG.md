@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 It is released with the Flock SDK, at the Flock SDK's version.
 
 
+## [1.67.0]
+
+### Fixed
+- **An Android build no longer logs shader warnings from the package** (6 for Vulkan alone, 13 with Unity's default graphics
+  APIs, measured). Building for OpenGL ES and Vulkan, the capture's colour conversion warned of a power that could be handed a
+  negative value and of a value it could leave unset. Neither could change a recording, and the conversion now gives neither
+  reason: what it records is unchanged.
+
+### Verified
+- On a Galaxy S23 Ultra (Android 16), against the same game built without the package, in IL2CPP (64-bit) and Mono (32-bit)
+  players at 60 frames a second: recording at the default settings cost no frame rate (60.01 and 59.95 frames a second against
+  60.01), and collecting play data alone nothing measurable; the frames captured took about 1 to 3.5 ms more of the graphics
+  card's time. The package adds 7.0 MB to an IL2CPP build and 1.4 MB to a Mono one.
+- Installed from its git URL into a new Unity 6000.3 project with that project's own defaults (at 1.66.0, before this release's
+  shader change), a live playtest on the phone, answered by taps, recorded, uploaded its recording, and the recording played in
+  a browser's video player from the link Protokite gives its dashboard.
+- No shader warnings in Android builds (IL2CPP and Mono, Vulkan and OpenGL ES), and on the phone the recordings are unchanged on
+  Vulkan and OpenGL ES, a phone turned upright mid-recording included (black bars beside the picture); the Unity 6000.3 and 2021.3
+  test suites.
+
 ## [1.66.0]
 
 ### Added

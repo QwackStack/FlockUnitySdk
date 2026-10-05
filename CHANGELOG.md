@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.67.0]
+
+Released together with the Protokite Playtest's fix for the shader warnings an Android build logged (see its changelog).
+Nothing in the Flock SDK itself changed.
+
 ## [1.66.0]
 
 Released together with the Protokite Playtest's question about which networks a phone's recordings upload on (see its

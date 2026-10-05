@@ -510,8 +510,15 @@ on, and a test video shows whether it records.
 C#, so the package ships no native file there either. Measured on a Galaxy S23 Ultra (Android 16) in Unity 2021.3 and 6000.3 players, IL2CPP
 64-bit and Mono 32-bit, both built with High managed stripping, on Vulkan and OpenGL ES, held sideways and upright: each recorded 20 seconds at 15
 frames a second that the phone's own decoder read back frame for frame and Chrome plays, at 1,511 to 1,517 kbps against the 1,500
-asked, while the game kept its 60 frames a second. That is a flagship phone, so treat its costs as a best case: on it, capture and
-hardware encoding cost 2 to 4 ms of graphics time on one frame in four, 2% of a processor core in the game and 8% in the phone's media service. A phone whose
+asked, while the game kept its 60 frames a second. That is a flagship phone, so treat its costs as a best case. Measured against the
+same game built without the package (400 moving lit cubes at the phone's full 3088x1440, 60 frames a second, three rounds each,
+IL2CPP and Mono, High stripping): recording at the defaults cost no frame rate (60.01 frames a second against 60.01 in IL2CPP,
+59.95 against 60.01 in Mono), and collecting play data alone nothing measurable. On the one frame in four that is captured,
+recording took about 1 to 3.5 ms more of the graphics card's time (95th and 99th percentile) and 1.3 to 1.8 ms more of the render
+thread, and the phone's media service took about 6% of a processor core; a Mono build's main thread spent about 3 ms more on those
+frames. The package adds 7.0 MB to an IL2CPP APK and 1.4 MB to a Mono one. Unity builds Mono for 32-bit ARM only. Installed from its
+git URL into a new Unity 6000.3 project with that project's own defaults (IL2CPP, Minimal stripping), a live playtest answered by
+taps on the phone recorded, uploaded its recording and played it back. A phone whose
 graphics cannot run compute shaders (OpenGL ES 3.0, measured by forcing it) or read the screen back without waiting records no
 video and says why once. A phone with no hardware H.264 encoder records no video unless **Android Allow Software Encoder** is on.
 A live playtest on that phone signed in, recorded, uploaded its recording (stored as MP4 that Chrome plays) and ended its session
