@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.70.0]
+
+The first step of matchmaking and multiplayer support: the SDK now recognises every refusal the matchmaking, party and
+multiplayer session services send, ahead of the calls that use them.
+
+### Added
+- `FlockErrorCode` members for the 27 refusals those services can send: 8 `Matchmaking...` (for example
+  `MatchmakingAlreadyQueued`), 11 `Multiplayer...` (for example `MultiplayerSessionFull`, `MultiplayerNotHost`) and 8
+  `Party...` (for example `PartyInvalidInviteCode`), each with a hint saying what to do next. The two "not the party
+  leader" refusals have separate members: `MatchmakingNotPartyLeader` for a search, `PartyNotPartyLeader` for the party.
+- A 404 from these services usually means "not yours, or no longer live" (a session the player has no seat in, a search
+  that belongs to someone else), and their hints say so.
+
 ## [1.69.0]
 
 No changes for games. Every release now carries `FlockSDK-<version>.unitypackage` and `ProtokitePlaytest-<version>.unitypackage`

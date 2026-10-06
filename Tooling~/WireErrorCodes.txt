@@ -25,10 +25,19 @@
 # then reconcile the result against the sections below. A code that appears and is not waived needs a
 # FlockErrorCode member (name = the code PascalCased) and a hint in FlockErrorHints.cs.
 #
-# Last refreshed against the live backend: 2026-08-31 (86 documented codes, 90 /v1 paths).
+# The spec is not the whole contract. On 2026-10-06 it no longer showed 18 codes listed under [documented]
+# (most of shop.* and game_command.*), while the backend still defines and sends every one. Each backend
+# package lists its codes in its enums.py, and the request-wide request.* codes are in
+# common/helpers/error_codes.py, so read those as well when refreshing:
+#   grep -rhoE '"[a-z_]+\.[a-z_]+"' <backend>/flock/packages/*/enums.py <backend>/common/helpers/error_codes.py \
+#     | tr -d '"' | sort -u
+#
+# Last refreshed against the live backend: 2026-10-06 (93 codes in the spec, 105 /v1 paths), for the
+# matchmaking, party and multiplayer codes and the codes the spec gained since 2026-08-31.
 
 [documented]
-# Declared in the backend OpenAPI spec. Each must have a FlockErrorCode member.
+# Declared in the backend OpenAPI spec when added (some since dropped from it; see the header). Each must have a
+# FlockErrorCode member.
 analytics.invalid_currency_id
 analytics.player_not_found
 analytics.session_not_found
@@ -55,7 +64,32 @@ game_patch.patch_not_found
 game_version.game_version_by_name_not_found
 game_version.game_version_not_found
 log_event.game_not_found
+matchmaking.already_queued
+matchmaking.match_not_found
+matchmaking.not_party_leader
+matchmaking.party_too_large
+matchmaking.player_not_eligible
+matchmaking.queue_not_found
+matchmaking.ticket_not_cancelable
+matchmaking.ticket_not_found
+multiplayer.extras_paused
+multiplayer.invalid_join_code
+multiplayer.invalid_join_token
+multiplayer.mint_rate_limited
+multiplayer.not_a_participant
+multiplayer.not_host
+multiplayer.session_full
+multiplayer.session_not_found
+multiplayer.target_not_a_participant
 notification_template.not_found
+party.already_in_party
+party.cannot_kick_leader
+party.full
+party.invalid_invite_code
+party.not_a_member
+party.not_found
+party.not_party_leader
+party.target_not_a_member
 player.account_already_linked
 player.account_not_linked
 player.apple_account_already_registered
@@ -110,29 +144,39 @@ shop_item.shop_not_found
 #                          backend took over code-to-id resolution on 2026-08-26; kept because absence
 #                          from the spec is not evidence of absence from the server, as the line above
 #                          demonstrates. Retire it only after checking the backend, not the spec.
+# multiplayer.join_code_unavailable - 500 when creating a session finds no free join code after 8 tries.
+# multiplayer.already_in_session - 409 when two requests seat one player at the same moment (a database
+#                          race). Both read in the backend's multiplayer code on 2026-10-06, not seen live.
+# The backend also defines multiplayer.session_ended and multiplayer.invalid_connection_info, which nothing
+# raises (2026-10-06), and matchmaking.queue_has_open_tickets, which only a dashboard route sends. None has
+# a member; add one the day it can reach a game.
 leaderboard.not_found
 analytics.currency_not_found
+multiplayer.join_code_unavailable
+multiplayer.already_in_session
 
 [waived]
 # Documented, but for features this SDK does not call — there is no surface for the error to reach.
 # Adding a member for one of these means the feature arrived, so move the code up to [documented] in the
 # same change. CI fails if a waived code turns out to have a member, which is what keeps this list honest
 # rather than letting it become the place unwanted codes go to be forgotten.
-matchmaking.already_queued
-matchmaking.match_not_found
-matchmaking.not_party_leader
-matchmaking.party_too_large
-matchmaking.player_not_eligible
-matchmaking.queue_not_found
-matchmaking.ticket_not_cancelable
-matchmaking.ticket_not_found
-multiplayer.extras_paused
-multiplayer.mint_rate_limited
-party.already_in_party
-party.cannot_kick_leader
-party.full
-party.invalid_invite_code
-party.not_a_member
-party.not_found
-party.not_party_leader
-party.target_not_a_member
+#
+# dashboard.* and the payment provider and refund codes below are sent by dashboard routes only, except
+# payment_provider.checkout_failed, which comes from the player-facing shop checkout route this SDK does not
+# call yet: move it up when checkout is added.
+dashboard.ai_generation_failed
+dashboard.ai_limiter_unavailable
+dashboard.ai_provider_unavailable
+dashboard.ai_rate_limited
+dashboard.recommendation_not_found
+dashboard.recommendations_busy
+dashboard.recommendations_disabled
+dashboard.request_not_sent
+dashboard.request_rate_limited
+payment_provider.checkout_failed
+payment_provider.encryption_unavailable
+payment_provider.missing_credential_fields
+payment_provider.provider_not_found
+payment_provider.unknown_provider
+shop.purchase_not_found
+shop.purchase_not_refundable

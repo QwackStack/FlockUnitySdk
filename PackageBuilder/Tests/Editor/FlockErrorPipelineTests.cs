@@ -1,6 +1,7 @@
 using Flock.Logging;
 using System;
 using System.Collections;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Flock.Config;
@@ -152,6 +153,75 @@ namespace Flock.Tests
             Assert.IsFalse(Exc("player.name_already_registered").IsAlreadyRegistered());
             Assert.IsFalse(Exc("shop.insufficient_funds").IsAlreadyRegistered());
             Assert.IsFalse(Exc(null).IsAlreadyRegistered());
+        }
+
+        // Every matchmaking, party and session refusal, body as the backend sends it: copied from live responses on
+        // 2026-10-05, except party_too_large, player_not_eligible, extras_paused and mint_rate_limited (the spec's own
+        // examples) and join_code_unavailable and already_in_session (the backend's messages; neither seen live).
+        private static readonly object[] MultiplayerRefusals =
+        {
+            new object[] { 409, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"matchmaking.already_queued\",\"message\":\"Player 01M46J2QM0KSQ1X3QNF03RRT6V is already queued for this game\"}}", FlockErrorCode.MatchmakingAlreadyQueued },
+            new object[] { 404, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"matchmaking.match_not_found\",\"message\":\"Match not found\"}}", FlockErrorCode.MatchmakingMatchNotFound },
+            new object[] { 403, typeof(FlockAuthException), "{\"detail\":{\"code\":\"matchmaking.not_party_leader\",\"message\":\"Only the party leader can queue the party\"}}", FlockErrorCode.MatchmakingNotPartyLeader },
+            new object[] { 400, typeof(FlockValidationException), "{\"detail\":{\"code\":\"matchmaking.party_too_large\",\"message\":\"The party has more players than the queue allows\"}}", FlockErrorCode.MatchmakingPartyTooLarge },
+            new object[] { 403, typeof(FlockAuthException), "{\"detail\":{\"code\":\"matchmaking.player_not_eligible\",\"message\":\"A player is not eligible for this queue\"}}", FlockErrorCode.MatchmakingPlayerNotEligible },
+            new object[] { 404, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"matchmaking.queue_not_found\",\"message\":\"Matchmaking queue not found\"}}", FlockErrorCode.MatchmakingQueueNotFound },
+            new object[] { 409, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"matchmaking.ticket_not_cancelable\",\"message\":\"This ticket is no longer queued\"}}", FlockErrorCode.MatchmakingTicketNotCancelable },
+            new object[] { 404, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"matchmaking.ticket_not_found\",\"message\":\"Ticket not found\"}}", FlockErrorCode.MatchmakingTicketNotFound },
+            new object[] { 409, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"multiplayer.already_in_session\",\"message\":\"Player is already in a live multiplayer session for this game\"}}", FlockErrorCode.MultiplayerAlreadyInSession },
+            new object[] { 402, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"multiplayer.extras_paused\",\"message\":\"Multiplayer is paused for this studio until an overdue payment is settled\"}}", FlockErrorCode.MultiplayerExtrasPaused },
+            new object[] { 404, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"multiplayer.invalid_join_code\",\"message\":\"Join code is not valid\"}}", FlockErrorCode.MultiplayerInvalidJoinCode },
+            new object[] { 400, typeof(FlockValidationException), "{\"detail\":{\"code\":\"multiplayer.invalid_join_token\",\"message\":\"Join token is not valid\"}}", FlockErrorCode.MultiplayerInvalidJoinToken },
+            new object[] { 500, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"multiplayer.join_code_unavailable\",\"message\":\"Could not allocate a join code, try again\"}}", FlockErrorCode.MultiplayerJoinCodeUnavailable },
+            new object[] { 429, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"multiplayer.mint_rate_limited\",\"message\":\"This player has requested relay credentials too frequently\"}}", FlockErrorCode.MultiplayerMintRateLimited },
+            new object[] { 404, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"multiplayer.not_a_participant\",\"message\":\"You are not in this session\"}}", FlockErrorCode.MultiplayerNotAParticipant },
+            new object[] { 403, typeof(FlockAuthException), "{\"detail\":{\"code\":\"multiplayer.not_host\",\"message\":\"Only the host can perform this action\"}}", FlockErrorCode.MultiplayerNotHost },
+            new object[] { 409, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"multiplayer.session_full\",\"message\":\"This session is full\"}}", FlockErrorCode.MultiplayerSessionFull },
+            new object[] { 404, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"multiplayer.session_not_found\",\"message\":\"Session not found\"}}", FlockErrorCode.MultiplayerSessionNotFound },
+            new object[] { 404, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"multiplayer.target_not_a_participant\",\"message\":\"That player is not in this session\"}}", FlockErrorCode.MultiplayerTargetNotAParticipant },
+            new object[] { 409, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"party.already_in_party\",\"message\":\"You are already in a party for this game\"}}", FlockErrorCode.PartyAlreadyInParty },
+            new object[] { 400, typeof(FlockValidationException), "{\"detail\":{\"code\":\"party.cannot_kick_leader\",\"message\":\"The leader cannot be kicked; leave or transfer leadership instead\"}}", FlockErrorCode.PartyCannotKickLeader },
+            new object[] { 409, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"party.full\",\"message\":\"This party is full\"}}", FlockErrorCode.PartyFull },
+            new object[] { 404, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"party.invalid_invite_code\",\"message\":\"Invite code is not valid\"}}", FlockErrorCode.PartyInvalidInviteCode },
+            new object[] { 404, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"party.not_a_member\",\"message\":\"You are not a member of this party\"}}", FlockErrorCode.PartyNotAMember },
+            new object[] { 404, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"party.not_found\",\"message\":\"Party not found\"}}", FlockErrorCode.PartyNotFound },
+            new object[] { 403, typeof(FlockAuthException), "{\"detail\":{\"code\":\"party.not_party_leader\",\"message\":\"Only the party leader can perform this action\"}}", FlockErrorCode.PartyNotPartyLeader },
+            new object[] { 404, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"party.target_not_a_member\",\"message\":\"That player is not a member of this party\"}}", FlockErrorCode.PartyTargetNotAMember },
+        };
+
+        [TestCaseSource(nameof(MultiplayerRefusals))]
+        public void MultiplayerRefusal_ParsesToItsCode_WithItsHint(int status, Type exceptionType, string body, FlockErrorCode expected)
+        {
+            FlockException ex = Assert.Catch<FlockException>(() =>
+                Send(new FlockHttpResponse { Result = FlockHttpResult.Success, StatusCode = status, Body = body }));
+
+            Assert.AreEqual(expected, ex.ErrorCode);
+            Assert.AreEqual(exceptionType, ex.GetType());
+            Assert.AreEqual(status, ex.StatusCode);
+            Assert.IsNotNull(ex.ServerMessage, "The server's own reason should survive parsing.");
+            Assert.AreEqual(FlockErrorHints.For(expected), ex.Hint);
+            Assert.IsNotNull(ex.Hint);
+        }
+
+        // A 403 here arrives as FlockAuthException but means "not allowed", not "signed out", so its hint never sends the player to sign in.
+        [Test]
+        public void PermissionRefusalHints_NeverSendThePlayerToSignIn()
+        {
+            int checkedCodes = 0;
+            foreach (object[] refusal in MultiplayerRefusals)
+            {
+                if ((int)refusal[0] != 403)
+                    continue;
+                FlockErrorCode code = (FlockErrorCode)refusal[3];
+                string hint = FlockErrorHints.For(code);
+                Assert.IsNotNull(hint, code + " has no hint.");
+                Assert.IsFalse(
+                    Regex.IsMatch(hint, @"\b(sign|log)(g?ed)?[\s-]?(in|out)\b|authenticat", RegexOptions.IgnoreCase),
+                    code + "'s hint sends the player to sign in, but this refusal is about permission, not sign-in: " + hint);
+                checkedCodes++;
+            }
+
+            Assert.Greater(checkedCodes, 0, "The refusal table has no 403 rows, so nothing was checked.");
         }
 
         // Live: real backend, intentional error. Manual only — needs FlockConfig.asset + network.
