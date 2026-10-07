@@ -72,6 +72,9 @@ namespace Flock
 #endif
             // The previous play session's launch lets go of its folder, so this one can take it over.
             _instance?._analyticsLaunches?.Dispose();
+#if !FLOCK_NO_MULTIPLAYER
+            _instance?._multiplayer?.StopForShutdown();
+#endif
             _instance = null;
             IsRestoringSession = false;
             InitializationError = null;
@@ -104,6 +107,9 @@ namespace Flock
 #endif
 #if !FLOCK_NO_NOTIFICATION
         private FlockNotificationProvider _notification;
+#endif
+#if !FLOCK_NO_MULTIPLAYER
+        private FlockMultiplayerProvider _multiplayer;
 #endif
         private FlockSession _session;
         private FlockAnalyticsLaunches _analyticsLaunches;
@@ -184,6 +190,9 @@ namespace Flock
 #if !FLOCK_NO_COMMANDS
             _instance._commands?.UnsubscribeFlushTriggers();
 #endif
+#if !FLOCK_NO_MULTIPLAYER
+            _instance._multiplayer?.StopForShutdown();
+#endif
             _instance.ClearTokens();
             // After the session end is spooled: a later Create takes this launch's folder over.
             _instance._analyticsLaunches?.Dispose();
@@ -219,6 +228,10 @@ namespace Flock
             #endif
 #if !FLOCK_NO_NOTIFICATION
             _notification = new FlockNotificationProvider(this);
+#endif
+#if !FLOCK_NO_MULTIPLAYER
+            _multiplayer = new FlockMultiplayerProvider(this);
+            _multiplayer.StartFrameUpdates();
 #endif
             _authentication = new FlockAuthProvider(this);
 
@@ -279,6 +292,9 @@ namespace Flock
         #endif
 #if !FLOCK_NO_NOTIFICATION
         public FlockNotificationProvider Notification => _notification;
+#endif
+#if !FLOCK_NO_MULTIPLAYER
+        public FlockMultiplayerProvider Multiplayer => _multiplayer;
 #endif
 #if !FLOCK_NO_ANALYTICS
         public IAnalyticProvider Analytics => _analytics;

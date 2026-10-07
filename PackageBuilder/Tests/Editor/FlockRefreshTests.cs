@@ -97,5 +97,34 @@ namespace Flock.Tests.Editor
                 Assert.AreEqual(1, transport.CountTo(FlockEndpoints.PlayerTokenRefresh), "Refresh attempted once, not in a loop.");
             }
         }
+
+        // ---- RFSH-07 ----
+        // A 403 means "not allowed" (not the host, not the party leader, a proxy's refusal), never a lapsed sign-in, so no
+        // new token is asked for and the request is not sent again. RFSH-01 is the control: a 401 still refreshes and retries.
+        [TestCase(true)]
+        [TestCase(false)]
+        public void Data403_IsNotAnsweredWithARefresh(bool coded)
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(Path, coded
+                ? FlockFakeTransport.Coded(403, "multiplayer.not_host")
+                : FlockFakeTransport.Status(403, "<html>Forbidden</html>"));
+            transport.On(FlockEndpoints.PlayerTokenRefresh, RefreshOk("player-a"));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+                FlockTestSnapshotProvider p = Provider(h);
+
+                FlockAuthException refused = Assert.Throws<FlockAuthException>(() => h.Run(() => p.FetchAsync("c", "k", Path)));
+
+                Assert.AreEqual(403, refused.StatusCode);
+                Assert.AreEqual(1, transport.CountTo(Path), "Sent once, not again after a refresh.");
+                Assert.AreEqual(0, transport.CountTo(FlockEndpoints.PlayerTokenRefresh), "No refresh for a 403.");
+                Assert.IsTrue(h.Client.IsAuthenticated, "The player stays signed in.");
+                if (coded)
+                    Assert.AreEqual(FlockErrorCode.MultiplayerNotHost, refused.ErrorCode);
+            }
+        }
     }
 }

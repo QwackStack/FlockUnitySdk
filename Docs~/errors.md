@@ -11,7 +11,7 @@ All SDK exceptions derive from `FlockException` (namespace `Flock.Exceptions`).
 | Type | Thrown when |
 |------|-------------|
 | `FlockException` | Base type — catch this to handle any SDK failure. |
-| `FlockAuthException` | Authentication/authorization failure (HTTP 401/403). |
+| `FlockAuthException` | Authentication failure (HTTP 401, which the SDK first answers with a token refresh) or a permission refusal (HTTP 403, which it never does). |
 | `FlockValidationException` | The request was rejected (HTTP 400/422) — bad input, business-rule violation. |
 | `FlockNetworkException` | Any other non-2xx (404, 409, 5xx, …) or a transport failure (timeout, no connection). Carries `RetryAfter` on 429/503. |
 | `FlockSerializationException` | A 2xx response body couldn't be parsed into the expected type (malformed/empty JSON). |

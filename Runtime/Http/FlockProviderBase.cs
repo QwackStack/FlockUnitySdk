@@ -46,8 +46,8 @@ namespace Flock.Http
             {
                 return await Client.RetryHandler.ExecuteAsync(operation, cancellationToken, retryAmbiguousFailures: idempotent, maxRetriesOverride: maxRetriesOverride);
             }
-            //only try refresh if the auth is even successful
-            catch (FlockAuthException) when (Client.IsAuthenticated)
+            // A 403 means "not allowed", never a lapsed sign-in (that is a 401), so a new token would change nothing.
+            catch (FlockAuthException refused) when (Client.IsAuthenticated && refused.StatusCode != 403)
             {
                 Client.Logger.LogDebug("Access token expired, attempting silent refresh");
                 bool refreshed = await Client.TryRefreshTokenAsync(signInNumber, cancellationToken);

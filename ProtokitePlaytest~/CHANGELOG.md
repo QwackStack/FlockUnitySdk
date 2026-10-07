@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 It is released with the Flock SDK, at the Flock SDK's version.
 
 
+## [1.71.0]
+
+No changes to the Protokite Playtest package: this version is released together with the Flock SDK's multiplayer entry
+point and its change to 403 refusals.
+
 ## [1.70.0]
 
 No changes to the Protokite Playtest package: this version is released together with the Flock SDK's new matchmaking,

@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.71.0]
+
+The multiplayer entry point, ahead of its calls, and one fewer wasted request for every refusal that means "not allowed".
+
+### Added
+- `FlockClient.Instance.Multiplayer`, the entry point for multiplayer. It has no calls of its own in this version.
+
+### Changed
+- A request refused with 403 is no longer answered with a token refresh and sent again. A 403 means the player may not do
+  this (for example, a player who is not the host), never that the sign-in has lapsed, which the backend answers with 401.
+  Such a refusal is now one request, where it also cost a token refresh and a second send; the debug log no longer says the
+  access token expired; and a 403 that came while the refresh token had lapsed no longer signs the player out. The
+  exception is still a `FlockAuthException` with `StatusCode` 403.
+
 ## [1.70.0]
 
 The first step of matchmaking and multiplayer support: the SDK now recognises every refusal the matchmaking, party and

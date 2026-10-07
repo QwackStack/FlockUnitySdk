@@ -94,6 +94,9 @@ namespace Flock.Http
             return $"notification_template/by-name{query}";
         }
 
+        // Matchmaking — the queue list needs only the API key; queues are found by name from it, since no by-name route exists.
+        public const string MatchmakingQueues = "matchmaking/queues";
+
         // Assets
         public const string Asset = "asset";
         public static string AssetById(string assetId) => $"asset/{assetId}";

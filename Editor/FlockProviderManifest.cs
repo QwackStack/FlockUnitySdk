@@ -152,6 +152,16 @@ namespace Flock.Editor
                 },
                 DependsOn = new string[0],
             },
+            new Entry
+            {
+                Id = "MULTIPLAYER",
+                DisplayName = "Multiplayer",
+                Description = "Matchmaking, parties and multiplayer sessions.",
+                Files = new string[0],
+                // The provider and its models grow task by task, so the whole folder goes; nothing outside it uses them.
+                Folders = new[] { "Runtime/Providers/Multiplayer/" },
+                DependsOn = new string[0],
+            },
         };
 
         public static Entry Find(string id)

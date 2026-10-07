@@ -40,6 +40,9 @@ namespace Flock.Interfaces
 #if !FLOCK_NO_NOTIFICATION
         FlockNotificationProvider Notification { get; }
 #endif
+#if !FLOCK_NO_MULTIPLAYER
+        FlockMultiplayerProvider Multiplayer { get; }
+#endif
 #if !FLOCK_NO_ANALYTICS
         IAnalyticProvider Analytics { get; }
 #endif
