@@ -185,19 +185,13 @@ namespace Flock.Providers
             if (string.IsNullOrEmpty(playerId))
                 playerId = Client.CurrentPlayerId;
             RequireNotEmpty(playerId, "Player ID (sign in first)");
+            // Taken with the player id, so the purchase and its records never go out as a player who signed in after.
+            int? purchaser = SignInToActFor;
 
             ShopItem shopItem = await GetItemAsync(shopItemId, cancellationToken);
             try
             {
-                await Client.Analytics.RecordTransactionAsync(
-                    new AnalyticsTransactionRequest
-                    {
-                        Amount = shopItem.Price,
-                        CurrencyCode = shopItem.Currency,
-                        ShopItemId = shopItemId,
-                        TransactionType = nameof(TransactionType.Purchase),
-                        Status = nameof(PurchaseStatus.Started)
-                    }, cancellationToken);
+                await RecordPurchaseAsync(shopItem, shopItemId, nameof(PurchaseStatus.Started), purchaser, cancellationToken);
             }
             catch
             {
@@ -218,21 +212,13 @@ namespace Flock.Providers
 
                     return await FlockHttpClient.PostAsync<PurchaseResult>(
                         $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.ShopTransaction}", request, Client.GetBaseHeaders(), cancellationToken);
-                }, "Purchase shop item", cancellationToken, idempotent: false);
+                }, "Purchase shop item", cancellationToken, idempotent: false, actsForSignIn: purchaser);
             }
             catch
             {
                 try
                 {
-                    await Client.Analytics.RecordTransactionAsync(
-                        new AnalyticsTransactionRequest
-                        {
-                            Amount = shopItem.Price,
-                            CurrencyCode = shopItem.Currency,
-                            ShopItemId = shopItemId,
-                            TransactionType = nameof(TransactionType.Purchase),
-                            Status = nameof(PurchaseStatus.Failed)
-                        }, cancellationToken);
+                    await RecordPurchaseAsync(shopItem, shopItemId, nameof(PurchaseStatus.Failed), purchaser, cancellationToken);
                 }
                 catch
                 {
@@ -245,15 +231,7 @@ namespace Flock.Providers
             {
                 try
                 {
-                    await Client.Analytics.RecordTransactionAsync(
-                        new AnalyticsTransactionRequest
-                        {
-                            Amount = shopItem.Price,
-                            CurrencyCode = shopItem.Currency,
-                            ShopItemId = shopItemId,
-                            TransactionType = nameof(TransactionType.Purchase),
-                            Status = nameof(PurchaseStatus.Purchased)
-                        }, cancellationToken);
+                    await RecordPurchaseAsync(shopItem, shopItemId, nameof(PurchaseStatus.Purchased), purchaser, cancellationToken);
                 }
                 catch
                 {
@@ -262,6 +240,22 @@ namespace Flock.Providers
             }
 
             return result;
+        }
+
+        // A purchase's record goes to its purchaser or nowhere: the transaction route takes the player from the sign-in.
+        private async Task RecordPurchaseAsync(ShopItem shopItem, string shopItemId, string status, int? purchaser, CancellationToken cancellationToken)
+        {
+            if (purchaser != SignInToActFor)
+                return;
+            await Client.Analytics.RecordTransactionAsync(
+                new AnalyticsTransactionRequest
+                {
+                    Amount = shopItem.Price,
+                    CurrencyCode = shopItem.Currency,
+                    ShopItemId = shopItemId,
+                    TransactionType = nameof(TransactionType.Purchase),
+                    Status = status
+                }, cancellationToken);
         }
 
         /// <summary>Consumes an owned inventory item, granting its rewards. Returns the updated row plus what was granted.</summary>
@@ -276,7 +270,7 @@ namespace Flock.Providers
                 // Route takes no request body — an empty object keeps the POST well-formed.
                 return await FlockHttpClient.PostAsync<ConsumeResult>(
                     $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.PlayerInventoryConsume(inventoryId)}", new { }, Client.GetBaseHeaders(), cancellationToken);
-            }, "Consume inventory item", cancellationToken, idempotent: false);
+            }, "Consume inventory item", cancellationToken, idempotent: false, actsForSignIn: SignInToActFor);
         }
 
         public async Task<PaginatedResponse<PlayerInventory>> GetPlayerInventoryAsync(

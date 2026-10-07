@@ -64,6 +64,9 @@ namespace Flock.Config
         /// <summary>Per-request timeout for SDK HTTP calls (default 30s; the client otherwise waits 100s). Asset downloads use UnityWebRequest and are unaffected.</summary>
         public TimeSpan HttpTimeout { get; set; } = TimeSpan.FromSeconds(30);
 
+        /// <summary>How often the player's party is read again while the game holds it (default 10 s); each read is one API call. Zero or less turns it off, and the party then changes only when the game asks for it again.</summary>
+        public TimeSpan PartyRefreshInterval { get; set; } = TimeSpan.FromSeconds(10);
+
         /// <summary>
         /// Flock analytics Settings
         /// </summary>

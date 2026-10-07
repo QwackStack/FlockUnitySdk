@@ -165,7 +165,7 @@ namespace Flock.Models
 
             object raw;
             if (!Data.TryGetValue(key, out raw)) return false;
-            return TryConvert(raw, out value);
+            return FlockJsonValues.TryConvert(raw, out value);
         }
 
         /// <summary>Reads one <see cref="Data"/> entry, returning <paramref name="fallback"/> when it's absent or the wrong shape.</summary>
@@ -187,40 +187,6 @@ namespace Flock.Models
             catch (JsonException)
             {
                 return default;
-            }
-        }
-
-        // JSON round-tripping into Dictionary<string, object> leaves whole numbers as long, decimals as
-        // double, and anything nested as JObject/JArray — so a plain (int) cast on a JSON 7 throws. Going
-        // back through JToken normalises all of those, and keeps Newtonsoft's types out of the public API.
-        private static bool TryConvert<T>(object raw, out T value)
-        {
-            value = default;
-            if (raw == null) return false;
-
-            if (raw is T direct)
-            {
-                value = direct;
-                return true;
-            }
-
-            try
-            {
-                JToken token = raw as JToken ?? JToken.FromObject(raw);
-                value = token.ToObject<T>();
-                return true;
-            }
-            catch (JsonException)
-            {
-                return false;
-            }
-            catch (InvalidCastException)
-            {
-                return false;
-            }
-            catch (FormatException)
-            {
-                return false;
             }
         }
     }

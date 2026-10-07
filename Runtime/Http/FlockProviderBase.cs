@@ -17,34 +17,41 @@ namespace Flock.Http
             Client = client ?? throw new ArgumentNullException(nameof(client));
         }
 
+        /// <summary>The sign-in a call that acts for the signed-in player hands to <see cref="ExecuteAsync{T}"/>; null while nobody is signed in.</summary>
+        protected int? SignInToActFor => Client.IsAuthenticated ? Client.SignInNumber : (int?)null;
+
         /// <summary>Runs an <paramref name="operation"/> that has nothing to return, with the same retry, refresh and error rules as <see cref="ExecuteAsync{T}"/>.</summary>
         protected Task ExecuteWithoutResultAsync(
             Func<Task> operation,
             string context,
             CancellationToken cancellationToken,
             bool idempotent = true,
-            int? maxRetriesOverride = null)
+            int? maxRetriesOverride = null,
+            int? actsForSignIn = null)
         {
             return ExecuteAsync(async () =>
             {
                 await operation();
                 return true;
-            }, context, cancellationToken, idempotent, maxRetriesOverride);
+            }, context, cancellationToken, idempotent, maxRetriesOverride, actsForSignIn);
         }
 
         /// <summary>Runs <paramref name="operation"/> via the retry handler. Pass idempotent=false for non-idempotent mutations (e.g. currency grants): ambiguous failures surface instead of being re-sent, and only provably-not-processed failures (408/429) are retried.</summary>
+        /// <param name="actsForSignIn">For a call that acts as the signed-in player through its token (<see cref="SignInToActFor"/>): each attempt, retries included, is cancelled once that sign-in has ended.</param>
         protected async Task<T> ExecuteAsync<T>(
             Func<Task<T>> operation,
             string context,
             CancellationToken cancellationToken,
             bool idempotent = true,
-            int? maxRetriesOverride = null)
+            int? maxRetriesOverride = null,
+            int? actsForSignIn = null)
         {
             // The sign-in this request goes out under; once it ends, the request is never re-sent as whoever signed in next.
             int signInNumber = Client.SignInNumber;
+            Func<Task<T>> send = actsForSignIn.HasValue ? () => SendForSignIn(operation, actsForSignIn.Value) : operation;
             try
             {
-                return await Client.RetryHandler.ExecuteAsync(operation, cancellationToken, retryAmbiguousFailures: idempotent, maxRetriesOverride: maxRetriesOverride);
+                return await Client.RetryHandler.ExecuteAsync(send, cancellationToken, retryAmbiguousFailures: idempotent, maxRetriesOverride: maxRetriesOverride);
             }
             // A 403 means "not allowed", never a lapsed sign-in (that is a 401), so a new token would change nothing.
             catch (FlockAuthException refused) when (Client.IsAuthenticated && refused.StatusCode != 403)
@@ -56,7 +63,7 @@ namespace Flock.Http
 
                 try
                 {
-                    return await Client.RetryHandler.ExecuteAsync(operation, cancellationToken, retryAmbiguousFailures: idempotent, maxRetriesOverride: maxRetriesOverride);
+                    return await Client.RetryHandler.ExecuteAsync(send, cancellationToken, retryAmbiguousFailures: idempotent, maxRetriesOverride: maxRetriesOverride);
                 }
                 catch (OperationCanceledException)
                 {
@@ -87,6 +94,14 @@ namespace Flock.Http
                 Client.Logger.LogError($"{context} failed", ex);
                 throw new FlockNetworkException($"{context} failed", ex);
             }
+        }
+
+        // A call that acts for one sign-in goes out as it or not at all, so a retry never carries the next player's token.
+        private Task<T> SendForSignIn<T>(Func<Task<T>> operation, int signInNumber)
+        {
+            if (signInNumber != Client.SignInNumber)
+                throw new OperationCanceledException("The player signed out or changed, so the request was not sent");
+            return operation();
         }
 
         // Names the failing SDK call on the exception; first writer wins so the innermost, most specific context survives.
@@ -140,10 +155,11 @@ namespace Flock.Http
             string key,
             Func<Task<T>> operation,
             string context,
-            CancellationToken cancellationToken) where T : class
+            CancellationToken cancellationToken,
+            int? actsForSignIn = null) where T : class
         {
             string snapshotScope = GetSnapshotScope(category);
-            return FetchAtScopeAsync(snapshotScope, key, operation, context, cancellationToken);
+            return FetchAtScopeAsync(snapshotScope, key, operation, context, cancellationToken, actsForSignIn);
         }
 
         // Raw-scope escape hatch for the rare caller that can't use a plain category — e.g. FlockGameProvider's
@@ -153,11 +169,12 @@ namespace Flock.Http
             string key,
             Func<Task<T>> operation,
             string context,
-            CancellationToken cancellationToken) where T : class
+            CancellationToken cancellationToken,
+            int? actsForSignIn = null) where T : class
         {
             FlockSnapshotStore store = Client.SnapshotStore;
             if (store == null)
-                return await ExecuteAsync(operation, context, cancellationToken);
+                return await ExecuteAsync(operation, context, cancellationToken, actsForSignIn: actsForSignIn);
 
             bool hasCache = store.TryRead(scope, key, out T cached);
 
@@ -172,7 +189,7 @@ namespace Flock.Http
             {
                 // With a cache to fall back on, don't burn the full retry backoff — one attempt, then serve cache.
                 int? retryBudget = hasCache ? 0 : (int?)null;
-                T result = await ExecuteAsync(operation, context, cancellationToken, maxRetriesOverride: retryBudget);
+                T result = await ExecuteAsync(operation, context, cancellationToken, maxRetriesOverride: retryBudget, actsForSignIn: actsForSignIn);
                 store.Write(scope, key, result);
                 return result;
             }

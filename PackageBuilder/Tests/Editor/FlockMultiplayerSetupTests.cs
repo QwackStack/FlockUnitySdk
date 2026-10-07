@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading;
+using Flock.Config;
 using Flock.Exceptions;
 using Flock.Http;
 using Flock.Providers;
@@ -324,6 +325,25 @@ namespace Flock.Tests.Editor
                 // Eight waits a thousand seconds long from one source that varies differ by far more than the moments between them.
                 Assert.Greater(firstWaits.Max() - firstWaits.Min(), 10.0, "The default jitter source gives different waits");
                 Assert.IsTrue(firstWaits.All(w => w >= 750 && w <= 1250.5), "Each wait stays within a quarter of the interval");
+            }
+        }
+
+        // The setting a studio sets in Flock > Settings is the one the SDK's party refresh runs at.
+        [Test]
+        public void PartyRefreshSeconds_ReachesTheSdk_AndDefaultsToTen()
+        {
+            FlockConfigAsset asset = UnityEngine.ScriptableObject.CreateInstance<FlockConfigAsset>();
+            try
+            {
+                Assert.AreEqual(TimeSpan.FromSeconds(10), asset.ToInitConfig().PartyRefreshInterval);
+                asset.partyRefreshSeconds = 2.5f;
+                Assert.AreEqual(TimeSpan.FromSeconds(2.5), asset.ToInitConfig().PartyRefreshInterval);
+                asset.partyRefreshSeconds = 0f;
+                Assert.AreEqual(TimeSpan.Zero, asset.ToInitConfig().PartyRefreshInterval);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(asset);
             }
         }
     }

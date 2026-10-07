@@ -125,7 +125,7 @@ namespace Flock.Providers
                     }
                     catch (FlockNetworkException ex) { throw AsCallerMistake(ex, leaderboardName); }
                 },
-                "Fetch player rank", cancellationToken);
+                "Fetch player rank", cancellationToken, actsForSignIn: SignInToActFor);
         }
 
         /// <summary>The <paramref name="neighbours"/> entries either side of the signed-in player, for a "you are here" view.</summary>
@@ -159,7 +159,7 @@ namespace Flock.Providers
                     }
                     catch (FlockNetworkException ex) { throw AsCallerMistake(ex, leaderboardName); }
                 },
-                "Fetch standings around player", cancellationToken);
+                "Fetch standings around player", cancellationToken, actsForSignIn: SignInToActFor);
         }
 
         // A name this game doesn't have is a caller mistake, not an empty result — the routes answer 404 for it.

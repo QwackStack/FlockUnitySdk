@@ -112,11 +112,11 @@ namespace Flock.Exceptions
             { FlockErrorCode.MultiplayerExtrasPaused, "The studio's subscription is past due, so the relay is paused. Settle the payment in the Flock dashboard; matchmaking and sessions keep working meanwhile." },
             { FlockErrorCode.PartyNotFound, "No party by that id that the signed-in player belongs to. It may have been disbanded, or the player removed from it." },
             { FlockErrorCode.PartyInvalidInviteCode, "No open party has that invite code. Ask the party leader for the current code." },
-            { FlockErrorCode.PartyAlreadyInParty, "The signed-in player is already in a party in this game, and a player can be in one at a time. Leave it before creating or joining another." },
+            { FlockErrorCode.PartyAlreadyInParty, "The signed-in player is already in a party in this game, and a player can be in one at a time. GetMyPartyAsync returns it; leave it with LeaveAsync before creating or joining another." },
             { FlockErrorCode.PartyNotAMember, "The signed-in player is not in that party, so there is nothing to leave." },
-            { FlockErrorCode.PartyNotPartyLeader, "Only the party leader can do this. Leadership may have moved to another member; read the party again to see who leads now." },
+            { FlockErrorCode.PartyNotPartyLeader, "Only the party leader can do this. Leadership may have moved to another member; GetMyPartyAsync reads the party again to show who leads now." },
             { FlockErrorCode.PartyFull, "The party has no free places, or its size was set below the number of players already in it." },
-            { FlockErrorCode.PartyCannotKickLeader, "The leader cannot remove themselves. Hand leadership to another member first, or disband the party." },
+            { FlockErrorCode.PartyCannotKickLeader, "The leader cannot remove themselves. Hand leadership to another member with MakeLeaderAsync and then leave, or disband the party with DisbandAsync." },
             { FlockErrorCode.PartyTargetNotAMember, "That player is not in the party, so they cannot be removed or made leader." },
         };
 

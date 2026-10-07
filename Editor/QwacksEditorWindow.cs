@@ -283,6 +283,7 @@ namespace Flock.Editor
             DrawAnalyticsCard();
             DrawAssetCacheCard();
             DrawRetryPolicyCard();
+            DrawMultiplayerCard();
             DrawConfigToolsCard();
             configSerialized.ApplyModifiedProperties();
         }
@@ -568,6 +569,14 @@ namespace Flock.Editor
                 DrawProperty("retryUseJitter");
             }
             DrawProperty("httpTimeoutSeconds");
+            EditorGUILayout.EndVertical();
+        }
+
+        private void DrawMultiplayerCard()
+        {
+            EditorGUILayout.BeginVertical(cardStyle);
+            GUILayout.Label("Multiplayer", sectionHeaderStyle);
+            DrawProperty("partyRefreshSeconds");
             EditorGUILayout.EndVertical();
         }
 

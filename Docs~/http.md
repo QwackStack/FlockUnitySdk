@@ -127,3 +127,7 @@ public sealed class ReportProvider : FlockProviderBase
 - Pass `idempotent: false` for a call that must not happen twice: only a 408 or a 429 is then retried.
 - While a player is signed in, a call refused as unauthorized refreshes the player's sign-in and is tried once more. A
   refresh answered after that player signed out changes nothing, and the call is not sent again as whoever signed in next.
+- A call that acts as the signed-in player through their sign-in (your service reads the player from the token) passes
+  `actsForSignIn: SignInToActFor`. Then every try, retries included, is cancelled once that player signs out or another
+  signs in: it throws `OperationCanceledException` rather than going out with the next player's sign-in. A call that needs
+  only the game's key (as above, through `GetGameHeaders()`) leaves it out and keeps retrying.

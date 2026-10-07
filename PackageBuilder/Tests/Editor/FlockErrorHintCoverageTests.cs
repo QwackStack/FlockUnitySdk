@@ -1,5 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
+using System.Text.RegularExpressions;
 using Flock.Exceptions;
 using NUnit.Framework;
 
@@ -45,6 +48,34 @@ namespace Flock.Tests
                     FlockErrorHints.For(code),
                     code + " is on the no-hint allowlist but FlockErrorHints returns one. Remove it from NoHintAllowed.");
             }
+        }
+
+        // A hint that names a call the SDK does not have sends a developer looking for it.
+        [Test]
+        public void EveryCallAHintNames_IsAPublicMethodOfTheSdk()
+        {
+            HashSet<string> publicMethods = new HashSet<string>(
+                typeof(FlockClient).Assembly.GetExportedTypes()
+                    .SelectMany(type => type.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static))
+                    .Select(method => method.Name),
+                StringComparer.Ordinal);
+            Assert.IsTrue(publicMethods.Contains("GetMyPartyAsync"), "The scan reads the SDK's public methods");
+            Assert.IsFalse(publicMethods.Contains("CancelOldSearchAsync"), "A name the SDK does not have is not found");
+
+            List<string> missing = new List<string>();
+            foreach (FlockErrorCode code in Enum.GetValues(typeof(FlockErrorCode)))
+            {
+                string hint = FlockErrorHints.For(code);
+                if (string.IsNullOrEmpty(hint))
+                    continue;
+                foreach (Match call in Regex.Matches(hint, @"\b[A-Z][A-Za-z]*Async\b"))
+                {
+                    if (!publicMethods.Contains(call.Value))
+                        missing.Add(code + ": " + call.Value);
+                }
+            }
+
+            Assert.IsEmpty(missing, "Hints name calls the SDK does not have: " + string.Join(", ", missing));
         }
     }
 }

@@ -7,20 +7,37 @@ using UnityEngine;
 
 namespace Flock.Providers
 {
-    /// <summary>The entry point for multiplayer.</summary>
+    /// <summary>The entry point for multiplayer; make its calls from the main thread.</summary>
     public class FlockMultiplayerProvider : FlockProviderBase
     {
         private readonly FlockRepeatingCalls _repeatingCalls;
         private readonly FlockMatchmakingQueueNames _queueNames;
+        private readonly FlockParties _parties;
         private FlockBehaviour _frames;
 
         public FlockMultiplayerProvider(FlockClient client) : base(client)
         {
             _repeatingCalls = new FlockRepeatingCalls(client);
             _queueNames = new FlockMatchmakingQueueNames(ReadQueuesAsync, client.Logger);
+            _parties = new FlockParties(client, _repeatingCalls, client.InitConfig.PartyRefreshInterval);
         }
 
         internal FlockRepeatingCalls RepeatingCalls => _repeatingCalls;
+        internal FlockParties Parties => _parties;
+
+        /// <summary>Makes a party with the signed-in player as its leader and only member. Leave <paramref name="maxSize"/> null for the server's default (4); a player can be in one party at a time.</summary>
+        /// <param name="maxSize">From 2 to 64 players.</param>
+        /// <param name="settings">The game's own data on the party, such as a mode; the players in it read it.</param>
+        public Task<FlockParty> CreatePartyAsync(int? maxSize = null, IReadOnlyDictionary<string, object> settings = null, CancellationToken cancellationToken = default)
+            => _parties.CreateAsync(maxSize, settings, cancellationToken);
+
+        /// <summary>Joins the party with this invite code; letter case does not matter. Joining the party the player is already in returns it.</summary>
+        public Task<FlockParty> JoinPartyAsync(string inviteCode, CancellationToken cancellationToken = default)
+            => _parties.JoinAsync(inviteCode, cancellationToken);
+
+        /// <summary>The signed-in player's party, read now, or null when the player is in none. A party lasts until the player leaves it, across launches, so call this after signing in. Returns the same object each time while it lasts.</summary>
+        public Task<FlockParty> GetMyPartyAsync(CancellationToken cancellationToken = default)
+            => _parties.GetMineAsync(cancellationToken);
 
         /// <summary>The id of the matchmaking queue named exactly <paramref name="queueName"/>, found without starting a search.</summary>
         internal Task<string> FindQueueIdAsync(string queueName, CancellationToken cancellationToken)
@@ -52,10 +69,15 @@ namespace Flock.Providers
                 _frames.OnQuit -= HandleQuit;
                 _frames = null;
             }
+            _parties.StopForShutdown();
             _repeatingCalls.StopAll();
         }
 
-        private void HandleFrame() => _repeatingCalls.SendThoseDue();
+        private void HandleFrame()
+        {
+            _parties.EndIfSignInEnded();
+            _repeatingCalls.SendThoseDue();
+        }
 
         private void HandleQuit() => _repeatingCalls.StopAll();
 

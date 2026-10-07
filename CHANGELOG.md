@@ -6,6 +6,42 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.72.0]
+
+Parties: players group up with an invite code, and the SDK keeps the party up to date. And a retried call never goes
+out as a player who signed in after it was made.
+
+### Added
+- `FlockClient.Instance.Multiplayer.CreatePartyAsync`, `JoinPartyAsync` (by invite code; letter case does not matter) and
+  `GetMyPartyAsync` (the player's party, or null). A party lasts until the player leaves it, across launches, so call
+  `GetMyPartyAsync` after signing in; it returns the same `FlockParty` object while the party lasts.
+- `FlockParty`: `InviteCode`, `LeaderPlayerId`, `IsLeader`, `Members` (in the order they joined), `MaxSize`, `Settings`
+  (read one value with `TryGetSetting<T>`), and `LeaveAsync`, `KickAsync`, `MakeLeaderAsync`, `UpdateAsync` and
+  `DisbandAsync`. New settings replace all of the old ones.
+- `FlockParty` events: `MembersChanged`, `LeaderChanged`, and `Ended` with a `FlockPartyEndReason` (`Left`, `Disbanded`,
+  `Removed` when the server no longer lists the player, `SignedOut` when the sign-in ended). `Ended` is raised once, and
+  not when Flock shuts down. A party that has ended refuses its calls.
+- **Party Refresh Seconds** in **Flock > Settings** (`FlockInitConfig.PartyRefreshInterval`, default 10): how often a held
+  party is read again. Each read is one API call per player; 0 turns it off, and the party then changes only when the game
+  calls `GetMyPartyAsync`. A party is also read again after each change the game makes, so its events come the same way
+  whether this game or another player changed it.
+
+- `FlockProviderBase`: `SignInToActFor` and an `actsForSignIn` argument on `ExecuteAsync`, `ExecuteWithoutResultAsync` and
+  the snapshot reads, for a provider of your own whose calls act as the signed-in player.
+
+### Changed
+- The party error hints name the calls to use (`GetMyPartyAsync`, `LeaveAsync`, `MakeLeaderAsync`, `DisbandAsync`).
+
+### Fixed
+- A call that acts as the signed-in player, retried after a timeout, a 5xx, a 408 or a 429, could go out as the next
+  player when another signed in (or this one signed out) while it waited, since each try takes the sign-in current at that
+  moment: an account link or unlink, a token revoke, a password reset or email verification, any notification call, the
+  leaderboard's "my rank" and "around me", a shop purchase or consume. Such a try is now cancelled
+  (`OperationCanceledException`) and never sent. Calls that need only the game's key (catalogs, config, public boards) and
+  player-data writes, which name their row, still retry as before. A shop purchase also takes its sign-in with its player
+  id, and records its analytics only for that sign-in, so neither the purchase nor its started, failed or completed record
+  goes to a player who signed in after it began.
+
 ## [1.71.0]
 
 The multiplayer entry point, ahead of its calls, and one fewer wasted request for every refusal that means "not allowed".
