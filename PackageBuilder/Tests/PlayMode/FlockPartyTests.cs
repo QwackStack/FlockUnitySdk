@@ -280,6 +280,53 @@ namespace Flock.Tests.PlayMode
         }
 
         [UnityTest]
+        public IEnumerator ALeaveAnsweredAfterTheSignInEnded_EndsThePartyAsSignedOut()
+        {
+            FlockMultiplayerProvider multiplayer = SignedInAs(A);
+            Task<FlockParty> created = multiplayer.CreatePartyAsync();
+            yield return Done(created, "the party was made");
+            List<FlockPartyEndReason> ended = new List<FlockPartyEndReason>();
+            created.Result.Ended += ended.Add;
+            FakePartyServer.Held answer = _server.HoldNext(FakePartyServer.Leave);
+            Task leave = created.Result.LeaveAsync();
+            yield return FlockTestWait.Until(() => answer.Arrived, "A's leave is on its way");
+
+            // B signs in, and A's leave lands before the frame check runs.
+            _h.LoginAs(B);
+            answer.Release();
+            yield return Done(leave, "A's leave landed");
+            yield return null;
+
+            CollectionAssert.AreEqual(new[] { FlockPartyEndReason.SignedOut }, ended, "Ended once, with the reason it already read as");
+            Assert.AreEqual(FlockPartyEndReason.SignedOut, created.Result.EndReason);
+        }
+
+        [UnityTest]
+        public IEnumerator ALateChangeAnswerFromTheLastSignIn_DoesNotSendTheNewPlayersReadAgain()
+        {
+            FlockMultiplayerProvider multiplayer = SignedInAs(A);
+            Task<FlockParty> created = multiplayer.CreatePartyAsync();
+            yield return Done(created, "the party was made");
+            _server.Joins(_server.PartyOf(A), B);
+            FakePartyServer.Held kick = _server.HoldNext(FakePartyServer.Kick);
+            Task kicked = created.Result.KickAsync(B);
+            yield return FlockTestWait.Until(() => kick.Arrived, "A's kick is on its way");
+
+            _h.LoginAs(D);
+            int readsBefore = _server.Count(FakePartyServer.Mine);
+            FakePartyServer.Held read = _server.HoldNext(FakePartyServer.Mine);
+            Task<FlockParty> mine = multiplayer.GetMyPartyAsync();
+            yield return FlockTestWait.Until(() => read.Arrived, "D's read is on its way");
+            kick.Release();
+            yield return Done(kicked, "A's kick landed");
+            read.Release();
+            yield return Done(mine, "D's party was read");
+
+            Assert.IsFalse(mine.IsFaulted, "D's read was taken");
+            Assert.AreEqual(1, _server.Count(FakePartyServer.Mine) - readsBefore, "A's answer did not send D's read again");
+        }
+
+        [UnityTest]
         public IEnumerator ARetryAfterAPlayerSwitch_IsNotSentAsTheNewPlayer()
         {
             FlockMultiplayerProvider multiplayer = SignedInAs(A, retries: 1);

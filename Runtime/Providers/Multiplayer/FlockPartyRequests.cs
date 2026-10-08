@@ -66,7 +66,7 @@ namespace Flock.Providers
         // Kept out of a retry: a second try after a lost answer would be refused for a player already gone.
         internal Task KickAsync(int signInNumber, string partyId, string playerId, CancellationToken cancellationToken)
         {
-            PartyPlayerBody body = new PartyPlayerBody { PlayerId = playerId };
+            PlayerIdBody body = new PlayerIdBody { PlayerId = playerId };
             return ExecuteAsync(async () => RequireParty(await FlockHttpClient.PostAsync<GenericResponse<PartyRecord>>(
                 Url(FlockEndpoints.PartyKick(partyId)), body, Client.GetBaseHeaders(), cancellationToken)),
                 "Remove party member", cancellationToken, idempotent: false, actsForSignIn: signInNumber);
@@ -75,7 +75,7 @@ namespace Flock.Providers
         // Kept out of a retry: after a lost answer the player is no longer the leader, and a second try would be refused.
         internal Task TransferAsync(int signInNumber, string partyId, string playerId, CancellationToken cancellationToken)
         {
-            PartyPlayerBody body = new PartyPlayerBody { PlayerId = playerId };
+            PlayerIdBody body = new PlayerIdBody { PlayerId = playerId };
             return ExecuteAsync(async () => RequireParty(await FlockHttpClient.PostAsync<GenericResponse<PartyRecord>>(
                 Url(FlockEndpoints.PartyTransfer(partyId)), body, Client.GetBaseHeaders(), cancellationToken)),
                 "Make party leader", cancellationToken, idempotent: false, actsForSignIn: signInNumber);

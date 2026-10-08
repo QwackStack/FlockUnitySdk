@@ -64,9 +64,100 @@ namespace Flock.Providers
         public string InviteCode { get; set; }
     }
 
-    /// <summary>The player a kick or a leadership change names.</summary>
-    internal sealed class PartyPlayerBody
+    /// <summary>The player a kick or a change of leader or host names.</summary>
+    internal sealed class PlayerIdBody
     {
+        [JsonProperty("player_id")]
+        public string PlayerId { get; set; }
+    }
+
+    /// <summary>A multiplayer session and every player who held a seat in it, in seniority order, as every session route answers it.</summary>
+    internal sealed class SessionRecord
+    {
+        [JsonProperty("id")]
+        public string Id { get; set; }
+
+        [JsonProperty("status")]
+        public string Status { get; set; }
+
+        [JsonProperty("ended_reason")]
+        public string EndedReason { get; set; }
+
+        [JsonProperty("host_player_id")]
+        public string HostPlayerId { get; set; }
+
+        [JsonProperty("host_epoch")]
+        public int HostEpoch { get; set; }
+
+        [JsonProperty("join_code")]
+        public string JoinCode { get; set; }
+
+        [JsonProperty("max_players")]
+        public int MaxPlayers { get; set; }
+
+        [JsonProperty("connection_info")]
+        public Dictionary<string, object> ConnectionInfo { get; set; }
+
+        [JsonProperty("connection_epoch")]
+        public int ConnectionEpoch { get; set; }
+
+        [JsonProperty("data")]
+        public Dictionary<string, object> Data { get; set; }
+
+        [JsonProperty("participants")]
+        public List<SessionParticipantRecord> Participants { get; set; }
+    }
+
+    internal sealed class SessionParticipantRecord
+    {
+        [JsonProperty("player_id")]
+        public string PlayerId { get; set; }
+
+        [JsonProperty("status")]
+        public string Status { get; set; }
+    }
+
+    internal sealed class HostSessionBody
+    {
+        [JsonProperty("max_players", NullValueHandling = NullValueHandling.Ignore)]
+        public int? MaxPlayers { get; set; }
+
+        [JsonProperty("data", NullValueHandling = NullValueHandling.Ignore)]
+        public IReadOnlyDictionary<string, object> Data { get; set; }
+    }
+
+    internal sealed class JoinSessionBody
+    {
+        [JsonProperty("join_code")]
+        public string JoinCode { get; set; }
+    }
+
+    internal sealed class PublishConnectionBody
+    {
+        [JsonProperty("connection_info")]
+        public Dictionary<string, object> ConnectionInfo { get; set; }
+    }
+
+    internal sealed class JoinTokenRecord
+    {
+        [JsonProperty("token")]
+        public string Token { get; set; }
+
+        [JsonProperty("expires_in")]
+        public int ExpiresIn { get; set; }
+    }
+
+    internal sealed class JoinTokenBody
+    {
+        [JsonProperty("token")]
+        public string Token { get; set; }
+    }
+
+    internal sealed class VerifiedJoinTokenRecord
+    {
+        [JsonProperty("session_id")]
+        public string SessionId { get; set; }
+
         [JsonProperty("player_id")]
         public string PlayerId { get; set; }
     }

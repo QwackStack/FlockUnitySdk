@@ -45,7 +45,7 @@ namespace Flock.Providers
             PartyRecord created = await _requests.CreateAsync(signInNumber, maxSize, settings, cancellationToken);
             RequireStillCurrent(signInNumber);
             // A new party is newer than every reading on its way; its only member is the player who made it, its leader.
-            _readsSettledThrough = _readsSent;
+            SettleReadsSentSoFar(signInNumber);
             return Hold(signInNumber, playerId, created, new[] { created.LeaderPlayerId });
         }
 
@@ -55,7 +55,7 @@ namespace Flock.Providers
             _requests.RequireGiven(inviteCode, "Invite Code");
             int signInNumber = RequireSignedIn(out string playerId);
             PartyRecord joined = await _requests.JoinAsync(signInNumber, inviteCode, cancellationToken);
-            _readsSettledThrough = _readsSent;
+            SettleReadsSentSoFar(signInNumber);
             PartyRead read = await ReadUntilNewestAsync(signInNumber, joined.Id, cancellationToken);
             RequireStillCurrent(signInNumber);
             return Apply(read, playerId);
@@ -86,7 +86,7 @@ namespace Flock.Providers
             {
                 _endingByThisGame = FlockPartyEndReason.None;
             }
-            _readsSettledThrough = _readsSent;
+            SettleReadsSentSoFar(party.SignInNumber);
             End(party, FlockPartyEndReason.Left);
         }
 
@@ -172,7 +172,7 @@ namespace Flock.Providers
                 End(party, FlockPartyEndReason.Removed);
                 throw;
             }
-            _readsSettledThrough = _readsSent;
+            SettleReadsSentSoFar(party.SignInNumber);
         }
 
         // A reading taken over by a newer one, or by a change finishing, is read again so the caller gets the server's latest.
@@ -240,11 +240,21 @@ namespace Flock.Providers
             return _held;
         }
 
+        // A finished write is newer than every read sent before it; one answered for a sign-in that ended settles nothing.
+        private void SettleReadsSentSoFar(int signInNumber)
+        {
+            if (signInNumber == CurrentSignInNumber)
+                _readsSettledThrough = _readsSent;
+        }
+
         // Settles everything before raising Ended, so a handler that calls back in finds the party over.
         private void End(FlockParty party, FlockPartyEndReason reason, bool raise = true)
         {
             if (party.EndReasonSet != FlockPartyEndReason.None)
                 return;
+            // A party whose sign-in ended reads as signed out from then on, whatever answer lands after.
+            if (party.SignInNumber != CurrentSignInNumber)
+                reason = FlockPartyEndReason.SignedOut;
             if (_held == party)
             {
                 _held = null;

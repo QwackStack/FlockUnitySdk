@@ -106,6 +106,17 @@ namespace Flock.Http
         public static string PartyKick(string partyId) => $"{PartyById(partyId)}/kick";
         public static string PartyTransfer(string partyId) => $"{PartyById(partyId)}/transfer";
 
+        // Multiplayer sessions — every route acts as the signed-in player and answers with the whole session.
+        public const string Sessions = "multiplayer/sessions";
+        public const string SessionJoin = "multiplayer/sessions/join";
+        public static string SessionById(string sessionId) => $"multiplayer/sessions/{Uri.EscapeDataString(sessionId)}";
+        public static string SessionLeave(string sessionId) => $"{SessionById(sessionId)}/leave";
+        public static string SessionEnd(string sessionId) => $"{SessionById(sessionId)}/end";
+        public static string SessionHost(string sessionId) => $"{SessionById(sessionId)}/host";
+        public static string SessionConnection(string sessionId) => $"{SessionById(sessionId)}/connection-info";
+        public static string SessionJoinToken(string sessionId) => $"{SessionById(sessionId)}/join-token";
+        public static string SessionVerifyJoinToken(string sessionId) => $"{SessionById(sessionId)}/verify-join-token";
+
         // Assets
         public const string Asset = "asset";
         public static string AssetById(string assetId) => $"asset/{assetId}";

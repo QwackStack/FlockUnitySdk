@@ -6,6 +6,44 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.73.0]
+
+Sessions: a player hosts a game others join with a code, says how to reach it, and the SDK keeps the session up to date
+from every answer. Heartbeats are not in this version yet, so after about a minute the server moves hosting on and then
+gives the seats up.
+
+### Added
+- `FlockClient.Instance.Multiplayer.HostSessionAsync` (seats 2 to 16, 8 when not given, and the game's own data),
+  `JoinSessionAsync` (by join code; letter case does not matter) and `GetSessionAsync` (a session the player holds or once
+  held a seat in; one that is over gives the session's own reason, so a host who left last reads `host_left`). A player
+  holds one seat at a time: hosting or joining another session ends the one held.
+- `FlockMultiplayerSession`: `JoinCode`, `HostPlayerId`, `IsHost`, `Players` (longest seated first; when the host leaves,
+  the first of the others hosts), `MaxPlayers`, `Data` (read one value with `TryGetData<T>`), `Connection` (how to reach
+  the host: a `Mode` and its `Values`, null until the host publishes), and `LeaveAsync`, `EndAsync`, `MakeHostAsync`,
+  `PublishConnectionAsync`, `RequestJoinTokenAsync` (a token proving the player's seat, good for 60 s) and
+  `VerifyJoinTokenAsync` (the host learns which player a token belongs to).
+- `FlockMultiplayerSession` events: `PlayersChanged`, `HostChanged`, `ConnectionChanged`, and `Ended` with a reason from
+  `FlockMultiplayerSessionEndReason` (`ended_by_host`, `host_left`, `expired`, `empty`, `left`, `dropped`,
+  `moved_to_another_session`, `signed_out`; the server can add reasons, so keep a default). `Ended` is raised once, and not
+  when Flock shuts down or the game quits. A session that has ended refuses its calls.
+- Quitting the game gives the player's seat up without waiting, so the other players see it at once.
+
+### Changed
+- The session error hints name the calls to use (`JoinSessionAsync`, `GetSessionAsync`, `RequestJoinTokenAsync`,
+  `HostSessionAsync`).
+
+### Fixed
+- A party whose player signed out, or another signed in, could end as `Left` or `Disbanded` after it had already read as
+  `SignedOut`, when a leave or disband answered in the same frame. It now stays `SignedOut`.
+- An answer to a party change that landed after another player signed in made that player's party read go out again.
+
+### Known limits
+- No heartbeats yet: by default the server hands hosting on from a host it has not heard from in 60 seconds and gives up
+  a seat it has not heard from in 90 (the game's multiplayer settings in the Flock dashboard can change both), so a session
+  lasts about a minute for its players. Heartbeats come in a later version and will be sent for you.
+- The session changes only when a call answers (any call, or `GetSessionAsync`); nothing reads it in the background yet.
+- After hosting moves, `Connection` can still show the previous host's address until the new host publishes.
+
 ## [1.72.0]
 
 Parties: players group up with an invite code, and the SDK keeps the party up to date. And a retried call never goes
