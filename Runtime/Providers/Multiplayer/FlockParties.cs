@@ -16,6 +16,7 @@ namespace Flock.Providers
         private readonly FlockClient _client;
         private readonly FlockPartyRequests _requests;
         private readonly FlockRepeatingCalls _repeatingCalls;
+        private readonly FlockMatchmaking _matchmaking;
         private readonly TimeSpan _refreshInterval;
         private FlockParty _held;
         private FlockRepeatingCall _refresh;
@@ -27,11 +28,12 @@ namespace Flock.Providers
         // Flock shut down or was reset: an answer still on its way holds nothing.
         private bool _stopped;
 
-        internal FlockParties(FlockClient client, FlockRepeatingCalls repeatingCalls, TimeSpan refreshInterval)
+        internal FlockParties(FlockClient client, FlockRepeatingCalls repeatingCalls, FlockMatchmaking matchmaking, TimeSpan refreshInterval)
         {
             _client = client;
             _requests = new FlockPartyRequests(client);
             _repeatingCalls = repeatingCalls;
+            _matchmaking = matchmaking;
             _refreshInterval = refreshInterval;
         }
 
@@ -46,7 +48,7 @@ namespace Flock.Providers
             RequireStillCurrent(signInNumber);
             // A new party is newer than every reading on its way; its only member is the player who made it, its leader.
             SettleReadsSentSoFar(signInNumber);
-            return Hold(signInNumber, playerId, created, new[] { created.LeaderPlayerId });
+            return await Watched(Hold(signInNumber, playerId, created, new[] { created.LeaderPlayerId }), cancellationToken);
         }
 
         // The join answer carries no members, so the party is read before it is handed over.
@@ -58,7 +60,7 @@ namespace Flock.Providers
             SettleReadsSentSoFar(signInNumber);
             PartyRead read = await ReadUntilNewestAsync(signInNumber, joined.Id, cancellationToken);
             RequireStillCurrent(signInNumber);
-            return Apply(read, playerId);
+            return await Watched(Apply(read, playerId), cancellationToken);
         }
 
         /// <summary>The player's party, read now, or null when the player is in none.</summary>
@@ -67,7 +69,14 @@ namespace Flock.Providers
             int signInNumber = RequireSignedIn(out string playerId);
             PartyRead read = await ReadUntilNewestAsync(signInNumber, null, cancellationToken);
             RequireStillCurrent(signInNumber);
-            return Apply(read, playerId);
+            return await Watched(Apply(read, playerId), cancellationToken);
+        }
+
+        // The party's searches are watched from the moment the game holds it: a match made before its first refresh is not taken for an old one.
+        private async Task<FlockParty> Watched(FlockParty party, CancellationToken cancellationToken)
+        {
+            await _matchmaking.StartWatchingAsync(party, cancellationToken);
+            return party;
         }
 
         internal async Task LeaveAsync(FlockParty party, CancellationToken cancellationToken)
@@ -123,6 +132,11 @@ namespace Flock.Providers
             }
             End(party, FlockPartyEndReason.Disbanded);
         }
+
+        internal Task<FlockMatchmakingResult> FindMatchAsync(FlockParty party, string queueName, FlockMatchmakingOptions options, CancellationToken cancellationToken)
+            => _matchmaking.FindForPartyAsync(party, queueName, options, cancellationToken);
+
+        internal bool IsSearching(FlockParty party) => _matchmaking.IsSearching(party);
 
         /// <summary>Ends the party of a sign-in that has ended; run once a frame.</summary>
         internal void EndIfSignInEnded()
@@ -274,9 +288,24 @@ namespace Flock.Providers
             _refresh = _repeatingCalls.Start(
                 RefreshCallName,
                 _refreshInterval,
-                cancellationToken => ReadNumberedAsync(signInNumber, null, cancellationToken),
-                read => Apply(read, null),
+                cancellationToken => RefreshAsync(signInNumber, cancellationToken),
+                TakeRefresh,
                 failure => _client.Logger.LogWarning($"The party is no longer refreshed: {failure.Message}. GetMyPartyAsync starts it again."));
+        }
+
+        // A refresh also reads the player's own matchmaking ticket, which is how a member's game learns of the leader's search.
+        private async Task<PartyRefresh> RefreshAsync(int signInNumber, CancellationToken cancellationToken)
+        {
+            PartyRead party = await ReadNumberedAsync(signInNumber, null, cancellationToken);
+            FlockMatchmaking.TicketReading ticket = await _matchmaking.ReadForPartyAsync(signInNumber, cancellationToken);
+            return new PartyRefresh(party, ticket);
+        }
+
+        private void TakeRefresh(PartyRefresh refresh)
+        {
+            FlockParty party = Apply(refresh.Party, null);
+            if (party != null)
+                _matchmaking.TakePartyReading(party, refresh.Ticket);
         }
 
         private void StopRefreshing()
@@ -330,6 +359,18 @@ namespace Flock.Providers
             internal int Number { get; }
             internal int SignInNumber { get; }
             internal PartyDetailRecord Party { get; }
+        }
+
+        private sealed class PartyRefresh
+        {
+            internal PartyRefresh(PartyRead party, FlockMatchmaking.TicketReading ticket)
+            {
+                Party = party;
+                Ticket = ticket;
+            }
+
+            internal PartyRead Party { get; }
+            internal FlockMatchmaking.TicketReading Ticket { get; }
         }
     }
 }

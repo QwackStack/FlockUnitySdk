@@ -96,6 +96,10 @@ namespace Flock.Http
 
         // Matchmaking — the queue list needs only the API key; queues are found by name from it, since no by-name route exists.
         public const string MatchmakingQueues = "matchmaking/queues";
+        // The ticket routes act as the signed-in player; a party member finds the ticket the leader made through "current".
+        public const string MatchmakingTicket = "matchmaking/ticket";
+        public const string MatchmakingTicketCurrent = "matchmaking/ticket/current";
+        public static string MatchmakingTicketById(string ticketId) => $"matchmaking/ticket/{Uri.EscapeDataString(ticketId)}";
 
         // Parties — every route acts as the signed-in player; only the two reads carry the members.
         public const string Party = "party";

@@ -135,6 +135,28 @@ namespace Flock.Tests.PlayMode
             }
         }
 
+        // A match's session, as the matchmaking engine makes it: every player seated, the longest waiting hosts, other seats given up.
+        internal Session SeatedByMatch(IReadOnlyList<string> playerIds, string gameVersion)
+        {
+            lock (_lock)
+            {
+                foreach (string playerId in playerIds)
+                    ReleaseSeatsOf(playerId);
+                Session session = new Session
+                {
+                    Id = "01SESSION" + (++_nextId).ToString("D17"),
+                    Code = "S" + (_nextId + 10000).ToString("D5"),
+                    HostId = playerIds[0],
+                    MaxPlayers = Math.Max(8, playerIds.Count),
+                    GameVersion = gameVersion,
+                };
+                foreach (string playerId in playerIds)
+                    session.Seats.Add(new Seat { PlayerId = playerId });
+                _sessions.Add(session);
+                return session;
+            }
+        }
+
         // A player seated again keeps one row, now the least senior, as the backend resets the old row.
         internal void Joins(Session session, string playerId)
         {

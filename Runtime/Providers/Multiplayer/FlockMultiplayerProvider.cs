@@ -14,19 +14,22 @@ namespace Flock.Providers
         private readonly FlockMatchmakingQueueNames _queueNames;
         private readonly FlockParties _parties;
         private readonly FlockMultiplayerSessions _sessions;
+        private readonly FlockMatchmaking _matchmaking;
         private FlockBehaviour _frames;
 
         public FlockMultiplayerProvider(FlockClient client) : base(client)
         {
             _repeatingCalls = new FlockRepeatingCalls(client);
             _queueNames = new FlockMatchmakingQueueNames(ReadQueuesAsync, client.Logger);
-            _parties = new FlockParties(client, _repeatingCalls, client.InitConfig.PartyRefreshInterval);
             _sessions = new FlockMultiplayerSessions(client, _repeatingCalls);
+            _matchmaking = new FlockMatchmaking(client, _repeatingCalls, _sessions, FindQueueIdAsync);
+            _parties = new FlockParties(client, _repeatingCalls, _matchmaking, client.InitConfig.PartyRefreshInterval);
         }
 
         internal FlockRepeatingCalls RepeatingCalls => _repeatingCalls;
         internal FlockParties Parties => _parties;
         internal FlockMultiplayerSessions Sessions => _sessions;
+        internal FlockMatchmaking Matchmaking => _matchmaking;
 
         /// <summary>Makes a party with the signed-in player as its leader and only member. Leave <paramref name="maxSize"/> null for the server's default (4); a player can be in one party at a time.</summary>
         /// <param name="maxSize">From 2 to 64 players.</param>
@@ -61,6 +64,10 @@ namespace Flock.Providers
         public Task<FlockMultiplayerSession> GetSessionAsync(string sessionId, CancellationToken cancellationToken = default)
             => _sessions.GetAsync(sessionId, cancellationToken);
 
+        /// <summary>Searches for a match alone in the queue named exactly <paramref name="queueName"/> (letter case included), and hands back the session the match seats the player in, held like any other. A search the server ends without a match (nobody found within 5 minutes, or another game of this player stopping it) comes back as its outcome, not an error. Cancelling the token cancels the search on the server; a match that landed meanwhile gives its seat up. A search of the player's own left from an earlier launch is cancelled first. To search as a party, use <see cref="FlockParty.FindMatchAsync"/>.</summary>
+        public Task<FlockMatchmakingResult> FindMatchAsync(string queueName, FlockMatchmakingOptions options = null, CancellationToken cancellationToken = default)
+            => _matchmaking.FindAloneAsync(queueName, options, cancellationToken);
+
         /// <summary>The id of the matchmaking queue named exactly <paramref name="queueName"/>, found without starting a search.</summary>
         internal Task<string> FindQueueIdAsync(string queueName, CancellationToken cancellationToken)
         {
@@ -92,6 +99,7 @@ namespace Flock.Providers
                 _frames = null;
             }
             _parties.StopForShutdown();
+            _matchmaking.StopForShutdown();
             _sessions.StopForShutdown();
             _repeatingCalls.StopAll();
         }
@@ -99,6 +107,7 @@ namespace Flock.Providers
         private void HandleFrame()
         {
             _parties.EndIfSignInEnded();
+            _matchmaking.EndIfSignInEnded();
             _sessions.EndIfSignInEnded();
             _repeatingCalls.SendThoseDue();
         }
@@ -106,6 +115,7 @@ namespace Flock.Providers
         private void HandleQuit()
         {
             _repeatingCalls.StopAll();
+            _matchmaking.CancelForQuit();
             _sessions.LeaveForQuit();
         }
 

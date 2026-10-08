@@ -84,6 +84,15 @@ namespace Flock.Providers
         /// <summary>The party stopped being the player's, raised once. Not raised when Flock shuts down.</summary>
         public event Action<FlockPartyEndReason> Ended;
 
+        /// <summary>True while the party searches for a match, as this game knows: its own <see cref="FindMatchAsync"/>, or the leader's search seen by the party's refresh.</summary>
+        public bool IsSearching => _owner.IsSearching(this);
+
+        /// <summary>The party started searching for a match. Every member's game hears it: the leader's from its call, the others' from the party's refresh (Party Refresh Seconds) or their own <see cref="FindMatchAsync"/>.</summary>
+        public event Action SearchStarted;
+
+        /// <summary>The party's search ended: matched, with the session the match seats this player in, or how it ended without a match.</summary>
+        public event Action<FlockMatchmakingResult> SearchEnded;
+
         internal int SignInNumber { get; }
         internal FlockPartyEndReason EndReasonSet => _endReason;
 
@@ -111,6 +120,14 @@ namespace Flock.Providers
 
         /// <summary>Disbands the party, so every player in it is free to make or join another. Leader only.</summary>
         public Task DisbandAsync(CancellationToken cancellationToken = default) => _owner.DisbandAsync(this, cancellationToken);
+
+        /// <summary>Searches for a match as the party, matched as one unit and never split. The leader's game starts the search in the queue named <paramref name="queueName"/>; another member's game waits for the leader's search (it may pass null) and gets the same match. A player joining or leaving the party during the search stops it (<see cref="FlockMatchmakingOutcome.PartyChanged"/>). Cancelling the token cancels the party's search on the server, for every member.</summary>
+        public Task<FlockMatchmakingResult> FindMatchAsync(string queueName, FlockMatchmakingOptions options = null, CancellationToken cancellationToken = default)
+            => _owner.FindMatchAsync(this, queueName, options, cancellationToken);
+
+        internal void RaiseSearchStarted() => FlockEvents.InvokeEach(SearchStarted, $"{nameof(FlockParty)}.{nameof(SearchStarted)}");
+
+        internal void RaiseSearchEnded(FlockMatchmakingResult result) => FlockEvents.InvokeEach(SearchEnded, result, $"{nameof(FlockParty)}.{nameof(SearchEnded)}");
 
         // Takes a newer reading of the party, then says what changed; events are raised once everything is in place.
         internal void Update(PartyRecord party, IReadOnlyList<string> memberIds)

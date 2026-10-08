@@ -239,8 +239,8 @@ namespace Flock.Providers
         }
 
         // Lets work no caller waits for run to its end, reading its failure on the thread that finishes it (a web player has no
-        // thread pool), so no failure is reported as unobserved.
-        private static void LetRun(Task work)
+        // thread pool), so no failure is reported as unobserved. Matchmaking uses it too.
+        internal static void LetRun(Task work)
             => work.ContinueWith(done => { _ = done.Exception; }, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously);
 
         // A change keeps the session, or ends it (end, a host leaving alone): its answer is the session as it now is.

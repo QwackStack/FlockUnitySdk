@@ -168,4 +168,65 @@ namespace Flock.Providers
         [JsonProperty("player_id")]
         public string PlayerId { get; set; }
     }
+
+    /// <summary>A player's matchmaking ticket, as the ticket routes answer it; the reads also carry the match once there is one.</summary>
+    internal sealed class TicketRecord
+    {
+        internal const string Queued = "queued";
+        internal const string Matched = "matched";
+        internal const string Cancelled = "cancelled";
+        internal const string Expired = "expired";
+
+        [JsonProperty("id")]
+        public string Id { get; set; }
+
+        [JsonProperty("queue_id")]
+        public string QueueId { get; set; }
+
+        [JsonProperty("player_id")]
+        public string PlayerId { get; set; }
+
+        [JsonProperty("status")]
+        public string Status { get; set; }
+
+        [JsonProperty("party_id")]
+        public string PartyId { get; set; }
+
+        [JsonProperty("cancel_reason")]
+        public string CancelReason { get; set; }
+
+        [JsonProperty("match")]
+        public MatchRecord Match { get; set; }
+    }
+
+    internal sealed class MatchRecord
+    {
+        [JsonProperty("id")]
+        public string Id { get; set; }
+
+        [JsonProperty("player_ids")]
+        public List<string> PlayerIds { get; set; }
+
+        [JsonProperty("connection_info")]
+        public MatchConnectionRecord ConnectionInfo { get; set; }
+    }
+
+    /// <summary>Where a match's players meet: the session the match made, unless the game's settings make none.</summary>
+    internal sealed class MatchConnectionRecord
+    {
+        [JsonProperty("session_id")]
+        public string SessionId { get; set; }
+    }
+
+    internal sealed class CreateTicketBody
+    {
+        [JsonProperty("queue_id")]
+        public string QueueId { get; set; }
+
+        [JsonProperty("attributes", NullValueHandling = NullValueHandling.Ignore)]
+        public IReadOnlyDictionary<string, object> Attributes { get; set; }
+
+        [JsonProperty("party_id", NullValueHandling = NullValueHandling.Ignore)]
+        public string PartyId { get; set; }
+    }
 }

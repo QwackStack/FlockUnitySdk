@@ -6,6 +6,34 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.75.0]
+
+A game can find a match by queue name, alone or as a party, and gets the session the match seats its players in.
+
+### Added
+- `FlockClient.Instance.Multiplayer.FindMatchAsync(queueName, options, cancellationToken)`: searches alone in the queue with
+  that exact name and hands back a `FlockMatchmakingResult`. When players are matched, its `Session` is the session the match
+  seats them in, held like any other (the longest waiting player hosts), and `PlayerIds` lists them. A search that ends
+  without a match is an outcome, not an error: `FlockMatchmakingOutcome.Expired` (nobody found within 5 minutes),
+  `PartyChanged` or `Cancelled` (stopped by another game). Cancelling the token cancels the search on the server, and a
+  match that landed meanwhile gives its seat up; the game can search again at once. A search of the player's own left by an
+  earlier launch is cancelled first.
+- `FlockParty.FindMatchAsync(queueName, options, cancellationToken)`: the leader's game searches as the party, matched as
+  one unit and never split; another member's game waits for the leader's search and gets the same match.
+- `FlockParty.SearchStarted`, `SearchEnded` and `IsSearching`: every member's game hears the party's search, through its
+  own call or the party's refresh, including a party matched between two refreshes. A search that ended before the game
+  got the party is not reported; one still running then is. `SearchEnded` is raised before the game's `FindMatchAsync`
+  returns.
+- `FlockMatchmakingOptions.Attributes`, passed to the server as given.
+
+### Changed
+- The party refresh also reads the player's own matchmaking ticket, one more request each refresh while in a party.
+- `CreatePartyAsync`, `JoinPartyAsync` and `GetMyPartyAsync` read the player's own matchmaking ticket once when they hand
+  over a party the game did not hold yet, so a search the leader makes right after is never taken for an old one.
+  Cancelling the call's token stops only that read; the party is handed over.
+- Quitting cancels a running search without waiting, so it matches nobody who has gone.
+- The `MatchmakingAlreadyQueued` hint now says what is left once the SDK replaces the player's own earlier search.
+
 ## [1.74.0]
 
 Sessions keep their players seated for as long as the game runs, and a game can find its session again after a restart.

@@ -54,6 +54,9 @@ namespace Flock.Tests.PlayMode
         private readonly List<KeyValuePair<string, FlockHttpRequest>> _requests = new List<KeyValuePair<string, FlockHttpRequest>>();
         private int _nextId;
 
+        // Told the party's id whenever its players change, as the backend then stops the party's matchmaking search.
+        internal Action<string> RosterChanged;
+
         internal int Count(string route)
         {
             lock (_lock)
@@ -102,6 +105,12 @@ namespace Flock.Tests.PlayMode
                 return _parties.FirstOrDefault(party => party.Status == "active" && party.Members.Contains(playerId));
         }
 
+        internal Party ActiveById(string partyId)
+        {
+            lock (_lock)
+                return _parties.FirstOrDefault(party => party.Status == "active" && party.Id == partyId);
+        }
+
         // ---- what other players (or this player on another device) do ----
 
         internal Party MadeBy(string playerId, int maxSize = 4, JObject settings = null)
@@ -119,6 +128,7 @@ namespace Flock.Tests.PlayMode
         {
             lock (_lock)
                 party.Members.Add(playerId);
+            RosterChanged?.Invoke(party.Id);
         }
 
         internal void Removes(Party party, string playerId)
@@ -131,6 +141,7 @@ namespace Flock.Tests.PlayMode
                 else if (party.LeaderId == playerId)
                     party.LeaderId = party.Members[0];
             }
+            RosterChanged?.Invoke(party.Id);
         }
 
         internal void Leads(Party party, string playerId)
@@ -146,6 +157,7 @@ namespace Flock.Tests.PlayMode
                 party.Members.Clear();
                 party.Status = "disbanded";
             }
+            RosterChanged?.Invoke(party.Id);
         }
 
         // ---- the wire ----
@@ -233,6 +245,7 @@ namespace Flock.Tests.PlayMode
                     if (joining.Members.Count >= joining.MaxSize)
                         return Refused(409, "party.full");
                     joining.Members.Add(player);
+                    RosterChanged?.Invoke(joining.Id);
                     return Answer(Describe(joining, false));
                 }
                 case Mine:
@@ -266,6 +279,7 @@ namespace Flock.Tests.PlayMode
                     if (!party.Members.Contains(target))
                         return Refused(404, "party.target_not_a_member");
                     party.Members.Remove(target);
+                    RosterChanged?.Invoke(party.Id);
                     break;
                 case Transfer:
                     if (target != player && !party.Members.Contains(target))
