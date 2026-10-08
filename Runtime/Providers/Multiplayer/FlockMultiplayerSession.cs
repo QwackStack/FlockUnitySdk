@@ -79,9 +79,12 @@ namespace Flock.Providers
         public int ExpiresInSeconds { get; }
     }
 
-    /// <summary>A multiplayer session the player holds a seat in, updated from every answer the game's calls get; use it from the main thread.</summary>
+    /// <summary>A multiplayer session the player holds a seat in, kept seated by heartbeats while it lasts and updated from their answers and every call's; use it from the main thread.</summary>
     public sealed class FlockMultiplayerSession
     {
+        // A third of the shorter of the server's default timeouts (60 s host, 90 s seat), for an answer that names no interval.
+        private static readonly TimeSpan HeartbeatWhenNoneIsGiven = TimeSpan.FromSeconds(20);
+
         private readonly FlockMultiplayerSessions _owner;
         private readonly string _playerId;
         // Set once, by the owner, when the session ends; a sign-in that ended reads as signed_out before then.
@@ -114,7 +117,7 @@ namespace Flock.Providers
         /// <summary>The game's own data on the session, set when it was hosted. Read one value with <see cref="TryGetData{T}"/>.</summary>
         public IReadOnlyDictionary<string, object> Data { get; private set; }
 
-        /// <summary>How to reach the host, or null until the host publishes it. After a change of host it may still be the previous host's until the new one publishes.</summary>
+        /// <summary>How to reach the host, or null until the host publishes it. When hosting moves it is cleared until the new host publishes; <see cref="ConnectionChanged"/> is raised both times.</summary>
         public FlockMultiplayerSessionConnection Connection { get; private set; }
 
         /// <summary>Why the session ended (a <see cref="FlockMultiplayerSessionEndReason"/> value, or a reason the server added), or null while it lasts.</summary>
@@ -129,7 +132,7 @@ namespace Flock.Providers
         /// <summary>Another player hosts the session now.</summary>
         public event Action HostChanged;
 
-        /// <summary>The host published how to reach it, or published again.</summary>
+        /// <summary>The host published how to reach it or published again, or hosting moved and the address was cleared.</summary>
         public event Action ConnectionChanged;
 
         /// <summary>The session stopped being the player's, raised once with the reason. Not raised when Flock shuts down or the game quits.</summary>
@@ -140,6 +143,8 @@ namespace Flock.Providers
         internal string EndReasonSet => _endReason;
         internal int HostEpoch { get; private set; }
         internal int ConnectionEpoch { get; private set; }
+        // How often to heartbeat, as the server says for the game's timeouts.
+        internal TimeSpan HeartbeatInterval { get; private set; }
 
         /// <summary>Reads one <see cref="Data"/> value as <typeparamref name="T"/>. False when the key is absent or the value cannot become a T.</summary>
         public bool TryGetData<T>(string key, out T value)
@@ -175,8 +180,11 @@ namespace Flock.Providers
             IReadOnlyList<string> seated = SeatedPlayers(session);
             bool playersChanged = !SamePlayers(seated);
             bool hostChanged = session.HostEpoch != HostEpoch || !string.Equals(session.HostPlayerId, HostPlayerId, StringComparison.Ordinal);
-            bool connectionChanged = session.ConnectionEpoch != ConnectionEpoch;
+            bool connectionEpochMoved = session.ConnectionEpoch != ConnectionEpoch;
+            bool hadConnection = Connection != null;
             CopyFrom(session);
+            // A publish moves the epoch; hosting moving on clears the address without moving it.
+            bool connectionChanged = connectionEpochMoved || hadConnection != (Connection != null);
 
             if (playersChanged)
                 FlockEvents.InvokeEach(PlayersChanged, $"{nameof(FlockMultiplayerSession)}.{nameof(PlayersChanged)}");
@@ -224,6 +232,7 @@ namespace Flock.Providers
             Players = players.AsReadOnly();
 
             ConnectionEpoch = session.ConnectionEpoch;
+            HeartbeatInterval = session.HeartbeatIntervalSeconds > 0 ? TimeSpan.FromSeconds(session.HeartbeatIntervalSeconds.Value) : HeartbeatWhenNoneIsGiven;
             // The server blanks the address for a player without a seat, and sends none before the host first publishes.
             Connection = session.ConnectionInfo != null && session.ConnectionInfo.TryGetValue("mode", out object mode)
                 ? new FlockMultiplayerSessionConnection(mode as string, ReadOnlyCopy(session.ConnectionInfo))

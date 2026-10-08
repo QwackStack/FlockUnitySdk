@@ -109,8 +109,10 @@ namespace Flock.Http
         // Multiplayer sessions — every route acts as the signed-in player and answers with the whole session.
         public const string Sessions = "multiplayer/sessions";
         public const string SessionJoin = "multiplayer/sessions/join";
+        public const string SessionCurrent = "multiplayer/sessions/current";
         public static string SessionById(string sessionId) => $"multiplayer/sessions/{Uri.EscapeDataString(sessionId)}";
         public static string SessionLeave(string sessionId) => $"{SessionById(sessionId)}/leave";
+        public static string SessionHeartbeat(string sessionId) => $"{SessionById(sessionId)}/heartbeat";
         public static string SessionEnd(string sessionId) => $"{SessionById(sessionId)}/end";
         public static string SessionHost(string sessionId) => $"{SessionById(sessionId)}/host";
         public static string SessionConnection(string sessionId) => $"{SessionById(sessionId)}/connection-info";

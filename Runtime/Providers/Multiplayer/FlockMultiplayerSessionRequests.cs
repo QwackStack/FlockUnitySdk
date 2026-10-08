@@ -17,9 +17,9 @@ namespace Flock.Providers
         internal void RequireGiven(string value, string name) => RequireNotEmpty(value, name);
 
         // Kept out of a retry: a lost answer may mean the session was made, and a second try would make another.
-        internal Task<SessionRecord> HostAsync(int signInNumber, int? maxPlayers, IReadOnlyDictionary<string, object> data, CancellationToken cancellationToken)
+        internal Task<SessionRecord> HostAsync(int signInNumber, int? maxPlayers, IReadOnlyDictionary<string, object> data, bool sameVersionOnly, CancellationToken cancellationToken)
         {
-            HostSessionBody body = new HostSessionBody { MaxPlayers = maxPlayers, Data = data };
+            HostSessionBody body = new HostSessionBody { MaxPlayers = maxPlayers, Data = data, SameVersionOnly = sameVersionOnly ? (bool?)null : false };
             return ExecuteAsync(async () => RequireSession(await FlockHttpClient.PostAsync<GenericResponse<SessionRecord>>(
                 Url(FlockEndpoints.Sessions), body, Client.GetBaseHeaders(), cancellationToken)),
                 "Host session", cancellationToken, idempotent: false, actsForSignIn: signInNumber);
@@ -39,6 +39,22 @@ namespace Flock.Providers
             return ExecuteAsync(async () => RequireSession(await FlockHttpClient.GetAsync<GenericResponse<SessionRecord>>(
                 Url(FlockEndpoints.SessionById(sessionId)), Client.GetBaseHeaders(), cancellationToken)),
                 "Read session", cancellationToken, actsForSignIn: signInNumber);
+        }
+
+        // The live session the player is seated in, found without its id; refused with session_not_found when seated nowhere.
+        internal Task<SessionRecord> ReadCurrentAsync(int signInNumber, CancellationToken cancellationToken)
+        {
+            return ExecuteAsync(async () => RequireSession(await FlockHttpClient.GetAsync<GenericResponse<SessionRecord>>(
+                Url(FlockEndpoints.SessionCurrent), Client.GetBaseHeaders(), cancellationToken)),
+                "Read my session", cancellationToken, actsForSignIn: signInNumber);
+        }
+
+        // Keeps the seat and answers the session as it is now; a second beat after a lost answer only keeps it again.
+        internal Task<SessionRecord> HeartbeatAsync(int signInNumber, string sessionId, CancellationToken cancellationToken)
+        {
+            return ExecuteAsync(async () => RequireSession(await FlockHttpClient.PostAsync<GenericResponse<SessionRecord>>(
+                Url(FlockEndpoints.SessionHeartbeat(sessionId)), new object(), Client.GetBaseHeaders(), cancellationToken)),
+                "Session heartbeat", cancellationToken, actsForSignIn: signInNumber);
         }
 
         // Retrying is safe: the caller reads "not a participant" after a lost answer as the leave having gone through.

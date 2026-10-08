@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.74.0]
+
+Sessions keep their players seated for as long as the game runs, and a game can find its session again after a restart.
+Players on different builds of a game no longer end up in one session unless the host allows it.
+
+### Added
+- Heartbeats: while a session is held, the SDK keeps the player's seat with a heartbeat at the interval the server gives
+  for the game's timeouts (set in the game's multiplayer settings in the Flock dashboard). Each heartbeat's answer updates
+  the session, so `PlayersChanged`, `HostChanged` and `ConnectionChanged` are raised without the game reading it. Nothing to
+  call or set. A heartbeat the server refuses for a reason other than the seat being gone logs one warning and stops; the
+  next `GetSessionAsync` or `GetMySessionAsync` starts them again.
+- `FlockClient.Instance.Multiplayer.GetMySessionAsync`: the session the player is seated in, found without its id (after a
+  restart, or one a party leader's game made), or null when seated nowhere. A session held until then that the player is no
+  longer seated in ends, with the reason the server gives.
+- `HostSessionAsync(sameVersionOnly: false)` lets players on any build join. By default a session keeps to its host's Game
+  Version, and a player whose game sends another one is refused with `MultiplayerVersionMismatch`.
+- `FlockErrorCode.MultiplayerVersionMismatch` and `MatchmakingVersionMismatch`, with hints.
+
+### Changed
+- When hosting moves, `Connection` is cleared until the new host publishes, and `ConnectionChanged` is raised for it.
+- A game paused past the timeouts (a phone on the home screen, a browser tab in the background, a desktop window that lost
+  focus with Run In Background off) sends no heartbeats, so the server gives its seat up; the first heartbeat after it comes
+  back ends the session, as `dropped` while others kept it going, or with the session's own reason if it closed meanwhile.
+
+### Removed
+- `FlockErrorCode.MultiplayerExtrasPaused`: the server no longer sends it.
+
 ## [1.73.0]
 
 Sessions: a player hosts a game others join with a code, says how to reach it, and the SDK keeps the session up to date

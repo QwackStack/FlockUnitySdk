@@ -130,8 +130,8 @@ catch (FlockException ex) when (ex.IsAlreadyRegistered())
 | `MatchmakingQueueNotFound` | `matchmaking.queue_not_found` |
 | `MatchmakingTicketNotCancelable` | `matchmaking.ticket_not_cancelable` |
 | `MatchmakingTicketNotFound` | `matchmaking.ticket_not_found` |
+| `MatchmakingVersionMismatch` | `matchmaking.version_mismatch` |
 | `MultiplayerAlreadyInSession` | `multiplayer.already_in_session` |
-| `MultiplayerExtrasPaused` | `multiplayer.extras_paused` |
 | `MultiplayerInvalidJoinCode` | `multiplayer.invalid_join_code` |
 | `MultiplayerInvalidJoinToken` | `multiplayer.invalid_join_token` |
 | `MultiplayerJoinCodeUnavailable` | `multiplayer.join_code_unavailable` |
@@ -141,6 +141,7 @@ catch (FlockException ex) when (ex.IsAlreadyRegistered())
 | `MultiplayerSessionFull` | `multiplayer.session_full` |
 | `MultiplayerSessionNotFound` | `multiplayer.session_not_found` |
 | `MultiplayerTargetNotAParticipant` | `multiplayer.target_not_a_participant` |
+| `MultiplayerVersionMismatch` | `multiplayer.version_mismatch` |
 | `NotificationTemplateNotFound` | `notification_template.not_found` |
 | `PartyAlreadyInParty` | `party.already_in_party` |
 | `PartyCannotKickLeader` | `party.cannot_kick_leader` |

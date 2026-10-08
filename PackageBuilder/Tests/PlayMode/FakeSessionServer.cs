@@ -9,14 +9,17 @@ using Newtonsoft.Json.Linq;
 
 namespace Flock.Tests.PlayMode
 {
-    // The multiplayer session routes in memory, with the backend's rules as measured on 2026-10-07: the bearer names the player,
-    // every route answers the whole session (players in seniority order), a player holds one seat a game, the host leaving hands
-    // hosting to the longest seated or ends the session (host_left), and each refusal has the backend's own status and code.
-    // Other players act through its methods.
+    // The multiplayer session routes in memory, with the backend's rules as measured on 2026-10-07 and 2026-10-08: the bearer
+    // names the player, every route answers the whole session (players in seniority order) with the heartbeat interval, a player
+    // holds one seat a game, the host leaving hands hosting to the longest seated or ends the session (host_left), a change of
+    // host clears the address and reopens the session, a session keeps to its host's game version unless told otherwise, and
+    // each refusal has the backend's own status and code. Other players act through its methods.
     internal sealed class FakeSessionServer : IFlockHttpAdapter
     {
         internal const string Host = "host";
         internal const string Join = "join";
+        internal const string Current = "current";
+        internal const string Heartbeat = "heartbeat";
         internal const string Read = "read";
         internal const string Leave = "leave";
         internal const string End = "end";
@@ -44,6 +47,8 @@ namespace Flock.Tests.PlayMode
             public JObject Connection = new JObject();
             public int ConnectionEpoch;
             public JObject Data = new JObject();
+            public string GameVersion = GameBuild;
+            public bool SameVersionOnly = true;
             public readonly List<Seat> Seats = new List<Seat>();
             public bool Live => Status != "ended";
             public IEnumerable<string> Seated => Seats.Where(seat => seat.Status == "joined").Select(seat => seat.PlayerId);
@@ -57,6 +62,12 @@ namespace Flock.Tests.PlayMode
             internal Task<FlockHttpResponse> Answer => _answer.Task;
             internal void Release() => _answer.TrySetResult(Computed);
         }
+
+        // The Game Version the test client sends: other players are on the game's build unless a test says otherwise.
+        internal const string GameBuild = "test-gvid";
+
+        // What every session answer says about heartbeats; null leaves the interval out, as a server from before it did.
+        internal int? HeartbeatSeconds = 20;
 
         private readonly object _lock = new object();
         private readonly List<Session> _sessions = new List<Session>();
@@ -159,10 +170,16 @@ namespace Flock.Tests.PlayMode
         internal void MakesHost(Session session, string playerId)
         {
             lock (_lock)
-            {
-                session.HostId = playerId;
-                session.HostEpoch++;
-            }
+                HandOver(session, playerId);
+        }
+
+        // Every change of host: the old host's address is cleared and the session is open again until the new host publishes.
+        private static void HandOver(Session session, string playerId)
+        {
+            session.HostId = playerId;
+            session.HostEpoch++;
+            session.Connection = new JObject();
+            session.Status = "open";
         }
 
         // ---- the wire ----
@@ -181,7 +198,7 @@ namespace Flock.Tests.PlayMode
                 if (_cannedAnswers.TryGetValue(route, out Queue<FlockHttpResponse> canned) && canned.Count > 0)
                     answer = canned.Dequeue();
                 else
-                    answer = Handle(route, path, PlayerOf(request), request.JsonBody == null ? null : JObject.Parse(request.JsonBody));
+                    answer = Handle(route, path, PlayerOf(request), VersionOf(request), request.JsonBody == null ? null : JObject.Parse(request.JsonBody));
             }
             if (held == null)
                 return Task.FromResult(answer);
@@ -198,6 +215,10 @@ namespace Flock.Tests.PlayMode
                 return Host;
             if (path == prefix + "/join")
                 return Join;
+            if (path == prefix + "/current")
+                return Current;
+            if (path.EndsWith("/heartbeat", StringComparison.Ordinal))
+                return Heartbeat;
             if (path.EndsWith("/leave", StringComparison.Ordinal))
                 return Leave;
             if (path.EndsWith("/end", StringComparison.Ordinal))
@@ -213,7 +234,7 @@ namespace Flock.Tests.PlayMode
             return Read;
         }
 
-        private FlockHttpResponse Handle(string route, string path, string player, JObject body)
+        private FlockHttpResponse Handle(string route, string path, string player, string version, JObject body)
         {
             if (route == Other)
                 return Refused(404, "request.not_found");
@@ -234,8 +255,19 @@ namespace Flock.Tests.PlayMode
                     Session made = HostedBy(player, size == null ? 8 : size.Value<int>());
                     if (body?["data"] is JObject data)
                         made.Data = data;
+                    made.GameVersion = version;
+                    made.SameVersionOnly = body?["same_version_only"]?.Value<bool>() ?? true;
                     return Answer(Describe(made, player, true));
                 }
+                case Current:
+                {
+                    Session mine = _sessions.FirstOrDefault(each => each.Live && each.Seated.Contains(player));
+                    return mine == null ? Refused(404, "multiplayer.session_not_found") : Answer(Describe(mine, player, false));
+                }
+                case Heartbeat:
+                    if (!live || !seated)
+                        return Refused(404, "multiplayer.session_not_found");
+                    return Answer(Describe(session, player, true));
                 case Join:
                 {
                     string code = ((string)body?["join_code"] ?? "").Trim().ToUpperInvariant();
@@ -244,6 +276,8 @@ namespace Flock.Tests.PlayMode
                         return Refused(404, "multiplayer.invalid_join_code");
                     if (joining.Seated.Contains(player))
                         return Answer(Describe(joining, player, true));
+                    if (joining.SameVersionOnly && joining.GameVersion != version)
+                        return Refused(409, "multiplayer.version_mismatch");
                     if (joining.Seated.Count() >= joining.MaxPlayers)
                         return Refused(409, "multiplayer.session_full");
                     ReleaseSeatsOf(player);
@@ -288,8 +322,7 @@ namespace Flock.Tests.PlayMode
                         return Answer(Describe(session, player, true));
                     if (!session.Seated.Contains(target))
                         return Refused(404, "multiplayer.target_not_a_participant");
-                    session.HostId = target;
-                    session.HostEpoch++;
+                    HandOver(session, target);
                     return Answer(Describe(session, player, true));
                 }
                 case Publish:
@@ -335,8 +368,7 @@ namespace Flock.Tests.PlayMode
                         Close(session, "host_left");
                         return;
                     }
-                    session.HostId = next;
-                    session.HostEpoch++;
+                    HandOver(session, next);
                 }
                 else if (next == null)
                 {
@@ -360,7 +392,7 @@ namespace Flock.Tests.PlayMode
         }
 
         // Every route answers the whole session; a read blanks the address for a player without a seat, as the backend does.
-        private static JObject Describe(Session session, string reader, bool asWritten)
+        private JObject Describe(Session session, string reader, bool asWritten)
         {
             bool seated = session.Seats.Any(seat => seat.PlayerId == reader && seat.Status == "joined");
             return new JObject
@@ -377,6 +409,11 @@ namespace Flock.Tests.PlayMode
                 ["connection_info"] = asWritten || seated ? session.Connection.DeepClone() : new JObject(),
                 ["connection_epoch"] = session.ConnectionEpoch,
                 ["data"] = session.Data.DeepClone(),
+                ["game_version_id"] = session.GameVersion,
+                ["same_version_only"] = session.SameVersionOnly,
+                ["participant_timeout_seconds"] = 90,
+                ["host_timeout_seconds"] = 60,
+                ["heartbeat_interval_seconds"] = HeartbeatSeconds,
                 ["last_host_seen_at"] = "2026-10-07T17:35:34.921920",
                 ["expires_at"] = "2026-10-07T21:35:34.921920",
                 ["ended_at"] = null,
@@ -409,6 +446,13 @@ namespace Flock.Tests.PlayMode
         {
             JObject body = new JObject { ["detail"] = new JObject { ["code"] = code, ["message"] = "refused by the test server" } };
             return new FlockHttpResponse { Result = FlockHttpResult.Success, StatusCode = status, Body = body.ToString() };
+        }
+
+        private static string VersionOf(FlockHttpRequest request)
+        {
+            if (request.Headers == null || !request.Headers.TryGetValue("X-Game-Version-ID", out string version))
+                return null;
+            return string.IsNullOrWhiteSpace(version) ? null : version.Trim();
         }
 
         private static string PlayerOf(FlockHttpRequest request)

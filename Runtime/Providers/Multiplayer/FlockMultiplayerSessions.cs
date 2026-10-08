@@ -9,12 +9,15 @@ namespace Flock.Providers
     /// <summary>The one owner of the player's session: at most one held per sign-in, changed only by the newest answer; runs on the main thread.</summary>
     internal sealed class FlockMultiplayerSessions
     {
+        internal const string HeartbeatCallName = "Session heartbeat";
         // A read overtaken this many times in a row means the session is changing faster than it can be read.
         private const int MostReadsWhileTheSessionChanges = 5;
 
         private readonly FlockClient _client;
         private readonly FlockMultiplayerSessionRequests _requests;
+        private readonly FlockRepeatingCalls _repeatingCalls;
         private FlockMultiplayerSession _held;
+        private FlockRepeatingCall _heartbeat;
         private int _readsSent;
         // Reads numbered at or below this change nothing when they land.
         private int _readsSettledThrough;
@@ -23,19 +26,20 @@ namespace Flock.Providers
         // Flock shut down or was reset: an answer still on its way holds nothing.
         private bool _stopped;
 
-        internal FlockMultiplayerSessions(FlockClient client)
+        internal FlockMultiplayerSessions(FlockClient client, FlockRepeatingCalls repeatingCalls)
         {
             _client = client;
             _requests = new FlockMultiplayerSessionRequests(client);
+            _repeatingCalls = repeatingCalls;
         }
 
         internal int CurrentSignInNumber => _client.SignInNumber;
         internal FlockMultiplayerSession Held => _held;
 
-        internal async Task<FlockMultiplayerSession> HostAsync(int? maxPlayers, IReadOnlyDictionary<string, object> data, CancellationToken cancellationToken)
+        internal async Task<FlockMultiplayerSession> HostAsync(int? maxPlayers, IReadOnlyDictionary<string, object> data, bool sameVersionOnly, CancellationToken cancellationToken)
         {
             int signInNumber = RequireSignedIn(out string playerId);
-            SessionRecord hosted = await _requests.HostAsync(signInNumber, maxPlayers, data, cancellationToken);
+            SessionRecord hosted = await _requests.HostAsync(signInNumber, maxPlayers, data, sameVersionOnly, cancellationToken);
             RequireStillCurrent(signInNumber);
             return TakeAnswerOfChange(hosted, signInNumber, playerId);
         }
@@ -54,19 +58,14 @@ namespace Flock.Providers
         {
             _requests.RequireGiven(sessionId, "Session ID");
             int signInNumber = RequireSignedIn(out string playerId);
-            for (int attempt = 1; ; attempt++)
-            {
-                int number = ++_readsSent;
-                SessionRecord session = await _requests.ReadAsync(signInNumber, sessionId, cancellationToken);
-                RequireStillCurrent(signInNumber);
-                if (number > _readsSettledThrough)
-                {
-                    _readsSettledThrough = number;
-                    return Take(session, signInNumber, playerId);
-                }
-                if (attempt == MostReadsWhileTheSessionChanges)
-                    throw new FlockException("The session kept changing while it was being read. Try again.");
-            }
+            return await ReadUntilNewestAsync(signInNumber, playerId, () => _requests.ReadAsync(signInNumber, sessionId, cancellationToken), cancellationToken);
+        }
+
+        /// <summary>The session the player is seated in now, found without its id, or null when seated nowhere.</summary>
+        internal async Task<FlockMultiplayerSession> GetMineAsync(CancellationToken cancellationToken)
+        {
+            int signInNumber = RequireSignedIn(out string playerId);
+            return await ReadUntilNewestAsync(signInNumber, playerId, () => ReadMineOrNoneAsync(signInNumber, cancellationToken), cancellationToken);
         }
 
         internal async Task LeaveAsync(FlockMultiplayerSession session, CancellationToken cancellationToken)
@@ -135,9 +134,7 @@ namespace Flock.Providers
             if (session == null || session.HasEnded)
                 return;
             End(session, FlockMultiplayerSessionEndReason.Left, raise: false);
-            Task leaving = _requests.LeaveAsync(session.SignInNumber, session.Id, CancellationToken.None);
-            // Observed on the thread that finishes it: a web player has no thread pool to run it on.
-            leaving.ContinueWith(sent => { _ = sent.Exception; }, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously);
+            LetRun(_requests.LeaveAsync(session.SignInNumber, session.Id, CancellationToken.None));
         }
 
         /// <summary>Flock is shutting down: the session ends without a word to the game, which hears Flock's own shutdown.</summary>
@@ -147,6 +144,104 @@ namespace Flock.Providers
             if (_held != null)
                 End(_held, FlockMultiplayerSessionEndReason.SignedOut, raise: false);
         }
+
+        // A read overtaken by a newer answer is sent again, so the caller gets the server's latest.
+        private async Task<FlockMultiplayerSession> ReadUntilNewestAsync(int signInNumber, string playerId, Func<Task<SessionRecord>> read, CancellationToken cancellationToken)
+        {
+            for (int attempt = 1; ; attempt++)
+            {
+                int number = ++_readsSent;
+                SessionRecord session = await read();
+                RequireStillCurrent(signInNumber);
+                if (number > _readsSettledThrough)
+                {
+                    _readsSettledThrough = number;
+                    if (session != null)
+                        return Take(session, signInNumber, playerId);
+                    // Seated nowhere: a session held until now is over, and a reading of it says why.
+                    EndIfSignInEnded();
+                    if (_held != null)
+                        await LearnWhyItEndedAsync(_held, cancellationToken);
+                    return null;
+                }
+                if (attempt == MostReadsWhileTheSessionChanges)
+                    throw new FlockException("The session kept changing while it was being read. Try again.");
+            }
+        }
+
+        // Seated nowhere is an answer here, not a failure.
+        private async Task<SessionRecord> ReadMineOrNoneAsync(int signInNumber, CancellationToken cancellationToken)
+        {
+            try
+            {
+                return await _requests.ReadCurrentAsync(signInNumber, cancellationToken);
+            }
+            catch (FlockException none) when (none.ErrorCode == FlockErrorCode.MultiplayerSessionNotFound)
+            {
+                return null;
+            }
+        }
+
+        // The held session is kept seated by heartbeats at the interval its answers give; a new interval or a call a failure stopped
+        // starts them again. Ending a session stops them, so a newly held one always starts afresh.
+        private void KeepHeartbeating()
+        {
+            FlockMultiplayerSession held = _held;
+            if (held == null || _stopped)
+                return;
+            if (_heartbeat != null && _heartbeat.IsRunning && _heartbeat.Interval == held.HeartbeatInterval)
+                return;
+            StopHeartbeating();
+            string sessionId = held.Id;
+            int signInNumber = held.SignInNumber;
+            _heartbeat = _repeatingCalls.Start(
+                HeartbeatCallName,
+                held.HeartbeatInterval,
+                cancellationToken => HeartbeatNumberedAsync(signInNumber, sessionId, cancellationToken),
+                TakeHeartbeat,
+                failure => HeartbeatStopped(sessionId, failure));
+        }
+
+        private void StopHeartbeating()
+        {
+            _heartbeat?.Stop();
+            _heartbeat = null;
+        }
+
+        // A heartbeat's answer is a reading like any other: numbered when sent, so an older one changes nothing.
+        private async Task<SessionReading> HeartbeatNumberedAsync(int signInNumber, string sessionId, CancellationToken cancellationToken)
+        {
+            int number = ++_readsSent;
+            SessionRecord session = await _requests.HeartbeatAsync(signInNumber, sessionId, cancellationToken);
+            return new SessionReading(number, signInNumber, session);
+        }
+
+        private void TakeHeartbeat(SessionReading reading)
+        {
+            if (reading.Number <= _readsSettledThrough)
+                return;
+            _readsSettledThrough = reading.Number;
+            Take(reading.Session, reading.SignInNumber, null);
+        }
+
+        // A seat the server no longer has ends the session, read once to learn why; any other refusal leaves the seat to time out.
+        private void HeartbeatStopped(string sessionId, Exception failure)
+        {
+            FlockMultiplayerSession held = _held;
+            if (held == null || held.Id != sessionId)
+                return;
+            if (failure is FlockException coded && IsOutOfTheSession(coded))
+            {
+                LetRun(LearnWhyItEndedAsync(held, CancellationToken.None));
+                return;
+            }
+            _client.Logger.LogWarning($"The session is no longer kept seated: {failure.Message}. The server gives the seat up when it stops hearing from it; GetMySessionAsync or GetSessionAsync starts the heartbeats again.");
+        }
+
+        // Lets work no caller waits for run to its end, reading its failure on the thread that finishes it (a web player has no
+        // thread pool), so no failure is reported as unobserved.
+        private static void LetRun(Task work)
+            => work.ContinueWith(done => { _ = done.Exception; }, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously);
 
         // A change keeps the session, or ends it (end, a host leaving alone): its answer is the session as it now is.
         private async Task ChangeAsync(FlockMultiplayerSession session, Func<Task<SessionRecord>> send, CancellationToken cancellationToken)
@@ -221,6 +316,7 @@ namespace Flock.Providers
                 if (ending == null)
                 {
                     held.Update(session);
+                    KeepHeartbeating();
                 }
                 else
                 {
@@ -244,6 +340,7 @@ namespace Flock.Providers
             if (_held != null)
                 End(_held, FlockMultiplayerSessionEndReason.MovedToAnotherSession);
             _held = taken;
+            KeepHeartbeating();
             return taken;
         }
 
@@ -276,7 +373,10 @@ namespace Flock.Providers
             if (session.SignInNumber != CurrentSignInNumber)
                 reason = FlockMultiplayerSessionEndReason.SignedOut;
             if (_held == session)
+            {
                 _held = null;
+                StopHeartbeating();
+            }
             session.End(reason, raise);
         }
 
@@ -302,6 +402,20 @@ namespace Flock.Providers
         {
             if (session.HasEnded)
                 throw new FlockValidationException($"This session has ended ({session.EndReason}). Host or join another.");
+        }
+
+        private sealed class SessionReading
+        {
+            internal SessionReading(int number, int signInNumber, SessionRecord session)
+            {
+                Number = number;
+                SignInNumber = signInNumber;
+                Session = session;
+            }
+
+            internal int Number { get; }
+            internal int SignInNumber { get; }
+            internal SessionRecord Session { get; }
         }
     }
 }

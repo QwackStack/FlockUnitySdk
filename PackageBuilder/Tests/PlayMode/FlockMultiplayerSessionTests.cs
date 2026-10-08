@@ -17,7 +17,7 @@ using UnityEngine.TestTools;
 namespace Flock.Tests.PlayMode
 {
     // The player's multiplayer session on real frames against a session server in memory: one held session per sign-in, changed
-    // only by the newest answer, its events, every way it ends, and its calls. (Heartbeats wait for the backend to say how often.)
+    // only by the newest answer, its events, every way it ends, its heartbeats, and its calls.
     public class FlockMultiplayerSessionTests
     {
         private const string A = "player-a";
@@ -43,14 +43,14 @@ namespace Flock.Tests.PlayMode
                 FlockClient.Shutdown();
         }
 
-        private FlockMultiplayerProvider SignedInAs(string player, int retries = 0)
+        private FlockMultiplayerProvider SignedInAs(string player, int retries = 0, int retryWaitMilliseconds = 50)
         {
             _server = new FakeSessionServer();
             _h = FlockTestClient.Create(new FlockFakeTransport(), config =>
             {
                 config.PartyRefreshInterval = TimeSpan.Zero;
                 if (retries > 0)
-                    config.RetryPolicy = new RetryPolicy { MaxRetries = retries, InitialDelay = TimeSpan.FromMilliseconds(50), UseJitter = false };
+                    config.RetryPolicy = new RetryPolicy { MaxRetries = retries, InitialDelay = TimeSpan.FromMilliseconds(retryWaitMilliseconds), UseJitter = false };
             });
             FlockHttpClient.Configure(_server);
             _h.LoginAs(player);
@@ -271,7 +271,8 @@ namespace Flock.Tests.PlayMode
             Task handOver = session.MakeHostAsync(B);
             yield return Done(handOver, "hosting was handed over");
 
-            CollectionAssert.AreEqual(new[] { "connection direct", "players " + A + "," + B + "," + C, "host " + B + " isHost=False" }, seen);
+            // The hand-over clears the old host's address, so ConnectionChanged follows HostChanged and sees no connection.
+            CollectionAssert.AreEqual(new[] { "connection direct", "players " + A + "," + B + "," + C, "host " + B + " isHost=False", "connection " }, seen);
             CollectionAssert.AreEqual(new[] { A, B }, before.Select(player => player.PlayerId).ToArray(), "A list handed out earlier keeps its players");
         }
 
@@ -750,6 +751,7 @@ namespace Flock.Tests.PlayMode
             Failure<FlockAuthException>(multiplayer.HostSessionAsync());
             Failure<FlockAuthException>(multiplayer.JoinSessionAsync("ABC123"));
             Failure<FlockAuthException>(multiplayer.GetSessionAsync("01SESSION"));
+            Failure<FlockAuthException>(multiplayer.GetMySessionAsync());
             Assert.AreEqual(sent, _server.TotalRequests);
         }
 
@@ -835,6 +837,301 @@ namespace Flock.Tests.PlayMode
             yield return FlockTestWait.Until(() => _server.Count(FakeSessionServer.Leave) == 1, "The leave went out");
             Assert.IsFalse(onServer.Seated.Contains(A), "The seat is given up on the server");
             Assert.AreEqual(0, ended, "Nothing is raised while the game quits");
+        }
+
+        // ---- heartbeats, my session and game versions ----
+
+        [UnityTest]
+        public IEnumerator AHeldSession_Heartbeats_AtTheIntervalItsAnswersGive()
+        {
+            FlockMultiplayerProvider multiplayer = SignedInAs(A);
+            _server.HeartbeatSeconds = 1;
+            Task<FlockMultiplayerSession> hosted = multiplayer.HostSessionAsync();
+            yield return Done(hosted, "hosted");
+            Assert.AreEqual(TimeSpan.FromSeconds(1), hosted.Result.HeartbeatInterval, "Precondition: the interval the answer gave");
+
+            yield return RealSeconds(3.5f);
+            List<FlockHttpRequest> beats = _server.RequestsTo(FakeSessionServer.Heartbeat);
+            Assert.That(beats.Count, Is.InRange(2, 4), "About one a second, each wait a quarter either way");
+            Assert.IsTrue(beats.All(beat => beat.Url.Contains("/" + hosted.Result.Id + "/heartbeat")), "Each one names the held session");
+        }
+
+        [UnityTest]
+        public IEnumerator AnAnswerGivingNoInterval_HeartbeatsEveryTwentySeconds_UntilOneGivesIt()
+        {
+            FlockMultiplayerProvider multiplayer = SignedInAs(A);
+            _server.HeartbeatSeconds = null;
+            Task<FlockMultiplayerSession> hosted = multiplayer.HostSessionAsync();
+            yield return Done(hosted, "hosted");
+            Assert.AreEqual(TimeSpan.FromSeconds(20), hosted.Result.HeartbeatInterval);
+
+            _server.HeartbeatSeconds = 7;
+            Task<FlockMultiplayerSession> read = multiplayer.GetSessionAsync(hosted.Result.Id);
+            yield return Done(read, "read");
+            Assert.AreEqual(TimeSpan.FromSeconds(7), hosted.Result.HeartbeatInterval);
+        }
+
+        [UnityTest]
+        public IEnumerator TheHeartbeats_FollowANewIntervalTheSessionGives()
+        {
+            FlockMultiplayerProvider multiplayer = SignedInAs(A);
+            _server.HeartbeatSeconds = 10;
+            Task<FlockMultiplayerSession> hosted = multiplayer.HostSessionAsync();
+            yield return Done(hosted, "hosted");
+
+            _server.HeartbeatSeconds = 1;
+            Task<FlockMultiplayerSession> read = multiplayer.GetSessionAsync(hosted.Result.Id);
+            yield return Done(read, "a read gave the new interval");
+            yield return RealSeconds(3.5f);
+            Assert.That(_server.Count(FakeSessionServer.Heartbeat), Is.InRange(2, 4), "At the new interval, not the first one's 10 s");
+        }
+
+        [UnityTest]
+        public IEnumerator AHeartbeatsAnswer_RefreshesTheSession_WithoutTheGameReadingIt()
+        {
+            FlockMultiplayerProvider multiplayer = SignedInAs(A);
+            _server.HeartbeatSeconds = 1;
+            Task<FlockMultiplayerSession> hosted = multiplayer.HostSessionAsync();
+            yield return Done(hosted, "hosted");
+            int changes = 0;
+            hosted.Result.PlayersChanged += () => changes++;
+
+            _server.Joins(_server.ById(hosted.Result.Id), B);
+            yield return FlockTestWait.Until(() => changes == 1, "A heartbeat's answer showed B");
+            CollectionAssert.AreEqual(new[] { A, B }, Ids(hosted.Result));
+            Assert.AreEqual(0, _server.Count(FakeSessionServer.Read), "No read was needed");
+        }
+
+        [UnityTest]
+        public IEnumerator AHeartbeatRefusedForAnotherReason_EndsNothing_WarnsOnce_AndAReadingStartsThemAgain()
+        {
+            FlockMultiplayerProvider multiplayer = SignedInAs(A);
+            _server.HeartbeatSeconds = 1;
+            _server.AnswerNext(FakeSessionServer.Heartbeat, FakeSessionServer.Refused(400, "request.validation_failed"));
+            Task<FlockMultiplayerSession> hosted = multiplayer.HostSessionAsync();
+            yield return Done(hosted, "hosted");
+            yield return FlockTestWait.Until(() => _server.Count(FakeSessionServer.Heartbeat) >= 1, "The heartbeat was refused");
+            yield return RealSeconds(2.5f);
+            Assert.IsFalse(hosted.Result.HasEnded, "A refusal that says nothing about the seat ends nothing");
+            Assert.AreEqual(1, _h.Logger.Warnings.Count(line => line.Contains("no longer kept seated")), "One warning says the seat is no longer kept");
+            Assert.AreEqual(1, _server.Count(FakeSessionServer.Heartbeat), "The heartbeats stopped");
+            Assert.AreEqual(0, _server.Count(FakeSessionServer.Read), "Nothing was read to learn why");
+
+            Task<FlockMultiplayerSession> read = multiplayer.GetSessionAsync(hosted.Result.Id);
+            yield return Done(read, "read");
+            yield return FlockTestWait.Until(() => _server.Count(FakeSessionServer.Heartbeat) >= 2, "A reading started the heartbeats again");
+        }
+
+        [UnityTest]
+        public IEnumerator NoHeartbeat_AfterLeaving()
+        {
+            FlockMultiplayerProvider multiplayer = SignedInAs(A);
+            _server.HeartbeatSeconds = 1;
+            List<FlockMultiplayerSession> held = new List<FlockMultiplayerSession>();
+            yield return HostWithB(multiplayer, held);
+            yield return FlockTestWait.Until(() => _server.Count(FakeSessionServer.Heartbeat) >= 1, "Heartbeats while seated");
+            Assert.That(_server.Count(FakeSessionServer.Heartbeat), Is.GreaterThanOrEqualTo(1), "Precondition: heartbeats while seated");
+
+            Task leave = held[0].LeaveAsync();
+            yield return Done(leave, "left");
+            int beats = _server.Count(FakeSessionServer.Heartbeat);
+            yield return RealSeconds(2.5f);
+            Assert.AreEqual(beats, _server.Count(FakeSessionServer.Heartbeat), "Nothing is sent for a seat given up");
+        }
+
+        [UnityTest]
+        public IEnumerator Heartbeats_FollowTheHeldSession_ToTheNextOne()
+        {
+            FlockMultiplayerProvider multiplayer = SignedInAs(A);
+            _server.HeartbeatSeconds = 1;
+            Task<FlockMultiplayerSession> first = multiplayer.HostSessionAsync();
+            yield return Done(first, "first hosted");
+            Task<FlockMultiplayerSession> second = multiplayer.HostSessionAsync();
+            yield return Done(second, "second hosted");
+            int before = _server.Count(FakeSessionServer.Heartbeat);
+
+            yield return RealSeconds(2.5f);
+            List<FlockHttpRequest> beats = _server.RequestsTo(FakeSessionServer.Heartbeat).Skip(before).ToList();
+            Assert.That(beats.Count, Is.GreaterThanOrEqualTo(1), "The second session is kept seated");
+            Assert.IsTrue(beats.All(beat => beat.Url.Contains("/" + second.Result.Id + "/")), "Nothing more for the session left behind");
+        }
+
+        [UnityTest]
+        public IEnumerator NoHeartbeat_AfterTheSignInEnds()
+        {
+            FlockMultiplayerProvider multiplayer = SignedInAs(A);
+            _server.HeartbeatSeconds = 1;
+            Task<FlockMultiplayerSession> hosted = multiplayer.HostSessionAsync();
+            yield return Done(hosted, "hosted");
+            yield return FlockTestWait.Until(() => _server.Count(FakeSessionServer.Heartbeat) >= 1, "Heartbeats while signed in");
+
+            _h.LoginAs(B);
+            int beats = _server.Count(FakeSessionServer.Heartbeat);
+            yield return RealSeconds(2.5f);
+            Assert.AreEqual(beats, _server.Count(FakeSessionServer.Heartbeat), "Nothing is sent for the last player's seat");
+        }
+
+        [UnityTest]
+        public IEnumerator AHeartbeatThatFindsTheSeatGone_EndsTheSessionAsDropped()
+        {
+            FlockMultiplayerProvider multiplayer = SignedInAs(A);
+            _server.HeartbeatSeconds = 1;
+            List<FlockMultiplayerSession> held = new List<FlockMultiplayerSession>();
+            yield return HostWithB(multiplayer, held);
+            List<string> ended = new List<string>();
+            held[0].Ended += ended.Add;
+
+            _server.Drops(_server.ById(held[0].Id), A);
+            yield return FlockTestWait.Until(() => ended.Count == 1, "The next heartbeat found the seat gone");
+            CollectionAssert.AreEqual(new[] { FlockMultiplayerSessionEndReason.Dropped }, ended, "A reading said why");
+            Assert.IsNull(multiplayer.Sessions.Held);
+        }
+
+        [UnityTest]
+        public IEnumerator AnOlderHeartbeatAnswer_ChangesNothing()
+        {
+            FlockMultiplayerProvider multiplayer = SignedInAs(A);
+            List<FlockMultiplayerSession> held = new List<FlockMultiplayerSession>();
+            yield return HostWithB(multiplayer, held);
+            FakeSessionServer.Held beat = _server.HoldNext(FakeSessionServer.Heartbeat);
+            _server.HeartbeatSeconds = 1;
+            Task<FlockMultiplayerSession> faster = multiplayer.GetSessionAsync(held[0].Id);
+            yield return Done(faster, "a read gave the one-second interval");
+            yield return FlockTestWait.Until(() => beat.Arrived, "A heartbeat is on its way, its answer showing A and B");
+
+            _server.Joins(_server.ById(held[0].Id), C);
+            Task<FlockMultiplayerSession> read = multiplayer.GetSessionAsync(held[0].Id);
+            yield return Done(read, "a newer read showed C");
+            int changes = 0;
+            held[0].PlayersChanged += () => changes++;
+            beat.Release();
+            yield return RealSeconds(0.2f);
+            CollectionAssert.AreEqual(new[] { A, B, C }, Ids(held[0]), "The older answer did not take C away");
+            Assert.AreEqual(0, changes);
+        }
+
+        [UnityTest]
+        public IEnumerator ARetriedHeartbeatAfterAPlayerSwitch_IsNotSentAsTheNewPlayer()
+        {
+            FlockMultiplayerProvider multiplayer = SignedInAs(A, retries: 1, retryWaitMilliseconds: 1000);
+            _server.HeartbeatSeconds = 1;
+            _server.AnswerNext(FakeSessionServer.Heartbeat, FakeSessionServer.Refused(429, "request.rate_limited"));
+            FakeSessionServer.Held firstTry = _server.HoldNext(FakeSessionServer.Heartbeat);
+            Task<FlockMultiplayerSession> hosted = multiplayer.HostSessionAsync();
+            yield return Done(hosted, "hosted");
+            yield return FlockTestWait.Until(() => firstTry.Arrived, "The first heartbeat is on its way");
+            firstTry.Release();
+            yield return RealSeconds(0.2f);
+
+            // The switch and a long frame (a scene load) after it: the retry's wait ends before a frame could end the session.
+            _h.LoginAs(C);
+            System.Threading.Thread.Sleep(1200);
+            yield return RealSeconds(0.5f);
+            Assert.AreEqual(1, _server.Count(FakeSessionServer.Heartbeat), "The retry did not go out as the new player");
+            Assert.IsTrue(hosted.Result.HasEnded, "The session ended with its sign-in");
+        }
+
+        [UnityTest]
+        public IEnumerator GetMySession_IsNullSeatedNowhere_ReturnsTheHeldObject_AndHoldsTheSessionTheServerSeatsThePlayerIn()
+        {
+            FlockMultiplayerProvider multiplayer = SignedInAs(A);
+            Task<FlockMultiplayerSession> none = multiplayer.GetMySessionAsync();
+            yield return Done(none, "read while seated nowhere");
+            Assert.IsFalse(none.IsFaulted, "Seated nowhere is an answer, not a failure");
+            Assert.IsNull(none.Result);
+            Assert.AreEqual(1, _server.Count(FakeSessionServer.Current), "The server was asked");
+
+            Task<FlockMultiplayerSession> hosted = multiplayer.HostSessionAsync();
+            yield return Done(hosted, "hosted");
+            Task<FlockMultiplayerSession> mine = multiplayer.GetMySessionAsync();
+            yield return Done(mine, "read while hosting");
+            Assert.AreSame(hosted.Result, mine.Result, "The same object while the session lasts");
+
+            List<string> ended = new List<string>();
+            hosted.Result.Ended += ended.Add;
+            FakeSessionServer.Session elsewhere = _server.HostedBy(B);
+            _server.Joins(elsewhere, A);
+            Task<FlockMultiplayerSession> moved = multiplayer.GetMySessionAsync();
+            yield return Done(moved, "read after the server seated A elsewhere");
+            Assert.AreEqual(elsewhere.Id, moved.Result.Id);
+            Assert.AreSame(moved.Result, multiplayer.Sessions.Held);
+            CollectionAssert.AreEqual(new[] { FlockMultiplayerSessionEndReason.MovedToAnotherSession }, ended);
+        }
+
+        [UnityTest]
+        public IEnumerator GetMySession_WhenTheSeatIsGone_EndsTheHeldSessionWithTheReasonAReadingGives()
+        {
+            FlockMultiplayerProvider multiplayer = SignedInAs(A);
+            List<FlockMultiplayerSession> held = new List<FlockMultiplayerSession>();
+            yield return HostWithB(multiplayer, held);
+            List<string> ended = new List<string>();
+            held[0].Ended += ended.Add;
+
+            _server.Drops(_server.ById(held[0].Id), A);
+            Task<FlockMultiplayerSession> mine = multiplayer.GetMySessionAsync();
+            yield return Done(mine, "read after the seat was dropped");
+            Assert.IsNull(mine.Result, "Seated nowhere");
+            CollectionAssert.AreEqual(new[] { FlockMultiplayerSessionEndReason.Dropped }, ended);
+            Assert.IsNull(multiplayer.Sessions.Held);
+        }
+
+        [UnityTest]
+        public IEnumerator HostSession_SendsSameVersionOnly_OnlyWhenFalse()
+        {
+            FlockMultiplayerProvider multiplayer = SignedInAs(A);
+            Task<FlockMultiplayerSession> kept = multiplayer.HostSessionAsync();
+            yield return Done(kept, "hosted, kept to the version");
+            Task<FlockMultiplayerSession> open = multiplayer.HostSessionAsync(sameVersionOnly: false);
+            yield return Done(open, "hosted, open to any build");
+
+            List<FlockHttpRequest> hosts = _server.RequestsTo(FakeSessionServer.Host);
+            Assert.IsNull(JObject.Parse(hosts[0].JsonBody)["same_version_only"], "The server's default is not sent");
+            Assert.AreEqual(false, (bool)JObject.Parse(hosts[1].JsonBody)["same_version_only"]);
+            Assert.IsFalse(_server.ById(open.Result.Id).SameVersionOnly);
+        }
+
+        [UnityTest]
+        public IEnumerator JoinSession_OfAnotherBuild_IsRefusedOnItsCode_UnlessItsHostOpenedItToAnyBuild()
+        {
+            FlockMultiplayerProvider multiplayer = SignedInAs(A);
+            FakeSessionServer.Session kept = _server.HostedBy(B);
+            kept.GameVersion = "another-build";
+            Task<FlockMultiplayerSession> refused = multiplayer.JoinSessionAsync(kept.Code);
+            yield return Done(refused, "tried another build's session");
+            FlockException failure = Failure<FlockException>(refused);
+            Assert.AreEqual(FlockErrorCode.MultiplayerVersionMismatch, failure.ErrorCode);
+            Assert.IsFalse(string.IsNullOrEmpty(failure.Hint), "It says what to do");
+            Assert.IsNull(multiplayer.Sessions.Held);
+
+            kept.SameVersionOnly = false;
+            Task<FlockMultiplayerSession> joined = multiplayer.JoinSessionAsync(kept.Code);
+            yield return Done(joined, "joined once open to any build");
+            Assert.IsFalse(joined.IsFaulted, "Counter-case: a session open to any build takes this one");
+        }
+
+        [UnityTest]
+        public IEnumerator AHostChange_ClearsTheConnection_AndRaisesConnectionChanged()
+        {
+            FlockMultiplayerProvider multiplayer = SignedInAs(A);
+            List<FlockMultiplayerSession> held = new List<FlockMultiplayerSession>();
+            yield return HostWithB(multiplayer, held);
+            FlockMultiplayerSession session = held[0];
+            Task publish = session.PublishConnectionAsync("direct", new Dictionary<string, object> { { "port", 7777 } });
+            yield return Done(publish, "published");
+            int connectionChanges = 0;
+            int hostChanges = 0;
+            session.ConnectionChanged += () => connectionChanges++;
+            session.HostChanged += () => hostChanges++;
+
+            Task handOver = session.MakeHostAsync(B);
+            yield return Done(handOver, "hosting handed over");
+            Assert.IsNull(session.Connection, "The old host's address is gone");
+            Assert.AreEqual(1, hostChanges);
+            Assert.AreEqual(1, connectionChanges, "Raised for the address going away, though its epoch did not move");
+
+            Task<FlockMultiplayerSession> read = multiplayer.GetSessionAsync(session.Id);
+            yield return Done(read, "read again");
+            Assert.AreEqual(1, connectionChanges, "Nothing more while nothing changed");
         }
     }
 }

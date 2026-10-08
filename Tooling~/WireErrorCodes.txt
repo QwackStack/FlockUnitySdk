@@ -33,7 +33,9 @@
 #     | tr -d '"' | sort -u
 #
 # Last refreshed against the live backend: 2026-10-06 (93 codes in the spec, 105 /v1 paths), for the
-# matchmaking, party and multiplayer codes and the codes the spec gained since 2026-08-31.
+# matchmaking, party and multiplayer codes and the codes the spec gained since 2026-08-31. On 2026-10-08
+# the backend's matchmaking and session fixes added multiplayer.version_mismatch and
+# matchmaking.version_mismatch and removed multiplayer.extras_paused (the relay now answers STUN only).
 
 [documented]
 # Declared in the backend OpenAPI spec when added (some since dropped from it; see the header). Each must have a
@@ -72,7 +74,7 @@ matchmaking.player_not_eligible
 matchmaking.queue_not_found
 matchmaking.ticket_not_cancelable
 matchmaking.ticket_not_found
-multiplayer.extras_paused
+matchmaking.version_mismatch
 multiplayer.invalid_join_code
 multiplayer.invalid_join_token
 multiplayer.mint_rate_limited
@@ -81,6 +83,7 @@ multiplayer.not_host
 multiplayer.session_full
 multiplayer.session_not_found
 multiplayer.target_not_a_participant
+multiplayer.version_mismatch
 notification_template.not_found
 party.already_in_party
 party.cannot_kick_leader

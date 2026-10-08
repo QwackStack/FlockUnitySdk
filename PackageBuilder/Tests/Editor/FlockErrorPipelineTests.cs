@@ -156,8 +156,9 @@ namespace Flock.Tests
         }
 
         // Every matchmaking, party and session refusal, body as the backend sends it: copied from live responses on
-        // 2026-10-05, except party_too_large, player_not_eligible, extras_paused and mint_rate_limited (the spec's own
-        // examples) and join_code_unavailable and already_in_session (the backend's messages; neither seen live).
+        // 2026-10-05 (the two version_mismatch codes on 2026-10-08), except party_too_large, player_not_eligible and
+        // mint_rate_limited (the spec's own examples) and join_code_unavailable and already_in_session (the backend's
+        // messages; neither seen live).
         private static readonly object[] MultiplayerRefusals =
         {
             new object[] { 409, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"matchmaking.already_queued\",\"message\":\"Player 01M46J2QM0KSQ1X3QNF03RRT6V is already queued for this game\"}}", FlockErrorCode.MatchmakingAlreadyQueued },
@@ -168,8 +169,8 @@ namespace Flock.Tests
             new object[] { 404, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"matchmaking.queue_not_found\",\"message\":\"Matchmaking queue not found\"}}", FlockErrorCode.MatchmakingQueueNotFound },
             new object[] { 409, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"matchmaking.ticket_not_cancelable\",\"message\":\"This ticket is no longer queued\"}}", FlockErrorCode.MatchmakingTicketNotCancelable },
             new object[] { 404, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"matchmaking.ticket_not_found\",\"message\":\"Ticket not found\"}}", FlockErrorCode.MatchmakingTicketNotFound },
+            new object[] { 409, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"matchmaking.version_mismatch\",\"message\":\"Player 01M46J4VCTQ54NSPP206GSA069 is on a different game version than the party leader, and this queue matches same-version players only\"}}", FlockErrorCode.MatchmakingVersionMismatch },
             new object[] { 409, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"multiplayer.already_in_session\",\"message\":\"Player is already in a live multiplayer session for this game\"}}", FlockErrorCode.MultiplayerAlreadyInSession },
-            new object[] { 402, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"multiplayer.extras_paused\",\"message\":\"Multiplayer is paused for this studio until an overdue payment is settled\"}}", FlockErrorCode.MultiplayerExtrasPaused },
             new object[] { 404, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"multiplayer.invalid_join_code\",\"message\":\"Join code is not valid\"}}", FlockErrorCode.MultiplayerInvalidJoinCode },
             new object[] { 400, typeof(FlockValidationException), "{\"detail\":{\"code\":\"multiplayer.invalid_join_token\",\"message\":\"Join token is not valid\"}}", FlockErrorCode.MultiplayerInvalidJoinToken },
             new object[] { 500, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"multiplayer.join_code_unavailable\",\"message\":\"Could not allocate a join code, try again\"}}", FlockErrorCode.MultiplayerJoinCodeUnavailable },
@@ -179,6 +180,7 @@ namespace Flock.Tests
             new object[] { 409, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"multiplayer.session_full\",\"message\":\"This session is full\"}}", FlockErrorCode.MultiplayerSessionFull },
             new object[] { 404, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"multiplayer.session_not_found\",\"message\":\"Session not found\"}}", FlockErrorCode.MultiplayerSessionNotFound },
             new object[] { 404, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"multiplayer.target_not_a_participant\",\"message\":\"That player is not in this session\"}}", FlockErrorCode.MultiplayerTargetNotAParticipant },
+            new object[] { 409, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"multiplayer.version_mismatch\",\"message\":\"This session is on a different game version\"}}", FlockErrorCode.MultiplayerVersionMismatch },
             new object[] { 409, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"party.already_in_party\",\"message\":\"You are already in a party for this game\"}}", FlockErrorCode.PartyAlreadyInParty },
             new object[] { 400, typeof(FlockValidationException), "{\"detail\":{\"code\":\"party.cannot_kick_leader\",\"message\":\"The leader cannot be kicked; leave or transfer leadership instead\"}}", FlockErrorCode.PartyCannotKickLeader },
             new object[] { 409, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"party.full\",\"message\":\"This party is full\"}}", FlockErrorCode.PartyFull },

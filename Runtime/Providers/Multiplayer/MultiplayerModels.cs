@@ -106,6 +106,9 @@ namespace Flock.Providers
 
         [JsonProperty("participants")]
         public List<SessionParticipantRecord> Participants { get; set; }
+
+        [JsonProperty("heartbeat_interval_seconds")]
+        public int? HeartbeatIntervalSeconds { get; set; }
     }
 
     internal sealed class SessionParticipantRecord
@@ -124,6 +127,10 @@ namespace Flock.Providers
 
         [JsonProperty("data", NullValueHandling = NullValueHandling.Ignore)]
         public IReadOnlyDictionary<string, object> Data { get; set; }
+
+        // Sent only as false: the server keeps a session to its host's game version unless told otherwise.
+        [JsonProperty("same_version_only", NullValueHandling = NullValueHandling.Ignore)]
+        public bool? SameVersionOnly { get; set; }
     }
 
     internal sealed class JoinSessionBody

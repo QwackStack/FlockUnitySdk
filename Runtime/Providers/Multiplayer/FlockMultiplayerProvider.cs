@@ -21,7 +21,7 @@ namespace Flock.Providers
             _repeatingCalls = new FlockRepeatingCalls(client);
             _queueNames = new FlockMatchmakingQueueNames(ReadQueuesAsync, client.Logger);
             _parties = new FlockParties(client, _repeatingCalls, client.InitConfig.PartyRefreshInterval);
-            _sessions = new FlockMultiplayerSessions(client);
+            _sessions = new FlockMultiplayerSessions(client, _repeatingCalls);
         }
 
         internal FlockRepeatingCalls RepeatingCalls => _repeatingCalls;
@@ -45,10 +45,15 @@ namespace Flock.Providers
         /// <summary>Hosts a session: the signed-in player is its host and only player, and others join with its join code. Leave <paramref name="maxPlayers"/> null for the game's default (8). A player holds one seat at a time, so a session held until now ends.</summary>
         /// <param name="maxPlayers">From 2 to 16 players.</param>
         /// <param name="data">The game's own data on the session, such as a map; set once, read by every player.</param>
-        public Task<FlockMultiplayerSession> HostSessionAsync(int? maxPlayers = null, IReadOnlyDictionary<string, object> data = null, CancellationToken cancellationToken = default)
-            => _sessions.HostAsync(maxPlayers, data, cancellationToken);
+        /// <param name="sameVersionOnly">True (the default) refuses players whose game sends another Game Version with <c>MultiplayerVersionMismatch</c>; false lets any build join.</param>
+        public Task<FlockMultiplayerSession> HostSessionAsync(int? maxPlayers = null, IReadOnlyDictionary<string, object> data = null, bool sameVersionOnly = true, CancellationToken cancellationToken = default)
+            => _sessions.HostAsync(maxPlayers, data, sameVersionOnly, cancellationToken);
 
-        /// <summary>Takes a seat in the session with this join code; letter case does not matter. Joining the session the player is seated in returns it; a session held until now ends.</summary>
+        /// <summary>The session the player is seated in, found without its id (after a restart, or a session a party leader made), or null when seated nowhere. Returns the same object while the session lasts.</summary>
+        public Task<FlockMultiplayerSession> GetMySessionAsync(CancellationToken cancellationToken = default)
+            => _sessions.GetMineAsync(cancellationToken);
+
+        /// <summary>Takes a seat in the session with this join code; letter case does not matter. Joining the session the player is seated in returns it; a session held until now ends. A session kept to its host's Game Version refuses another build with <c>MultiplayerVersionMismatch</c>.</summary>
         public Task<FlockMultiplayerSession> JoinSessionAsync(string joinCode, CancellationToken cancellationToken = default)
             => _sessions.JoinAsync(joinCode, cancellationToken);
 
