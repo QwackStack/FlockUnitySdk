@@ -158,8 +158,8 @@ namespace Flock.Editor
                 DisplayName = "Multiplayer",
                 Description = "Matchmaking, parties and multiplayer sessions.",
                 Files = new string[0],
-                // The provider and its models grow task by task, so the whole folder goes; nothing outside it uses them.
-                Folders = new[] { "Runtime/Providers/Multiplayer/" },
+                // The provider and its models grow task by task, so the whole folder goes, with the samples that use it.
+                Folders = new[] { "Runtime/Providers/Multiplayer/", "Samples/Multiplayer/" },
                 DependsOn = new string[0],
             },
         };

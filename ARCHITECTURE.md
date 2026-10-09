@@ -116,6 +116,16 @@ Writes typed accessors to `Assets/Flock/Generated/`. Each sync replaces the file
 - **\*Emitter** (GameConfig, ConfigAccessor, PlayerAccessor, PlayerTemplate, SchemaProperty, Command, Shop) — generate the typed C#.
 - **ManifestEmitter** — emits `SchemasManifest` (GameVersionId + hash). · `EmitResult`/`CodegenResult` — codegen DTOs.
 
+## Samples/
+Shipped with the package (not `Samples~`, which a `.unitypackage` cannot carry). **QuickStart** (asmdef `Flock.Samples.QuickStart`):
+one IMGUI script, device sign-in, a test event and a player-data read. **Multiplayer** (asmdef `Flock.Samples.Multiplayer`,
+compiled only with Netcode for GameObjects 1.x or 2.x, and listed in the Multiplayer provider's folders so a package built
+without Multiplayer leaves it out): **FlockMultiplayerSample**, the shared base (device sign-in with a register fallback,
+`PlayAsync` starting the netcode for a session and giving the seat up when the start fails, the players, a Wave named message the
+host passes on, Leave or End Session, the session's `Ended`), with **FlockPlayWithFriendsSample** (host by code, join by code) and
+**FlockQuickMatchSample** (Find Match in a queue named on the component, Cancel). A test in `FlockMaintainerToolingTests` fails
+when a sample built on a provider's code is not dropped with that provider.
+
 ## PackageBuilder/Tests/Editor/
 EditMode tests (run via Unity Test Runner only): **CodeGenNamingHelpersTests**, **FlockBuildGuardTests**, **RetryHandlerTests**, **SchemaHasherTests**, **TypeMapTests**, **FlockErrorPipelineTests** (exception/`FlockErrorCode` mapping; has an `[Explicit]` live-backend test), **FlockErrorMessageTests** (composed `Message`, hints, FastAPI field errors), **FlockErrorHintCoverageTests** (every `FlockErrorCode` has a hint or is explicitly allowlisted), **FlockCodegenHintTests** (compile-error classification over real Roslyn text), **FlockConfigResolutionTests** (patch-else-config resolution), **FlockEmptySuccessTests** (a 2xx with no body on a route with nothing to read), **FlockModelPreservationTests** (the build's link.xml), **FlockPlaytestInstallerTests** (release URL, version match, which downloads are imported, a Flock SDK with Analytics takes it).
 

@@ -53,6 +53,47 @@ namespace Flock.Tests
             Assert.IsNull(FlockPackageBuilder.ReleaseFolderFromArguments(new[] { "Unity", "-releaseOut", "-quit" }), "Another flag is not a folder");
         }
 
+        [System.Serializable]
+        private class AssemblyDefinition
+        {
+            public string name;
+            public string[] references;
+        }
+
+        private static AssemblyDefinition Read(string asmdef) => UnityEngine.JsonUtility.FromJson<AssemblyDefinition>(File.ReadAllText(asmdef));
+
+        // A sample left in a release whose provider was taken out would name code that is not there, where a game has the netcode.
+        [Test]
+        public void ASampleBuiltOnAProvidersCode_LeavesTheReleaseWithThatProvider()
+        {
+            PackageInfo package = PackageInfo.FindForAssetPath("Packages/com.flock.sdk");
+            Assert.IsNotNull(package, "Control: the SDK package is in this project");
+            string root = package.resolvedPath.Replace('\\', '/').TrimEnd('/') + "/";
+            Dictionary<string, FlockProviderManifest.Entry> providerOf = new Dictionary<string, FlockProviderManifest.Entry>();
+            foreach (string asmdef in Directory.GetFiles(root + "Runtime", "*.asmdef", SearchOption.AllDirectories))
+            {
+                string relative = asmdef.Replace('\\', '/').Substring(root.Length);
+                FlockProviderManifest.Entry owner = FlockProviderManifest.Providers.FirstOrDefault(entry => entry.Folders != null && entry.Folders.Any(relative.StartsWith));
+                if (owner != null)
+                    providerOf[Read(asmdef).name] = owner;
+            }
+            Assert.IsTrue(providerOf.ContainsKey("Flock.Multiplayer.Netcode"), "Control: the netcode adapter is found inside Multiplayer's folders");
+
+            int samplesBuiltOnAProvider = 0;
+            foreach (string asmdef in Directory.GetFiles(root + "Samples", "*.asmdef", SearchOption.AllDirectories))
+            {
+                string relative = asmdef.Replace('\\', '/').Substring(root.Length);
+                foreach (string reference in Read(asmdef).references ?? new string[0])
+                {
+                    if (!providerOf.TryGetValue(reference, out FlockProviderManifest.Entry owner))
+                        continue;
+                    samplesBuiltOnAProvider++;
+                    Assert.IsTrue(owner.Folders.Any(relative.StartsWith), $"{relative} uses {reference}, so it must leave a release with the {owner.Id} provider");
+                }
+            }
+            Assert.Greater(samplesBuiltOnAProvider, 0, "Control: a sample built on a provider's code is found");
+        }
+
         [Test]
         public void ThePlaytestReleaseShipsItsSampleAndNotItsTests()
         {

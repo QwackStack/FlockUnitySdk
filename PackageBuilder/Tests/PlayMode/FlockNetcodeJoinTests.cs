@@ -73,7 +73,13 @@ namespace Flock.Tests.PlayMode
 
         private static IEnumerator LetIn(NetworkManager host, NetworkManager player, int clients)
         {
-            yield return FlockTestWait.Until(() => player.IsConnectedClient && host.ConnectedClientsIds.Count == clients, "the player was let in", 15f);
+            float until = Time.realtimeSinceStartup + 15f;
+            while (!(player.IsConnectedClient && host.ConnectedClientsIds.Count == clients) && Time.realtimeSinceStartup < until)
+                yield return null;
+            Assert.IsTrue(player.IsConnectedClient && host.ConnectedClientsIds.Count == clients,
+                $"the player was let in: player listening {player.IsListening}, connected {player.IsConnectedClient}, reason \"{player.DisconnectReason}\"; " +
+                $"host clients {host.ConnectedClientsIds.Count}, waiting {host.PendingClients.Count}; scenes loaded: " +
+                string.Join(", ", Enumerable.Range(0, UnityEngine.SceneManagement.SceneManager.sceneCount).Select(index => UnityEngine.SceneManagement.SceneManager.GetSceneAt(index).name)));
         }
 
         private static ulong Newest(NetworkManager host) => host.ConnectedClientsIds.Max();

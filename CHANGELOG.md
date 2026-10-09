@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.78.0]
+
+Two multiplayer samples, each one component to drop on an empty GameObject: play with friends by a session's code, or quick
+match.
+
+### Added
+- `Samples/Multiplayer`, compiled only with Netcode for GameObjects 1.x or 2.x installed and left out of a package built
+  without Multiplayer. `FlockPlayWithFriendsSample`: **Host** shows the session's code, **Join** takes a friend's.
+  `FlockQuickMatchSample`: **Find Match** searches the queue named in **Queue Name**, and **Cancel** stops the search. Both sign
+  in with the device (registering it the first time), start Netcode for GameObjects for the session with `StartNetcodeAsync`
+  (the NetworkManager given, else the scene's, else one they make on **Port**), list the players, send a **Wave** over the
+  netcode that the host passes on to the others, and **Leave** (**End Session** for the host). A start that fails gives the
+  seat up. Each says it connects on a LAN or where the host's port is forwarded to it.
+
+### Fixed
+- The Quick Start sample's README named `Analytics.LogEvent` and a **Flock > Sync Schemas** menu that no longer exist.
+
 ## [1.77.0]
 
 A host started with `StartNetcodeAsync` lets in only the session's players: each joining player's game sends a join token

@@ -38,8 +38,10 @@ namespace Protokite.Playtest.Tests
         public void Setup()
         {
 #if UNITY_EDITOR
-            UnityEditor.SceneManagement.EditorSceneManager.SaveScene(
-                UnityEditor.SceneManagement.EditorSceneManager.NewScene(UnityEditor.SceneManagement.NewSceneSetup.EmptyScene, UnityEditor.SceneManagement.NewSceneMode.Additive), ScenePath);
+            Scene made = UnityEditor.SceneManagement.EditorSceneManager.NewScene(UnityEditor.SceneManagement.NewSceneSetup.EmptyScene, UnityEditor.SceneManagement.NewSceneMode.Additive);
+            UnityEditor.SceneManagement.EditorSceneManager.SaveScene(made, ScenePath);
+            // Closed once saved: left open, every PlayMode test in the run had it loaded, and a netcode host handed it to each player.
+            UnityEditor.SceneManagement.EditorSceneManager.CloseScene(made, true);
             List<UnityEditor.EditorBuildSettingsScene> scenes = new List<UnityEditor.EditorBuildSettingsScene>(UnityEditor.EditorBuildSettings.scenes);
             scenes.Add(new UnityEditor.EditorBuildSettingsScene(ScenePath, true));
             UnityEditor.EditorBuildSettings.scenes = scenes.ToArray();
@@ -107,6 +109,31 @@ namespace Protokite.Playtest.Tests
             ProtokitePlaytest.DeviceIdFilePathForTesting = Path.Combine(_folder, "device_id.txt");
             ProtokitePlaytest.RecordingsFolderForTesting = Path.Combine(_folder, "Recordings");
             _analyticsFolder = FlockTestSavedFiles.UseFolderOfItsOwn();
+        }
+
+        // Every scene a test loaded or made is unloaded, so later tests start from the runner's own scene: one left loaded made a
+        // netcode test's player wait for scenes it could never load (measured).
+        [UnityTearDown]
+        public IEnumerator UnloadTheTestsScenes()
+        {
+            List<Scene> ours = new List<Scene>();
+            for (int index = 0; index < SceneManager.sceneCount; index++)
+            {
+                Scene scene = SceneManager.GetSceneAt(index);
+                if (scene.name == SceneName || scene.name == AddedLevelName)
+                    ours.Add(scene);
+            }
+            if (ours.Count == 0)
+                yield break;
+            // A scene cannot be unloaded while it is the only one, so an empty one is made to stay.
+            if (ours.Count == SceneManager.sceneCount)
+                SceneManager.SetActiveScene(SceneManager.CreateScene("ProtokitePlaytestAfterHeavyAnalyticsTests"));
+            foreach (Scene scene in ours)
+            {
+                AsyncOperation unloading = SceneManager.UnloadSceneAsync(scene);
+                while (unloading != null && !unloading.isDone)
+                    yield return null;
+            }
         }
 
         [TearDown]
