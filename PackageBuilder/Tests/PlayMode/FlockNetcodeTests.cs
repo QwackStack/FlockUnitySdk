@@ -22,7 +22,7 @@ namespace Flock.Tests.PlayMode
 {
     // StartNetcodeAsync on real frames with Netcode for GameObjects on this machine's loopback, against a session server in memory
     // and a STUN server on loopback: the host listens then publishes, a player waits for it and connects, and every way it stops.
-    public class FlockNetcodeTests
+    public partial class FlockNetcodeTests
     {
         private const string A = "player-a";
         private const string B = "player-b";
@@ -192,6 +192,8 @@ namespace Flock.Tests.PlayMode
                 Assert.IsFalse(started.IsFaulted, started.Exception?.InnerException?.ToString());
                 Assert.AreEqual(FlockNetcodeStartOutcome.CouldNotStart, started.Result.Outcome);
                 Assert.AreEqual(0, _server.Count(FakeSessionServer.Publish), "Nothing published for a host that is not listening");
+                Assert.IsNull(manager.ConnectionApprovalCallback, "Flock's check taken off again");
+                Assert.IsFalse(manager.NetworkConfig.ConnectionApproval, "The approval switch as the game had it");
             }
         }
 
@@ -207,22 +209,41 @@ namespace Flock.Tests.PlayMode
             int port = FreePort();
             NetworkManager host = Manager(port);
             TransportOf(host).SetConnectionData("127.0.0.1", (ushort)port, "127.0.0.1");
+            // The other player's game hosts here with Flock's check on, which this one stands in for.
+            List<byte[]> payloads = new List<byte[]>();
+            host.NetworkConfig.ConnectionApproval = true;
+            host.ConnectionApprovalCallback = (request, response) =>
+            {
+                payloads.Add(request.Payload);
+                response.Approved = true;
+            };
             Assert.IsTrue(host.StartHost(), "Precondition: the other player's game hosts here");
             NetworkManager client = Manager(FreePort());
+            byte[] gamesBytes = { 7, 8, 9 };
+            client.NetworkConfig.ConnectionData = gamesBytes;
 
             Task<FlockNetcodeStartResult> started = held[0].StartNetcodeAsync(client);
             yield return new WaitForSecondsRealtime(0.5f);
             Assert.IsFalse(started.IsCompleted, "Waits for the host to publish");
             Assert.IsFalse(client.IsListening, "Netcode not started before there is a host to reach");
+            Assert.AreEqual(0, _server.Count(FakeSessionServer.JoinToken), "No token asked for before there is a host: it lasts 60 s");
             _server.Publishes(served[0], DirectOnThisMachine(port));
             yield return Done(started, "connected", 15f);
             Assert.IsFalse(started.IsFaulted, started.Exception?.InnerException?.ToString());
             Assert.AreEqual(FlockNetcodeStartOutcome.Connected, started.Result.Outcome);
             Assert.IsFalse(started.Result.IsHost);
+            Assert.IsNull(started.Result.RefusedReason);
             Assert.AreEqual("127.0.0.1", started.Result.Address, "The LAN address: this device shares the host's public address");
             Assert.AreEqual(port, started.Result.Port);
             Assert.IsTrue(client.IsConnectedClient);
             yield return FlockTestWait.Until(() => host.ConnectedClientsIds.Count == 2, "the host sees the player");
+
+            Assert.AreEqual(2, payloads.Count, "The host's own connection and the player's");
+            Assert.IsTrue(FlockJoinTokenPayload.TryRead(payloads[1], out string token, out byte[] sentBytes), "The player's connection carries a join token");
+            Assert.AreEqual("token-" + served[0].Id + "-" + B + "-1", token, "The token Flock gave this player for this session");
+            CollectionAssert.AreEqual(gamesBytes, sentBytes, "The game's own bytes ride behind it unchanged");
+            Assert.AreSame(gamesBytes, client.NetworkConfig.ConnectionData, "The game's own bytes are put back once connected");
+            Assert.IsFalse(client.NetworkConfig.ConnectionApproval, "The game's own approval switch is put back too");
         }
 
         [UnityTest]

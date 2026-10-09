@@ -78,7 +78,16 @@ namespace Flock.Tests.PlayMode
         private readonly Dictionary<string, Queue<Held>> _holds = new Dictionary<string, Queue<Held>>();
         private readonly Dictionary<string, Queue<FlockHttpResponse>> _cannedAnswers = new Dictionary<string, Queue<FlockHttpResponse>>();
         private readonly List<KeyValuePair<string, FlockHttpRequest>> _requests = new List<KeyValuePair<string, FlockHttpRequest>>();
+        private readonly Dictionary<string, JoinTokenMinted> _joinTokens = new Dictionary<string, JoinTokenMinted>();
         private int _nextId;
+
+        // A join token as the backend signs it: bound to its session and player, good for 60 s, and checkable any number of times.
+        private sealed class JoinTokenMinted
+        {
+            public string SessionId;
+            public string PlayerId;
+            public bool Expired;
+        }
 
         internal int Count(string route)
         {
@@ -197,6 +206,30 @@ namespace Flock.Tests.PlayMode
         {
             lock (_lock)
                 HandOver(session, playerId);
+        }
+
+        // A token another player's game asked for.
+        internal string MintsJoinToken(Session session, string playerId)
+        {
+            lock (_lock)
+                return MintJoinToken(session, playerId);
+        }
+
+        // Every token minted so far is past its 60 s.
+        internal void ExpireJoinTokens()
+        {
+            lock (_lock)
+            {
+                foreach (JoinTokenMinted minted in _joinTokens.Values)
+                    minted.Expired = true;
+            }
+        }
+
+        private string MintJoinToken(Session session, string playerId)
+        {
+            string token = "token-" + session.Id + "-" + playerId + "-" + (_joinTokens.Count + 1);
+            _joinTokens[token] = new JoinTokenMinted { SessionId = session.Id, PlayerId = playerId };
+            return token;
         }
 
         // Every change of host: the old host's address is cleared and the session is open again until the new host publishes.
@@ -349,7 +382,7 @@ namespace Flock.Tests.PlayMode
             {
                 if (!seated)
                     return Refused(404, "multiplayer.session_not_found");
-                return Answer(new JObject { ["token"] = "token-" + session.Id + "-" + player, ["expires_in"] = 60 });
+                return Answer(new JObject { ["token"] = MintJoinToken(session, player), ["expires_in"] = 60 });
             }
             if (session.HostId != player)
                 return Refused(403, "multiplayer.not_host");
@@ -384,11 +417,10 @@ namespace Flock.Tests.PlayMode
                     string token = (string)body?["token"];
                     if (string.IsNullOrEmpty(token))
                         return Refused(422, "request.validation_failed");
-                    string expected = "token-" + session.Id + "-";
-                    string named = token.StartsWith(expected, StringComparison.Ordinal) ? token.Substring(expected.Length) : null;
-                    if (named == null || !session.Seated.Contains(named))
+                    // Made up, signed for another session, expired, or its player no longer seated: the backend's one answer for all four.
+                    if (!_joinTokens.TryGetValue(token, out JoinTokenMinted minted) || minted.SessionId != session.Id || minted.Expired || !session.Seated.Contains(minted.PlayerId))
                         return Refused(400, "multiplayer.invalid_join_token");
-                    return Answer(new JObject { ["session_id"] = session.Id, ["player_id"] = named });
+                    return Answer(new JObject { ["session_id"] = session.Id, ["player_id"] = minted.PlayerId });
                 }
             }
             return Refused(404, "request.not_found");

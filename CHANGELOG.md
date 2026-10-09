@@ -6,6 +6,36 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.77.0]
+
+A host started with `StartNetcodeAsync` lets in only the session's players: each joining player's game sends a join token
+Flock gives it, and the host checks it with Flock before the player is in.
+
+### Added
+- On the host, `StartNetcodeAsync` installs Netcode for GameObjects' connection approval: a joining player is held while Flock
+  checks their join token (the frame is never held), then let in or refused with a reason the player's game is told. One
+  connection a player: the same player connecting again while still connected is refused. When Flock's answer does not come in
+  time (2 s before the NetworkManager's Client Connection Buffer Timeout, and at most 8 s, so a player on the default 10 s hears
+  it), or cannot be read, the player is refused rather than let in unchecked.
+- On a joining player, `StartNetcodeAsync` asks Flock for a join token once the host is known and sends it in front of the
+  game's own `NetworkConfig.ConnectionData`, with connection approval turned on as the host needs; both are put back once the
+  connect has ended. A refused player gets the new outcome `FlockNetcodeStartOutcome.Refused` with
+  `FlockNetcodeStartResult.RefusedReason`, a `FlockNetcodeRefusedReason` value (`no_join_token`, `join_token_invalid`,
+  `already_connected`, `flock_unreachable`, `session_ended`, `not_host`, `refused_by_the_game`, `game_check_failed`), the
+  game's own reason, or Netcode for GameObjects' own words when the host's netcode turned the player away itself (such as
+  "Client-1 disconnected by server." between builds whose netcode settings differ).
+- `FlockNetcodeOptions.ApproveJoiningPlayer`: the game's own check on the host, run once Flock has let a player in, with a
+  `FlockJoiningPlayer` (`PlayerId`, `ClientId`, and the game's own `ConnectionData` without the token) and Netcode for
+  GameObjects' approval response, which arrives approved with the player object the config names.
+- `session.PlayerForConnection(clientId)`: the Flock player behind a Netcode for GameObjects connection on the host, the host's
+  own included.
+
+### Changed
+- A NetworkManager that already has a `ConnectionApprovalCallback` is refused by `StartNetcodeAsync` on the host, with a message
+  naming `FlockNetcodeOptions.ApproveJoiningPlayer`. When the netcode stops, the NetworkManager's approval is put back as the
+  game had it, unless the game set a check of its own meanwhile.
+- A host on this version refuses players on 1.76.0, which connect with connection approval off.
+
 ## [1.76.0]
 
 A session's players can connect their netcode directly: the host says where it is, and the others wait for that and connect.
