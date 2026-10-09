@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Globalization;
+using System.Net;
+using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 using Flock.Models;
@@ -39,13 +42,53 @@ namespace Flock.Providers
         public string PlayerId { get; }
     }
 
+    /// <summary>The connection modes the SDK publishes. An open set: a game may publish a mode of its own, such as "steam".</summary>
+    public static class FlockMultiplayerConnectionMode
+    {
+        /// <summary>The host's address and port, published by <see cref="FlockMultiplayerSession.PublishDirectConnectionAsync"/>.</summary>
+        public const string Direct = "direct";
+    }
+
+    // The values a direct connection holds on the wire; "address" and "port" are the names the backend expects.
+    internal static class DirectConnectionValues
+    {
+        internal const string Address = "address";
+        internal const string Port = "port";
+        internal const string LanAddress = "lan_address";
+        internal const string PublicAddress = "public_address";
+    }
+
+    /// <summary>Where this device connects to reach a direct host.</summary>
+    public sealed class FlockDirectAddress
+    {
+        internal FlockDirectAddress(string address, int port, bool isLan)
+        {
+            Address = address;
+            Port = port;
+            IsLan = isLan;
+        }
+
+        /// <summary>The host's IPv4 address.</summary>
+        public string Address { get; }
+
+        public int Port { get; }
+
+        /// <summary>True when this is the host's LAN address, chosen because this device shares the host's public address.</summary>
+        public bool IsLan { get; }
+    }
+
     /// <summary>How to reach the session's host, as the host published it: a mode and whatever values that mode needs.</summary>
     public sealed class FlockMultiplayerSessionConnection
     {
-        internal FlockMultiplayerSessionConnection(string mode, IReadOnlyDictionary<string, object> values)
+        private readonly FlockDirectAddresses _addresses;
+        private readonly int _signInNumber;
+
+        internal FlockMultiplayerSessionConnection(string mode, IReadOnlyDictionary<string, object> values, FlockDirectAddresses addresses, int signInNumber)
         {
             Mode = mode;
             Values = values;
+            _addresses = addresses;
+            _signInNumber = signInNumber;
         }
 
         /// <summary>What kind of connection this is, such as "direct", or one the game names itself.</summary>
@@ -61,6 +104,35 @@ namespace Flock.Providers
             if (string.IsNullOrEmpty(key) || !Values.TryGetValue(key, out object raw))
                 return false;
             return FlockJsonValues.TryConvert(raw, out value);
+        }
+
+        /// <summary>Where this device connects to reach a direct host: the host's LAN address when this device shares its public address (one request to the STUN server Flock lists says), the published address otherwise. Null when this is not a direct connection with an IPv4 address and a port.</summary>
+        public async Task<FlockDirectAddress> FindDirectAddressAsync(CancellationToken cancellationToken = default)
+        {
+            // Read as text, so a port sent as "7777" is taken and one sent as 7777.5 is not.
+            if (!string.Equals(Mode, FlockMultiplayerConnectionMode.Direct, StringComparison.Ordinal)
+                || !TryGetValue(DirectConnectionValues.Port, out string portText)
+                || !long.TryParse(portText, NumberStyles.None, CultureInfo.InvariantCulture, out long port) || port < 1 || port > 65535)
+                return null;
+            string address = Ipv4Value(DirectConnectionValues.Address);
+            string lanAddress = Ipv4Value(DirectConnectionValues.LanAddress);
+            string publicAddress = Ipv4Value(DirectConnectionValues.PublicAddress);
+            if (lanAddress != null && publicAddress != null)
+            {
+                string mine = await _addresses.FindPublicAddressAsync(_signInNumber, cancellationToken);
+                if (string.Equals(mine, publicAddress, StringComparison.Ordinal))
+                    return new FlockDirectAddress(lanAddress, (int)port, true);
+            }
+            string chosen = address ?? publicAddress ?? lanAddress;
+            return chosen == null ? null : new FlockDirectAddress(chosen, (int)port, string.Equals(chosen, lanAddress, StringComparison.Ordinal));
+        }
+
+        // A dotted IPv4 address, or null: IPAddress also takes "7" as 0.0.0.7, which no host publishes.
+        private string Ipv4Value(string key)
+        {
+            if (!TryGetValue(key, out string text) || string.IsNullOrEmpty(text) || text.Split('.').Length != 4)
+                return null;
+            return IPAddress.TryParse(text, out IPAddress parsed) && parsed.AddressFamily == AddressFamily.InterNetwork ? parsed.ToString() : null;
         }
     }
 
@@ -168,6 +240,14 @@ namespace Flock.Providers
         public Task PublishConnectionAsync(string mode, IReadOnlyDictionary<string, object> values = null, CancellationToken cancellationToken = default)
             => _owner.PublishConnectionAsync(this, mode, values, cancellationToken);
 
+        /// <summary>Publishes how to reach this device directly on <paramref name="port"/>: its public address (one request to the STUN server Flock lists) or, when that is unknown, its LAN address. Host only; not in a web player. Outside a LAN, players reach it only when the port is forwarded to this device.</summary>
+        public Task PublishDirectConnectionAsync(int port, CancellationToken cancellationToken = default)
+            => _owner.PublishDirectConnectionAsync(this, port, cancellationToken);
+
+        /// <summary>Waits until the host has published how to reach it and returns <see cref="Connection"/>; null when <paramref name="timeout"/> passes first or the session ends (<see cref="EndReason"/> says which). Reads the session every 2 s while it waits.</summary>
+        public Task<FlockMultiplayerSessionConnection> WaitForConnectionAsync(TimeSpan timeout, CancellationToken cancellationToken = default)
+            => _owner.WaitForConnectionAsync(this, timeout, cancellationToken);
+
         /// <summary>A token proving the player holds a seat, to send the host when connecting; good for 60 s.</summary>
         public Task<FlockMultiplayerSessionJoinToken> RequestJoinTokenAsync(CancellationToken cancellationToken = default) => _owner.RequestJoinTokenAsync(this, cancellationToken);
 
@@ -235,7 +315,7 @@ namespace Flock.Providers
             HeartbeatInterval = session.HeartbeatIntervalSeconds > 0 ? TimeSpan.FromSeconds(session.HeartbeatIntervalSeconds.Value) : HeartbeatWhenNoneIsGiven;
             // The server blanks the address for a player without a seat, and sends none before the host first publishes.
             Connection = session.ConnectionInfo != null && session.ConnectionInfo.TryGetValue("mode", out object mode)
-                ? new FlockMultiplayerSessionConnection(mode as string, ReadOnlyCopy(session.ConnectionInfo))
+                ? new FlockMultiplayerSessionConnection(mode as string, ReadOnlyCopy(session.ConnectionInfo), _owner.DirectAddresses, SignInNumber)
                 : null;
         }
 

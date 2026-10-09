@@ -145,6 +145,36 @@ namespace Flock.Providers
         public Dictionary<string, object> ConnectionInfo { get; set; }
     }
 
+    /// <summary>The servers a player may connect through: relay entries with credentials minted for them, and STUN entries with none.</summary>
+    internal sealed class RelayCredentialsRecord
+    {
+        [JsonProperty("ttl")]
+        public int Ttl { get; set; }
+
+        [JsonProperty("ice_servers")]
+        public List<IceServerRecord> IceServers { get; set; }
+
+        [JsonProperty("relay_paused")]
+        public bool RelayPaused { get; set; }
+    }
+
+    internal sealed class IceServerRecord
+    {
+        [JsonProperty("urls")]
+        public List<string> Urls { get; set; }
+
+        [JsonProperty("username")]
+        public string Username { get; set; }
+
+        [JsonProperty("credential")]
+        public string Credential { get; set; }
+    }
+
+    // Asked with no session named, so a direct connection is not counted as relay use of the player's seat.
+    internal sealed class RelayCredentialsBody
+    {
+    }
+
     internal sealed class JoinTokenRecord
     {
         [JsonProperty("token")]

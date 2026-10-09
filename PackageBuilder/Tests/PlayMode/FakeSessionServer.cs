@@ -27,6 +27,7 @@ namespace Flock.Tests.PlayMode
         internal const string Publish = "publish";
         internal const string JoinToken = "join-token";
         internal const string Verify = "verify";
+        internal const string RelayCredentials = "relay-credentials";
         internal const string Other = "other";
 
         internal sealed class Seat
@@ -68,6 +69,9 @@ namespace Flock.Tests.PlayMode
 
         // What every session answer says about heartbeats; null leaves the interval out, as a server from before it did.
         internal int? HeartbeatSeconds = 20;
+
+        // The STUN servers the relay route lists, after a relay entry with credentials, as the backend answers.
+        internal readonly List<string> StunUrls = new List<string>();
 
         private readonly object _lock = new object();
         private readonly List<Session> _sessions = new List<Session>();
@@ -231,6 +235,8 @@ namespace Flock.Tests.PlayMode
         private static string RouteOf(string method, string path)
         {
             const string prefix = "multiplayer/sessions";
+            if (path == "multiplayer/relay-credentials" && method == "POST")
+                return RelayCredentials;
             if (!path.StartsWith(prefix, StringComparison.Ordinal))
                 return Other;
             if (path == prefix)
@@ -262,6 +268,21 @@ namespace Flock.Tests.PlayMode
                 return Refused(404, "request.not_found");
             if (player == null)
                 return Refused(401, "player.missing_token");
+            if (route == RelayCredentials)
+            {
+                JArray servers = new JArray
+                {
+                    new JObject
+                    {
+                        ["urls"] = new JArray("turn:relay.test:3479?transport=udp", "turn:relay.test:3479?transport=tcp"),
+                        ["username"] = "1760000000:game:" + player,
+                        ["credential"] = "minted-for-the-test",
+                    },
+                };
+                if (StunUrls.Count > 0)
+                    servers.Add(new JObject { ["urls"] = new JArray(StunUrls.ToArray()), ["username"] = null, ["credential"] = null });
+                return Answer(new JObject { ["ttl"] = 600, ["ice_servers"] = servers, ["relay_paused"] = false });
+            }
             string sessionId = path.Length > "multiplayer/sessions/".Length ? path.Substring("multiplayer/sessions/".Length).Split('/')[0] : null;
             Session session = _sessions.FirstOrDefault(each => each.Id == sessionId);
             bool live = session != null && session.Live;

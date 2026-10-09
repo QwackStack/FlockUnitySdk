@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Flock.Exceptions;
+using UnityEngine;
 
 namespace Flock.Providers
 {
@@ -10,14 +11,22 @@ namespace Flock.Providers
     internal sealed class FlockMultiplayerSessions
     {
         internal const string HeartbeatCallName = "Session heartbeat";
+        internal const string ConnectionWaitCallName = "Session connection wait";
+        // While a game waits for the host's address, the session is read this often; heartbeats alone come every 20 s.
+        internal static readonly TimeSpan DefaultConnectionWaitInterval = TimeSpan.FromSeconds(2);
         // A read overtaken this many times in a row means the session is changing faster than it can be read.
         private const int MostReadsWhileTheSessionChanges = 5;
 
         private readonly FlockClient _client;
         private readonly FlockMultiplayerSessionRequests _requests;
         private readonly FlockRepeatingCalls _repeatingCalls;
+        private readonly FlockDirectAddresses _directAddresses;
+        // Each call waiting for the host's address, woken when one is published, the session ends, or Flock shuts down.
+        private readonly List<TaskCompletionSource<bool>> _connectionWaiters = new List<TaskCompletionSource<bool>>();
+        private TimeSpan _connectionWaitInterval = DefaultConnectionWaitInterval;
         private FlockMultiplayerSession _held;
         private FlockRepeatingCall _heartbeat;
+        private FlockRepeatingCall _connectionWait;
         private int _readsSent;
         // Reads numbered at or below this change nothing when they land.
         private int _readsSettledThrough;
@@ -31,10 +40,14 @@ namespace Flock.Providers
             _client = client;
             _requests = new FlockMultiplayerSessionRequests(client);
             _repeatingCalls = repeatingCalls;
+            _directAddresses = new FlockDirectAddresses(client, _requests);
         }
 
         internal int CurrentSignInNumber => _client.SignInNumber;
         internal FlockMultiplayerSession Held => _held;
+        internal FlockDirectAddresses DirectAddresses => _directAddresses;
+
+        internal void SetConnectionWaitIntervalForTesting(TimeSpan interval) => _connectionWaitInterval = interval;
 
         internal async Task<FlockMultiplayerSession> HostAsync(int? maxPlayers, IReadOnlyDictionary<string, object> data, bool sameVersionOnly, CancellationToken cancellationToken)
         {
@@ -105,6 +118,72 @@ namespace Flock.Providers
             await ChangeAsync(session, () => _requests.PublishConnectionAsync(session.SignInNumber, session.Id, connection, cancellationToken), cancellationToken);
         }
 
+        // The backend checks nothing of a direct descriptor, so what it holds is checked here: a port, and an address players can use.
+        internal async Task PublishDirectConnectionAsync(FlockMultiplayerSession session, int port, CancellationToken cancellationToken)
+        {
+            if (port < 1 || port > 65535)
+                throw new FlockValidationException($"The port must be from 1 to 65535, not {port}. Give the port the game's netcode listens on.");
+            RequireRunning(session);
+            if (Application.platform == RuntimePlatform.WebGLPlayer)
+                throw new FlockValidationException("A web player cannot be reached directly. Host from a desktop or phone build, or publish a connection of the game's own with PublishConnectionAsync.");
+            FlockDirectAddresses.DeviceAddresses found = await _directAddresses.FindAsync(session.SignInNumber, cancellationToken);
+            if (found.Lan == null && found.Public == null)
+                throw new FlockNetworkException("This device has no network address to publish. Check it is connected to a network.");
+            Dictionary<string, object> values = new Dictionary<string, object>
+            {
+                [DirectConnectionValues.Address] = found.Public ?? found.Lan,
+                [DirectConnectionValues.Port] = port,
+            };
+            if (found.Lan != null)
+                values[DirectConnectionValues.LanAddress] = found.Lan;
+            if (found.Public != null)
+                values[DirectConnectionValues.PublicAddress] = found.Public;
+            await PublishConnectionAsync(session, FlockMultiplayerConnectionMode.Direct, values, cancellationToken);
+        }
+
+        // Woken by the host publishing, the session ending, or Flock shutting down; the session is read every 2 s meanwhile.
+        internal async Task<FlockMultiplayerSessionConnection> WaitForConnectionAsync(FlockMultiplayerSession session, TimeSpan timeout, CancellationToken cancellationToken)
+        {
+            if (timeout <= TimeSpan.Zero)
+                throw new FlockValidationException("Give WaitForConnectionAsync a time to wait that is longer than zero.");
+            RequireRunning(session);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (session.Connection != null)
+                return session.Connection;
+
+            TaskCompletionSource<bool> woken = new TaskCompletionSource<bool>();
+            Action published = () =>
+            {
+                if (session.Connection != null)
+                    woken.TrySetResult(true);
+            };
+            Action<string> ended = reason => woken.TrySetResult(true);
+            session.ConnectionChanged += published;
+            session.Ended += ended;
+            _connectionWaiters.Add(woken);
+            KeepReadingForConnection();
+            CancellationTokenSource stopWaiting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            try
+            {
+                Task timeUp = FlockWaiting.DelayAsync(timeout, stopWaiting.Token);
+                await Task.WhenAny(woken.Task, timeUp);
+            }
+            finally
+            {
+                stopWaiting.Cancel();
+                stopWaiting.Dispose();
+                session.ConnectionChanged -= published;
+                session.Ended -= ended;
+                _connectionWaiters.Remove(woken);
+                if (_connectionWaiters.Count == 0)
+                    StopReadingForConnection();
+            }
+            if (woken.Task.IsCanceled)
+                throw new OperationCanceledException("Flock shut down while waiting for the host's connection");
+            cancellationToken.ThrowIfCancellationRequested();
+            return session.HasEnded ? null : session.Connection;
+        }
+
         internal async Task<FlockMultiplayerSessionJoinToken> RequestJoinTokenAsync(FlockMultiplayerSession session, CancellationToken cancellationToken)
         {
             RequireRunning(session);
@@ -143,6 +222,9 @@ namespace Flock.Providers
             _stopped = true;
             if (_held != null)
                 End(_held, FlockMultiplayerSessionEndReason.SignedOut, raise: false);
+            // A call waiting for the host's address ends as cancelled, as every other call does at shutdown.
+            foreach (TaskCompletionSource<bool> waiting in _connectionWaiters.ToArray())
+                waiting.TrySetCanceled();
         }
 
         // A read overtaken by a newer answer is sent again, so the caller gets the server's latest.
@@ -198,7 +280,7 @@ namespace Flock.Providers
                 HeartbeatCallName,
                 held.HeartbeatInterval,
                 cancellationToken => HeartbeatNumberedAsync(signInNumber, sessionId, cancellationToken),
-                TakeHeartbeat,
+                TakeReading,
                 failure => HeartbeatStopped(sessionId, failure));
         }
 
@@ -206,6 +288,44 @@ namespace Flock.Providers
         {
             _heartbeat?.Stop();
             _heartbeat = null;
+        }
+
+        // Read while any call waits for the held session's address; its answers are readings like a heartbeat's.
+        private void KeepReadingForConnection()
+        {
+            FlockMultiplayerSession held = _held;
+            if (held == null || _stopped || _connectionWaiters.Count == 0)
+                return;
+            if (_connectionWait != null && _connectionWait.IsRunning)
+                return;
+            string sessionId = held.Id;
+            int signInNumber = held.SignInNumber;
+            _connectionWait = _repeatingCalls.Start(
+                ConnectionWaitCallName,
+                _connectionWaitInterval,
+                cancellationToken => ReadNumberedAsync(signInNumber, sessionId, cancellationToken),
+                TakeReading,
+                failure => ConnectionWaitStopped(sessionId, failure));
+        }
+
+        private void StopReadingForConnection()
+        {
+            _connectionWait?.Stop();
+            _connectionWait = null;
+        }
+
+        // A seat the server no longer has ends the session; any other refusal leaves the wait to the heartbeats' answers.
+        private void ConnectionWaitStopped(string sessionId, Exception failure)
+        {
+            FlockMultiplayerSession held = _held;
+            if (held == null || held.Id != sessionId)
+                return;
+            if (failure is FlockException coded && IsOutOfTheSession(coded))
+            {
+                LetRun(LearnWhyItEndedAsync(held, CancellationToken.None));
+                return;
+            }
+            _client.Logger.LogWarning($"The session is no longer read while waiting for the host's address: {failure.Message}. The heartbeats still bring it, about every 20 s.");
         }
 
         // A heartbeat's answer is a reading like any other: numbered when sent, so an older one changes nothing.
@@ -216,7 +336,14 @@ namespace Flock.Providers
             return new SessionReading(number, signInNumber, session);
         }
 
-        private void TakeHeartbeat(SessionReading reading)
+        private async Task<SessionReading> ReadNumberedAsync(int signInNumber, string sessionId, CancellationToken cancellationToken)
+        {
+            int number = ++_readsSent;
+            SessionRecord session = await _requests.ReadAsync(signInNumber, sessionId, cancellationToken);
+            return new SessionReading(number, signInNumber, session);
+        }
+
+        private void TakeReading(SessionReading reading)
         {
             if (reading.Number <= _readsSettledThrough)
                 return;
@@ -377,6 +504,7 @@ namespace Flock.Providers
                 _held = null;
                 StopHeartbeating();
             }
+            // A call waiting for this session's address is woken by Ended and stops the reads itself, inline on the main thread.
             session.End(reason, raise);
         }
 

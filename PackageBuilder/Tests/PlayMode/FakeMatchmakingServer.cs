@@ -244,7 +244,7 @@ namespace Flock.Tests.PlayMode
             string path = request.Url.Substring(request.Url.IndexOf("/v1/", StringComparison.Ordinal) + 4);
             if (path == "party" || path.StartsWith("party/", StringComparison.Ordinal))
                 return Parties.SendAsync(request, cancellationToken);
-            if (path.StartsWith("multiplayer/sessions", StringComparison.Ordinal))
+            if (path.StartsWith("multiplayer/", StringComparison.Ordinal))
                 return Sessions.SendAsync(request, cancellationToken);
 
             string route = RouteOf(request.Method, path);

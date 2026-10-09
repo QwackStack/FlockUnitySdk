@@ -39,6 +39,11 @@ namespace Flock.Models
             {
                 return false;
             }
+            catch (OverflowException)
+            {
+                // A number too large for T, such as a port published as 99999999999 read as an int.
+                return false;
+            }
         }
     }
 }

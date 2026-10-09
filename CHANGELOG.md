@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.76.0]
+
+A session's players can connect their netcode directly: the host says where it is, and the others wait for that and connect.
+With Netcode for GameObjects installed, one call does both.
+
+### Added
+- `FlockMultiplayerSession.PublishDirectConnectionAsync(port, cancellationToken)`: the host publishes how to reach it, mode
+  `FlockMultiplayerConnectionMode.Direct`, with its public address (one request to the STUN server Flock lists) or, when that
+  is unknown, its LAN address, and the port. Outside a LAN, players reach it only when that port is forwarded to the host.
+- `FlockMultiplayerSession.WaitForConnectionAsync(timeout, cancellationToken)`: waits until the host has published and returns
+  `Connection`, or null when the time runs out or the session ends. The session is read every 2 s while it waits.
+- `FlockMultiplayerSessionConnection.FindDirectAddressAsync(cancellationToken)`: where this device connects, a
+  `FlockDirectAddress` (`Address`, `Port`, `IsLan`): the host's LAN address when this device shares its public address, the
+  published address otherwise; null for a connection that is not a usable direct one.
+- With Netcode for GameObjects 1.x or 2.x installed: `session.StartNetcodeAsync(networkManager, options, cancellationToken)`.
+  The host starts as host on Unity Transport's port and publishes; a player waits for the host (`FlockNetcodeOptions.WaitForHost`,
+  60 s), connects to it and returns once connected. `FlockNetcodeStartResult.Outcome` says how it ended
+  (`FlockNetcodeStartOutcome`: `started_as_host`, `connected`, `host_never_published`, `session_ended`, `could_not_connect`,
+  `could_not_start`, `not_direct`). The package does not depend on Netcode for GameObjects: these calls exist only where it is
+  installed. Not in a web player.
+
+### Fixed
+- `TryGetValue` and `TryGetData` return false for a number too large for the type asked for, instead of throwing.
+
 ## [1.75.0]
 
 A game can find a match by queue name, alone or as a party, and gets the session the match seats its players in.

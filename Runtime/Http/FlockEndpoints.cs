@@ -122,6 +122,8 @@ namespace Flock.Http
         public static string SessionConnection(string sessionId) => $"{SessionById(sessionId)}/connection-info";
         public static string SessionJoinToken(string sessionId) => $"{SessionById(sessionId)}/join-token";
         public static string SessionVerifyJoinToken(string sessionId) => $"{SessionById(sessionId)}/verify-join-token";
+        // The servers a player connects through: always the STUN server a direct connection asks its public address of.
+        public const string RelayCredentials = "multiplayer/relay-credentials";
 
         // Assets
         public const string Asset = "asset";

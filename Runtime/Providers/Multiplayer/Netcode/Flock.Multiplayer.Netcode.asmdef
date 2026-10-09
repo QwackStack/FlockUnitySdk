@@ -1,27 +1,20 @@
 {
-    "name": "Flock.Tests.PlayMode",
-    "rootNamespace": "Flock.Tests.PlayMode",
+    "name": "Flock.Multiplayer.Netcode",
+    "rootNamespace": "Flock",
     "references": [
         "Flock.Runtime",
-        "Flock.Tests.Support",
-        "UnityEngine.TestRunner",
-        "UnityEditor.TestRunner",
-        "Unity.Newtonsoft.Json",
-        "Flock.Multiplayer.Netcode",
         "Unity.Netcode.Runtime",
         "Unity.Networking.Transport"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
-    "overrideReferences": true,
-    "precompiledReferences": [
-        "nunit.framework.dll",
-        "Newtonsoft.Json.dll"
-    ],
-    "autoReferenced": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
     "defineConstraints": [
-        "UNITY_INCLUDE_TESTS"
+        "FLOCK_NETCODE_FOR_GAMEOBJECTS",
+        "!FLOCK_NO_MULTIPLAYER"
     ],
     "versionDefines": [
         {
