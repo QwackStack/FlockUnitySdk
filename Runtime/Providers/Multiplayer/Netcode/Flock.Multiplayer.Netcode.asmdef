@@ -21,6 +21,11 @@
             "name": "com.unity.netcode.gameobjects",
             "expression": "[1.0.0,3.0.0)",
             "define": "FLOCK_NETCODE_FOR_GAMEOBJECTS"
+        },
+        {
+            "name": "com.unity.transport",
+            "expression": "[2.0.0,3.0.0)",
+            "define": "FLOCK_UNITY_TRANSPORT_2"
         }
     ],
     "noEngineReferences": false

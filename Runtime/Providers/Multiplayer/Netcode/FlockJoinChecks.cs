@@ -8,6 +8,13 @@ using System.Threading.Tasks;
 using Flock.Exceptions;
 using Flock.Logging;
 using Unity.Netcode;
+using Unity.Netcode.Transports.UTP;
+// Unity Transport 2.x names its endpoint NetworkEndpoint, 1.x NetworkEndPoint (each netcode takes its own).
+#if FLOCK_UNITY_TRANSPORT_2
+using TransportEndpoint = Unity.Networking.Transport.NetworkEndpoint;
+#else
+using TransportEndpoint = Unity.Networking.Transport.NetworkEndPoint;
+#endif
 
 namespace Flock.Providers
 {
@@ -76,6 +83,11 @@ namespace Flock.Providers
         private readonly Dictionary<ulong, string> _players = new Dictionary<ulong, string>();
         private readonly CancellationTokenSource _removedToken = new CancellationTokenSource();
         private bool _removed;
+        // Relayed players reach the host from a loopback port of the bridge's: one let in is told to the bridge, and forgotten when it leaves.
+        private FlockRelayBridge _bridge;
+        private UnityTransport _transport;
+        private readonly Dictionary<ulong, FlockRelayPeer> _relayedPlayers = new Dictionary<ulong, FlockRelayPeer>();
+        private readonly Action<ulong> _clientLeft;
 
         private FlockJoinChecks(FlockMultiplayerSession session, NetworkManager networkManager, Action<FlockJoiningPlayer, NetworkManager.ConnectionApprovalResponse> gamesCheck)
         {
@@ -85,6 +97,7 @@ namespace Flock.Providers
             _approvalWasOn = networkManager.NetworkConfig.ConnectionApproval;
             _approve = Approve;
             _netcodeStopped = _ => Remove();
+            _clientLeft = ForgetRelayedPlayer;
         }
 
         internal static FlockJoinChecks Install(FlockMultiplayerSession session, NetworkManager networkManager, Action<FlockJoiningPlayer, NetworkManager.ConnectionApprovalResponse> gamesCheck)
@@ -101,6 +114,19 @@ namespace Flock.Providers
         internal static string PlayerFor(FlockMultiplayerSession session, ulong clientId)
             => Running.TryGetValue(session, out FlockJoinChecks checks) ? checks.PlayerOf(clientId) : null;
 
+        internal static FlockRelayBridge RelayBridgeForTesting(FlockMultiplayerSession session)
+            => Running.TryGetValue(session, out FlockJoinChecks checks) ? checks._bridge : null;
+
+        /// <summary>Players the host takes through the relay reach it through <paramref name="bridge"/>; each one let in gets a relay channel.</summary>
+        internal void UseRelayBridge(FlockRelayBridge bridge, UnityTransport transport)
+        {
+            if (_removed)
+                return;
+            _bridge = bridge;
+            _transport = transport;
+            _networkManager.OnClientDisconnectCallback += _clientLeft;
+        }
+
         // Puts the NetworkManager back as the game had it, unless the game has set a check of its own since.
         internal void Remove()
         {
@@ -110,6 +136,7 @@ namespace Flock.Providers
             if (Running.TryGetValue(_session, out FlockJoinChecks current) && current == this)
                 Running.Remove(_session);
             _networkManager.OnServerStopped -= _netcodeStopped;
+            _networkManager.OnClientDisconnectCallback -= _clientLeft;
             if (_networkManager.ConnectionApprovalCallback == _approve)
             {
                 _networkManager.ConnectionApprovalCallback = null;
@@ -208,8 +235,31 @@ namespace Flock.Providers
             AskTheGame(clientId, playerId, gameData, response);
             // Remembered once let in, so a refused connection never holds the player's place.
             if (response.Approved)
+            {
                 _players[clientId] = playerId;
+                LetInThroughTheRelay(clientId);
+            }
             response.Pending = false;
+        }
+
+        // A player let in from one of the bridge's loopback ports is a relayed player: it keeps its place there and gets a relay channel.
+        private void LetInThroughTheRelay(ulong clientId)
+        {
+            if (_bridge == null)
+                return;
+            TransportEndpoint from = _transport.GetEndpoint(clientId);
+            if (!from.IsLoopback || !_bridge.TryGetPeer(from.Port, out FlockRelayPeer peer))
+                return;
+            _relayedPlayers[clientId] = peer;
+            _bridge.LetIn(peer);
+        }
+
+        private void ForgetRelayedPlayer(ulong clientId)
+        {
+            if (!_relayedPlayers.TryGetValue(clientId, out FlockRelayPeer peer))
+                return;
+            _relayedPlayers.Remove(clientId);
+            _bridge.Forget(peer);
         }
 
         // Flock's verdict, or the host's state; any other failure lets nobody in unchecked.

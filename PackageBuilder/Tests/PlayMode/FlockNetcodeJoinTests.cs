@@ -29,7 +29,7 @@ namespace Flock.Tests.PlayMode
             public int Port;
         }
 
-        private IEnumerator HostedWithNetcode(Hosting hosting, FlockNetcodeOptions options = null, Action<NetworkManager> before = null)
+        private IEnumerator HostedWithNetcode(Hosting hosting, FlockNetcodeOptions options = null, Action<NetworkManager> before = null, Action<Task<FlockNetcodeStartResult>> startedWith = null)
         {
             FlockMultiplayerProvider multiplayer = SignedInAs(A);
             List<FlockMultiplayerSession> held = new List<FlockMultiplayerSession>();
@@ -43,6 +43,7 @@ namespace Flock.Tests.PlayMode
             yield return Done(started, "hosting");
             Assert.IsFalse(started.IsFaulted, started.Exception?.InnerException?.ToString());
             Assert.AreEqual(FlockNetcodeStartOutcome.StartedAsHost, started.Result.Outcome, "Precondition: hosting");
+            startedWith?.Invoke(started);
         }
 
         // Another player's game: Netcode for GameObjects alone, with the approval switch a host checking players needs.

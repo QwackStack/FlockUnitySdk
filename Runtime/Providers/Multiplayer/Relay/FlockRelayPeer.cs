@@ -48,6 +48,9 @@ namespace Flock.Providers
 
         public override int GetHashCode() => unchecked((int)Address * 397) ^ Port;
 
-        public override string ToString() => $"{Address >> 24}.{(Address >> 16) & 0xFF}.{(Address >> 8) & 0xFF}.{Address & 0xFF}:{Port}";
+        /// <summary>The address as "a.b.c.d", without the port.</summary>
+        internal string Ip => $"{Address >> 24}.{(Address >> 16) & 0xFF}.{(Address >> 8) & 0xFF}.{Address & 0xFF}";
+
+        public override string ToString() => $"{Ip}:{Port}";
     }
 }

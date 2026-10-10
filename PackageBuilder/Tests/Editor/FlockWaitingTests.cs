@@ -56,9 +56,10 @@ namespace Flock.Tests.Editor
         public void NothingInTheRuntimeWaitsOnAThreadOrATimerWebGLDoesNotHave()
         {
             Regex unsafeWait = new Regex(@"ConfigureAwait\(\s*(continueOnCapturedContext\s*:\s*)?false\s*\)|Task\.Delay\(|Task\.Run\(|ThreadPool\.|Threading\.Timer|new Timer\(|new Thread\(|RunContinuationsAsynchronously");
-            // The relay client runs on a thread of its own and never in a web player: OpenRelayAsync refuses one before anything starts.
-            List<string> found = FlockRuntimeSource.LinesMatching(unsafeWait, "FlockWaiting.cs", "FlockRelayConnection.cs");
+            // The relay client and its bridge run on threads of their own and never in a web player: OpenRelayAsync refuses one before anything starts.
+            List<string> found = FlockRuntimeSource.LinesMatching(unsafeWait, "FlockWaiting.cs", "FlockRelayConnection.cs", "FlockRelayBridge.cs");
             Assert.IsNotEmpty(FlockRuntimeSource.LinesMatchingIn("FlockRelayConnection.cs", unsafeWait), "Control: the relay's own thread is what the scan would find");
+            Assert.IsNotEmpty(FlockRuntimeSource.LinesMatchingIn("FlockRelayBridge.cs", unsafeWait), "Control: the bridge's loopback threads are what the scan would find");
             Assert.IsEmpty(found, "Wait through FlockWaiting (ResumeOnCallersThread, DelayAsync) instead:\n" + string.Join("\n", found));
         }
     }

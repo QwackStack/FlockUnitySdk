@@ -54,6 +54,8 @@ namespace Flock.Tests.PlayMode
         private FlockQuickMatchSample SignedInSample(string player, string queueName)
         {
             _server = new FakeMatchmakingServer();
+            // The relay switched off for the game: these tests are about matching, and the host publishes its direct address.
+            _server.Sessions.RelayUrls.Clear();
             _h = FlockTestClient.Create(new FlockFakeTransport(), config => config.PartyRefreshInterval = TimeSpan.Zero);
             FlockHttpClient.Configure(_server);
             _h.LoginAs(player);

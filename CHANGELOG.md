@@ -6,6 +6,56 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.81.0]
+
+A player who shares the host's public address but cannot reach the host on that network now connects through Flock's relay
+instead of failing.
+
+### Fixed
+- With `FlockNetcodeOptions.Relay` left at `WhenNeeded`, a player sharing the host's public address connected only to the host's
+  address on that network, and failed once Unity Transport's connect attempts ran out (a minute by default) wherever that address
+  does not answer: Wi-Fi that keeps its devices apart (schools, offices, hotels), or a mobile carrier putting many phones behind one
+  address. It now tries that address for at least two of Unity Transport's connect attempts and 3 seconds, then goes through the
+  relay. A host that answered is never left for the relay: one that refuses the player, or checks it slowly, is waited for there, and
+  a netcode the game stopped is not started again.
+- A host that knew only its LAN address no longer counts as being on this player's network: a `WhenNeeded` player goes through the
+  relay. `FlockDirectAddress.IsLan` is unchanged; its description now says it is also true for the only address the host knew.
+
+- A session that ends while a player tries the host's network ends `StartNetcodeAsync` with `session_ended`.
+
+### Changed
+- When the try on the host's network is given up, Netcode for GameObjects raises its own stop for it (`OnClientStopped`) before
+  the relay's connection starts. A game whose own connect attempts run out first (a short `MaxConnectAttempts`) also sees Unity
+  Transport's "Failed to connect to server." error then, though the player goes on to connect through the relay.
+
+Released together with the Protokite Playtest at the same version (no changes to it).
+
+## [1.80.0]
+
+Players on different networks can now play together without forwarding a port: `StartNetcodeAsync` connects them through Flock's
+relay. Players on the host's own network still connect directly, and a game can send every player through the relay, or none.
+
+### Added
+- `FlockNetcodeOptions.Relay`, a `FlockRelayUse`: `WhenNeeded` (the default: players on the host's network connect directly,
+  everyone else through Flock's relay), `Always` (every player through the relay; the host publishes no address of its own and
+  listens on its loopback only) or `Never` (direct connections only). Set it the same on every player of a game.
+- `FlockNetcodeStartResult.ThroughRelay` and `RelayFailureReason`, the outcome `relay_failed`, the connection mode
+  `FlockMultiplayerConnectionMode.Relay`, and `FlockRelayFailure`, the reasons the relay could not be used.
+- A host opens its address on the relay as it starts and publishes it with the relay server it is on, where players reserve
+  theirs. Relayed packets reach Unity Transport through sockets on the device's own loopback, so its secure mode, timeouts and
+  simulator work as on a direct connection.
+- The host checks a relayed player's Flock join token like any other's, and binds a relay channel only to a player it let in; a
+  stranger on the relay is refused, and in a host full of them one never let in makes way after 30 seconds.
+
+### Changed
+- By default, a player off the host's network now connects through the relay instead of the host's public address (which only
+  worked where the host forwarded its port). Set `Relay` to `Never` for the earlier behaviour.
+- A host asks Flock for relay logins as it starts, unless `Relay` is `Never`. A game whose relay is switched off in the dashboard
+  publishes its direct address as before, without a warning; one whose studio's relay is paused publishes it and says why.
+- `FlockMultiplayerSessionConnection.FindDirectAddressAsync` also reads the direct addresses a relay connection holds.
+
+Released together with the Protokite Playtest at the same version (no changes to it).
+
 ## [1.79.0]
 
 The groundwork for Flock's relay, which connects players on different networks: the SDK can now reserve an address on the relay

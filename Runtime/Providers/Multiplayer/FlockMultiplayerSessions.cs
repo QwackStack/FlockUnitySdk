@@ -132,16 +132,36 @@ namespace Flock.Providers
             FlockDirectAddresses.DeviceAddresses found = await _directAddresses.FindAsync(session.SignInNumber, cancellationToken);
             if (found.Lan == null && found.Public == null)
                 throw new FlockNetworkException("This device has no network address to publish. Check it is connected to a network.");
+            Dictionary<string, object> values = new Dictionary<string, object>();
+            AddDirectAddresses(values, found, port);
+            await PublishConnectionAsync(session, FlockMultiplayerConnectionMode.Direct, values, cancellationToken);
+        }
+
+        // The host's address on the relay, and with withDirectAddresses its own addresses too, so players on its network skip the relay.
+        internal async Task PublishRelayConnectionAsync(FlockMultiplayerSession session, FlockRelayConnection relay, int port, bool withDirectAddresses, CancellationToken cancellationToken)
+        {
+            RequireRunning(session);
             Dictionary<string, object> values = new Dictionary<string, object>
             {
-                [DirectConnectionValues.Address] = found.Public ?? found.Lan,
-                [DirectConnectionValues.Port] = port,
+                [RelayConnectionValues.RelayAddress] = relay.Address.ToString(),
+                [RelayConnectionValues.RelayServer] = relay.Server,
             };
+            if (withDirectAddresses)
+                AddDirectAddresses(values, await _directAddresses.FindAsync(session.SignInNumber, cancellationToken), port);
+            await PublishConnectionAsync(session, FlockMultiplayerConnectionMode.Relay, values, cancellationToken);
+        }
+
+        // An unknown address is left out; with neither known, nothing is added.
+        private static void AddDirectAddresses(Dictionary<string, object> values, FlockDirectAddresses.DeviceAddresses found, int port)
+        {
+            if (found.Lan == null && found.Public == null)
+                return;
+            values[DirectConnectionValues.Address] = found.Public ?? found.Lan;
+            values[DirectConnectionValues.Port] = port;
             if (found.Lan != null)
                 values[DirectConnectionValues.LanAddress] = found.Lan;
             if (found.Public != null)
                 values[DirectConnectionValues.PublicAddress] = found.Public;
-            await PublishConnectionAsync(session, FlockMultiplayerConnectionMode.Direct, values, cancellationToken);
         }
 
         // Woken by the host publishing, the session ending, or Flock shutting down; the session is read every 2 s meanwhile.
@@ -202,20 +222,35 @@ namespace Flock.Providers
             return verified.PlayerId;
         }
 
-        /// <summary>The player's address on Flock's relay for this session, opened once and shared by every caller until it fails or the session ends, which closes it. A caller's token only stops its own wait. Fails with a <see cref="FlockRelayException"/> naming why.</summary>
-        internal async Task<FlockRelayConnection> OpenRelayAsync(FlockMultiplayerSession session, CancellationToken cancellationToken)
+        /// <summary>The player's address on Flock's relay for this session, opened once and shared by every caller until it fails or the session ends, which closes it; on <paramref name="server"/> ("name:port") when one is named, else on the first relay Flock lists that answers. A caller's token only stops its own wait. Fails with a <see cref="FlockRelayException"/> naming why.</summary>
+        internal async Task<FlockRelayConnection> OpenRelayAsync(FlockMultiplayerSession session, string server, CancellationToken cancellationToken)
         {
             if (Application.platform == RuntimePlatform.WebGLPlayer)
                 throw new FlockRelayException(FlockRelayFailure.NotOnThisPlatform, "A web player cannot send UDP, so it cannot use Flock's relay.");
             RequireRunning(session);
             Task<FlockRelayConnection> opening = session.RelayOpening;
+            if (opening != null && !HasFailed(opening) && !IsOn(session, opening, server))
+            {
+                // Open, or opening, on another server: it makes way once its opening has ended.
+                if (!await FlockWaiting.FinishedBeforeGivenUpAsync(opening, cancellationToken))
+                    throw new OperationCanceledException(cancellationToken);
+                RequireRunning(session);
+                if (session.RelayOpening == opening && !HasFailed(opening) && !IsOn(session, opening, server))
+                {
+                    session.Relay?.Close();
+                    session.Relay = null;
+                    session.RelayOpening = null;
+                }
+                opening = session.RelayOpening;
+            }
             if (opening == null || HasFailed(opening))
             {
                 session.Relay?.Close();
                 session.Relay = null;
-                opening = OpenRelayForAsync(session);
+                opening = OpenRelayForAsync(session, server);
                 LetRun(opening);
                 session.RelayOpening = opening;
+                session.RelayServerAsked = server;
             }
             if (!await FlockWaiting.FinishedBeforeGivenUpAsync(opening, cancellationToken))
                 throw new OperationCanceledException(cancellationToken);
@@ -226,8 +261,13 @@ namespace Flock.Providers
         private static bool HasFailed(Task<FlockRelayConnection> opening)
             => opening.IsFaulted || opening.IsCanceled || (opening.Status == TaskStatus.RanToCompletion && opening.Result.HasStopped);
 
-        // Logins named with the session, then each relay server Flock lists in turn; the session's end stops it at any step.
-        private async Task<FlockRelayConnection> OpenRelayForAsync(FlockMultiplayerSession session)
+        // Whether an opening serves a caller who needs the relay on server; any server does for one who named none.
+        private static bool IsOn(FlockMultiplayerSession session, Task<FlockRelayConnection> opening, string server)
+            => server == null || string.Equals(session.RelayServerAsked, server, StringComparison.OrdinalIgnoreCase)
+               || (opening.Status == TaskStatus.RanToCompletion && string.Equals(opening.Result.Server, server, StringComparison.OrdinalIgnoreCase));
+
+        // Logins named with the session, then each relay server Flock lists in turn, or the one named; the session's end stops it at any step.
+        private async Task<FlockRelayConnection> OpenRelayForAsync(FlockMultiplayerSession session, string server)
         {
             CancellationToken stop = session.RelayStopToken;
             RelayCredentialsRecord answer;
@@ -246,6 +286,13 @@ namespace Flock.Providers
             List<FlockRelayLogin> logins = FlockRelayLogin.InAnswer(answer);
             if (logins.Count == 0)
                 throw new FlockRelayException(FlockRelayFailure.NotOffered, "Flock listed no relay for this game: it is switched off for the game in the Flock dashboard, or no relay is set up.");
+            if (server != null)
+            {
+                // Players reach the host only from the relay server it is on, since only that server's addresses share the IP it opened to.
+                logins = logins.FindAll(login => string.Equals(login.ToString(), server, StringComparison.OrdinalIgnoreCase));
+                if (logins.Count == 0)
+                    throw new FlockRelayException(FlockRelayFailure.ServerNotListed, $"Flock does not list the relay server the host uses ({server}) for this player.");
+            }
             FlockRelayException first = null;
             foreach (FlockRelayLogin login in logins)
             {

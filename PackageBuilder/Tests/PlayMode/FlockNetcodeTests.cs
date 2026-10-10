@@ -56,6 +56,7 @@ namespace Flock.Tests.PlayMode
             }
             _managers.Clear();
             yield return null;
+            RelayTearDown();
             _h?.Dispose();
             _h = null;
             _stun?.Dispose();
@@ -67,6 +68,8 @@ namespace Flock.Tests.PlayMode
         private FlockMultiplayerProvider SignedInAs(string player)
         {
             _server = new FakeSessionServer();
+            // The relay switched off for the game, so a host publishes its direct address; the relay tests list one (RelayOn).
+            _server.RelayUrls.Clear();
             _stun = new FakeStunServer { PublicAddress = HostsPublicAddress };
             _server.StunUrls.Add(_stun.Url);
             _h = FlockTestClient.Create(new FlockFakeTransport(), config => config.PartyRefreshInterval = TimeSpan.Zero);

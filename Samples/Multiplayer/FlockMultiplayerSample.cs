@@ -87,7 +87,7 @@ namespace Flock.Samples
             GUI.enabled = true;
             GUILayout.FlexibleSpace();
             GUILayout.Label(Status);
-            GUILayout.Label("Connects on a LAN, or where the host's port is forwarded to it.");
+            GUILayout.Label("Players on the host's network connect directly, others through Flock's relay.");
             GUILayout.EndArea();
         }
 
@@ -178,13 +178,16 @@ namespace Flock.Samples
                     Status = "Hosting. Friends join with code " + session.JoinCode + ".";
                     break;
                 case FlockNetcodeStartOutcome.Connected:
-                    Status = "Connected to the host.";
+                    Status = started.ThroughRelay ? "Connected to the host through Flock's relay." : "Connected to the host.";
                     break;
                 case FlockNetcodeStartOutcome.Refused:
                     Status = "The host refused this player: " + started.RefusedReason + ".";
                     break;
                 case FlockNetcodeStartOutcome.CouldNotConnect:
-                    Status = "Could not reach the host. Outside a LAN, its port must be forwarded to it.";
+                    Status = "Could not reach the host.";
+                    break;
+                case FlockNetcodeStartOutcome.RelayFailed:
+                    Status = "Flock's relay could not be used: " + started.RelayFailureReason + ".";
                     break;
                 case FlockNetcodeStartOutcome.HostNeverPublished:
                     Status = "The host never said where it is.";

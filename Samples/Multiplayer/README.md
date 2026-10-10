@@ -10,8 +10,9 @@ Two one-screen samples of players playing together over Netcode for GameObjects,
 Once connected, each lists the players, **Wave** sends a message over the netcode that the others see, and **Leave** (or
 **End Session** for the host) ends it.
 
-They connect players directly: on the same network, or where the host's port is forwarded to it. Playing across the internet
-without forwarding needs Flock's relay, which comes in a later version.
+Players on the host's network connect to it directly; everyone else connects through Flock's relay, so nobody forwards a port.
+If the relay is switched off for the game in the Flock dashboard, players on other networks reach the host only on a port
+forwarded to it.
 
 ## Setup
 
@@ -32,5 +33,6 @@ without forwarding needs Flock's relay, which comes in a later version.
 - Hosting and joining by code: `Multiplayer.HostSessionAsync`, `Multiplayer.JoinSessionAsync(code)`, `session.JoinCode`.
 - Finding a match: `Multiplayer.FindMatchAsync(queueName)` and its result's `Session`.
 - Starting the netcode for a session: `session.StartNetcodeAsync(networkManager)`. The host lets in only players whose Flock
-  join token checks out, and `session.PlayerForConnection(clientId)` names the player behind each connection.
+  join token checks out, and `session.PlayerForConnection(clientId)` names the player behind each connection. Its result's
+  `ThroughRelay` says whether the connection goes through Flock's relay, and `RelayFailureReason` why the relay could not be used.
 - Leaving: `session.LeaveAsync()`, or `session.EndAsync()` for the host, and the session's `Ended` event.

@@ -47,6 +47,8 @@ namespace Flock.Providers
     {
         /// <summary>The host's address and port, published by <see cref="FlockMultiplayerSession.PublishDirectConnectionAsync"/>.</summary>
         public const string Direct = "direct";
+        /// <summary>The host's address on Flock's relay, published by StartNetcodeAsync, with its direct addresses too when players on its network may connect directly.</summary>
+        public const string Relay = "relay";
     }
 
     // The values a direct connection holds on the wire; "address" and "port" are the names the backend expects.
@@ -58,14 +60,22 @@ namespace Flock.Providers
         internal const string PublicAddress = "public_address";
     }
 
+    // What a relay connection adds: the host's address on the relay ("a.b.c.d:port") and the relay server it is on ("name:port").
+    internal static class RelayConnectionValues
+    {
+        internal const string RelayAddress = "relay_address";
+        internal const string RelayServer = "relay_server";
+    }
+
     /// <summary>Where this device connects to reach a direct host.</summary>
     public sealed class FlockDirectAddress
     {
-        internal FlockDirectAddress(string address, int port, bool isLan)
+        internal FlockDirectAddress(string address, int port, bool isLan, bool sharesTheHostsPublicAddress)
         {
             Address = address;
             Port = port;
             IsLan = isLan;
+            SharesTheHostsPublicAddress = sharesTheHostsPublicAddress;
         }
 
         /// <summary>The host's IPv4 address.</summary>
@@ -73,8 +83,11 @@ namespace Flock.Providers
 
         public int Port { get; }
 
-        /// <summary>True when this is the host's LAN address, chosen because this device shares the host's public address.</summary>
+        /// <summary>True when this is the host's LAN address: chosen because this device shares the host's public address, or the only address the host knew.</summary>
         public bool IsLan { get; }
+
+        // This device shares the host's public address, so the LAN address is worth trying first; a host that knew only its LAN address says nothing about this device.
+        internal bool SharesTheHostsPublicAddress { get; }
     }
 
     /// <summary>How to reach the session's host, as the host published it: a mode and whatever values that mode needs.</summary>
@@ -106,11 +119,11 @@ namespace Flock.Providers
             return FlockJsonValues.TryConvert(raw, out value);
         }
 
-        /// <summary>Where this device connects to reach a direct host: the host's LAN address when this device shares its public address (one request to the STUN server Flock lists says), the published address otherwise. Null when this is not a direct connection with an IPv4 address and a port.</summary>
+        /// <summary>Where this device connects to reach the host directly: the host's LAN address when this device shares its public address (one request to the STUN server Flock lists says), the published address otherwise. Null when the host published no direct IPv4 address and port.</summary>
         public async Task<FlockDirectAddress> FindDirectAddressAsync(CancellationToken cancellationToken = default)
         {
             // Read as text, so a port sent as "7777" is taken and one sent as 7777.5 is not.
-            if (!string.Equals(Mode, FlockMultiplayerConnectionMode.Direct, StringComparison.Ordinal)
+            if (!(string.Equals(Mode, FlockMultiplayerConnectionMode.Direct, StringComparison.Ordinal) || string.Equals(Mode, FlockMultiplayerConnectionMode.Relay, StringComparison.Ordinal))
                 || !TryGetValue(DirectConnectionValues.Port, out string portText)
                 || !long.TryParse(portText, NumberStyles.None, CultureInfo.InvariantCulture, out long port) || port < 1 || port > 65535)
                 return null;
@@ -121,10 +134,20 @@ namespace Flock.Providers
             {
                 string mine = await _addresses.FindPublicAddressAsync(_signInNumber, cancellationToken);
                 if (string.Equals(mine, publicAddress, StringComparison.Ordinal))
-                    return new FlockDirectAddress(lanAddress, (int)port, true);
+                    return new FlockDirectAddress(lanAddress, (int)port, true, true);
             }
             string chosen = address ?? publicAddress ?? lanAddress;
-            return chosen == null ? null : new FlockDirectAddress(chosen, (int)port, string.Equals(chosen, lanAddress, StringComparison.Ordinal));
+            return chosen == null ? null : new FlockDirectAddress(chosen, (int)port, string.Equals(chosen, lanAddress, StringComparison.Ordinal), false);
+        }
+
+        /// <summary>The host's address on the relay and the relay server it is on; false when this is not a relay connection holding both.</summary>
+        internal bool TryGetRelay(out FlockRelayPeer address, out string server)
+        {
+            address = default;
+            server = null;
+            return string.Equals(Mode, FlockMultiplayerConnectionMode.Relay, StringComparison.Ordinal)
+                && TryGetValue(RelayConnectionValues.RelayAddress, out string text) && FlockRelayPeer.TryParse(text, out address)
+                && TryGetValue(RelayConnectionValues.RelayServer, out server) && !string.IsNullOrEmpty(server);
         }
 
         // A dotted IPv4 address, or null: IPAddress also takes "7" as 0.0.0.7, which no host publishes.
@@ -254,8 +277,15 @@ namespace Flock.Providers
         /// <summary>Checks a token a connecting player sent and returns that player's id; refused with <c>MultiplayerInvalidJoinToken</c> when it is not good for this session. Host only.</summary>
         public Task<string> VerifyJoinTokenAsync(string token, CancellationToken cancellationToken = default) => _owner.VerifyJoinTokenAsync(this, token, cancellationToken);
 
-        /// <summary>This player's address on Flock's relay for the session, opened once and closed when the session ends; fails with a <see cref="FlockRelayException"/> naming why.</summary>
-        internal Task<FlockRelayConnection> OpenRelayAsync(CancellationToken cancellationToken = default) => _owner.OpenRelayAsync(this, cancellationToken);
+        /// <summary>This player's address on Flock's relay for the session, on the first relay Flock lists that answers, opened once and closed when the session ends; fails with a <see cref="FlockRelayException"/> naming why.</summary>
+        internal Task<FlockRelayConnection> OpenRelayAsync(CancellationToken cancellationToken = default) => _owner.OpenRelayAsync(this, null, cancellationToken);
+
+        /// <summary>As <see cref="OpenRelayAsync"/>, on the relay server named "name:port" (the one the host uses).</summary>
+        internal Task<FlockRelayConnection> OpenRelayOnAsync(string server, CancellationToken cancellationToken = default) => _owner.OpenRelayAsync(this, server, cancellationToken);
+
+        /// <summary>Publishes this device's address on the relay, and with <paramref name="withDirectAddresses"/> also how players on its network reach it on <paramref name="port"/>. Host only.</summary>
+        internal Task PublishRelayConnectionAsync(FlockRelayConnection relay, int port, bool withDirectAddresses, CancellationToken cancellationToken = default)
+            => _owner.PublishRelayConnectionAsync(this, relay, port, withDirectAddresses, cancellationToken);
 
         // Takes a newer reading of the session, then says what changed; events are raised once everything is in place.
         internal void Update(SessionRecord session)
@@ -282,6 +312,8 @@ namespace Flock.Providers
 
         // The session's relay connection: one at a time, opened by the sessions owner, closed when the session ends.
         internal Task<FlockRelayConnection> RelayOpening { get; set; }
+        // The server the opening was asked for; null when any server Flock lists would do.
+        internal string RelayServerAsked { get; set; }
         internal FlockRelayConnection Relay { get; set; }
         private CancellationTokenSource _relayStop;
 
@@ -296,6 +328,7 @@ namespace Flock.Providers
             Relay?.Close();
             Relay = null;
             RelayOpening = null;
+            RelayServerAsked = null;
             if (raise)
                 FlockEvents.InvokeEach(Ended, reason, $"{nameof(FlockMultiplayerSession)}.{nameof(Ended)}");
         }

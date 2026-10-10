@@ -443,6 +443,7 @@ namespace Flock.Tests.PlayMode
                 Assert.AreEqual("192.168.1.20", found.Address);
                 Assert.AreEqual(7777, found.Port);
                 Assert.IsTrue(found.IsLan);
+                Assert.IsTrue(found.SharesTheHostsPublicAddress);
             });
             Assert.AreEqual(1, _stun.Requests, "This device's own public address was asked");
         }
@@ -454,6 +455,7 @@ namespace Flock.Tests.PlayMode
             {
                 Assert.AreEqual("198.51.100.4", found.Address);
                 Assert.IsFalse(found.IsLan);
+                Assert.IsFalse(found.SharesTheHostsPublicAddress);
             });
         }
 
@@ -464,6 +466,7 @@ namespace Flock.Tests.PlayMode
             {
                 Assert.AreEqual(HostsPublicAddress, found.Address, "Not the LAN address: this device may be elsewhere");
                 Assert.IsFalse(found.IsLan);
+                Assert.IsFalse(found.SharesTheHostsPublicAddress);
             }, stunSilent: true);
             Assert.AreEqual(1, _stun.Requests, "Asked, and no answer came");
         }
@@ -474,7 +477,8 @@ namespace Flock.Tests.PlayMode
             yield return Found(Direct("192.168.1.20", 7777, publicAddress: null), found =>
             {
                 Assert.AreEqual("192.168.1.20", found.Address);
-                Assert.IsTrue(found.IsLan);
+                Assert.IsTrue(found.IsLan, "The only address the host knew");
+                Assert.IsFalse(found.SharesTheHostsPublicAddress, "Which says nothing about this device's network");
             });
             Assert.AreEqual(0, _stun.Requests, "Nothing to compare, so nothing asked");
         }

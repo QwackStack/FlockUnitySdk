@@ -3,37 +3,41 @@ using Flock.Exceptions;
 
 namespace Flock.Providers
 {
-    /// <summary>Why the relay cannot be used, one reason each, so the netcode that uses it can say what went wrong.</summary>
-    internal static class FlockRelayFailure
+    /// <summary>Why Flock's relay could not be used (FlockNetcodeStartResult.RelayFailureReason). An open set: compare with these and keep a default.</summary>
+    public static class FlockRelayFailure
     {
         /// <summary>A web player cannot send UDP.</summary>
-        internal const string NotOnThisPlatform = "relay_not_on_this_platform";
+        public const string NotOnThisPlatform = "relay_not_on_this_platform";
         /// <summary>Flock listed no relay: switched off for this game in the dashboard, or none set up.</summary>
-        internal const string NotOffered = "relay_not_offered";
+        public const string NotOffered = "relay_not_offered";
+        /// <summary>The host takes no players through the relay (its FlockNetcodeOptions.Relay is Never, or its relay could not be opened).</summary>
+        public const string NotOfferedByTheHost = "relay_not_offered_by_host";
+        /// <summary>Flock does not list, for this player, the relay server the host uses.</summary>
+        public const string ServerNotListed = "relay_server_not_listed";
         /// <summary>The studio's relay is paused until its bill is paid.</summary>
-        internal const string Paused = "relay_paused";
+        public const string Paused = "relay_paused";
         /// <summary>The player asked Flock for relay logins more than 12 times in a minute.</summary>
-        internal const string TooManyLogins = "relay_too_many_logins";
+        public const string TooManyLogins = "relay_too_many_logins";
         /// <summary>Flock says the player has no seat in the session.</summary>
-        internal const string NotInSession = "relay_not_in_session";
+        public const string NotInSession = "relay_not_in_session";
         /// <summary>Flock did not answer the request for relay logins.</summary>
-        internal const string FlockUnreachable = "flock_unreachable";
+        public const string FlockUnreachable = "flock_unreachable";
         /// <summary>Flock refused the request for relay logins for another reason.</summary>
-        internal const string LoginsRefused = "relay_logins_refused";
+        public const string LoginsRefused = "relay_logins_refused";
         /// <summary>The relay server's name could not be looked up, or the server did not answer.</summary>
-        internal const string Unreachable = "relay_unreachable";
+        public const string Unreachable = "relay_unreachable";
         /// <summary>The relay refused the login Flock minted.</summary>
-        internal const string WrongLogin = "relay_wrong_login";
+        public const string WrongLogin = "relay_wrong_login";
         /// <summary>The relay has no room for another address.</summary>
-        internal const string Full = "relay_full";
+        public const string Full = "relay_full";
         /// <summary>The relay refused to let packets in from the host's relay address.</summary>
-        internal const string OpenRefused = "relay_open_refused";
+        public const string OpenRefused = "relay_open_refused";
         /// <summary>The relay refused a request for another reason.</summary>
-        internal const string Refused = "relay_refused";
+        public const string Refused = "relay_refused";
         /// <summary>The relay let the address go: a renewal was refused, or none was answered before it lapsed.</summary>
-        internal const string Lost = "relay_lost";
+        public const string Lost = "relay_lost";
         /// <summary>The relay connection was closed by its owner (the session's end) before the call.</summary>
-        internal const string Closed = "relay_closed";
+        public const string Closed = "relay_closed";
     }
 
     /// <summary>The relay cannot be used, for <see cref="Reason"/>.</summary>

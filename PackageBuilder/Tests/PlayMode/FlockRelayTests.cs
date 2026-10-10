@@ -294,7 +294,7 @@ namespace Flock.Tests.PlayMode
         // ---- packets ----
 
         [UnityTest]
-        public IEnumerator HostAndPlayer_TradePackets_OnChannelsOnceBound()
+        public IEnumerator HostAndPlayer_TradePackets_OnChannelsOnceAsked()
         {
             List<FlockRelayConnection> pair = new List<FlockRelayConnection>();
             yield return HostAndPlayer(pair);
@@ -306,7 +306,11 @@ namespace Flock.Tests.PlayMode
             Assert.AreEqual(player.Address, heard[0], "The host hears the player from the player's relay address");
             yield return Delivered(host, heard[0], player, "hello player", heard);
             Assert.AreEqual(host.Address, heard[1], "The player hears the host from the host's relay address");
+            yield return RealSeconds(0.3f);
+            Assert.AreEqual(0, _relay.SeenRequests(FakeRelayServer.MethodChannelBind).Count, "Sending and hearing bind no channel");
 
+            player.KeepChannelTo(host.Address);
+            host.KeepChannelTo(player.Address);
             yield return FlockTestWait.Until(() => _relay.SeenRequests(FakeRelayServer.MethodChannelBind).Count >= 2, "each side bound a channel to the other", 3f);
             yield return RealSeconds(0.3f);
             int framesBefore = _relay.Count(0xFFFF, 0);
@@ -385,6 +389,8 @@ namespace Flock.Tests.PlayMode
             List<FlockRelayPeer> heard = new List<FlockRelayPeer>();
             yield return Delivered(player, host.Address, host, "warm up", heard);
             yield return Delivered(host, player.Address, player, "warm up back", heard);
+            player.KeepChannelTo(host.Address);
+            host.KeepChannelTo(player.Address);
             yield return FlockTestWait.Until(() => _relay.SeenRequests(FakeRelayServer.MethodChannelBind).Count >= 2, "channels bound", 3f);
             yield return RealSeconds(0.3f);
 
@@ -477,6 +483,8 @@ namespace Flock.Tests.PlayMode
             List<FlockRelayConnection> pair = new List<FlockRelayConnection>();
             yield return HostAndPlayer(pair, timing);
             List<FlockRelayPeer> heard = new List<FlockRelayPeer>();
+            pair[1].KeepChannelTo(pair[0].Address);
+            pair[0].KeepChannelTo(pair[1].Address);
             yield return Delivered(pair[1], pair[0].Address, pair[0], "bind", heard);
             yield return Delivered(pair[0], pair[1].Address, pair[1], "bind back", heard);
             yield return RealSeconds(4.5f);
@@ -554,15 +562,49 @@ namespace Flock.Tests.PlayMode
         }
 
         [UnityTest]
-        public IEnumerator Host_BindsAChannel_ToAPlayerItHearsFirst()
+        public IEnumerator Host_BindsNoChannel_ToAPeerItHearsOrAnswers_UntilAsked()
         {
             List<FlockRelayConnection> pair = new List<FlockRelayConnection>();
             yield return HostAndPlayer(pair);
             List<FlockRelayPeer> heard = new List<FlockRelayPeer>();
-            yield return Delivered(pair[1], pair[0].Address, pair[0], "the host only listens", heard);
+            yield return Delivered(pair[1], pair[0].Address, pair[0], "from someone on the relay", heard);
+            yield return Delivered(pair[0], heard[0], pair[1], "an answer", heard);
+            yield return RealSeconds(0.5f);
+            Assert.AreEqual(0, _relay.SeenRequests(FakeRelayServer.MethodChannelBind).Count, "Strangers on the relay get no channel: only a peer known to be a player");
 
-            yield return FlockTestWait.Until(() => _relay.SeenRequests(FakeRelayServer.MethodChannelBind).Count >= 2, "the host bound a channel to the player it heard", 3f);
-            Assert.AreEqual(2, _relay.SeenRequests(FakeRelayServer.MethodChannelBind).Select(seen => seen.ClientPort).Distinct().Count(), "One from each side");
+            pair[0].KeepChannelTo(heard[0]);
+            yield return FlockTestWait.Until(() => _relay.SeenRequests(FakeRelayServer.MethodChannelBind).Count >= 1, "the host bound a channel once asked", 3f);
+            Assert.AreEqual(pair[0].LocalPortForTesting, _relay.SeenRequests(FakeRelayServer.MethodChannelBind)[0].ClientPort, "From the host");
+        }
+
+        [UnityTest]
+        public IEnumerator Arrivals_HandedOver_ReachTheReceiver_AndAreKeptAgainOnceItStops()
+        {
+            List<FlockRelayConnection> pair = new List<FlockRelayConnection>();
+            yield return HostAndPlayer(pair);
+            List<string> handed = new List<string>();
+            Action<FlockRelayPeer, byte[], int, int> receiver = (from, packet, offset, count) =>
+            {
+                lock (handed)
+                    handed.Add(from + " " + System.Text.Encoding.UTF8.GetString(packet, offset, count));
+            };
+            Action<FlockRelayPeer, byte[], int, int> another = (from, packet, offset, count) => { };
+            Assert.IsTrue(pair[0].HandArrivalsTo(receiver));
+            Assert.IsFalse(pair[0].HandArrivalsTo(another), "One receiver at a time");
+            byte[] packet1 = System.Text.Encoding.UTF8.GetBytes("handed");
+            Assert.IsTrue(pair[1].Send(pair[0].Address, packet1, 0, packet1.Length));
+            yield return FlockTestWait.Until(() => { lock (handed) return handed.Count == 1; }, "the receiver was handed the packet", 3f);
+            Assert.AreEqual(pair[1].Address + " handed", handed[0]);
+            Assert.IsFalse(pair[0].TryReceive(new byte[FlockRelayConnection.MostBytesInAPacket], out _, out _), "Nothing kept while handed over");
+
+            pair[0].StopHandingArrivalsTo(another);
+            Assert.IsTrue(pair[0].HandsArrivalsOverForTesting, "Only the receiver itself stops it");
+            Assert.IsFalse(pair[0].KeepsPacketsForTesting, "No packet store made while every arrival is handed over");
+            pair[0].StopHandingArrivalsTo(receiver);
+            List<FlockRelayPeer> heard = new List<FlockRelayPeer>();
+            yield return Delivered(pair[1], pair[0].Address, pair[0], "kept again", heard);
+            Assert.AreEqual(1, handed.Count);
+            Assert.IsTrue(pair[0].KeepsPacketsForTesting, "Made when the first packet is kept");
         }
 
         // ---- opening to the host ----
@@ -683,9 +725,9 @@ namespace Flock.Tests.PlayMode
         {
             List<FlockRelayConnection> opened = new List<FlockRelayConnection>();
             yield return Opened(A, opened);
-            System.Net.Sockets.Socket socket = (System.Net.Sockets.Socket)typeof(FlockRelayConnection)
+            FlockRelaySocket socket = (FlockRelaySocket)typeof(FlockRelayConnection)
                 .GetField("_socket", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).GetValue(opened[0]);
-            Assert.IsFalse(socket.Blocking, "A full send buffer drops a packet rather than holding the sender");
+            Assert.IsFalse(socket.BlocksForTesting, "A full send buffer drops a packet rather than holding the sender");
         }
 
         [UnityTest]
@@ -758,6 +800,37 @@ namespace Flock.Tests.PlayMode
             Task<FlockRelayConnection> again = held[0].OpenRelayAsync();
             yield return Done(again, "asked again");
             Assert.AreSame(first.Result, again.Result, "An open relay is handed back as it is");
+        }
+
+        [UnityTest]
+        public IEnumerator OpenRelayOn_TheHostsServer_ReplacesARelayOpenOnAnother_AndKeepsOneOnIt()
+        {
+            using (FakeRelayServer hosts = new FakeRelayServer())
+            {
+                FlockMultiplayerProvider multiplayer = SignedInAs(A);
+                _server.RelayUrls.Add(hosts.Url);
+                List<FlockMultiplayerSession> held = new List<FlockMultiplayerSession>();
+                yield return Hosted(multiplayer, held);
+                Task<FlockRelayConnection> anyServer = held[0].OpenRelayAsync();
+                yield return Done(anyServer, "opened on the first server Flock lists");
+                Assert.AreEqual(1, _relay.Reservations, "Precondition: on the first");
+
+                string hostsServer = "127.0.0.1:" + hosts.Port;
+                Task<FlockRelayConnection> onTheHosts = held[0].OpenRelayOnAsync(hostsServer);
+                yield return Done(onTheHosts, "opened on the host's server");
+                Assert.IsFalse(onTheHosts.IsFaulted, onTheHosts.Exception?.InnerException?.Message);
+                Assert.AreEqual(hostsServer, onTheHosts.Result.Server);
+                Assert.IsTrue(anyServer.Result.HasStopped, "The relay on the other server made way");
+                yield return FlockTestWait.Until(() => _relay.Releases == 1, "and was given back", 3f);
+
+                Task<FlockRelayConnection> again = held[0].OpenRelayOnAsync(hostsServer.ToUpperInvariant());
+                yield return Done(again, "asked again");
+                Assert.AreSame(onTheHosts.Result, again.Result, "One already on the host's server is handed back as it is");
+                Task<FlockRelayConnection> anyAgain = held[0].OpenRelayAsync();
+                yield return Done(anyAgain, "asked for any server");
+                Assert.AreSame(onTheHosts.Result, anyAgain.Result, "Any server will do for a caller who names none");
+                Assert.AreEqual(1, hosts.Reservations);
+            }
         }
 
         [UnityTest]
