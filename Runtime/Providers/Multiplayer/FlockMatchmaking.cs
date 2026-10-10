@@ -161,7 +161,7 @@ namespace Flock.Providers
                 string queueId = await _findQueueId(queueName, cancellationToken);
                 RequireStillCurrent(signInNumber);
                 Task<TicketRecord> making = MakeTicketAsync(signInNumber, playerId, party?.Id, queueId, options?.Attributes, cancellationToken);
-                if (!await FinishedBeforeGivenUpAsync(making, cancellationToken))
+                if (!await FlockWaiting.FinishedBeforeGivenUpAsync(making, cancellationToken))
                 {
                     FlockMultiplayerSessions.LetRun(CancelOnceMadeAsync(signInNumber, making));
                     cancellationToken.ThrowIfCancellationRequested();
@@ -270,7 +270,7 @@ namespace Flock.Providers
             search.HasCaller = true;
             try
             {
-                if (!await FinishedBeforeGivenUpAsync(search.Finished.Task, cancellationToken))
+                if (!await FlockWaiting.FinishedBeforeGivenUpAsync(search.Finished.Task, cancellationToken))
                 {
                     await CancelSearchAsync(search);
                     cancellationToken.ThrowIfCancellationRequested();
@@ -512,17 +512,6 @@ namespace Flock.Providers
                 return ticket.CancelReason == PartyChangedReason ? FlockMatchmakingOutcome.PartyChanged : FlockMatchmakingOutcome.Cancelled;
             // A status the server added: the search ended as the server names it.
             return ticket.Status;
-        }
-
-        // No RunContinuationsAsynchronously: Task.WhenAny over such a source never finished in a WebGL player (measured).
-        private static async Task<bool> FinishedBeforeGivenUpAsync(Task work, CancellationToken cancellationToken)
-        {
-            if (work.IsCompleted || !cancellationToken.CanBeCanceled)
-                return true;
-            TaskCompletionSource<bool> givenUp = new TaskCompletionSource<bool>();
-            using (cancellationToken.Register(() => givenUp.TrySetResult(true)))
-                await Task.WhenAny(work, givenUp.Task);
-            return work.IsCompleted;
         }
 
         private static async Task<FlockMatchmakingResult> ResultOrNoneAsync(Task<FlockMatchmakingResult> finished)

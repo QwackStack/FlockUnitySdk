@@ -47,6 +47,9 @@ namespace Flock.Providers
         internal FlockMultiplayerSession Held => _held;
         internal FlockDirectAddresses DirectAddresses => _directAddresses;
 
+        /// <summary>How the relay's steps are timed; a test shortens them.</summary>
+        internal FlockRelayConnection.Timing RelayTiming { get; } = new FlockRelayConnection.Timing();
+
         internal void SetConnectionWaitIntervalForTesting(TimeSpan interval) => _connectionWaitInterval = interval;
 
         internal async Task<FlockMultiplayerSession> HostAsync(int? maxPlayers, IReadOnlyDictionary<string, object> data, bool sameVersionOnly, CancellationToken cancellationToken)
@@ -197,6 +200,79 @@ namespace Flock.Providers
             RequireRunning(session);
             VerifiedJoinTokenRecord verified = await AskAsync(session, () => _requests.VerifyJoinTokenAsync(session.SignInNumber, session.Id, token, cancellationToken), cancellationToken);
             return verified.PlayerId;
+        }
+
+        /// <summary>The player's address on Flock's relay for this session, opened once and shared by every caller until it fails or the session ends, which closes it. A caller's token only stops its own wait. Fails with a <see cref="FlockRelayException"/> naming why.</summary>
+        internal async Task<FlockRelayConnection> OpenRelayAsync(FlockMultiplayerSession session, CancellationToken cancellationToken)
+        {
+            if (Application.platform == RuntimePlatform.WebGLPlayer)
+                throw new FlockRelayException(FlockRelayFailure.NotOnThisPlatform, "A web player cannot send UDP, so it cannot use Flock's relay.");
+            RequireRunning(session);
+            Task<FlockRelayConnection> opening = session.RelayOpening;
+            if (opening == null || HasFailed(opening))
+            {
+                session.Relay?.Close();
+                session.Relay = null;
+                opening = OpenRelayForAsync(session);
+                LetRun(opening);
+                session.RelayOpening = opening;
+            }
+            if (!await FlockWaiting.FinishedBeforeGivenUpAsync(opening, cancellationToken))
+                throw new OperationCanceledException(cancellationToken);
+            return await opening;
+        }
+
+        // An opening that failed, or one whose relay has since stopped, opens again on the next call.
+        private static bool HasFailed(Task<FlockRelayConnection> opening)
+            => opening.IsFaulted || opening.IsCanceled || (opening.Status == TaskStatus.RanToCompletion && opening.Result.HasStopped);
+
+        // Logins named with the session, then each relay server Flock lists in turn; the session's end stops it at any step.
+        private async Task<FlockRelayConnection> OpenRelayForAsync(FlockMultiplayerSession session)
+        {
+            CancellationToken stop = session.RelayStopToken;
+            RelayCredentialsRecord answer;
+            try
+            {
+                answer = await _requests.RelayLoginsAsync(session.SignInNumber, session.Id, stop);
+            }
+            catch (FlockException failure)
+            {
+                throw RelayLoginsRefused(failure);
+            }
+            RequireStillCurrent(session.SignInNumber);
+            stop.ThrowIfCancellationRequested();
+            if (answer.RelayPaused)
+                throw new FlockRelayException(FlockRelayFailure.Paused, "Flock paused this studio's relay until its bill is paid; a direct connection still works.");
+            List<FlockRelayLogin> logins = FlockRelayLogin.InAnswer(answer);
+            if (logins.Count == 0)
+                throw new FlockRelayException(FlockRelayFailure.NotOffered, "Flock listed no relay for this game: it is switched off for the game in the Flock dashboard, or no relay is set up.");
+            FlockRelayException first = null;
+            foreach (FlockRelayLogin login in logins)
+            {
+                try
+                {
+                    FlockRelayConnection connection = await FlockRelayConnection.OpenAsync(login, RelayTiming, _client.Logger, stop);
+                    session.Relay = connection;
+                    return connection;
+                }
+                catch (FlockRelayException failure)
+                {
+                    // The first server Flock lists is its main one, so its reason is the one told when none opens.
+                    first = first ?? failure;
+                }
+            }
+            throw first;
+        }
+
+        private static FlockRelayException RelayLoginsRefused(FlockException failure)
+        {
+            if (failure.ErrorCode == FlockErrorCode.MultiplayerMintRateLimited)
+                return new FlockRelayException(FlockRelayFailure.TooManyLogins, "Flock refused relay logins: more than 12 were asked for this player in a minute.", failure);
+            if (IsOutOfTheSession(failure))
+                return new FlockRelayException(FlockRelayFailure.NotInSession, "Flock refused relay logins: the player has no seat in this session.", failure);
+            if (!failure.StatusCode.HasValue)
+                return new FlockRelayException(FlockRelayFailure.FlockUnreachable, $"Flock did not answer the request for relay logins: {failure.Message}", failure);
+            return new FlockRelayException(FlockRelayFailure.LoginsRefused, $"Flock refused relay logins: {failure.Message}", failure);
         }
 
         /// <summary>Ends the session of a sign-in that has ended; run once a frame.</summary>

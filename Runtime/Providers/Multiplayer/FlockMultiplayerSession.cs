@@ -254,6 +254,9 @@ namespace Flock.Providers
         /// <summary>Checks a token a connecting player sent and returns that player's id; refused with <c>MultiplayerInvalidJoinToken</c> when it is not good for this session. Host only.</summary>
         public Task<string> VerifyJoinTokenAsync(string token, CancellationToken cancellationToken = default) => _owner.VerifyJoinTokenAsync(this, token, cancellationToken);
 
+        /// <summary>This player's address on Flock's relay for the session, opened once and closed when the session ends; fails with a <see cref="FlockRelayException"/> naming why.</summary>
+        internal Task<FlockRelayConnection> OpenRelayAsync(CancellationToken cancellationToken = default) => _owner.OpenRelayAsync(this, cancellationToken);
+
         // Takes a newer reading of the session, then says what changed; events are raised once everything is in place.
         internal void Update(SessionRecord session)
         {
@@ -277,9 +280,22 @@ namespace Flock.Providers
         // The last reading of a session that has ended for the player: kept for what it says, without raising changes.
         internal void TakeFinalReading(SessionRecord session) => CopyFrom(session);
 
+        // The session's relay connection: one at a time, opened by the sessions owner, closed when the session ends.
+        internal Task<FlockRelayConnection> RelayOpening { get; set; }
+        internal FlockRelayConnection Relay { get; set; }
+        private CancellationTokenSource _relayStop;
+
+        /// <summary>Cancelled when the session ends, which stops a relay still opening.</summary>
+        internal CancellationToken RelayStopToken => (_relayStop ?? (_relayStop = new CancellationTokenSource())).Token;
+
         internal void End(string reason, bool raise)
         {
             _endReason = reason;
+            // The relay is given back before anyone hears of the end, so a handler finds it closed; an ended session keeps none of it.
+            _relayStop?.Cancel();
+            Relay?.Close();
+            Relay = null;
+            RelayOpening = null;
             if (raise)
                 FlockEvents.InvokeEach(Ended, reason, $"{nameof(FlockMultiplayerSession)}.{nameof(Ended)}");
         }

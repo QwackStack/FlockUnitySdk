@@ -58,12 +58,14 @@ namespace Protokite.Playtest
 
         private const string LogPrefix = "[Protokite Playtest] ";
         private static readonly TimeSpan LongestWaitForAnAnswer = TimeSpan.FromSeconds(10);
+        private static readonly TimeSpan ShortestWait = TimeSpan.FromMilliseconds(1);
         private static readonly object CheckLock = new object();
         private static List<ProtokitePlaytestEncoderFound> _found;
         private static string _whyNoneFound;
         private static bool _checked;
         private static Thread _looking;
-        private static DateTime _stopWaitingForTheAnswerAt;
+        // A ClockReadingAfter reading; 0 is long past.
+        private static long _stopWaitingForTheAnswerAt;
         // Counts launches, so a check an earlier launch started never answers this one.
         private static int _launch;
         private static bool _reportedNoVideo;
@@ -76,6 +78,9 @@ namespace Protokite.Playtest
 
         /// <summary>How long the platform is given to answer, when a test sets it; 10 seconds otherwise.</summary>
         internal static TimeSpan? LongestWaitForAnAnswerForTesting;
+
+        /// <summary>Stands in for one wait on the asking thread, so a test can act out a wait that wakes before its time.</summary>
+        internal static Action<Thread, TimeSpan> WaitForTheAnswerForTesting;
 
         /// <summary>Makes this process decide as an Android player does, so the editor's tests can drive a phone's rules.</summary>
         internal static bool ActAsAndroidForTesting;
@@ -122,8 +127,16 @@ namespace Protokite.Playtest
         internal static List<ProtokitePlaytestEncoderFound> EncodersOnThisPc(out string whyNone)
         {
             Thread looking = StartLookingForEncoders();
-            if (looking != null)
-                looking.Join(TimeLeftToAnswer());
+            // A wait can wake before its time, so it ends only once the platform answered or the clock FinishedLookingForEncoders reads says the time is up.
+            TimeSpan left;
+            while (looking != null && looking.IsAlive && (left = TimeLeftToAnswer()) > TimeSpan.Zero)
+            {
+                if (WaitForTheAnswerForTesting != null)
+                    WaitForTheAnswerForTesting(looking, left);
+                else
+                    // A join waits whole milliseconds, so the last part of one is waited as one rather than spun through.
+                    looking.Join(left < ShortestWait ? ShortestWait : left);
+            }
             lock (CheckLock)
             {
                 whyNone = _checked ? _whyNoneFound : OnAndroid ? NoAnswerInTimeOnThisPhone : NoAnswerInTime;
@@ -138,9 +151,19 @@ namespace Protokite.Playtest
         {
             lock (CheckLock)
             {
-                TimeSpan left = _stopWaitingForTheAnswerAt - DateTime.UtcNow;
-                return left > TimeSpan.Zero ? left : TimeSpan.Zero;
+                return TimeUntil(_stopWaitingForTheAnswerAt);
             }
+        }
+
+        // Stopwatch readings, which setting the system clock does not move.
+        private static long ClockReadingAfter(TimeSpan wait)
+            => System.Diagnostics.Stopwatch.GetTimestamp() + (long)(wait.TotalSeconds * System.Diagnostics.Stopwatch.Frequency);
+
+        private static TimeSpan TimeUntil(long clockReading)
+        {
+            long left = clockReading - System.Diagnostics.Stopwatch.GetTimestamp();
+            // Ticks rather than seconds, since TimeSpan.FromSeconds rounds to a whole millisecond on older runtimes.
+            return left > 0 ? TimeSpan.FromTicks((long)(left * (double)TimeSpan.TicksPerSecond / System.Diagnostics.Stopwatch.Frequency)) : TimeSpan.Zero;
         }
 
         /// <summary>Starts asking the platform which encoders this machine has, on a thread of its own, unless that is done or under way; the thread asking, or null once answered.</summary>
@@ -157,7 +180,7 @@ namespace Protokite.Playtest
                 int launch = _launch;
                 bool onAndroid = OnAndroid;
                 Func<KeyValuePair<List<ProtokitePlaytestEncoderFound>, string>> lookForTesting = LookForEncodersForTesting;
-                _stopWaitingForTheAnswerAt = DateTime.UtcNow + (LongestWaitForAnAnswerForTesting ?? LongestWaitForAnAnswer);
+                _stopWaitingForTheAnswerAt = ClockReadingAfter(LongestWaitForAnAnswerForTesting ?? LongestWaitForAnAnswer);
                 _looking = new Thread(() =>
                 {
                     List<ProtokitePlaytestEncoderFound> found;
@@ -333,7 +356,7 @@ namespace Protokite.Playtest
                 _found = null;
                 _whyNoneFound = null;
                 _looking = null;
-                _stopWaitingForTheAnswerAt = DateTime.MinValue;
+                _stopWaitingForTheAnswerAt = 0;
                 _reportedNoVideo = false;
             }
         }

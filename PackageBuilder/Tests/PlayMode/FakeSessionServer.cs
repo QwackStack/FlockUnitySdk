@@ -73,6 +73,10 @@ namespace Flock.Tests.PlayMode
         // The STUN servers the relay route lists, after a relay entry with credentials, as the backend answers.
         internal readonly List<string> StunUrls = new List<string>();
 
+        // The relay entry's addresses (none: the relay switched off for the game), and whether the studio's relay is paused.
+        internal readonly List<string> RelayUrls = new List<string> { "turn:relay.test:3479?transport=udp", "turn:relay.test:3479?transport=tcp" };
+        internal bool RelayPaused;
+
         private readonly object _lock = new object();
         private readonly List<Session> _sessions = new List<Session>();
         private readonly Dictionary<string, Queue<Held>> _holds = new Dictionary<string, Queue<Held>>();
@@ -303,18 +307,27 @@ namespace Flock.Tests.PlayMode
                 return Refused(401, "player.missing_token");
             if (route == RelayCredentials)
             {
-                JArray servers = new JArray
+                // A session named must be live with the player seated (404 otherwise); a paused or switched-off relay lists STUN alone.
+                string named = body?["session_id"]?.Type == JTokenType.String ? body["session_id"].Value<string>() : null;
+                if (named != null)
                 {
-                    new JObject
+                    Session seatedIn = _sessions.FirstOrDefault(each => each.Id == named);
+                    if (seatedIn == null || !seatedIn.Live || !seatedIn.Seats.Any(seat => seat.PlayerId == player && seat.Status == "joined"))
+                        return Refused(404, "multiplayer.session_not_found");
+                }
+                JArray servers = new JArray();
+                if (!RelayPaused && RelayUrls.Count > 0)
+                {
+                    servers.Add(new JObject
                     {
-                        ["urls"] = new JArray("turn:relay.test:3479?transport=udp", "turn:relay.test:3479?transport=tcp"),
+                        ["urls"] = new JArray(RelayUrls.ToArray()),
                         ["username"] = "1760000000:game:" + player,
                         ["credential"] = "minted-for-the-test",
-                    },
-                };
+                    });
+                }
                 if (StunUrls.Count > 0)
                     servers.Add(new JObject { ["urls"] = new JArray(StunUrls.ToArray()), ["username"] = null, ["credential"] = null });
-                return Answer(new JObject { ["ttl"] = 600, ["ice_servers"] = servers, ["relay_paused"] = false });
+                return Answer(new JObject { ["ttl"] = 600, ["ice_servers"] = servers, ["relay_paused"] = RelayPaused });
             }
             string sessionId = path.Length > "multiplayer/sessions/".Length ? path.Substring("multiplayer/sessions/".Length).Split('/')[0] : null;
             Session session = _sessions.FirstOrDefault(each => each.Id == sessionId);

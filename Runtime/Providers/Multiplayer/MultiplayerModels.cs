@@ -175,6 +175,13 @@ namespace Flock.Providers
     {
     }
 
+    // Relay logins for a session name it, so Flock counts the relay's use against the player's seat there.
+    internal sealed class RelayLoginsBody
+    {
+        [JsonProperty("session_id")]
+        public string SessionId { get; set; }
+    }
+
     internal sealed class JoinTokenRecord
     {
         [JsonProperty("token")]

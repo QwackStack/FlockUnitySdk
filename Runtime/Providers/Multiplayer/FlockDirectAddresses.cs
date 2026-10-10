@@ -15,11 +15,11 @@ namespace Flock.Providers
         // A binding request answers in about 100 ms; a server silent this long is taken as out of reach.
         internal static readonly TimeSpan DefaultStunWait = TimeSpan.FromSeconds(2);
         private const int DefaultStunPort = 3478;
-        private const uint StunMagicCookie = 0x2112A442;
-        private const ushort BindingRequest = 0x0001;
-        private const ushort BindingSuccess = 0x0101;
+        private const uint StunMagicCookie = FlockRelayWire.MagicCookie;
+        private const ushort BindingRequest = FlockRelayWire.BindingMethod | FlockRelayWire.RequestClass;
+        private const ushort BindingSuccess = FlockRelayWire.BindingMethod | FlockRelayWire.SuccessClass;
         private const ushort MappedAddress = 0x0001;
-        private const ushort XorMappedAddress = 0x0020;
+        private const ushort XorMappedAddress = FlockRelayWire.XorMappedAddressAttribute;
         // Where the LAN address is routed toward when no STUN server is known: an address on the internet, sent nothing.
         private static readonly IPAddress InternetAddress = new IPAddress(new byte[] { 8, 8, 8, 8 });
 
@@ -53,7 +53,8 @@ namespace Flock.Providers
             string publicAddress = null;
             foreach (StunServer server in servers)
             {
-                IPAddress serverAddress = await ResolveAsync(server.Host, cancellationToken);
+                // A name lookup takes no token and can hang for as long as the network's resolver does, so it gets the STUN wait too.
+                IPAddress serverAddress = await FlockNameLookup.FindIpv4Async(server.Host, _stunWait, _lookUpForTesting, cancellationToken);
                 if (serverAddress == null)
                     continue;
                 firstServer = firstServer ?? serverAddress;
@@ -106,37 +107,14 @@ namespace Flock.Providers
             return found;
         }
 
-        // A name lookup takes no token and can hang for as long as the network's resolver does, so it gets the STUN wait too.
-        private async Task<IPAddress> ResolveAsync(string host, CancellationToken cancellationToken)
-        {
-            if (IPAddress.TryParse(host, out IPAddress literal))
-                return literal.AddressFamily == AddressFamily.InterNetwork ? literal : null;
-            Task<IPAddress[]> looking = _lookUpForTesting != null ? _lookUpForTesting(host) : Dns.GetHostAddressesAsync(host);
-            FlockMultiplayerSessions.LetRun(looking);
-            using (CancellationTokenSource stopWaiting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
-            {
-                Task first = await Task.WhenAny(looking, FlockWaiting.DelayAsync(_stunWait, stopWaiting.Token));
-                stopWaiting.Cancel();
-                cancellationToken.ThrowIfCancellationRequested();
-                if (first != looking || looking.IsFaulted || looking.IsCanceled)
-                    return null;
-            }
-            foreach (IPAddress address in looking.Result)
-            {
-                if (address.AddressFamily == AddressFamily.InterNetwork)
-                    return address;
-            }
-            return null;
-        }
-
         // One binding request; its answer names the address and port the server saw this device's request come from.
         private async Task<string> AskPublicAddressAsync(IPEndPoint server, CancellationToken cancellationToken)
         {
             byte[] transaction = new byte[12];
             Array.Copy(Guid.NewGuid().ToByteArray(), transaction, 12);
             byte[] request = new byte[20];
-            WriteUInt16(request, 0, BindingRequest);
-            WriteUInt32(request, 4, StunMagicCookie);
+            FlockRelayWire.WriteUInt16(request, 0, BindingRequest);
+            FlockRelayWire.WriteUInt32(request, 4, StunMagicCookie);
             Array.Copy(transaction, 0, request, 8, 12);
 
             using (UdpClient udp = new UdpClient(AddressFamily.InterNetwork))
@@ -166,20 +144,20 @@ namespace Flock.Providers
         // The XOR-MAPPED-ADDRESS (or the older MAPPED-ADDRESS) of a binding success that answers this transaction; null for anything else.
         internal static string PublicAddressInStunAnswer(byte[] answer, byte[] transaction)
         {
-            if (answer == null || answer.Length < 20 || ReadUInt16(answer, 0) != BindingSuccess || ReadUInt32(answer, 4) != StunMagicCookie)
+            if (answer == null || answer.Length < 20 || FlockRelayWire.ReadUInt16(answer, 0) != BindingSuccess || FlockRelayWire.ReadUInt32(answer, 4) != StunMagicCookie)
                 return null;
             for (int i = 0; i < 12; i++)
             {
                 if (answer[8 + i] != transaction[i])
                     return null;
             }
-            int end = Math.Min(answer.Length, 20 + ReadUInt16(answer, 2));
+            int end = Math.Min(answer.Length, 20 + FlockRelayWire.ReadUInt16(answer, 2));
             string plain = null;
             int position = 20;
             while (position + 4 <= end)
             {
-                ushort kind = ReadUInt16(answer, position);
-                int length = ReadUInt16(answer, position + 2);
+                ushort kind = FlockRelayWire.ReadUInt16(answer, position);
+                int length = FlockRelayWire.ReadUInt16(answer, position + 2);
                 int value = position + 4;
                 if (value + length > end)
                     break;
@@ -188,7 +166,7 @@ namespace Flock.Providers
                 {
                     if (kind == XorMappedAddress)
                     {
-                        uint masked = ReadUInt32(answer, value + 4) ^ StunMagicCookie;
+                        uint masked = FlockRelayWire.ReadUInt32(answer, value + 4) ^ StunMagicCookie;
                         return new IPAddress(new[] { (byte)(masked >> 24), (byte)(masked >> 16), (byte)(masked >> 8), (byte)masked }).ToString();
                     }
                     if (kind == MappedAddress && plain == null)
@@ -217,24 +195,6 @@ namespace Flock.Providers
             {
                 return null;
             }
-        }
-
-        private static ushort ReadUInt16(byte[] data, int at) => (ushort)((data[at] << 8) | data[at + 1]);
-
-        private static uint ReadUInt32(byte[] data, int at) => ((uint)data[at] << 24) | ((uint)data[at + 1] << 16) | ((uint)data[at + 2] << 8) | data[at + 3];
-
-        private static void WriteUInt16(byte[] data, int at, ushort value)
-        {
-            data[at] = (byte)(value >> 8);
-            data[at + 1] = (byte)value;
-        }
-
-        private static void WriteUInt32(byte[] data, int at, uint value)
-        {
-            data[at] = (byte)(value >> 24);
-            data[at + 1] = (byte)(value >> 16);
-            data[at + 2] = (byte)(value >> 8);
-            data[at + 3] = (byte)value;
         }
 
         internal sealed class DeviceAddresses

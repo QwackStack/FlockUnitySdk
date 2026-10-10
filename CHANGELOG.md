@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.79.0]
+
+The groundwork for Flock's relay, which connects players on different networks: the SDK can now reserve an address on the relay
+for a session, open it to the host's relay address, and send and receive packets through it. Nothing public uses it yet; the next
+release plugs it into Netcode for GameObjects.
+
+### Added
+- An internal relay connection for a session, over UDP: logins Flock mints for the session's seat, the relay server's name looked up
+  within 5 s, an address reserved (answering the relay's login challenge, and its stale nonce with the new one; a request lost on
+  the way is sent again under its transaction, and given up on after 5 s), opened to the host's relay address, and kept alive on a
+  thread of its own (the address, the opening and each channel renewed before the relay lets them go). Packets ride in 4-byte
+  channel frames once a channel is bound to the peer; sending and taking one makes no garbage and never holds the game's thread.
+  The session's end gives the address back before `Ended` is raised, answering a stale nonce on the way. Each failure has a reason
+  of its own: a web player, a relay paused for the studio's bill, none offered for the game, too many logins in a minute, no seat
+  in the session, Flock or the relay out of reach, a refused login, a full relay, a refused opening, a lost relay.
+
+Released together with the Protokite Playtest's fix to its check of which video encoders the machine has (see its changelog).
+
 ## [1.78.0]
 
 Two multiplayer samples, each one component to drop on an empty GameObject: play with friends by a session's code, or quick

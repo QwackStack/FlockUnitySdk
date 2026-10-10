@@ -128,6 +128,19 @@ namespace Flock.Providers
             }, "Read the servers to connect through", cancellationToken, actsForSignIn: signInNumber);
         }
 
+        internal Task<RelayCredentialsRecord> RelayLoginsAsync(int signInNumber, string sessionId, CancellationToken cancellationToken)
+        {
+            RelayLoginsBody body = new RelayLoginsBody { SessionId = sessionId };
+            return ExecuteAsync(async () =>
+            {
+                GenericResponse<RelayCredentialsRecord> response = await FlockHttpClient.PostAsync<GenericResponse<RelayCredentialsRecord>>(
+                    Url(FlockEndpoints.RelayCredentials), body, Client.GetBaseHeaders(), cancellationToken);
+                if (response?.Result?.IceServers == null)
+                    throw new FlockNetworkException("Invalid response from server");
+                return response.Result;
+            }, "Request relay logins", cancellationToken, actsForSignIn: signInNumber);
+        }
+
         private string Url(string path) => $"{Client.GetVersionedApiUrl()}/{path}";
 
         // A session answer that names no session is not one, whatever its status.
