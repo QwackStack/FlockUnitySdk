@@ -1,4 +1,5 @@
 using System;
+using System.Net;
 using Flock.Providers;
 using NUnit.Framework;
 
@@ -92,6 +93,25 @@ namespace Flock.Tests.Editor
                 Assert.IsNull(FlockDirectAddresses.PublicAddressInStunAnswer(cut, Transaction), $"{length} bytes");
             }
             Assert.IsNull(FlockDirectAddresses.PublicAddressInStunAnswer(null, Transaction));
+        }
+
+        [Test]
+        public void ThePort_IsReadUnmasked_FromEitherAttribute()
+        {
+            Assert.AreEqual(new IPEndPoint(IPAddress.Parse("203.0.113.7"), 50000),
+                FlockDirectAddresses.PublicEndpointInStunAnswer(Answer(0x0101, Transaction, XorMapped()), 32, Transaction));
+            Assert.AreEqual(new IPEndPoint(IPAddress.Parse("198.51.100.4"), 50000),
+                FlockDirectAddresses.PublicEndpointInStunAnswer(Answer(0x0101, Transaction, PlainMapped(198, 51, 100, 4)), 32, Transaction));
+        }
+
+        [Test]
+        public void OnlyTheBytesReceived_AreRead()
+        {
+            byte[] answer = Answer(0x0101, Transaction, XorMapped());
+            byte[] buffer = new byte[answer.Length + 64];
+            Array.Copy(answer, buffer, answer.Length);
+            Assert.AreEqual(new IPEndPoint(IPAddress.Parse("203.0.113.7"), 50000), FlockDirectAddresses.PublicEndpointInStunAnswer(buffer, answer.Length, Transaction));
+            Assert.IsNull(FlockDirectAddresses.PublicEndpointInStunAnswer(buffer, answer.Length - 1, Transaction), "Cut short of the address");
         }
 
         [Test]

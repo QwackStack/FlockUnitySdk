@@ -31,29 +31,35 @@ namespace Flock.Providers
         private readonly int _netcodePort;
         // A player's: the one loopback socket the netcode connects to, standing in for the host.
         private readonly FlockRelayLoopback _host;
+        // Whether the netcode's packets move to a direct path when the two ends reach each other (FlockRelayUse.WhenNeeded).
+        private readonly bool _goesDirect;
+        // A player's: its link to the host. A host's: one per player its netcode let in.
+        private volatile FlockDirectLink _hostLink;
+        private readonly Dictionary<FlockRelayPeer, FlockDirectLink> _links = new Dictionary<FlockRelayPeer, FlockDirectLink>();
         private bool _closed;
         private int _toldTooLarge;
 
-        private FlockRelayBridge(FlockRelayConnection relay, IFlockLogger logger, int netcodePort, FlockRelayPeer host)
+        private FlockRelayBridge(FlockRelayConnection relay, IFlockLogger logger, int netcodePort, FlockRelayPeer host, bool goesDirect)
         {
             _relay = relay;
             _logger = logger;
             _netcodePort = netcodePort;
+            _goesDirect = goesDirect;
             _arrived = Arrived;
             if (netcodePort == 0)
                 _host = new FlockRelayLoopback(this, host, 0);
         }
 
-        /// <summary>A player's bridge: the netcode connects to 127.0.0.1 on <see cref="LocalPort"/>, and its packets go to <paramref name="host"/>'s relay address; what anyone else sends through the relay is dropped.</summary>
-        internal static FlockRelayBridge ToTheHost(FlockRelayConnection relay, FlockRelayPeer host, IFlockLogger logger)
-            => Registered(new FlockRelayBridge(relay, logger, 0, host));
+        /// <summary>A player's bridge: the netcode connects to 127.0.0.1 on <see cref="LocalPort"/>, and its packets go to <paramref name="host"/>'s relay address; what anyone else sends through the relay is dropped. With <paramref name="goesDirect"/>, the packets move to a direct path once the host and this device reach each other.</summary>
+        internal static FlockRelayBridge ToTheHost(FlockRelayConnection relay, FlockRelayPeer host, IFlockLogger logger, bool goesDirect = false)
+            => Registered(new FlockRelayBridge(relay, logger, 0, host, goesDirect));
 
-        /// <summary>A host's bridge: each relayed player gets a loopback socket of its own that sends to the netcode listening on <paramref name="netcodePort"/>, up to <see cref="MostPlayers"/>.</summary>
-        internal static FlockRelayBridge ForTheHost(FlockRelayConnection relay, int netcodePort, IFlockLogger logger)
+        /// <summary>A host's bridge: each relayed player gets a loopback socket of its own that sends to the netcode listening on <paramref name="netcodePort"/>, up to <see cref="MostPlayers"/>. With <paramref name="goesDirect"/>, a player the netcode let in is offered a direct path.</summary>
+        internal static FlockRelayBridge ForTheHost(FlockRelayConnection relay, int netcodePort, IFlockLogger logger, bool goesDirect = false)
         {
             if (netcodePort < 1 || netcodePort > 65535)
                 throw new ArgumentOutOfRangeException(nameof(netcodePort));
-            return Registered(new FlockRelayBridge(relay, logger, netcodePort, default));
+            return Registered(new FlockRelayBridge(relay, logger, netcodePort, default, goesDirect));
         }
 
         // One bridge a relay: two netcodes behind one relay address would reach the other end as one and be mixed up.
@@ -63,7 +69,11 @@ namespace Flock.Providers
             {
                 // The host is the one peer a player's netcode sends to, so it gets a channel at once; a host's peers get one when let in.
                 if (bridge._host != null)
+                {
                     bridge._relay.KeepChannelTo(bridge._host.Peer);
+                    if (bridge._goesDirect)
+                        bridge._hostLink = bridge.NewLink(bridge._host, "the host");
+                }
                 return bridge;
             }
             bridge._host?.Close();
@@ -102,15 +112,25 @@ namespace Flock.Providers
             return false;
         }
 
-        /// <summary>The netcode let <paramref name="peer"/> in: it keeps its place, and its packets ride on a relay channel (4 bytes each rather than 36).</summary>
+        /// <summary>The netcode let <paramref name="peer"/> in: it keeps its place, its packets ride on a relay channel (4 bytes each rather than 36), and it is offered a direct path when the bridge goes direct (the player's offers before this were not taken; the host's own offer asks for one again). A connection let in again gets a new link, since the player's bridge behind it is new.</summary>
         internal void LetIn(FlockRelayPeer peer)
         {
+            FlockDirectLink replaced = null;
             lock (_gate)
             {
                 if (_closed || !_peers.TryGetValue(peer, out FlockRelayLoopback loopback))
                     return;
                 loopback.WasLetIn = true;
+                if (_goesDirect)
+                {
+                    _links.TryGetValue(peer, out replaced);
+                    _links.Remove(peer);
+                    FlockDirectLink link = NewLink(loopback, "a player");
+                    if (link != null)
+                        _links.Add(peer, link);
+                }
             }
+            replaced?.Close();
             _relay.KeepChannelTo(peer);
         }
 
@@ -118,14 +138,47 @@ namespace Flock.Providers
         internal void Forget(FlockRelayPeer peer)
         {
             FlockRelayLoopback loopback;
+            FlockDirectLink link;
             lock (_gate)
             {
                 if (!_peers.TryGetValue(peer, out loopback))
                     return;
                 _peers.Remove(peer);
+                if (_links.TryGetValue(peer, out link))
+                    _links.Remove(peer);
             }
+            link?.Close();
             loopback.Close();
             _relay.LetChannelGo(peer);
+        }
+
+        /// <summary>The player's let-in connection left while another of its connections still comes through this address (its game started the netcode again): the address keeps its loopback socket, lets go of its channel and direct link, and waits to be let in again as a newly heard peer does.</summary>
+        internal void NoLongerLetIn(FlockRelayPeer peer)
+        {
+            FlockDirectLink link;
+            lock (_gate)
+            {
+                if (!_peers.TryGetValue(peer, out FlockRelayLoopback loopback))
+                    return;
+                loopback.WasLetIn = false;
+                loopback.WaitingSince = FlockRelayClock.Now();
+                if (_links.TryGetValue(peer, out link))
+                    _links.Remove(peer);
+            }
+            link?.Close();
+            _relay.LetChannelGo(peer);
+        }
+
+        /// <summary>The direct link to <paramref name="peer"/> (the host, on a player's bridge), or null when there is none, whether or not the bridge goes direct.</summary>
+        internal FlockDirectLink DirectLinkForTesting(FlockRelayPeer peer)
+        {
+            if (_host != null)
+                return peer.Equals(_host.Peer) ? _hostLink : null;
+            lock (_gate)
+            {
+                _links.TryGetValue(peer, out FlockDirectLink link);
+                return link;
+            }
         }
 
         internal int PeersForTesting
@@ -156,6 +209,7 @@ namespace Flock.Providers
         internal void Close()
         {
             List<FlockRelayLoopback> closing;
+            List<FlockDirectLink> links;
             lock (_gate)
             {
                 if (_closed)
@@ -163,8 +217,13 @@ namespace Flock.Providers
                 _closed = true;
                 closing = new List<FlockRelayLoopback>(_peers.Values);
                 _peers.Clear();
+                links = new List<FlockDirectLink>(_links.Values);
+                _links.Clear();
             }
             _relay.StopHandingArrivalsTo(_arrived);
+            _hostLink?.Close();
+            foreach (FlockDirectLink link in links)
+                link.Close();
             if (_host != null)
             {
                 _host.Close();
@@ -180,6 +239,11 @@ namespace Flock.Providers
         // On the relay thread: a packet a relayed peer sent, handed to the netcode from that peer's loopback socket.
         private void Arrived(FlockRelayPeer from, byte[] packet, int offset, int count)
         {
+            if (FlockDirectLinkWire.IsMessage(packet, offset, count))
+            {
+                HeardFromTheOtherBridge(from, packet, offset, count);
+                return;
+            }
             if (_host != null)
             {
                 if (from.Equals(_host.Peer))
@@ -218,7 +282,7 @@ namespace Flock.Providers
             List<FlockRelayPeer> forgotten = null;
             foreach (KeyValuePair<FlockRelayPeer, FlockRelayLoopback> entry in _peers)
             {
-                if (entry.Value.WasLetIn || now - entry.Value.MadeAt < givenTime)
+                if (entry.Value.WasLetIn || now - entry.Value.WaitingSince < givenTime)
                     continue;
                 forgotten = forgotten ?? new List<FlockRelayPeer>();
                 forgotten.Add(entry.Key);
@@ -232,7 +296,58 @@ namespace Flock.Providers
             }
         }
 
-        // From a loopback socket's thread: what the netcode sent, on through the relay. A relay that has stopped (the session ended, or it was lost) closes the bridge.
+        // On the relay thread: an offer, or word of going back to the relay, from the bridge at the other end. A host has links only to players its netcode let in, so nobody else's is taken.
+        private void HeardFromTheOtherBridge(FlockRelayPeer from, byte[] packet, int offset, int count)
+        {
+            if (!_goesDirect)
+                return;
+            FlockDirectLink link;
+            lock (_gate)
+            {
+                if (_closed)
+                    return;
+                if (_host != null)
+                    link = from.Equals(_host.Peer) ? _hostLink : null;
+                else
+                    _links.TryGetValue(from, out link);
+            }
+            if (link == null)
+                return;
+            byte kind = FlockDirectLinkWire.KindOf(packet, offset);
+            if (kind == FlockDirectLinkWire.Offer && FlockDirectLinkWire.TryReadOffer(packet, offset, count, out byte[] theirKey, out byte[] keyTheyHold, out List<IPEndPoint> theirAddresses))
+                link.HeardOffer(theirKey, keyTheyHold, theirAddresses);
+            else if (kind == FlockDirectLinkWire.BackToTheRelay)
+                link.HeardBackToTheRelay(packet, offset, count);
+        }
+
+        // A link to the peer a loopback socket stands for, handing what arrives directly to the netcode from that socket; null when no socket could be made.
+        private FlockDirectLink NewLink(FlockRelayLoopback loopback, string peerName)
+        {
+            FlockRelayPeer peer = loopback.Peer;
+            try
+            {
+                return new FlockDirectLink(_relay.ServerEndpoint, bytes => _relay.Send(peer, bytes, 0, bytes.Length), loopback.HandToTheNetcode, _logger, peerName);
+            }
+            catch (SocketException)
+            {
+                return null;
+            }
+        }
+
+        private FlockDirectLink LinkTo(FlockRelayPeer to)
+        {
+            if (!_goesDirect)
+                return null;
+            if (_host != null)
+                return to.Equals(_host.Peer) ? _hostLink : null;
+            lock (_gate)
+            {
+                _links.TryGetValue(to, out FlockDirectLink link);
+                return link;
+            }
+        }
+
+        // From a loopback socket's thread: what the netcode sent, on directly when the link to the peer is direct, else through the relay. A relay that has stopped (the session ended, or it was lost) closes the bridge.
         internal void SendThroughTheRelay(FlockRelayPeer to, byte[] data, int count)
         {
             if (_relay.HasStopped)
@@ -240,6 +355,9 @@ namespace Flock.Providers
                 Close();
                 return;
             }
+            FlockDirectLink link = LinkTo(to);
+            if (link != null && link.TrySend(data, count))
+                return;
             if (count > FlockRelayConnection.MostBytesInAPacket && Interlocked.Exchange(ref _toldTooLarge, 1) == 0)
                 _logger.LogWarning($"The netcode sent a packet of {count} bytes, more than the {FlockRelayConnection.MostBytesInAPacket} Flock's relay carries; such packets are dropped. Keep Unity Transport's message size at its default.");
             _relay.Send(to, data, 0, count);
@@ -265,7 +383,7 @@ namespace Flock.Providers
         {
             _bridge = bridge;
             Peer = peer;
-            MadeAt = FlockRelayClock.Now();
+            WaitingSince = FlockRelayClock.Now();
             _learnsTheNetcode = netcodePort == 0;
             Socket socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
             try
@@ -287,7 +405,8 @@ namespace Flock.Providers
 
         internal FlockRelayPeer Peer { get; }
         internal int Port { get; }
-        internal long MadeAt { get; }
+        // When it began waiting to be let in: when made, or when no longer let in. Read and written under the bridge's lock.
+        internal long WaitingSince;
         // Read and written under the bridge's lock.
         internal bool WasLetIn;
 

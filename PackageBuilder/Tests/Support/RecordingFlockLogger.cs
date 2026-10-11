@@ -13,25 +13,34 @@ namespace Flock.Tests.Support
         public readonly List<string> Errors = new List<string>();
         public readonly List<string> Debugs = new List<string>();
 
-        public void LogInfo(string message) => Infos.Add(message);
-        public void LogWarning(string message) => Warnings.Add(message);
-        public void LogError(string message) => Errors.Add(message);
-        public void LogError(string message, Exception exception) => Errors.Add($"{message}: {exception?.Message}");
-        public void LogException(Exception exception) => Errors.Add(exception?.Message ?? "");
-        public void LogDebug(string message) => Debugs.Add(message);
+        // The SDK logs from threads of its own too (the relay's, a direct link's), so each list is written and read under its own lock.
+        public void LogInfo(string message) => Add(Infos, message);
+        public void LogWarning(string message) => Add(Warnings, message);
+        public void LogError(string message) => Add(Errors, message);
+        public void LogError(string message, Exception exception) => Add(Errors, $"{message}: {exception?.Message}");
+        public void LogException(Exception exception) => Add(Errors, exception?.Message ?? "");
+        public void LogDebug(string message) => Add(Debugs, message);
 
         public void Clear()
         {
-            Infos.Clear();
-            Warnings.Clear();
-            Errors.Clear();
-            Debugs.Clear();
+            foreach (List<string> level in new[] { Infos, Warnings, Errors, Debugs })
+            {
+                lock (level)
+                    level.Clear();
+            }
         }
 
         /// <summary>True when any message at the given level contains <paramref name="fragment"/>.</summary>
         public bool Logged(List<string> level, string fragment)
         {
-            return level.Exists(m => m != null && m.Contains(fragment));
+            lock (level)
+                return level.Exists(m => m != null && m.Contains(fragment));
+        }
+
+        private static void Add(List<string> level, string message)
+        {
+            lock (level)
+                level.Add(message);
         }
     }
 }

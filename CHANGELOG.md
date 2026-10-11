@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.83.0]
+
+With `FlockNetcodeOptions.Relay` left at `WhenNeeded`, a player who connected through Flock's relay now moves to a direct path
+to the host when the two can reach each other, and keeps the relay ready in case that path stops.
+
+### Added
+- Direct paths for relayed players, with nothing for the game to change. Once the host has let a relayed player in, each side asks
+  Flock's relay server where it sees it, the two swap those addresses (and their LAN ones) through the relay, and each sends small
+  probes to the other's; once a probe is answered both ways, the netcode's packets go directly. When none is answered (a router
+  that gives each destination a port of its own on both sides, or a firewall that drops them), the packets stay on the relay. A
+  direct path that goes quiet for 4 seconds goes back to the relay, and the other end follows. With Enable Debug Logs on, the log
+  says which happened.
+- Only with `WhenNeeded`: `Always` keeps every player on the relay, and players on the host's network still connect directly as
+  before.
+
+### Changed
+- With `WhenNeeded`, the host learns a relayed player's address once it has let the player in, and the player the host's (the host
+  already published its own). Use `Always` to keep addresses hidden.
+- A game on 1.82.0 or earlier in the same session as one on 1.83.0 stays on the relay with it; the messages it is handed are dropped
+  by Unity Transport without a log line.
+
+### Fixed
+- A relayed player whose game started its netcode again before the host noticed the old connection was gone could not connect with
+  Netcode for GameObjects 1.x: when the host let the old connection go while the new one was still being checked, it closed the
+  socket the new one came through. The host now keeps that socket for the new connection and lets it in there; a relay address
+  is forgotten only once no connection comes through it. With 2.x the new connection moved to another socket and connected.
+
+Released together with the Protokite Playtest at the same version (no changes to it).
+
 ## [1.82.0]
 
 A game follows a change of host, or a relay that stopped working, by shutting its netcode down and calling `StartNetcodeAsync`

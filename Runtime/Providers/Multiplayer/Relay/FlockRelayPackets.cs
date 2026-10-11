@@ -45,6 +45,7 @@ namespace Flock.Providers
         private int _arrivedFirst;
         private int _arrivedCount;
         private long _packetsDropped;
+        private long _packetsSent;
 
         internal FlockRelayPackets(FlockRelaySocket socket)
         {
@@ -53,6 +54,9 @@ namespace Flock.Providers
 
         /// <summary>Packets that arrived while <see cref="MostBytesInAPacket"/>-byte room for 256 was full, or that were larger.</summary>
         internal long PacketsDropped => Interlocked.Read(ref _packetsDropped);
+
+        /// <summary>Packets sent on through the relay: channel frames and send indications.</summary>
+        internal long PacketsSent => Interlocked.Read(ref _packetsSent);
 
         internal bool IsOpenedTo(uint ip)
         {
@@ -96,7 +100,10 @@ namespace Flock.Providers
                     FlockRelayWire.WriteUInt32(_indicationTransaction, 8, ++_indicationsSent);
                     length = FlockRelayWire.WriteSendIndication(_sendBuffer, _indicationTransaction, to, data, offset, count);
                 }
-                return _socket.TrySend(_sendBuffer, 0, length);
+                if (!_socket.TrySend(_sendBuffer, 0, length))
+                    return false;
+                Interlocked.Increment(ref _packetsSent);
+                return true;
             }
         }
 

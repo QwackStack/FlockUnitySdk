@@ -27,17 +27,27 @@ namespace Flock.Tests.PlayMode
         private FlockTestClient _h;
         private FakeMatchmakingServer _server;
         private NetworkManager _manager;
+#if FLOCK_UNITY_TRANSPORT_1
+        private NetcodeLibraryLogs _libraryLogs;
+#endif
 
         [SetUp]
         public void SetUp()
         {
             if (FlockClient.IsInitialized)
                 FlockClient.Shutdown();
+#if FLOCK_UNITY_TRANSPORT_1
+            _libraryLogs?.StopListening();
+            _libraryLogs = NetcodeLibraryLogs.Start();
+#endif
         }
 
         [UnityTearDown]
         public IEnumerator TearDown()
         {
+#if FLOCK_UNITY_TRANSPORT_1
+            _libraryLogs?.LetThrough();
+#endif
             if (_manager != null && _manager.IsListening)
                 _manager.Shutdown();
             yield return FlockTestWait.Until(() => _manager == null || (!_manager.IsListening && !_manager.ShutdownInProgress), "Netcode stopped");
@@ -49,10 +59,29 @@ namespace Flock.Tests.PlayMode
             _h = null;
             if (FlockClient.IsInitialized)
                 FlockClient.Shutdown();
+#if FLOCK_UNITY_TRANSPORT_1
+            NetcodeLibraryLogs libraryLogs = _libraryLogs;
+            _libraryLogs = null;
+            libraryLogs?.Finish();
+#endif
         }
+
+#if FLOCK_UNITY_TRANSPORT_1
+        // A teardown that failed before Finish leaves the listener on; the fixture's end lets it go.
+        [OneTimeTearDown]
+        public void StopLibraryLogs()
+        {
+            _libraryLogs?.StopListening();
+            _libraryLogs = null;
+        }
+#endif
 
         private FlockQuickMatchSample SignedInSample(string player, string queueName)
         {
+#if FLOCK_UNITY_TRANSPORT_1
+            // Each test makes its sample from its own body, whose log scope is not set-up's.
+            _libraryLogs?.LetThrough();
+#endif
             _server = new FakeMatchmakingServer();
             // The relay switched off for the game: these tests are about matching, and the host publishes its direct address.
             _server.Sessions.RelayUrls.Clear();

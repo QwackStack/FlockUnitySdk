@@ -112,10 +112,7 @@ namespace Flock.Providers
         {
             byte[] transaction = new byte[12];
             Array.Copy(Guid.NewGuid().ToByteArray(), transaction, 12);
-            byte[] request = new byte[20];
-            FlockRelayWire.WriteUInt16(request, 0, BindingRequest);
-            FlockRelayWire.WriteUInt32(request, 4, StunMagicCookie);
-            Array.Copy(transaction, 0, request, 8, 12);
+            byte[] request = StunRequest(transaction);
 
             using (UdpClient udp = new UdpClient(AddressFamily.InterNetwork))
             using (CancellationTokenSource stopWaiting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
@@ -143,16 +140,30 @@ namespace Flock.Providers
 
         // The XOR-MAPPED-ADDRESS (or the older MAPPED-ADDRESS) of a binding success that answers this transaction; null for anything else.
         internal static string PublicAddressInStunAnswer(byte[] answer, byte[] transaction)
+            => PublicEndpointInStunAnswer(answer, answer?.Length ?? 0, transaction)?.Address.ToString();
+
+        /// <summary>A binding request with this transaction, as sent to a STUN server (or a relay server, which answers it too).</summary>
+        internal static byte[] StunRequest(byte[] transaction)
         {
-            if (answer == null || answer.Length < 20 || FlockRelayWire.ReadUInt16(answer, 0) != BindingSuccess || FlockRelayWire.ReadUInt32(answer, 4) != StunMagicCookie)
+            byte[] request = new byte[20];
+            FlockRelayWire.WriteUInt16(request, 0, BindingRequest);
+            FlockRelayWire.WriteUInt32(request, 4, StunMagicCookie);
+            Array.Copy(transaction, 0, request, 8, 12);
+            return request;
+        }
+
+        /// <summary>The address and port of a binding success answering this transaction, read from its first <paramref name="count"/> bytes; null for anything else.</summary>
+        internal static IPEndPoint PublicEndpointInStunAnswer(byte[] answer, int count, byte[] transaction)
+        {
+            if (answer == null || count < 20 || count > answer.Length || FlockRelayWire.ReadUInt16(answer, 0) != BindingSuccess || FlockRelayWire.ReadUInt32(answer, 4) != StunMagicCookie)
                 return null;
             for (int i = 0; i < 12; i++)
             {
                 if (answer[8 + i] != transaction[i])
                     return null;
             }
-            int end = Math.Min(answer.Length, 20 + FlockRelayWire.ReadUInt16(answer, 2));
-            string plain = null;
+            int end = Math.Min(count, 20 + FlockRelayWire.ReadUInt16(answer, 2));
+            IPEndPoint plain = null;
             int position = 20;
             while (position + 4 <= end)
             {
@@ -166,11 +177,12 @@ namespace Flock.Providers
                 {
                     if (kind == XorMappedAddress)
                     {
+                        int port = FlockRelayWire.ReadUInt16(answer, value + 2) ^ (int)(StunMagicCookie >> 16);
                         uint masked = FlockRelayWire.ReadUInt32(answer, value + 4) ^ StunMagicCookie;
-                        return new IPAddress(new[] { (byte)(masked >> 24), (byte)(masked >> 16), (byte)(masked >> 8), (byte)masked }).ToString();
+                        return new IPEndPoint(new IPAddress(new[] { (byte)(masked >> 24), (byte)(masked >> 16), (byte)(masked >> 8), (byte)masked }), port);
                     }
                     if (kind == MappedAddress && plain == null)
-                        plain = new IPAddress(new[] { answer[value + 4], answer[value + 5], answer[value + 6], answer[value + 7] }).ToString();
+                        plain = new IPEndPoint(new IPAddress(new[] { answer[value + 4], answer[value + 5], answer[value + 6], answer[value + 7] }), FlockRelayWire.ReadUInt16(answer, value + 2));
                 }
                 position = value + length + ((4 - length % 4) % 4);
             }
@@ -178,7 +190,7 @@ namespace Flock.Providers
         }
 
         // The address this device sends from toward the internet; a UDP socket picks its route on Connect and sends nothing.
-        private static string LanAddressToward(IPAddress target)
+        internal static string LanAddressToward(IPAddress target)
         {
             try
             {

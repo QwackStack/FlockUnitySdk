@@ -23,6 +23,8 @@ namespace Flock.Tests.PlayMode
     {
         private const string A = "player-a";
         private const string B = "player-b";
+        // A frame of the engine's own varies by a sample or two (measured 11 to 15 with nothing sent); garbage per packet adds 100 or more.
+        private const int EngineSamplesAFrameVaryBy = 3;
 
         private FakeRelayServer _relay;
         private RecordingFlockLogger _logger;
@@ -436,8 +438,8 @@ namespace Flock.Tests.PlayMode
             allocations.enabled = false;
 
             string counts = $"quiet frames {string.Join(",", quiet)}; sending frames {string.Join(",", working)}; allocating frames {string.Join(",", allocating)}";
-            Assert.Greater(allocating.Min(), quiet.Max(), $"Control: the count sees {made.Count} allocations ({counts})");
-            Assert.LessOrEqual(working.Max(), quiet.Max(), $"Sending and taking 100 packets a frame adds no allocation to the frame ({counts})");
+            Assert.Greater(allocating.Min(), quiet.Max() + EngineSamplesAFrameVaryBy, $"Control: the count sees {made.Count} allocations ({counts})");
+            Assert.LessOrEqual(working.Max(), quiet.Max() + EngineSamplesAFrameVaryBy, $"Sending and taking 100 packets a frame adds no allocation to the frame ({counts})");
             Assert.Greater(received, 100, "Control: packets were taken while measured");
         }
 
@@ -679,7 +681,7 @@ namespace Flock.Tests.PlayMode
             allocations.enabled = false;
 
             Assert.IsFalse(anySent, "Nothing goes once the relay stopped");
-            Assert.LessOrEqual(sending.Max(), quiet.Max(), $"A game still sending after the stop costs no garbage (quiet {string.Join(",", quiet)}; sending {string.Join(",", sending)})");
+            Assert.LessOrEqual(sending.Max(), quiet.Max() + EngineSamplesAFrameVaryBy, $"A game still sending after the stop costs no garbage (quiet {string.Join(",", quiet)}; sending {string.Join(",", sending)})");
         }
 
         [UnityTest]

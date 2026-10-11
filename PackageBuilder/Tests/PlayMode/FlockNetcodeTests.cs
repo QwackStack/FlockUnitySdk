@@ -32,17 +32,27 @@ namespace Flock.Tests.PlayMode
         private FakeSessionServer _server;
         private FakeStunServer _stun;
         private readonly List<NetworkManager> _managers = new List<NetworkManager>();
+#if FLOCK_UNITY_TRANSPORT_1
+        private NetcodeLibraryLogs _libraryLogs;
+#endif
 
         [SetUp]
         public void SetUp()
         {
             if (FlockClient.IsInitialized)
                 FlockClient.Shutdown();
+#if FLOCK_UNITY_TRANSPORT_1
+            _libraryLogs?.StopListening();
+            _libraryLogs = NetcodeLibraryLogs.Start();
+#endif
         }
 
         [UnityTearDown]
         public IEnumerator TearDown()
         {
+#if FLOCK_UNITY_TRANSPORT_1
+            _libraryLogs?.LetThrough();
+#endif
             foreach (NetworkManager manager in _managers)
             {
                 if (manager != null && manager.IsListening)
@@ -63,10 +73,29 @@ namespace Flock.Tests.PlayMode
             _stun = null;
             if (FlockClient.IsInitialized)
                 FlockClient.Shutdown();
+#if FLOCK_UNITY_TRANSPORT_1
+            NetcodeLibraryLogs libraryLogs = _libraryLogs;
+            _libraryLogs = null;
+            libraryLogs?.Finish();
+#endif
         }
+
+#if FLOCK_UNITY_TRANSPORT_1
+        // A teardown that failed before Finish leaves the listener on; the fixture's end lets it go.
+        [OneTimeTearDown]
+        public void StopLibraryLogs()
+        {
+            _libraryLogs?.StopListening();
+            _libraryLogs = null;
+        }
+#endif
 
         private FlockMultiplayerProvider SignedInAs(string player)
         {
+#if FLOCK_UNITY_TRANSPORT_1
+            // Every test signs in from its own body (whose log scope is not set-up's) before any netcode exists.
+            _libraryLogs?.LetThrough();
+#endif
             _server = new FakeSessionServer();
             // The relay switched off for the game, so a host publishes its direct address; the relay tests list one (RelayOn).
             _server.RelayUrls.Clear();
@@ -192,6 +221,9 @@ namespace Flock.Tests.PlayMode
                 Task<FlockNetcodeStartResult> started = held[0].StartNetcodeAsync(manager);
                 yield return Done(started, "refused");
                 LogAssert.ignoreFailingMessages = false;
+#if FLOCK_UNITY_TRANSPORT_1
+                _libraryLogs?.LetThrough();
+#endif
                 Assert.IsFalse(started.IsFaulted, started.Exception?.InnerException?.ToString());
                 Assert.AreEqual(FlockNetcodeStartOutcome.CouldNotStart, started.Result.Outcome);
                 Assert.AreEqual(0, _server.Count(FakeSessionServer.Publish), "Nothing published for a host that is not listening");

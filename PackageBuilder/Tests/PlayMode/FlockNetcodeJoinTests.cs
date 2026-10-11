@@ -540,6 +540,10 @@ namespace Flock.Tests.PlayMode
 
             private void Heard(string text, string stack, LogType type)
             {
+#if FLOCK_UNITY_TRANSPORT_1
+                if (NetcodeLibraryLogs.IsTransportSocketLine(text))
+                    return;
+#endif
                 if (type != LogType.Log)
                     WarningsAndErrors.Add(type + ": " + text);
             }

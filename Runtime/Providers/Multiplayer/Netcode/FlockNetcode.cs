@@ -58,9 +58,9 @@ namespace Flock.Providers
     /// <summary>Which players go through Flock's relay (<see cref="FlockNetcodeOptions.Relay"/>). Set it the same on every player of a game.</summary>
     public enum FlockRelayUse
     {
-        /// <summary>A player sharing the host's public address tries the host's address on its network for a few seconds (at least two of Unity Transport's connect attempts), then goes through Flock's relay if that is not answered; everyone else goes through the relay, so no port has to be forwarded. Against a host that offers no relay, players connect to the address it published.</summary>
+        /// <summary>A player sharing the host's public address tries the host's address on its network for a few seconds (at least two of Unity Transport's connect attempts), then goes through Flock's relay if that is not answered; everyone else goes through the relay, so no port has to be forwarded. Once the host has let a relayed player in, the two try to reach each other directly, and the packets move to that path when it works (the relay stays ready and takes them back if it goes quiet), so the host and the player learn each other's addresses. Against a host that offers no relay, players connect to the address it published.</summary>
         WhenNeeded,
-        /// <summary>Every player goes through Flock's relay, on the host's network too: the host publishes no address of its own and listens on its loopback only.</summary>
+        /// <summary>Every player goes through Flock's relay, on the host's network too, and stays on it: the host publishes no address of its own and listens on its loopback only, and no player's address reaches the host or the host's a player.</summary>
         Always,
         /// <summary>Never through the relay: players reach the host on its network, or on a port it forwarded.</summary>
         Never,
@@ -95,7 +95,7 @@ namespace Flock.Providers
         /// <summary>The game's own check on the host, run once Flock has verified a joining player's join token (and for the host's own connection, which Netcode for GameObjects never refuses). The response arrives approved, with the player object the NetworkConfig names; refuse with Approved = false and a Reason, before returning.</summary>
         public Action<FlockJoiningPlayer, NetworkManager.ConnectionApprovalResponse> ApproveJoiningPlayer { get; set; }
 
-        /// <summary>Which players go through Flock's relay: by default players on the host's network connect directly (through the relay if the host does not answer there) and everyone else through the relay.</summary>
+        /// <summary>Which players go through Flock's relay: by default players on the host's network connect directly (through the relay if the host does not answer there), everyone else through the relay, moving to a direct path when the two ends reach each other.</summary>
         public FlockRelayUse Relay { get; set; } = FlockRelayUse.WhenNeeded;
     }
 
@@ -325,7 +325,7 @@ namespace Flock.Providers
                 {
                     try
                     {
-                        bridge = await OpenRelayForPlayersAsync(session, networkManager, transport, port, checks, cancellationToken);
+                        bridge = await OpenRelayForPlayersAsync(session, networkManager, transport, port, checks, options.Relay == FlockRelayUse.WhenNeeded, cancellationToken);
                     }
                     catch (FlockRelayException failure)
                     {
@@ -362,8 +362,9 @@ namespace Flock.Providers
         }
 
         // The host's address on the relay, opened to the relay's own IP: every player reserves on this relay server, so their addresses share it.
+        // With goesDirect (WhenNeeded), each player let in through it is offered a direct path; Always keeps every address hidden behind the relay.
         private static async Task<FlockRelayBridge> OpenRelayForPlayersAsync(FlockMultiplayerSession session, NetworkManager networkManager, UnityTransport transport, ushort port,
-            FlockJoinChecks checks, CancellationToken cancellationToken)
+            FlockJoinChecks checks, bool goesDirect, CancellationToken cancellationToken)
         {
             FlockRelayConnection relay = await session.OpenRelayAsync(cancellationToken);
             try
@@ -376,7 +377,7 @@ namespace Flock.Providers
                 relay.Close();
                 throw;
             }
-            FlockRelayBridge bridge = FlockRelayBridge.ForTheHost(relay, port, FlockClient.Instance.Logger);
+            FlockRelayBridge bridge = FlockRelayBridge.ForTheHost(relay, port, FlockClient.Instance.Logger, goesDirect);
             checks.UseRelayBridge(bridge, transport);
             CloseWhenStopped(bridge, networkManager, session, true);
             return bridge;
@@ -420,7 +421,7 @@ namespace Flock.Providers
                         Inform($"The host's address on this network ({onItsNetwork.Address}:{onItsNetwork.Port}) did not answer, so this player connects through Flock's relay.");
                     }
                 }
-                return await ConnectThroughTheRelayAsync(session, networkManager, transport, connection, hostOnTheRelay, relayServer, cancellationToken);
+                return await ConnectThroughTheRelayAsync(session, networkManager, transport, connection, hostOnTheRelay, relayServer, options.Relay == FlockRelayUse.WhenNeeded, cancellationToken);
             }
             if (options.Relay == FlockRelayUse.Always)
             {
@@ -446,15 +447,16 @@ namespace Flock.Providers
         }
 
         // Reserves on the relay server the host uses, opens to the host's relay address and connects the netcode to a bridge standing in for the host.
+        // With goesDirect (WhenNeeded), the bridge moves the packets to a direct path once the host and this device reach each other.
         private static async Task<FlockNetcodeStartResult> ConnectThroughTheRelayAsync(FlockMultiplayerSession session, NetworkManager networkManager, UnityTransport transport,
-            FlockMultiplayerSessionConnection connection, FlockRelayPeer host, string relayServer, CancellationToken cancellationToken)
+            FlockMultiplayerSessionConnection connection, FlockRelayPeer host, string relayServer, bool goesDirect, CancellationToken cancellationToken)
         {
             FlockRelayBridge bridge;
             try
             {
                 FlockRelayConnection relay = await session.OpenRelayOnAsync(relayServer, cancellationToken);
                 await relay.OpenToHostAsync(host, cancellationToken);
-                bridge = FlockRelayBridge.ToTheHost(relay, host, FlockClient.Instance.Logger);
+                bridge = FlockRelayBridge.ToTheHost(relay, host, FlockClient.Instance.Logger, goesDirect);
             }
             catch (FlockRelayException failure)
             {

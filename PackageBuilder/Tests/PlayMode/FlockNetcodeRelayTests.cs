@@ -42,6 +42,9 @@ namespace Flock.Tests.PlayMode
         private void RelayTearDown()
         {
             FlockNetcode.TryOnTheHostsNetworkRanOutForTesting = null;
+            FlockDirectLink.TimingForTesting = null;
+            FlockDirectLink.NextLinkOffersForTesting = null;
+            FlockRelayBridge.NotLetInWithinForTesting = null;
             foreach (FlockRelayBridge bridge in _otherBridges)
                 bridge.Close();
             _otherBridges.Clear();
@@ -83,14 +86,14 @@ namespace Flock.Tests.PlayMode
         private int ChannelsBoundBy(FlockRelayConnection relay)
             => _relay.SeenRequests(FakeRelayServer.MethodChannelBind).Count(seen => seen.ClientPort == relay.LocalPortForTesting);
 
-        // A relayed player's game reaching this host: its relay address, a bridge standing in for the host, and Netcode for GameObjects on it.
-        private IEnumerator RelayedPlayer(Hosting hosting, string player, byte[] payload, List<FlockRelayConnection> relays, List<NetworkManager> players)
+        // A relayed player's game reaching this host: its relay address, a bridge standing in for the host (going direct when it can, if asked), and Netcode for GameObjects on it.
+        private IEnumerator RelayedPlayer(Hosting hosting, string player, byte[] payload, List<FlockRelayConnection> relays, List<NetworkManager> players, bool goesDirect = false)
         {
             FlockRelayPeer host = RelayAddressIn(Published());
             yield return OtherRelay(player, relays, () => host);
             FlockRelayConnection relay = relays.Last();
             relay.KeepChannelTo(host);
-            FlockRelayBridge bridge = OtherBridge(FlockRelayBridge.ToTheHost(relay, host, _h.Logger));
+            FlockRelayBridge bridge = OtherBridge(FlockRelayBridge.ToTheHost(relay, host, _h.Logger, goesDirect));
             players.Add(PlayerConnecting(bridge.LocalPort, payload));
         }
 
@@ -290,8 +293,9 @@ namespace Flock.Tests.PlayMode
 
         // ---- a player ----
 
-        // Another player's game hosting on this machine with a relay address and a bridge, as StartNetcodeAsync hosts with Relay Always.
-        private IEnumerator RelayedHostOnThisMachine(int port, List<FlockRelayConnection> relays, Action<NetworkManager.ConnectionApprovalRequest, NetworkManager.ConnectionApprovalResponse> approve = null)
+        // Another player's game hosting on this machine with a relay address and a bridge, as StartNetcodeAsync hosts with Relay Always (or WhenNeeded, going direct).
+        private IEnumerator RelayedHostOnThisMachine(int port, List<FlockRelayConnection> relays, Action<NetworkManager.ConnectionApprovalRequest, NetworkManager.ConnectionApprovalResponse> approve = null,
+            bool goesDirect = false)
         {
             NetworkManager host = Manager(port);
             TransportOf(host).SetConnectionData("127.0.0.1", (ushort)port, "127.0.0.1");
@@ -299,7 +303,7 @@ namespace Flock.Tests.PlayMode
             host.ConnectionApprovalCallback = approve ?? ((request, response) => response.Approved = true);
             Assert.IsTrue(host.StartHost(), "Precondition: the other player's game hosts here");
             yield return OtherRelay(A, relays);
-            OtherBridge(FlockRelayBridge.ForTheHost(relays[0], port, _h.Logger));
+            OtherBridge(FlockRelayBridge.ForTheHost(relays[0], port, _h.Logger, goesDirect));
         }
 
         private JObject RelayedOnThisMachine(FlockRelayPeer host, int port, string publicAddress = null, string server = null)
@@ -321,14 +325,15 @@ namespace Flock.Tests.PlayMode
         }
 
         private IEnumerator PlayerAgainstARelayedHost(FlockNetcodeOptions options, Func<FlockRelayPeer, int, JObject> published, List<Task<FlockNetcodeStartResult>> started,
-            List<FlockMultiplayerSession> held, List<FlockRelayConnection> relays, Action<NetworkManager.ConnectionApprovalRequest, NetworkManager.ConnectionApprovalResponse> approve = null)
+            List<FlockMultiplayerSession> held, List<FlockRelayConnection> relays, Action<NetworkManager.ConnectionApprovalRequest, NetworkManager.ConnectionApprovalResponse> approve = null,
+            bool hostGoesDirect = false)
         {
             FlockMultiplayerProvider multiplayer = SignedInAs(B);
             List<FakeSessionServer.Session> served = new List<FakeSessionServer.Session>();
             yield return JoinedAsB(multiplayer, held, served);
             RelayOn();
             int port = FreePort();
-            yield return RelayedHostOnThisMachine(port, relays, approve);
+            yield return RelayedHostOnThisMachine(port, relays, approve, hostGoesDirect);
             NetworkManager client = Manager(FreePort());
             _server.Publishes(served[0], published(relays[0].Address, port));
             started.Add(held[0].StartNetcodeAsync(client, options));

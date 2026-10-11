@@ -72,6 +72,7 @@ namespace Flock.Providers
             _login = login;
             _timing = timing;
             _logger = logger;
+            ServerEndpoint = server;
             _socket = new FlockRelaySocket(server);
             _requests = new FlockRelayRequests(login, _socket, timing);
             _packets = new FlockRelayPackets(_socket);
@@ -87,6 +88,9 @@ namespace Flock.Providers
         /// <summary>This player's address on the relay; the host publishes it, and players send to it.</summary>
         internal FlockRelayPeer Address => _address;
 
+        /// <summary>The relay server's address and port; it also answers a STUN request with the address it saw the request come from.</summary>
+        internal IPEndPoint ServerEndpoint { get; }
+
         internal bool IsOpen => Volatile.Read(ref _state) == StateOpen;
 
         /// <summary>True once closed or failed; nothing more is sent.</summary>
@@ -97,6 +101,9 @@ namespace Flock.Providers
 
         /// <summary>Packets that arrived while <see cref="MostBytesInAPacket"/>-byte room for 256 was full, or that were larger.</summary>
         internal long PacketsDropped => _packets.PacketsDropped;
+
+        /// <summary>Packets sent on through the relay: channel frames and send indications.</summary>
+        internal long PacketsSent => _packets.PacketsSent;
 
         /// <summary>Realms and nonces the relay handed over to sign with: its login challenge, then each stale nonce answered.</summary>
         internal int NoncesTakenForTesting => _requests.NoncesTaken;

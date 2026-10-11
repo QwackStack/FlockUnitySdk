@@ -128,6 +128,13 @@ namespace Flock.Tests.PlayMode
                 return _seen.Count(seen => seen.Method == 0xFFFF && seen.ClientPort == clientPort);
         }
 
+        // Everything one relay client sent on to someone through the relay: channel frames and send indications.
+        internal int PassedOnFrom(int clientPort)
+        {
+            lock (_lock)
+                return _seen.Count(seen => seen.ClientPort == clientPort && (seen.Method == 0xFFFF || (seen.Method == Send && seen.Class == 0x010)));
+        }
+
         internal int Reservations
         {
             get { lock (_lock) return _reservations.Count(each => each.ExpiresAt > DateTime.UtcNow); }

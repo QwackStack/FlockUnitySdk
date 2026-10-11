@@ -259,7 +259,25 @@ namespace Flock.Providers
             if (!_relayedPlayers.TryGetValue(clientId, out FlockRelayPeer peer))
                 return;
             _relayedPlayers.Remove(clientId);
-            _bridge.Forget(peer);
+            if (AnotherConnectionThrough(peer))
+                _bridge.NoLongerLetIn(peer);
+            else
+                _bridge.Forget(peer);
+        }
+
+        // A connection still being checked or let in from the same relay address: the player's game started its netcode again before the
+        // host let the old one go, through the same loopback socket. Netcode for GameObjects lists the leaving connection nowhere by then.
+        private bool AnotherConnectionThrough(FlockRelayPeer peer)
+        {
+            foreach (ulong other in _networkManager.PendingClients.Keys.Concat(_networkManager.ConnectedClientsIds).ToList())
+            {
+                if (other == NetworkManager.ServerClientId)
+                    continue;
+                TransportEndpoint from = _transport.GetEndpoint(other);
+                if (from.IsLoopback && _bridge.TryGetPeer(from.Port, out FlockRelayPeer through) && through.Equals(peer))
+                    return true;
+            }
+            return false;
         }
 
         // Flock's verdict, or the host's state; any other failure lets nobody in unchecked.

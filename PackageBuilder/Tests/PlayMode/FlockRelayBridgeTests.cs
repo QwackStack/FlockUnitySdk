@@ -15,7 +15,7 @@ namespace Flock.Tests.PlayMode
 {
     // The bridge on real loopback sockets, with a plain UDP socket standing in for the netcode and relays in memory: a player's netcode
     // reaches the host's relay address, a host's netcode hears each relayed peer from a loopback port of its own.
-    public class FlockRelayBridgeTests
+    public partial class FlockRelayBridgeTests
     {
         private const string Host = "player-a";
         private const string Player = "player-b";
@@ -81,6 +81,8 @@ namespace Flock.Tests.PlayMode
             _netcodes.Clear();
             FlockRelayBridge.MostPlayersForTesting = null;
             FlockRelayBridge.NotLetInWithinForTesting = null;
+            FlockDirectLink.TimingForTesting = null;
+            FlockDirectLink.NextLinkOffersForTesting = null;
             _relay?.Dispose();
             _relay = null;
         }
