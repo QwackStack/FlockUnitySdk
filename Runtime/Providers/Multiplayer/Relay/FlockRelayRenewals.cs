@@ -67,6 +67,9 @@ namespace Flock.Providers
                         renewal.Bound = false;
                         _packets.ChannelLetGo(renewal.Peer);
                     }
+                    // No longer wanted (a player that left, a netcode that stopped): not renewed, so it lapses; wanted again, it is renewed on its number.
+                    if (!_packets.KeepsChannelTo(renewal.Peer))
+                        continue;
                 }
                 else if (now > renewal.GoodUntil)
                 {

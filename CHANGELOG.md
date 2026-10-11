@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.82.0]
+
+A game follows a change of host, or a relay that stopped working, by shutting its netcode down and calling `StartNetcodeAsync`
+again: the new host hosts and the other players connect to it.
+
+### Added
+- `FlockMultiplayerSession.RelayLost`, raised once on the main thread when this device's address on Flock's relay stops working
+  mid-session, with a `FlockRelayFailure` reason (such as `relay_lost`). Connections through it are gone; start the netcode again
+  to open another. It is not raised when the session ends.
+- `FlockNetcodeStartOutcome.Restarted`: a start the game replaced by starting the netcode again on the same NetworkManager.
+
+### Changed
+- `StartNetcodeAsync` waits (at most 5 seconds) for a shutdown of the NetworkManager already under way, so `Shutdown()` and
+  `StartNetcodeAsync` can follow each other in one frame; it used to refuse. After such a wait, a netcode still running, or a
+  ConnectionApprovalCallback of the game's own on a host, is refused through the returned task rather than thrown at the call.
+- Starting the netcode again on a NetworkManager while an earlier start is still under way ends the earlier one with `restarted`
+  (or as cancelled, when its own caller cancelled it) and waits for it to stop what it started.
+- After a change of host, `StartNetcodeAsync` takes the part the session gives this device once any shutdown has finished: the new
+  host hosts on the relay address it had as a player, with no new relay login, and the others wait for it to say where it is.
+- Relay channels are renewed only while they are used: a player who left, or a netcode that stopped, lets its channel lapse.
+
+Released together with the Protokite Playtest at the same version (no changes to it).
+
 ## [1.81.0]
 
 A player who shares the host's public address but cannot reach the host on that network now connects through Flock's relay

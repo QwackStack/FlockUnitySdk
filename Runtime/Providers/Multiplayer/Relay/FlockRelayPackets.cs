@@ -21,6 +21,8 @@ namespace Flock.Providers
         // Every peer a channel was ever wanted for, added under _wantedGate from any thread.
         private readonly object _wantedGate = new object();
         private volatile FlockRelayPeer[] _channelsWanted = new FlockRelayPeer[0];
+        // Peers whose channel is no longer wanted (a player that left, a netcode that stopped): not renewed, so the relay lets it lapse.
+        private volatile FlockRelayPeer[] _channelsLetGo = new FlockRelayPeer[0];
 
         // The relay thread's own: the peer each channel number went to, and how many went.
         private readonly FlockRelayPeer[] _peerOfChannel = new FlockRelayPeer[MostChannels];
@@ -197,7 +199,8 @@ namespace Flock.Providers
             _channels = kept.ToArray();
         }
 
-        private ushort ChannelFor(FlockRelayPeer peer)
+        /// <summary>The channel number packets to <paramref name="peer"/> go on now; 0 when none is bound. Any thread.</summary>
+        internal ushort ChannelFor(FlockRelayPeer peer)
         {
             Channel[] channels = _channels;
             for (int i = 0; i < channels.Length; i++)
@@ -211,10 +214,13 @@ namespace Flock.Providers
         /// <summary>Binds a channel to <paramref name="peer"/> on the relay thread's next turn, once each; past the most channels a relay connection keeps, packets go as send indications. Only a peer known to be a player is given one, so a stranger on the relay cannot take them all.</summary>
         internal void WantChannel(FlockRelayPeer peer)
         {
-            if (HasWanted(_channelsWanted, peer))
+            if (HasWanted(_channelsWanted, peer) && !Holds(_channelsLetGo, peer))
                 return;
             lock (_wantedGate)
             {
+                // Wanted again after it was let go: renewed from the relay thread's next turn, on the number it had.
+                if (Holds(_channelsLetGo, peer))
+                    _channelsLetGo = Without(_channelsLetGo, peer);
                 FlockRelayPeer[] before = _channelsWanted;
                 if (HasWanted(before, peer))
                     return;
@@ -225,18 +231,47 @@ namespace Flock.Providers
             }
         }
 
-        // True as well once the most channels were wanted, so nothing more is asked.
-        private static bool HasWanted(FlockRelayPeer[] wanted, FlockRelayPeer peer)
+        /// <summary>Stops renewing <paramref name="peer"/>'s channel, so the relay lets it lapse; nothing for a peer no channel was wanted for. Any thread.</summary>
+        internal void LetChannelGo(FlockRelayPeer peer)
         {
-            if (wanted.Length >= MostChannels)
-                return true;
-            for (int i = 0; i < wanted.Length; i++)
+            lock (_wantedGate)
             {
-                if (wanted[i].Equals(peer))
+                if (!Holds(_channelsWanted, peer) || Holds(_channelsLetGo, peer))
+                    return;
+                FlockRelayPeer[] before = _channelsLetGo;
+                FlockRelayPeer[] after = new FlockRelayPeer[before.Length + 1];
+                Array.Copy(before, after, before.Length);
+                after[before.Length] = peer;
+                _channelsLetGo = after;
+            }
+        }
+
+        /// <summary>Whether <paramref name="peer"/>'s channel is renewed: wanted and not let go since. Any thread.</summary>
+        internal bool KeepsChannelTo(FlockRelayPeer peer) => Holds(_channelsWanted, peer) && !Holds(_channelsLetGo, peer);
+
+        private static bool Holds(FlockRelayPeer[] peers, FlockRelayPeer peer)
+        {
+            for (int i = 0; i < peers.Length; i++)
+            {
+                if (peers[i].Equals(peer))
                     return true;
             }
             return false;
         }
+
+        private static FlockRelayPeer[] Without(FlockRelayPeer[] peers, FlockRelayPeer peer)
+        {
+            List<FlockRelayPeer> kept = new List<FlockRelayPeer>(peers.Length);
+            foreach (FlockRelayPeer each in peers)
+            {
+                if (!each.Equals(peer))
+                    kept.Add(each);
+            }
+            return kept.ToArray();
+        }
+
+        // True as well once the most channels were wanted, so nothing more is asked.
+        private static bool HasWanted(FlockRelayPeer[] wanted, FlockRelayPeer peer) => wanted.Length >= MostChannels || Holds(wanted, peer);
 
         private void Arrive(FlockRelayPeer from, byte[] packet, int offset, int count)
         {

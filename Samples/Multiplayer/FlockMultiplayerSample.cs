@@ -160,6 +160,14 @@ namespace Flock.Samples
         {
             Session = session;
             session.Ended += OnSessionEnded;
+            // The netcode follows the session: started again for the new host, or once this device's relay was lost.
+            session.HostChanged += OnHostChanged;
+            session.RelayLost += OnRelayLost;
+            await StartForTheSessionAsync(session);
+        }
+
+        private async Task StartForTheSessionAsync(FlockMultiplayerSession session)
+        {
             Status = session.IsHost ? "Starting to host..." : "Waiting for the host...";
             FlockNetcodeStartResult started;
             try
@@ -172,6 +180,9 @@ namespace Flock.Samples
                 await LeaveQuietlyAsync();
                 throw;
             }
+            // A newer start took over (the host changed again), and it says how it went.
+            if (started.Outcome == FlockNetcodeStartOutcome.Restarted)
+                return;
             switch (started.Outcome)
             {
                 case FlockNetcodeStartOutcome.StartedAsHost:
@@ -273,6 +284,34 @@ namespace Flock.Samples
             Status = "The session ended (" + reason + ").";
         }
 
+        private void OnHostChanged()
+        {
+            StartAgain(Session != null && Session.IsHost ? "The host left; hosting now..." : "The host changed; joining the new host...");
+        }
+
+        private void OnRelayLost(string reason)
+        {
+            StartAgain("Flock's relay was lost (" + reason + "); starting again...");
+        }
+
+        // The netcode is shut down and started again for this device's part now; what the old host held is not kept.
+        private async void StartAgain(string status)
+        {
+            FlockMultiplayerSession session = Session;
+            if (session == null || session.HasEnded)
+                return;
+            ShutDownTheNetcode();
+            Status = status;
+            try
+            {
+                await StartForTheSessionAsync(session);
+            }
+            catch (Exception ex)
+            {
+                Status = "Could not start again: " + ex.Message;
+            }
+        }
+
         private void OnDisconnected(ulong clientId)
         {
             if (_network != null && !_network.IsHost && (clientId == _network.LocalClientId || !_network.IsConnectedClient))
@@ -333,7 +372,16 @@ namespace Flock.Samples
         private void StopNetcode()
         {
             if (Session != null)
+            {
                 Session.Ended -= OnSessionEnded;
+                Session.HostChanged -= OnHostChanged;
+                Session.RelayLost -= OnRelayLost;
+            }
+            ShutDownTheNetcode();
+        }
+
+        private void ShutDownTheNetcode()
+        {
             if (_network == null)
                 return;
             _network.OnClientDisconnectCallback -= OnDisconnected;

@@ -233,6 +233,9 @@ namespace Flock.Providers
         /// <summary>The session stopped being the player's, raised once with the reason. Not raised when Flock shuts down or the game quits.</summary>
         public event Action<string> Ended;
 
+        /// <summary>Raised on the main thread when this device's address on Flock's relay for the session stopped working mid-session (the reason a <see cref="FlockRelayFailure"/> value, such as relay_lost): connections through it are gone. Shut the netcode down and call StartNetcodeAsync again to open another. Not raised when the session ends.</summary>
+        public event Action<string> RelayLost;
+
         internal int SignInNumber { get; }
         internal string PlayerId => _playerId;
         internal string EndReasonSet => _endReason;
@@ -316,6 +319,19 @@ namespace Flock.Providers
         internal string RelayServerAsked { get; set; }
         internal FlockRelayConnection Relay { get; set; }
         private CancellationTokenSource _relayStop;
+        // The relay RelayLost was raised for, so each lost relay is told of once.
+        private FlockRelayConnection _relayToldLost;
+
+        /// <summary>Raises <see cref="RelayLost"/> once for a relay that stopped by itself (one the SDK closed has no failure reason); from the game's frames.</summary>
+        internal void TellIfTheRelayWasLost()
+        {
+            // An ended session holds no relay: End lets it go before anyone hears of the end.
+            FlockRelayConnection relay = Relay;
+            if (relay == null || relay == _relayToldLost || !relay.HasStopped || relay.FailureReason == null)
+                return;
+            _relayToldLost = relay;
+            FlockEvents.InvokeEach(RelayLost, relay.FailureReason, $"{nameof(FlockMultiplayerSession)}.{nameof(RelayLost)}");
+        }
 
         /// <summary>Cancelled when the session ends, which stops a relay still opening.</summary>
         internal CancellationToken RelayStopToken => (_relayStop ?? (_relayStop = new CancellationTokenSource())).Token;

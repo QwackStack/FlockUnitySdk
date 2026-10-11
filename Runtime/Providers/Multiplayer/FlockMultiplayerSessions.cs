@@ -45,6 +45,9 @@ namespace Flock.Providers
 
         internal int CurrentSignInNumber => _client.SignInNumber;
         internal FlockMultiplayerSession Held => _held;
+
+        /// <summary>From the game's frames: tells the held session's game once when its relay stopped by itself.</summary>
+        internal void TellIfTheRelayWasLost() => _held?.TellIfTheRelayWasLost();
         internal FlockDirectAddresses DirectAddresses => _directAddresses;
 
         /// <summary>How the relay's steps are timed; a test shortens them.</summary>

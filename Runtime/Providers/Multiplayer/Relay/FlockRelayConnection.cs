@@ -166,6 +166,14 @@ namespace Flock.Providers
         /// <summary>Packets to and from <paramref name="peer"/> ride on a relay channel (4 bytes each rather than 36), renewed until closed. Asked for the host by a player, and by the host for each player it let in.</summary>
         internal void KeepChannelTo(FlockRelayPeer peer) => _packets.WantChannel(peer);
 
+        /// <summary>Stops renewing the channel to <paramref name="peer"/>, so the relay lets it lapse (TURN cannot unbind one); <see cref="KeepChannelTo"/> renews it again on the same number.</summary>
+        internal void LetChannelGo(FlockRelayPeer peer) => _packets.LetChannelGo(peer);
+
+        internal bool KeepsChannelToForTesting(FlockRelayPeer peer) => _packets.KeepsChannelTo(peer);
+
+        /// <summary>The channel number packets to <paramref name="peer"/> go on now; 0 when none is bound.</summary>
+        internal ushort ChannelNumberForTesting(FlockRelayPeer peer) => _packets.ChannelFor(peer);
+
         /// <summary>Hands every packet that arrives to <paramref name="receiver"/> on the relay thread, which must not wait; false when another receiver has them.</summary>
         internal bool HandArrivalsTo(Action<FlockRelayPeer, byte[], int, int> receiver) => _packets.HandArrivalsTo(receiver);
 

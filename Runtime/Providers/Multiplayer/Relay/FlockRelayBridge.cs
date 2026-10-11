@@ -60,7 +60,12 @@ namespace Flock.Providers
         private static FlockRelayBridge Registered(FlockRelayBridge bridge)
         {
             if (bridge._relay.HandArrivalsTo(bridge._arrived))
+            {
+                // The host is the one peer a player's netcode sends to, so it gets a channel at once; a host's peers get one when let in.
+                if (bridge._host != null)
+                    bridge._relay.KeepChannelTo(bridge._host.Peer);
                 return bridge;
+            }
             bridge._host?.Close();
             throw new FlockValidationException("Netcode for GameObjects already runs through this session's relay on another NetworkManager. Shut that one down before starting another.");
         }
@@ -109,7 +114,7 @@ namespace Flock.Providers
             _relay.KeepChannelTo(peer);
         }
 
-        /// <summary>Forgets a relayed player that left or was refused; it gets a new place if it sends again.</summary>
+        /// <summary>Forgets a relayed player that left or was refused, and stops renewing its channel; it gets a new place if it sends again.</summary>
         internal void Forget(FlockRelayPeer peer)
         {
             FlockRelayLoopback loopback;
@@ -120,6 +125,7 @@ namespace Flock.Providers
                 _peers.Remove(peer);
             }
             loopback.Close();
+            _relay.LetChannelGo(peer);
         }
 
         internal int PeersForTesting
@@ -146,7 +152,7 @@ namespace Flock.Providers
             }
         }
 
-        /// <summary>Stops forwarding and closes every loopback socket; the relay stays the session's.</summary>
+        /// <summary>Stops forwarding, closes every loopback socket and stops renewing the channels it kept; the relay stays the session's.</summary>
         internal void Close()
         {
             List<FlockRelayLoopback> closing;
@@ -159,9 +165,16 @@ namespace Flock.Providers
                 _peers.Clear();
             }
             _relay.StopHandingArrivalsTo(_arrived);
-            _host?.Close();
+            if (_host != null)
+            {
+                _host.Close();
+                _relay.LetChannelGo(_host.Peer);
+            }
             foreach (FlockRelayLoopback loopback in closing)
+            {
                 loopback.Close();
+                _relay.LetChannelGo(loopback.Peer);
+            }
         }
 
         // On the relay thread: a packet a relayed peer sent, handed to the netcode from that peer's loopback socket.

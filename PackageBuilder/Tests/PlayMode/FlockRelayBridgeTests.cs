@@ -108,10 +108,10 @@ namespace Flock.Tests.PlayMode
         }
 
         // A relay address of the player's own, opened to the host's relay IP, as StartNetcodeAsync opens one.
-        private IEnumerator Opened(string player, List<FlockRelayConnection> into, Func<FlockRelayPeer> openTo = null)
+        private IEnumerator Opened(string player, List<FlockRelayConnection> into, Func<FlockRelayPeer> openTo = null, FlockRelayConnection.Timing timing = null)
         {
             FlockRelayLogin login = new FlockRelayLogin("127.0.0.1", _relay.Port, "1760000000:game:" + player, "minted-for-the-test");
-            Task<FlockRelayConnection> opening = FlockRelayConnection.OpenAsync(login, new FlockRelayConnection.Timing { AnswerWait = TimeSpan.FromSeconds(2) }, _logger, default);
+            Task<FlockRelayConnection> opening = FlockRelayConnection.OpenAsync(login, timing ?? new FlockRelayConnection.Timing { AnswerWait = TimeSpan.FromSeconds(2) }, _logger, default);
             yield return Done(opening, $"{player}'s relay opened");
             Assert.IsFalse(opening.IsFaulted, $"Precondition: {player}'s relay opened ({opening.Exception?.InnerException?.Message})");
             FlockRelayConnection connection = opening.Result;
@@ -447,6 +447,101 @@ namespace Flock.Tests.PlayMode
             yield return HeardOnTheRelay(relays[0], "still carried", from);
             Assert.AreEqual(1, _logger.Warnings.Count(warning => warning.Contains("more than the 1400 Flock's relay carries")), "Said once");
             Assert.IsFalse(bridge.IsClosed);
+        }
+
+        // ---- channels follow what a bridge forwards for ----
+
+        // Channels renewed every second and kept by the relay for three, so a renewal that stops shows within a test.
+        private static FlockRelayConnection.Timing RenewingChannelsOften() => new FlockRelayConnection.Timing
+        {
+            AnswerWait = TimeSpan.FromSeconds(2),
+            RenewChannelsEvery = TimeSpan.FromSeconds(1),
+            ChannelLasts = TimeSpan.FromSeconds(3),
+        };
+
+        private int ChannelRenewalsFrom(FlockRelayConnection relay)
+            => _relay.SeenRequests(FakeRelayServer.MethodChannelBind).Count(seen => seen.ClientPort == relay.LocalPortForTesting);
+
+        // Counted once anything sent before has landed, then over more than two renewal periods.
+        private IEnumerator NoMoreRenewalsFrom(FlockRelayConnection relay, string why)
+        {
+            yield return RealSeconds(0.3f);
+            int before = ChannelRenewalsFrom(relay);
+            yield return RealSeconds(2.5f);
+            Assert.AreEqual(before, ChannelRenewalsFrom(relay), why);
+        }
+
+        [UnityTest]
+        public IEnumerator AClosedPlayersBridge_StopsRenewingItsChannelToTheHost()
+        {
+            List<FlockRelayConnection> relays = new List<FlockRelayConnection>();
+            yield return Opened(Host, relays);
+            yield return Opened(Player, relays, () => relays[0].Address, RenewingChannelsOften());
+            FlockRelayBridge bridge = Kept(FlockRelayBridge.ToTheHost(relays[1], relays[0].Address, _logger));
+            yield return FlockTestWait.Until(() => ChannelRenewalsFrom(relays[1]) >= 2, "the channel to the host was bound and renewed", 5f);
+            Assert.IsTrue(relays[1].KeepsChannelToForTesting(relays[0].Address), "Precondition: kept while the bridge forwards");
+
+            bridge.Close();
+            Assert.IsFalse(relays[1].KeepsChannelToForTesting(relays[0].Address));
+            yield return NoMoreRenewalsFrom(relays[1], "The relay lets the channel lapse once the bridge closed");
+        }
+
+        [UnityTest]
+        public IEnumerator AHostsBridge_StopsRenewingTheChannelOfAPlayerItForgets()
+        {
+            List<FlockRelayConnection> relays = new List<FlockRelayConnection>();
+            yield return Opened(Host, relays, null, RenewingChannelsOften());
+            yield return Opened(Player, relays, () => relays[0].Address);
+            StandInNetcode netcode = Netcode();
+            FlockRelayBridge bridge = Kept(FlockRelayBridge.ForTheHost(relays[0], netcode.Port, _logger));
+            List<KeyValuePair<string, int>> heard = new List<KeyValuePair<string, int>>();
+            SendThrough(relays[1], relays[0].Address, "b");
+            yield return Heard(netcode, "b", heard);
+            bridge.LetIn(relays[1].Address);
+            yield return FlockTestWait.Until(() => ChannelRenewalsFrom(relays[0]) >= 2, "the player's channel was bound and renewed", 5f);
+
+            // The player left: the netcode's disconnect makes the host forget it.
+            bridge.Forget(relays[1].Address);
+            Assert.IsFalse(relays[0].KeepsChannelToForTesting(relays[1].Address));
+            yield return NoMoreRenewalsFrom(relays[0], "A player who left is not renewed a channel");
+        }
+
+        [UnityTest]
+        public IEnumerator AClosedHostsBridge_StopsRenewingItsPlayersChannels()
+        {
+            List<FlockRelayConnection> relays = new List<FlockRelayConnection>();
+            yield return Opened(Host, relays, null, RenewingChannelsOften());
+            yield return Opened(Player, relays, () => relays[0].Address);
+            StandInNetcode netcode = Netcode();
+            FlockRelayBridge bridge = Kept(FlockRelayBridge.ForTheHost(relays[0], netcode.Port, _logger));
+            List<KeyValuePair<string, int>> heard = new List<KeyValuePair<string, int>>();
+            SendThrough(relays[1], relays[0].Address, "b");
+            yield return Heard(netcode, "b", heard);
+            bridge.LetIn(relays[1].Address);
+            yield return FlockTestWait.Until(() => ChannelRenewalsFrom(relays[0]) >= 2, "the player's channel was bound and renewed", 5f);
+
+            // The host's netcode stopped (a host change, the game shutting it down): its bridge closes.
+            bridge.Close();
+            Assert.IsFalse(relays[0].KeepsChannelToForTesting(relays[1].Address));
+            yield return NoMoreRenewalsFrom(relays[0], "The relay lets a player's channel lapse once the host's bridge closed");
+        }
+
+        [UnityTest]
+        public IEnumerator AChannelWantedAgain_IsRenewedOnTheNumberItHad()
+        {
+            List<FlockRelayConnection> relays = new List<FlockRelayConnection>();
+            yield return Opened(Host, relays);
+            yield return Opened(Player, relays, () => relays[0].Address, RenewingChannelsOften());
+            FlockRelayPeer host = relays[0].Address;
+            relays[1].KeepChannelTo(host);
+            yield return FlockTestWait.Until(() => relays[1].ChannelNumberForTesting(host) != 0, "the channel was bound", 5f);
+            ushort number = relays[1].ChannelNumberForTesting(host);
+
+            relays[1].LetChannelGo(host);
+            yield return FlockTestWait.Until(() => relays[1].ChannelNumberForTesting(host) == 0, "the channel lapsed", 6f);
+            relays[1].KeepChannelTo(host);
+            yield return FlockTestWait.Until(() => relays[1].ChannelNumberForTesting(host) != 0, "the channel was bound again", 5f);
+            Assert.AreEqual(number, relays[1].ChannelNumberForTesting(host), "On the number it had: the relay keeps a peer's number for a while after it lapses");
         }
     }
 }

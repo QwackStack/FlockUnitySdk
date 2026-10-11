@@ -1,4 +1,5 @@
 using System;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Flock.Exceptions;
@@ -29,6 +30,8 @@ namespace Flock.Providers
         public const string Refused = "refused";
         /// <summary>Flock's relay was needed and could not be used; <see cref="FlockNetcodeStartResult.RelayFailureReason"/> says why.</summary>
         public const string RelayFailed = "relay_failed";
+        /// <summary>The game started the netcode again on the same NetworkManager (such as after <see cref="FlockMultiplayerSession.HostChanged"/>) before this start ended, and the newer start took over.</summary>
+        public const string Restarted = "restarted";
     }
 
     /// <summary>Why a host refused a joining player (<see cref="FlockNetcodeStartResult.RefusedReason"/>). An open set: the game's own check gives reasons of its own.</summary>
@@ -142,7 +145,7 @@ namespace Flock.Providers
         private static readonly TimeSpan StoppedCheckInterval = TimeSpan.FromMilliseconds(250);
         // The shortest try at the host's address on this network before a WhenNeeded player goes through the relay.
         private static readonly TimeSpan ShortestTryOnTheHostsNetwork = TimeSpan.FromSeconds(3);
-        // How long a direct try that is given up waits for Netcode for GameObjects to finish stopping before the relay's start.
+        // How long Netcode for GameObjects is given to finish stopping: the game's shutdown before a start, or a given-up direct try before the relay's.
         private static readonly TimeSpan LongestWaitToStop = TimeSpan.FromSeconds(5);
         private const string Loopback = "127.0.0.1";
         // Ends a connect whose host never answered in time; never handed to the game.
@@ -151,7 +154,18 @@ namespace Flock.Providers
         // Called at the moment a try at the host's network has run out, before it is given up, so a test can stop the netcode in that frame.
         internal static Action<NetworkManager> TryOnTheHostsNetworkRanOutForTesting;
 
-        /// <summary>The host starts Netcode for GameObjects as host on Unity Transport's port, letting in only players whose Flock join token checks out (one connection each), opens its address on Flock's relay unless told not to, then publishes how to reach it; a player waits for that, connects to the host on its network or through the relay (<see cref="FlockNetcodeOptions.Relay"/>) with a join token, and returns once connected or refused. Not in a web player.</summary>
+        // The start under way on each NetworkManager, one at a time: a newer start ends it as Restarted.
+        private static readonly object StartsGate = new object();
+        private static readonly ConditionalWeakTable<NetworkManager, NetcodeStart> StartsUnderWay = new ConditionalWeakTable<NetworkManager, NetcodeStart>();
+
+        private sealed class NetcodeStart
+        {
+            internal readonly CancellationTokenSource Replaced = new CancellationTokenSource();
+            // Set once the start has ended and cleaned up, whatever its outcome; a newer start waits for it.
+            internal readonly TaskCompletionSource<bool> Ended = new TaskCompletionSource<bool>();
+        }
+
+        /// <summary>The host starts Netcode for GameObjects as host on Unity Transport's port, letting in only players whose Flock join token checks out (one connection each), opens its address on Flock's relay unless told not to, then publishes how to reach it; a player waits for that, connects to the host on its network or through the relay (<see cref="FlockNetcodeOptions.Relay"/>) with a join token, and returns once connected or refused. A shutdown of the NetworkManager still under way is waited for (at most 5 s; still running after that, it is refused, through the returned task), and a start of this one still under way ends as <see cref="FlockNetcodeStartOutcome.Restarted"/>, so after <see cref="FlockMultiplayerSession.HostChanged"/> or <see cref="FlockMultiplayerSession.RelayLost"/> the game shuts the netcode down and calls this again for its new part. Not in a web player.</summary>
         public static Task<FlockNetcodeStartResult> StartNetcodeAsync(this FlockMultiplayerSession session, NetworkManager networkManager, FlockNetcodeOptions options = null, CancellationToken cancellationToken = default)
         {
             if (session == null)
@@ -160,21 +174,113 @@ namespace Flock.Providers
                 throw new FlockValidationException($"This session has ended ({session.EndReason}). Host or join another.");
             if (networkManager == null)
                 throw new FlockValidationException("StartNetcodeAsync needs the scene's NetworkManager.");
-            if (networkManager.IsListening || networkManager.ShutdownInProgress)
-                throw new FlockValidationException("Netcode for GameObjects is already running on this NetworkManager. Shut it down before starting it for a session.");
             if (Application.platform == RuntimePlatform.WebGLPlayer)
                 throw new FlockValidationException("A web player cannot connect directly or through Flock's relay. Use a connection of the game's own with PublishConnectionAsync.");
             UnityTransport transport = TransportOf(networkManager);
             if (transport == null)
                 throw new FlockValidationException("StartNetcodeAsync connects through Unity Transport: set the NetworkManager's transport to UnityTransport.");
-            if (session.IsHost && networkManager.ConnectionApprovalCallback != null)
-                throw new FlockValidationException("This NetworkManager already has a ConnectionApprovalCallback. StartNetcodeAsync installs Flock's check of every joining player: move the game's own check to FlockNetcodeOptions.ApproveJoiningPlayer.");
             options = options ?? new FlockNetcodeOptions();
             if (!Enum.IsDefined(typeof(FlockRelayUse), options.Relay))
                 throw new FlockValidationException($"FlockNetcodeOptions.Relay must be WhenNeeded, Always or Never, not {(int)options.Relay}.");
-            return session.IsHost
-                ? StartAsHostAsync(session, networkManager, transport, options, cancellationToken)
-                : ConnectAsync(session, networkManager, transport, options, cancellationToken);
+            // A shutdown or a start of Flock's still under way is waited for first; anything else already running is refused now.
+            bool waitsFirst = StartUnderWay(networkManager) != null || networkManager.ShutdownInProgress;
+            if (!waitsFirst)
+                RefuseWhatRunsAlready(session, networkManager);
+            NetcodeStart start = BeginStart(networkManager, out NetcodeStart replaced);
+            return RunAsync(start, replaced, waitsFirst, session, networkManager, transport, options, cancellationToken);
+        }
+
+        // How a start a newer one replaced ends: cancelled when its own caller gave up too, the caller's cancel being theirs; restarted otherwise.
+        private static FlockNetcodeStartResult EndedByANewerStart(FlockMultiplayerSession session, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return new FlockNetcodeStartResult(FlockNetcodeStartOutcome.Restarted, session.IsHost, null, 0, session.Connection);
+        }
+
+        private static void RefuseWhatRunsAlready(FlockMultiplayerSession session, NetworkManager networkManager)
+        {
+            if (networkManager.IsListening || networkManager.ShutdownInProgress)
+                throw new FlockValidationException("Netcode for GameObjects is already running on this NetworkManager. Shut it down before starting it for a session.");
+            if (session.IsHost && networkManager.ConnectionApprovalCallback != null)
+                throw new FlockValidationException("This NetworkManager already has a ConnectionApprovalCallback. StartNetcodeAsync installs Flock's check of every joining player: move the game's own check to FlockNetcodeOptions.ApproveJoiningPlayer.");
+        }
+
+        private static NetcodeStart StartUnderWay(NetworkManager networkManager)
+        {
+            lock (StartsGate)
+                return StartsUnderWay.TryGetValue(networkManager, out NetcodeStart start) ? start : null;
+        }
+
+        private static NetcodeStart BeginStart(NetworkManager networkManager, out NetcodeStart replaced)
+        {
+            NetcodeStart start = new NetcodeStart();
+            lock (StartsGate)
+            {
+                if (StartsUnderWay.TryGetValue(networkManager, out replaced))
+                    StartsUnderWay.Remove(networkManager);
+                StartsUnderWay.Add(networkManager, start);
+            }
+            // Outside the gate: cancelling runs the replaced start's waits on the spot.
+            replaced?.Replaced.Cancel();
+            return start;
+        }
+
+        private static void EndStart(NetworkManager networkManager, NetcodeStart start)
+        {
+            lock (StartsGate)
+            {
+                // A newer start may hold the place already; only this start's own is given back.
+                if (StartsUnderWay.TryGetValue(networkManager, out NetcodeStart current) && current == start)
+                    StartsUnderWay.Remove(networkManager);
+            }
+        }
+
+        // The start's whole run: the replaced start and a shutdown under way first, then the part of the role the session gives this device now.
+        private static async Task<FlockNetcodeStartResult> RunAsync(NetcodeStart start, NetcodeStart replaced, bool waitsFirst, FlockMultiplayerSession session,
+            NetworkManager networkManager, UnityTransport transport, FlockNetcodeOptions options, CancellationToken cancellationToken)
+        {
+            try
+            {
+                using (CancellationTokenSource linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, start.Replaced.Token))
+                {
+                    try
+                    {
+                        if (replaced != null)
+                        {
+                            // Waited for until it has cleaned up, so it never stops the netcode this start launches; only this caller's own token gives up.
+                            if (!await FlockWaiting.FinishedBeforeGivenUpAsync(replaced.Ended.Task, cancellationToken))
+                                throw new OperationCanceledException(cancellationToken);
+                            await replaced.Ended.Task;
+                        }
+                        if (waitsFirst)
+                        {
+                            await StoppedAsync(networkManager, linked.Token);
+                            RefuseWhatRunsAlready(session, networkManager);
+                        }
+                        linked.Token.ThrowIfCancellationRequested();
+                        if (session.HasEnded)
+                            return new FlockNetcodeStartResult(FlockNetcodeStartOutcome.SessionEnded, session.IsHost, null, 0, session.Connection);
+                        FlockNetcodeStartResult result = session.IsHost
+                            ? await StartAsHostAsync(session, networkManager, transport, options, linked.Token)
+                            : await ConnectAsync(session, networkManager, transport, options, linked.Token);
+                        // Replaced while an answer that does not stop for cancelling was on its way: what it started is stopped for the newer start.
+                        if (!start.Replaced.IsCancellationRequested)
+                            return result;
+                        if (result.Outcome == FlockNetcodeStartOutcome.StartedAsHost || result.Outcome == FlockNetcodeStartOutcome.Connected)
+                            networkManager.Shutdown();
+                        return EndedByANewerStart(session, cancellationToken);
+                    }
+                    catch (OperationCanceledException) when (start.Replaced.IsCancellationRequested)
+                    {
+                        return EndedByANewerStart(session, cancellationToken);
+                    }
+                }
+            }
+            finally
+            {
+                EndStart(networkManager, start);
+                start.Ended.TrySetResult(true);
+            }
         }
 
         /// <summary>The Flock player behind a Netcode for GameObjects connection on this host, the host's own included; null for a connection that is not here or a device that is not hosting through StartNetcodeAsync.</summary>
@@ -348,8 +454,6 @@ namespace Flock.Providers
             {
                 FlockRelayConnection relay = await session.OpenRelayOnAsync(relayServer, cancellationToken);
                 await relay.OpenToHostAsync(host, cancellationToken);
-                // The host is the one peer this player sends to, so it gets a channel at once.
-                relay.KeepChannelTo(host);
                 bridge = FlockRelayBridge.ToTheHost(relay, host, FlockClient.Instance.Logger);
             }
             catch (FlockRelayException failure)
