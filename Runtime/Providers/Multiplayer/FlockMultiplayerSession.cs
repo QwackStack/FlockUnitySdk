@@ -65,6 +65,15 @@ namespace Flock.Providers
     {
         internal const string RelayAddress = "relay_address";
         internal const string RelayServer = "relay_server";
+
+        // A descriptor of mode "relay" naming an address on the relay: the host's for the session, or a player's for its seat.
+        internal static bool TryReadRelayAddress(IReadOnlyDictionary<string, object> values, out FlockRelayPeer address)
+        {
+            address = default;
+            return values != null
+                && values.TryGetValue("mode", out object mode) && string.Equals(mode as string, FlockMultiplayerConnectionMode.Relay, StringComparison.Ordinal)
+                && values.TryGetValue(RelayAddress, out object raw) && FlockJsonValues.TryConvert(raw, out string text) && FlockRelayPeer.TryParse(text, out address);
+        }
     }
 
     /// <summary>Where this device connects to reach a direct host.</summary>
@@ -143,10 +152,8 @@ namespace Flock.Providers
         /// <summary>The host's address on the relay and the relay server it is on; false when this is not a relay connection holding both.</summary>
         internal bool TryGetRelay(out FlockRelayPeer address, out string server)
         {
-            address = default;
             server = null;
-            return string.Equals(Mode, FlockMultiplayerConnectionMode.Relay, StringComparison.Ordinal)
-                && TryGetValue(RelayConnectionValues.RelayAddress, out string text) && FlockRelayPeer.TryParse(text, out address)
+            return RelayConnectionValues.TryReadRelayAddress(Values, out address)
                 && TryGetValue(RelayConnectionValues.RelayServer, out server) && !string.IsNullOrEmpty(server);
         }
 
@@ -243,6 +250,8 @@ namespace Flock.Providers
         internal int ConnectionEpoch { get; private set; }
         // How often to heartbeat, as the server says for the game's timeouts.
         internal TimeSpan HeartbeatInterval { get; private set; }
+        // Each seated player's address on the relay, as its seat says: the host reads every seat's, a player only its own.
+        internal IReadOnlyDictionary<string, FlockRelayPeer> SeatRelayAddresses { get; private set; }
 
         /// <summary>Reads one <see cref="Data"/> value as <typeparamref name="T"/>. False when the key is absent or the value cannot become a T.</summary>
         public bool TryGetData<T>(string key, out T value)
@@ -289,6 +298,10 @@ namespace Flock.Providers
         /// <summary>Publishes this device's address on the relay, and with <paramref name="withDirectAddresses"/> also how players on its network reach it on <paramref name="port"/>. Host only.</summary>
         internal Task PublishRelayConnectionAsync(FlockRelayConnection relay, int port, bool withDirectAddresses, CancellationToken cancellationToken = default)
             => _owner.PublishRelayConnectionAsync(this, relay, port, withDirectAddresses, cancellationToken);
+
+        /// <summary>Publishes this player's address on the relay for its own seat, so the host's relay lets it in; skipped when the seat already says it.</summary>
+        internal Task PublishSeatRelayAddressAsync(FlockRelayConnection relay, CancellationToken cancellationToken = default)
+            => _owner.PublishSeatRelayAddressAsync(this, relay, cancellationToken);
 
         // Takes a newer reading of the session, then says what changed; events are raised once everything is in place.
         internal void Update(SessionRecord session)
@@ -375,6 +388,18 @@ namespace Flock.Providers
             foreach (string playerId in SeatedPlayers(session))
                 players.Add(new FlockMultiplayerSessionPlayer(playerId));
             Players = players.AsReadOnly();
+
+            Dictionary<string, FlockRelayPeer> seatRelays = new Dictionary<string, FlockRelayPeer>();
+            if (session.Participants != null)
+            {
+                foreach (SessionParticipantRecord participant in session.Participants)
+                {
+                    if (participant.PlayerId != null && participant.Status == SessionWireValues.SeatJoined
+                        && RelayConnectionValues.TryReadRelayAddress(participant.ConnectionInfo, out FlockRelayPeer address))
+                        seatRelays[participant.PlayerId] = address;
+                }
+            }
+            SeatRelayAddresses = seatRelays;
 
             ConnectionEpoch = session.ConnectionEpoch;
             HeartbeatInterval = session.HeartbeatIntervalSeconds > 0 ? TimeSpan.FromSeconds(session.HeartbeatIntervalSeconds.Value) : HeartbeatWhenNoneIsGiven;

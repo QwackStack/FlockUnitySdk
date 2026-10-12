@@ -13,7 +13,8 @@ namespace Flock.Tests.PlayMode
     // names the player, every route answers the whole session (players in seniority order) with the heartbeat interval, a player
     // holds one seat a game, the host leaving hands hosting to the longest seated or ends the session (host_left), a change of
     // host clears the address and reopens the session, a session keeps to its host's game version unless told otherwise, and
-    // each refusal has the backend's own status and code. Other players act through its methods.
+    // each refusal has the backend's own status and code; since 2026-10-12 a seated player may publish how to reach it for its own
+    // seat, which only the host and that player read. Other players act through its methods.
     internal sealed class FakeSessionServer : IFlockHttpAdapter
     {
         internal const string Host = "host";
@@ -25,15 +26,19 @@ namespace Flock.Tests.PlayMode
         internal const string End = "end";
         internal const string MakeHost = "make-host";
         internal const string Publish = "publish";
+        internal const string SeatPublish = "seat-publish";
         internal const string JoinToken = "join-token";
         internal const string Verify = "verify";
         internal const string RelayCredentials = "relay-credentials";
         internal const string Other = "other";
 
+        // How to reach the seat's player, as it published for its seat (backend 2026-10-12): read by the host and the player alone, cleared when the seat ends.
         internal sealed class Seat
         {
             public string PlayerId;
             public string Status = "joined";
+            public JObject Connection = new JObject();
+            public int ConnectionEpoch;
         }
 
         internal sealed class Session
@@ -103,6 +108,13 @@ namespace Flock.Tests.PlayMode
         {
             lock (_lock)
                 return _requests.Where(pair => pair.Key == route).Select(pair => pair.Value).ToList();
+        }
+
+        // Every route asked, in the order asked.
+        internal List<string> RoutesInOrder()
+        {
+            lock (_lock)
+                return _requests.Select(pair => pair.Key).ToList();
         }
 
         internal int TotalRequests
@@ -206,6 +218,17 @@ namespace Flock.Tests.PlayMode
             }
         }
 
+        // Another player's game publishing how to reach it, for its own seat.
+        internal void PublishesSeat(Session session, string playerId, JObject connection)
+        {
+            lock (_lock)
+            {
+                Seat seat = session.Seats.First(each => each.PlayerId == playerId && each.Status == "joined");
+                seat.Connection = connection;
+                seat.ConnectionEpoch++;
+            }
+        }
+
         internal void MakesHost(Session session, string playerId)
         {
             lock (_lock)
@@ -290,6 +313,8 @@ namespace Flock.Tests.PlayMode
                 return End;
             if (path.EndsWith("/host", StringComparison.Ordinal))
                 return MakeHost;
+            if (path.EndsWith("/participants/me/connection-info", StringComparison.Ordinal))
+                return SeatPublish;
             if (path.EndsWith("/connection-info", StringComparison.Ordinal))
                 return Publish;
             if (path.EndsWith("/join-token", StringComparison.Ordinal))
@@ -391,6 +416,19 @@ namespace Flock.Tests.PlayMode
 
             if (!live)
                 return Refused(404, "multiplayer.session_not_found");
+            if (route == SeatPublish)
+            {
+                if (!seated)
+                    return Refused(404, "multiplayer.session_not_found");
+                JObject connection = body?["connection_info"] as JObject;
+                string mode = (string)connection?["mode"];
+                if (string.IsNullOrWhiteSpace(mode) || mode.Length > 32)
+                    return Refused(422, "request.validation_failed");
+                Seat mine = session.Seats.First(seat => seat.PlayerId == player && seat.Status == "joined");
+                mine.Connection = connection;
+                mine.ConnectionEpoch++;
+                return Answer(Describe(session, player, true));
+            }
             if (route == JoinToken)
             {
                 if (!seated)
@@ -448,6 +486,7 @@ namespace Flock.Tests.PlayMode
                 if (seat == null)
                     return;
                 seat.Status = how;
+                seat.Connection = new JObject();
                 string next = session.Seated.FirstOrDefault();
                 if (session.HostId == playerId)
                 {
@@ -476,13 +515,17 @@ namespace Flock.Tests.PlayMode
             session.Status = "ended";
             session.EndedReason = reason;
             foreach (Seat seat in session.Seats.Where(each => each.Status == "joined"))
+            {
                 seat.Status = "left";
+                seat.Connection = new JObject();
+            }
         }
 
         // Every route answers the whole session; a read blanks the address for a player without a seat, as the backend does.
         private JObject Describe(Session session, string reader, bool asWritten)
         {
             bool seated = session.Seats.Any(seat => seat.PlayerId == reader && seat.Status == "joined");
+            bool hosting = seated && session.HostId == reader;
             return new JObject
             {
                 ["id"] = session.Id,
@@ -515,6 +558,9 @@ namespace Flock.Tests.PlayMode
                     ["left_at"] = null,
                     ["last_seen_at"] = "2026-10-07T17:35:34.921920",
                     ["relay_credential_mints"] = 0,
+                    // The host reads every seated player's, a seated player only its own.
+                    ["connection_info"] = seated && seat.Status == "joined" && (hosting || seat.PlayerId == reader) ? seat.Connection.DeepClone() : new JObject(),
+                    ["connection_epoch"] = seat.ConnectionEpoch,
                 })),
             };
         }

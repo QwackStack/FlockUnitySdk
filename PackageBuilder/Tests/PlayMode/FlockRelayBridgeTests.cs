@@ -81,6 +81,7 @@ namespace Flock.Tests.PlayMode
             _netcodes.Clear();
             FlockRelayBridge.MostPlayersForTesting = null;
             FlockRelayBridge.NotLetInWithinForTesting = null;
+            FlockUdpSockets.ResetForTesting();
             FlockDirectLink.TimingForTesting = null;
             FlockDirectLink.NextLinkOffersForTesting = null;
             _relay?.Dispose();

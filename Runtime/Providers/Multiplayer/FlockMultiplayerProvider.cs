@@ -110,6 +110,7 @@ namespace Flock.Providers
             _matchmaking.EndIfSignInEnded();
             _sessions.EndIfSignInEnded();
             _sessions.TellIfTheRelayWasLost();
+            _sessions.KeepReadingForRelayedPlayers();
             _repeatingCalls.SendThoseDue();
         }
 

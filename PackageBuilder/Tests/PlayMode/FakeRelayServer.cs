@@ -14,7 +14,8 @@ namespace Flock.Tests.PlayMode
     // a repeat of a request under its transaction is answered again, an opening to a refused address is 403, a channel taken twice
     // or out of range is 400, a release (lifetime 0) ends a reservation and a renewal after it is 437, and data is relayed between
     // its own reservations (channel frames to a peer that bound a channel back, data indications otherwise). Every success to a
-    // signed request is signed and every answer fingerprinted. A test chooses silences, refusals, stale nonces and lifetimes.
+    // signed request is signed and every answer fingerprinted. A test chooses silences, refusals, stale nonces and lifetimes, and can
+    // make it answer as Cloudflare's relay did on 2026-10-12: an IP of its own for each reservation, and only some client ports answered.
     internal sealed class FakeRelayServer : IDisposable
     {
         internal const string Realm = "test-realm";
@@ -48,6 +49,7 @@ namespace Flock.Tests.PlayMode
         private sealed class Reservation
         {
             public IPEndPoint Client;
+            public string Ip;
             public int RelayedPort;
             public string AllocateTransaction;
             public DateTime ExpiresAt;
@@ -78,6 +80,15 @@ namespace Flock.Tests.PlayMode
         // Answers to signed reservations are held while this is set, and sent when it is cleared.
         private readonly List<KeyValuePair<byte[], IPEndPoint>> _heldAnswers = new List<KeyValuePair<byte[], IPEndPoint>>();
         internal volatile bool HoldReservationAnswers;
+        // The IPs reservations are given in turn: one, as coturn does, or several, as Cloudflare's relay gives addresses (measured 2026-10-12).
+        internal readonly List<string> RelayIps = new List<string> { RelayIp };
+        private int _reservationsMade;
+        // Answers only the client ports first heard at these places (1 for the first port heard, and so on); every other port is ignored
+        // whole, as Cloudflare's relay answered about one port in three, every request or none (measured 2026-10-12). Null answers every port.
+        internal HashSet<int> AnswersOnlyPortsHeard;
+        private readonly Dictionary<int, int> _portsHeard = new Dictionary<int, int>();
+        // Binding requests answered with the address they came from; off for a relay that ignores them.
+        internal volatile bool AnswersBindings = true;
 
         internal FakeRelayServer()
         {
@@ -202,6 +213,13 @@ namespace Flock.Tests.PlayMode
 
         private void Handle(byte[] packet, IPEndPoint from)
         {
+            lock (_lock)
+            {
+                if (!_portsHeard.ContainsKey(from.Port))
+                    _portsHeard[from.Port] = _portsHeard.Count + 1;
+                if (AnswersOnlyPortsHeard != null && !AnswersOnlyPortsHeard.Contains(_portsHeard[from.Port]))
+                    return;
+            }
             if (packet.Length >= 4 && (packet[0] & 0xC0) == 0x40)
             {
                 ushort channel = (ushort)((packet[0] << 8) | packet[1]);
@@ -242,7 +260,8 @@ namespace Flock.Tests.PlayMode
                 return;
             if (method == Binding)
             {
-                SendTo(Answer(type, transaction, 0x0100, new[] { Attr(XorMappedAddress, Address(from)) }, null), from);
+                if (AnswersBindings)
+                    SendTo(Answer(type, transaction, 0x0100, new[] { Attr(XorMappedAddress, Address(from)) }, null), from);
                 return;
             }
             lock (_lock)
@@ -309,7 +328,8 @@ namespace Flock.Tests.PlayMode
                             return Error(type, transaction, 437, "Allocation Mismatch", false, key);
                         if (reservation == null)
                         {
-                            reservation = new Reservation { Client = from, RelayedPort = _nextPort++, AllocateTransaction = id, ExpiresAt = DateTime.UtcNow + ReservationLifetime };
+                            string ip = RelayIps[_reservationsMade++ % RelayIps.Count];
+                            reservation = new Reservation { Client = from, Ip = ip, RelayedPort = _nextPort++, AllocateTransaction = id, ExpiresAt = DateTime.UtcNow + ReservationLifetime };
                             _reservations.Add(reservation);
                         }
                         if (ForgeNextReservation)
@@ -320,7 +340,7 @@ namespace Flock.Tests.PlayMode
                         }
                         return Answer(type, transaction, 0x0100, new[]
                         {
-                            Attr(XorRelayedAddress, Address(new IPEndPoint(IPAddress.Parse(RelayIp), reservation.RelayedPort))),
+                            Attr(XorRelayedAddress, Address(new IPEndPoint(IPAddress.Parse(reservation.Ip), reservation.RelayedPort))),
                             Attr(XorMappedAddress, Address(from)),
                             Attr(Lifetime, Be32((uint)ReservationLifetime.TotalSeconds)),
                         }, key);
@@ -392,12 +412,10 @@ namespace Flock.Tests.PlayMode
             DateTime now = DateTime.UtcNow;
             if (sender.ExpiresAt < now || !sender.Openings.TryGetValue(peer.Address.ToString(), out DateTime open) || open < now)
                 return;
-            if (peer.Address.ToString() != RelayIp)
+            Reservation receiver = _reservations.FirstOrDefault(each => each.Ip == peer.Address.ToString() && each.RelayedPort == peer.Port && each.ExpiresAt > now);
+            if (receiver == null || !receiver.Openings.TryGetValue(sender.Ip, out DateTime receiverOpen) || receiverOpen < now)
                 return;
-            Reservation receiver = _reservations.FirstOrDefault(each => each.RelayedPort == peer.Port && each.ExpiresAt > now);
-            if (receiver == null || !receiver.Openings.TryGetValue(RelayIp, out DateTime receiverOpen) || receiverOpen < now)
-                return;
-            IPEndPoint senderAddress = new IPEndPoint(IPAddress.Parse(RelayIp), sender.RelayedPort);
+            IPEndPoint senderAddress = new IPEndPoint(IPAddress.Parse(sender.Ip), sender.RelayedPort);
             foreach (KeyValuePair<ushort, KeyValuePair<IPEndPoint, DateTime>> channel in receiver.Channels)
             {
                 if (channel.Value.Key.Equals(senderAddress) && channel.Value.Value > now)

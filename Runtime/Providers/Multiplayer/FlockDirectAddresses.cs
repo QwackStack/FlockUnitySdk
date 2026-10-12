@@ -39,6 +39,9 @@ namespace Flock.Providers
 
         internal void SetStunWaitForTesting(TimeSpan wait) => _stunWait = wait;
 
+        /// <summary>The family of the socket the last STUN request went out from.</summary>
+        internal AddressFamily AskedFromForTesting { get; private set; }
+
         // Stands in for the operating system's name lookup, so a test can hold one that never answers.
         internal void SetNameLookUpForTesting(Func<string, Task<IPAddress[]>> lookUp) => _lookUpForTesting = lookUp;
 
@@ -91,8 +94,46 @@ namespace Flock.Providers
                 _client.Logger.LogWarning($"The STUN server could not be read from Flock: {failure.Message}. This device's public address stays unknown this time.");
                 return new List<StunServer>();
             }
+            _stunServers = StunServersIn(servers);
+            return _stunServers;
+        }
+
+        /// <summary>The STUN servers an answer of Flock's lists, looked up together, each within <paramref name="wait"/>; one that cannot be is left out, since they only help a direct link.</summary>
+        internal static async Task<List<IPEndPoint>> LookUpStunServersAsync(RelayCredentialsRecord answer, TimeSpan wait, Func<string, Task<IPAddress[]>> lookUpForTesting, CancellationToken cancellationToken)
+        {
+            List<StunServer> servers = StunServersIn(answer);
+            List<Task<IPEndPoint>> lookups = new List<Task<IPEndPoint>>();
+            foreach (StunServer server in servers)
+                lookups.Add(LookUpOneAsync(server, wait, lookUpForTesting, cancellationToken));
+            List<IPEndPoint> found = new List<IPEndPoint>();
+            foreach (IPEndPoint endpoint in await Task.WhenAll(lookups))
+            {
+                if (endpoint != null)
+                    found.Add(endpoint);
+            }
+            return found;
+        }
+
+        // A name the resolver refuses (the lookup throws at once for a malformed one) is left out like one that does not answer.
+        private static async Task<IPEndPoint> LookUpOneAsync(StunServer server, TimeSpan wait, Func<string, Task<IPAddress[]>> lookUpForTesting, CancellationToken cancellationToken)
+        {
+            try
+            {
+                IPAddress address = await FlockNameLookup.FindIpv4Async(server.Host, wait, lookUpForTesting, cancellationToken);
+                return address == null ? null : new IPEndPoint(address, server.Port);
+            }
+            catch (Exception failure) when (!(failure is OperationCanceledException))
+            {
+                return null;
+            }
+        }
+
+        private static List<StunServer> StunServersIn(RelayCredentialsRecord answer)
+        {
             List<StunServer> found = new List<StunServer>();
-            foreach (IceServerRecord entry in servers.IceServers)
+            if (answer?.IceServers == null)
+                return found;
+            foreach (IceServerRecord entry in answer.IceServers)
             {
                 if (entry?.Urls == null)
                     continue;
@@ -103,7 +144,6 @@ namespace Flock.Providers
                         found.Add(server);
                 }
             }
-            _stunServers = found;
             return found;
         }
 
@@ -114,12 +154,13 @@ namespace Flock.Providers
             Array.Copy(Guid.NewGuid().ToByteArray(), transaction, 12);
             byte[] request = StunRequest(transaction);
 
-            using (UdpClient udp = new UdpClient(AddressFamily.InterNetwork))
+            using (UdpClient udp = FlockUdpSockets.OpenClient())
             using (CancellationTokenSource stopWaiting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
             {
+                AskedFromForTesting = udp.Client.AddressFamily;
                 try
                 {
-                    await udp.SendAsync(request, request.Length, server);
+                    await udp.SendAsync(request, request.Length, FlockUdpSockets.Toward(udp.Client, server));
                 }
                 catch (SocketException)
                 {

@@ -16,7 +16,7 @@ namespace Flock.Providers
         public const string ServerNotListed = "relay_server_not_listed";
         /// <summary>The studio's relay is paused until its bill is paid.</summary>
         public const string Paused = "relay_paused";
-        /// <summary>The player asked Flock for relay logins more than 12 times in a minute.</summary>
+        /// <summary>The player asked Flock for relay logins more than 12 times in a minute, or its seat drew the most logins one seat may (10).</summary>
         public const string TooManyLogins = "relay_too_many_logins";
         /// <summary>Flock says the player has no seat in the session.</summary>
         public const string NotInSession = "relay_not_in_session";
@@ -30,7 +30,7 @@ namespace Flock.Providers
         public const string WrongLogin = "relay_wrong_login";
         /// <summary>The relay has no room for another address.</summary>
         public const string Full = "relay_full";
-        /// <summary>The relay refused to let packets in from the host's relay address.</summary>
+        /// <summary>The relay refused to let packets in from the host's relay address, or from a player's.</summary>
         public const string OpenRefused = "relay_open_refused";
         /// <summary>The relay refused a request for another reason.</summary>
         public const string Refused = "relay_refused";

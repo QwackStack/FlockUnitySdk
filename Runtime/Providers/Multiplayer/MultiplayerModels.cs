@@ -118,6 +118,10 @@ namespace Flock.Providers
 
         [JsonProperty("status")]
         public string Status { get; set; }
+
+        // How to reach this player, as it published for its seat: the host reads every seated player's, a player only its own.
+        [JsonProperty("connection_info")]
+        public Dictionary<string, object> ConnectionInfo { get; set; }
     }
 
     internal sealed class HostSessionBody

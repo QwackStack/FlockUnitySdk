@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
 using Flock.Exceptions;
@@ -12,8 +13,11 @@ namespace Flock.Providers
     {
         internal const string HeartbeatCallName = "Session heartbeat";
         internal const string ConnectionWaitCallName = "Session connection wait";
+        internal const string RelayedPlayersReadCallName = "Session read for relayed players";
         // While a game waits for the host's address, the session is read this often; heartbeats alone come every 20 s.
         internal static readonly TimeSpan DefaultConnectionWaitInterval = TimeSpan.FromSeconds(2);
+        // While a host takes players through its relay, the session is read this often, so a joining player's relay address is let in within seconds.
+        internal static readonly TimeSpan DefaultRelayedPlayersReadInterval = TimeSpan.FromSeconds(2);
         // A read overtaken this many times in a row means the session is changing faster than it can be read.
         private const int MostReadsWhileTheSessionChanges = 5;
 
@@ -27,6 +31,10 @@ namespace Flock.Providers
         private FlockMultiplayerSession _held;
         private FlockRepeatingCall _heartbeat;
         private FlockRepeatingCall _connectionWait;
+        private TimeSpan _relayedPlayersReadInterval = DefaultRelayedPlayersReadInterval;
+        private FlockRepeatingCall _relayedPlayersRead;
+        // The relay the read for relayed players runs for.
+        private FlockRelayConnection _relayedPlayersReadRelay;
         private int _readsSent;
         // Reads numbered at or below this change nothing when they land.
         private int _readsSettledThrough;
@@ -54,6 +62,10 @@ namespace Flock.Providers
         internal FlockRelayConnection.Timing RelayTiming { get; } = new FlockRelayConnection.Timing();
 
         internal void SetConnectionWaitIntervalForTesting(TimeSpan interval) => _connectionWaitInterval = interval;
+
+        internal void SetRelayedPlayersReadIntervalForTesting(TimeSpan interval) => _relayedPlayersReadInterval = interval;
+
+        internal bool ReadsForRelayedPlayersForTesting => _relayedPlayersRead != null && _relayedPlayersRead.IsRunning;
 
         internal async Task<FlockMultiplayerSession> HostAsync(int? maxPlayers, IReadOnlyDictionary<string, object> data, bool sameVersionOnly, CancellationToken cancellationToken)
         {
@@ -152,6 +164,91 @@ namespace Flock.Providers
             if (withDirectAddresses)
                 AddDirectAddresses(values, await _directAddresses.FindAsync(session.SignInNumber, cancellationToken), port);
             await PublishConnectionAsync(session, FlockMultiplayerConnectionMode.Relay, values, cancellationToken);
+        }
+
+        // A player's address on the relay, published for its own seat so the host's relay lets it in: a relay may give each address an
+        // IP of its own (Cloudflare's does, measured), and lets packets in only from IPs it was opened to. Skipped when the last reading holds it.
+        internal async Task PublishSeatRelayAddressAsync(FlockMultiplayerSession session, FlockRelayConnection relay, CancellationToken cancellationToken)
+        {
+            RequireRunning(session);
+            if (session.SeatRelayAddresses.TryGetValue(session.PlayerId, out FlockRelayPeer published) && published.Equals(relay.Address))
+                return;
+            Dictionary<string, object> values = new Dictionary<string, object>
+            {
+                ["mode"] = FlockMultiplayerConnectionMode.Relay,
+                [RelayConnectionValues.RelayAddress] = relay.Address.ToString(),
+            };
+            await ChangeAsync(session, () => _requests.PublishSeatConnectionAsync(session.SignInNumber, session.Id, values, cancellationToken), cancellationToken);
+        }
+
+        // A host's relay lets in every seated player's relay address its seat names, at each reading; the connection skips an IP already open or asked.
+        private void OpenTheRelayToSeatedPlayers(FlockMultiplayerSession session)
+        {
+            FlockRelayConnection relay = session.Relay;
+            if (session.HasEnded || !session.IsHost || relay == null || !relay.IsOpen)
+                return;
+            foreach (KeyValuePair<string, FlockRelayPeer> seat in session.SeatRelayAddresses)
+            {
+                if (!string.Equals(seat.Key, session.PlayerId, StringComparison.Ordinal) && !relay.IsOpenTo(seat.Value) && !relay.RefusedToOpenTo(seat.Value))
+                    LetRun(OpenToSeatedPlayerAsync(relay, seat.Value));
+            }
+        }
+
+        // A refusal is told once: an IP the relay refused is skipped at later readings. A relay that did not answer is asked again at the next one.
+        private async Task OpenToSeatedPlayerAsync(FlockRelayConnection relay, FlockRelayPeer player)
+        {
+            try
+            {
+                await relay.OpenToAsync(player);
+            }
+            catch (FlockRelayException refused) when (refused.Reason == FlockRelayFailure.OpenRefused)
+            {
+                _client.Logger.LogWarning($"A player's relay address cannot be let in, so that player cannot join through Flock's relay: {refused.Message}");
+            }
+        }
+
+        /// <summary>While the held session's host takes players through its relay (a host bridge hears what arrives), the session is read every 2 s, so a joining player's relay address is let in within seconds; heartbeats alone come every 20 s. Run once a frame.</summary>
+        internal void KeepReadingForRelayedPlayers()
+        {
+            FlockMultiplayerSession held = _held;
+            FlockRelayConnection relay = held?.Relay;
+            bool wanted = held != null && !_stopped && held.IsHost && relay != null && relay.IsOpen && relay.HandsArrivalsOver && !relay.ReadForPlayersRefused;
+            if (!wanted || relay != _relayedPlayersReadRelay)
+                StopReadingForRelayedPlayers();
+            if (!wanted || (_relayedPlayersRead != null && _relayedPlayersRead.IsRunning))
+                return;
+            string sessionId = held.Id;
+            int signInNumber = held.SignInNumber;
+            _relayedPlayersReadRelay = relay;
+            _relayedPlayersRead = _repeatingCalls.Start(
+                RelayedPlayersReadCallName,
+                _relayedPlayersReadInterval,
+                cancellationToken => ReadNumberedAsync(signInNumber, sessionId, cancellationToken),
+                TakeReading,
+                failure => RelayedPlayersReadStopped(sessionId, relay, failure));
+        }
+
+        private void StopReadingForRelayedPlayers()
+        {
+            _relayedPlayersRead?.Stop();
+            _relayedPlayersRead = null;
+            _relayedPlayersReadRelay = null;
+        }
+
+        // Not started again for this relay whatever the refusal, or the frames would send it again until the reason landed. A seat the
+        // server no longer has ends the session; any other refusal leaves it to the heartbeats' answers.
+        private void RelayedPlayersReadStopped(string sessionId, FlockRelayConnection relay, Exception failure)
+        {
+            relay.ReadForPlayersRefused = true;
+            FlockMultiplayerSession held = _held;
+            if (held == null || held.Id != sessionId)
+                return;
+            if (failure is FlockException coded && IsOutOfTheSession(coded))
+            {
+                LetRun(LearnWhyItEndedAsync(held, CancellationToken.None));
+                return;
+            }
+            _client.Logger.LogWarning($"The session is no longer read every 2 s for players joining through Flock's relay: {failure.Message}. The heartbeats still bring their relay addresses, about every 20 s.");
         }
 
         // An unknown address is left out; with neither known, nothing is added.
@@ -296,6 +393,9 @@ namespace Flock.Providers
                 if (logins.Count == 0)
                     throw new FlockRelayException(FlockRelayFailure.ServerNotListed, $"Flock does not list the relay server the host uses ({server}) for this player.");
             }
+            // Looked up while the relay opens: a direct link learns its own address from them, since a relay server may answer few of a device's ports (Cloudflare's, measured).
+            Task<List<IPEndPoint>> stunServers = FlockDirectAddresses.LookUpStunServersAsync(answer, RelayTiming.NameLookUpWait, RelayTiming.NameLookUpForTesting, stop);
+            LetRun(stunServers);
             FlockRelayException first = null;
             foreach (FlockRelayLogin login in logins)
             {
@@ -303,6 +403,7 @@ namespace Flock.Providers
                 {
                     FlockRelayConnection connection = await FlockRelayConnection.OpenAsync(login, RelayTiming, _client.Logger, stop);
                     session.Relay = connection;
+                    connection.StunServers = await stunServers;
                     return connection;
                 }
                 catch (FlockRelayException failure)
@@ -318,6 +419,8 @@ namespace Flock.Providers
         {
             if (failure.ErrorCode == FlockErrorCode.MultiplayerMintRateLimited)
                 return new FlockRelayException(FlockRelayFailure.TooManyLogins, "Flock refused relay logins: more than 12 were asked for this player in a minute.", failure);
+            if (failure.ErrorCode == FlockErrorCode.MultiplayerSeatMintLimit)
+                return new FlockRelayException(FlockRelayFailure.TooManyLogins, "Flock refused relay logins: this player's seat in the session has drawn the most one seat may (10).", failure);
             if (IsOutOfTheSession(failure))
                 return new FlockRelayException(FlockRelayFailure.NotInSession, "Flock refused relay logins: the player has no seat in this session.", failure);
             if (!failure.StatusCode.HasValue)
@@ -570,6 +673,7 @@ namespace Flock.Providers
                 {
                     held.Update(session);
                     KeepHeartbeating();
+                    OpenTheRelayToSeatedPlayers(held);
                 }
                 else
                 {
@@ -629,6 +733,7 @@ namespace Flock.Providers
             {
                 _held = null;
                 StopHeartbeating();
+                StopReadingForRelayedPlayers();
             }
             // A call waiting for this session's address is woken by Ended and stops the reads itself, inline on the main thread.
             session.End(reason, raise);

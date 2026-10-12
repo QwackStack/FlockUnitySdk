@@ -49,11 +49,13 @@ namespace Flock.Tests.PlayMode
         }
 
         // A host's bridge and a player's on one relay, the player's netcode heard by the host's; the host lets it in unless told not to.
-        private IEnumerator Paired(Pair pair, bool hostGoesDirect = true, bool playerGoesDirect = true, bool letIn = true, FlockDirectLink.Timing timing = null)
+        // beforeBridges runs once both relay addresses are open, before either bridge (or link) is made.
+        private IEnumerator Paired(Pair pair, bool hostGoesDirect = true, bool playerGoesDirect = true, bool letIn = true, FlockDirectLink.Timing timing = null, Action beforeBridges = null)
         {
             FlockDirectLink.TimingForTesting = timing ?? Quick();
             yield return Opened(Host, pair.Relays);
             yield return Opened(Player, pair.Relays, () => pair.Relays[0].Address);
+            beforeBridges?.Invoke();
             pair.HostNetcode = Netcode();
             pair.PlayerNetcode = Netcode();
             pair.Host = Kept(FlockRelayBridge.ForTheHost(pair.Relays[0], pair.HostNetcode.Port, _logger, hostGoesDirect));
@@ -103,6 +105,57 @@ namespace Flock.Tests.PlayMode
             Assert.IsTrue(InfoLogged(_logger, "now go directly"), "Saying so in the log");
             Assert.AreEqual(RelayedFrom(pair.Relays[1]), pair.Relays[1].PacketsSent, "The relay client counts what it sent on as the relay saw it");
             Assert.AreEqual(RelayedFrom(pair.Relays[0]), pair.Relays[0].PacketsSent);
+        }
+
+        [UnityTest]
+        public IEnumerator AnEndTheRelayServerDoesNotAnswer_OffersTheAddressFlocksStunServerSaw_AndStillGoesDirect()
+        {
+            using (FakeStunServer stun = new FakeStunServer { PublicAddress = "203.0.113.7" })
+            {
+                Pair pair = new Pair();
+                // As Cloudflare's relay server answers most of a device's ports nothing: only the STUN server Flock lists says where it sees the link.
+                yield return Paired(pair, beforeBridges: () =>
+                {
+                    _relay.AnswersBindings = false;
+                    foreach (FlockRelayConnection relay in pair.Relays)
+                        relay.StunServers = new[] { new IPEndPoint(IPAddress.Loopback, stun.Port) };
+                });
+                yield return FlockTestWait.Until(() => pair.PlayersLink?.TheirAddressesForTesting != null, "the player heard the host's offer", 5f);
+                List<IPEndPoint> offered = pair.PlayersLink.TheirAddressesForTesting;
+                Assert.IsTrue(offered.Any(address => address.Address.ToString() == "203.0.113.7"), "The host offered the address the STUN server saw: " + string.Join(", ", offered));
+                yield return BothDirect(pair);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator TwoBridges_ReachEachOtherFromDualStackSockets_AndReadWhatTheyHearAsIpv4()
+        {
+            Pair pair = new Pair();
+            yield return Paired(pair);
+            yield return BothDirect(pair);
+            AddressFamily dualStack = FlockUdpSocketsTests.FamilyThisMachineGives();
+            Assert.AreEqual(dualStack, pair.Relays[0].SocketFamilyForTesting, "The relay socket is dual-stack where the platform allows");
+            Assert.AreEqual(dualStack, pair.HostsLink.FamilyForTesting, "So is each link's");
+            Assert.AreEqual(dualStack, pair.PlayersLink.FamilyForTesting);
+            // The relay server heard on a dual-stack socket is still known as the server that said where it sees the link.
+            Assert.IsNotNull(pair.PlayersLink.PublicAddressForTesting, "The player's link learned where the relay server sees it");
+            Assert.AreEqual(AddressFamily.InterNetwork, pair.PlayersLink.PublicAddressForTesting.AddressFamily);
+            List<IPEndPoint> heard = pair.PlayersLink.TheirAddressesForTesting;
+            Assert.IsTrue(heard.All(address => address.AddressFamily == AddressFamily.InterNetwork), "The host's addresses, offered and probed from, read as IPv4: " + string.Join(", ", heard));
+            yield return OneEachWay(pair, "direct");
+        }
+
+        [UnityTest]
+        public IEnumerator WithoutIpv6_TwoBridges_StillGoDirect_FromPlainIpv4Sockets()
+        {
+            FlockUdpSockets.DualStackRefusedForTesting = true;
+            Pair pair = new Pair();
+            yield return Paired(pair);
+            yield return BothDirect(pair);
+            Assert.AreEqual(AddressFamily.InterNetwork, pair.Relays[0].SocketFamilyForTesting, "A platform without IPv6 gets a plain IPv4 relay socket");
+            Assert.AreEqual(AddressFamily.InterNetwork, pair.HostsLink.FamilyForTesting);
+            Assert.AreEqual(AddressFamily.InterNetwork, pair.PlayersLink.FamilyForTesting);
+            yield return OneEachWay(pair, "direct");
         }
 
         [UnityTest]

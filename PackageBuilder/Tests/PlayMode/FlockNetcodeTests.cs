@@ -90,6 +90,11 @@ namespace Flock.Tests.PlayMode
         }
 #endif
 
+        // Retries the next signed-in client makes of a request that failed for a passing reason; 0 by default, as the harness pins.
+        private int _retriesForTheNextSignIn;
+        // The heartbeat interval the next sign-in's sessions are given, so a test can keep heartbeats out of its window.
+        private int? _heartbeatSecondsForTheNextSignIn;
+
         private FlockMultiplayerProvider SignedInAs(string player)
         {
 #if FLOCK_UNITY_TRANSPORT_1
@@ -101,7 +106,18 @@ namespace Flock.Tests.PlayMode
             _server.RelayUrls.Clear();
             _stun = new FakeStunServer { PublicAddress = HostsPublicAddress };
             _server.StunUrls.Add(_stun.Url);
-            _h = FlockTestClient.Create(new FlockFakeTransport(), config => config.PartyRefreshInterval = TimeSpan.Zero);
+            if (_heartbeatSecondsForTheNextSignIn.HasValue)
+                _server.HeartbeatSeconds = _heartbeatSecondsForTheNextSignIn.Value;
+            _heartbeatSecondsForTheNextSignIn = null;
+            int retries = _retriesForTheNextSignIn;
+            _retriesForTheNextSignIn = 0;
+            _h = FlockTestClient.Create(new FlockFakeTransport(), config =>
+            {
+                config.PartyRefreshInterval = TimeSpan.Zero;
+                // The harness never retries unless a test asks, so a test of a call sent once can see the difference.
+                if (retries > 0)
+                    config.RetryPolicy = new RetryPolicy { MaxRetries = retries, InitialDelay = TimeSpan.FromMilliseconds(50), UseJitter = false };
+            });
             FlockHttpClient.Configure(_server);
             _h.LoginAs(player);
             FlockMultiplayerProvider multiplayer = _h.Client.Multiplayer;

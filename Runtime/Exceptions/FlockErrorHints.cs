@@ -111,6 +111,7 @@ namespace Flock.Exceptions
             { FlockErrorCode.MultiplayerJoinCodeUnavailable, "The server could not find a free join code for a new session. It is temporary; host the session again with HostSessionAsync." },
             { FlockErrorCode.MultiplayerAlreadyInSession, "Two requests tried to seat this player at the same moment. A player holds one seat per game; try again once the first has finished." },
             { FlockErrorCode.MultiplayerMintRateLimited, "Relay credentials were requested too often (at most 12 a minute per player). Request them once per session and reuse them until they expire." },
+            { FlockErrorCode.MultiplayerSeatMintLimit, "This player's seat has drawn the most relay credentials one seat may (10), usually from starting the netcode again and again in one session. Nothing more is given for this seat, even after leaving and joining the same session again; another session gives a seat of its own." },
             { FlockErrorCode.PartyNotFound, "No party by that id that the signed-in player belongs to. It may have been disbanded, or the player removed from it." },
             { FlockErrorCode.PartyInvalidInviteCode, "No open party has that invite code. Ask the party leader for the current code." },
             { FlockErrorCode.PartyAlreadyInParty, "The signed-in player is already in a party in this game, and a player can be in one at a time. GetMyPartyAsync returns it; leave it with LeaveAsync before creating or joining another." },

@@ -40,6 +40,7 @@ namespace Flock.Tests.PlayMode
             _h = null;
             _stun?.Dispose();
             _stun = null;
+            FlockUdpSockets.ResetForTesting();
             if (FlockClient.IsInitialized)
                 FlockClient.Shutdown();
         }
@@ -126,9 +127,26 @@ namespace Flock.Tests.PlayMode
             Assert.AreEqual(HostsPublicAddress, (string)published["public_address"]);
             Assert.AreEqual("127.0.0.1", (string)published["lan_address"], "Routed toward the STUN server, here on loopback");
             Assert.AreEqual(1, _stun.Requests, "One STUN request");
+            Assert.AreEqual(FlockUdpSocketsTests.FamilyThisMachineGives(), multiplayer.Sessions.DirectAddresses.AskedFromForTesting, "Asked from a dual-stack socket, which a phone on mobile data needs");
             Assert.AreEqual(1, _server.Count(FakeSessionServer.RelayCredentials));
             Assert.AreEqual("{}", _server.RequestsTo(FakeSessionServer.RelayCredentials)[0].JsonBody, "No session named: a direct connection is not relay use");
             Assert.AreEqual("direct", held[0].Connection.Mode, "The session holds what it published");
+        }
+
+        [UnityTest]
+        public IEnumerator WithoutIpv6_PublishDirect_StillPublishesThePublicAddress()
+        {
+            FlockUdpSockets.DualStackRefusedForTesting = true;
+            FlockMultiplayerProvider multiplayer = SignedInAs(A);
+            List<FlockMultiplayerSession> held = new List<FlockMultiplayerSession>();
+            yield return Hosted(multiplayer, held);
+
+            Task publishing = held[0].PublishDirectConnectionAsync(7777);
+            yield return Done(publishing, "published");
+            Assert.IsFalse(publishing.IsFaulted, publishing.Exception?.InnerException?.Message);
+            Assert.AreEqual(HostsPublicAddress, (string)LastPublished()["public_address"], "Asked from a plain IPv4 socket, as before");
+            Assert.AreEqual(System.Net.Sockets.AddressFamily.InterNetwork, multiplayer.Sessions.DirectAddresses.AskedFromForTesting);
+            Assert.AreEqual(1, _stun.Requests);
         }
 
         [UnityTest]

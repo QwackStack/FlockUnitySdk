@@ -120,6 +120,8 @@ namespace Flock.Http
         public static string SessionEnd(string sessionId) => $"{SessionById(sessionId)}/end";
         public static string SessionHost(string sessionId) => $"{SessionById(sessionId)}/host";
         public static string SessionConnection(string sessionId) => $"{SessionById(sessionId)}/connection-info";
+        // How to reach the signed-in player, for its own seat; the host reads it.
+        public static string SessionSeatConnection(string sessionId) => $"{SessionById(sessionId)}/participants/me/connection-info";
         public static string SessionJoinToken(string sessionId) => $"{SessionById(sessionId)}/join-token";
         public static string SessionVerifyJoinToken(string sessionId) => $"{SessionById(sessionId)}/verify-join-token";
         // The servers a player connects through: always the STUN server a direct connection asks its public address of.

@@ -69,6 +69,9 @@ namespace Flock.Providers
             return false;
         }
 
+        /// <summary>How many IPs the relay opened to.</summary>
+        internal int OpeningsCount => _openedTo.Length;
+
         /// <summary>Notes an IP the relay opened to; false when it already was. The relay thread's alone.</summary>
         internal bool AddOpening(uint ip)
         {

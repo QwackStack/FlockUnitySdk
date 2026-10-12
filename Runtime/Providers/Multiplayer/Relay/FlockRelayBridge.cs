@@ -326,7 +326,7 @@ namespace Flock.Providers
             FlockRelayPeer peer = loopback.Peer;
             try
             {
-                return new FlockDirectLink(_relay.ServerEndpoint, bytes => _relay.Send(peer, bytes, 0, bytes.Length), loopback.HandToTheNetcode, _logger, peerName);
+                return new FlockDirectLink(_relay.ServerEndpoint, _relay.StunServers, bytes => _relay.Send(peer, bytes, 0, bytes.Length), loopback.HandToTheNetcode, _logger, peerName);
             }
             catch (SocketException)
             {

@@ -158,15 +158,17 @@ namespace Flock.Tests.PlayMode
         }
 
         [UnityTest]
-        public IEnumerator Open_SilentRelay_FailsUnreachable_WithinTheAnswerWait()
+        public IEnumerator Open_SilentRelay_FailsUnreachable_AfterTheSocketRoundsAndTheAnswerWait()
         {
             _relay.Silent = true;
+            FlockRelayConnection.Timing timing = Quick();
+            timing.SocketRoundWait = TimeSpan.FromSeconds(0.3);
             Stopwatch clock = Stopwatch.StartNew();
-            Task<FlockRelayConnection> opening = Open(A);
+            Task<FlockRelayConnection> opening = Open(A, timing);
             yield return Done(opening, "the open gave up");
 
             Assert.AreEqual(FlockRelayFailure.Unreachable, ReasonOf(opening));
-            Assert.That(clock.Elapsed.TotalSeconds, Is.InRange(1.8, 4.0), "Given up at the 2 s answer wait");
+            Assert.That(clock.Elapsed.TotalSeconds, Is.InRange(2.7, 4.9), "Three 0.3 s rounds of sockets went unanswered, then the 2 s answer wait from a new socket");
             List<FakeRelayServer.Seen> asked = _relay.SeenRequests(FakeRelayServer.MethodAllocate);
             Assert.AreEqual(3, asked.Count, "Sent at 0, 0.5 and 1.5 s before giving up at 2 s");
             Assert.AreEqual(1, asked.Select(seen => seen.Transaction).Distinct().Count(), "Every send under one transaction");
@@ -600,7 +602,7 @@ namespace Flock.Tests.PlayMode
             Assert.IsFalse(pair[0].TryReceive(new byte[FlockRelayConnection.MostBytesInAPacket], out _, out _), "Nothing kept while handed over");
 
             pair[0].StopHandingArrivalsTo(another);
-            Assert.IsTrue(pair[0].HandsArrivalsOverForTesting, "Only the receiver itself stops it");
+            Assert.IsTrue(pair[0].HandsArrivalsOver, "Only the receiver itself stops it");
             Assert.IsFalse(pair[0].KeepsPacketsForTesting, "No packet store made while every arrival is handed over");
             pair[0].StopHandingArrivalsTo(receiver);
             List<FlockRelayPeer> heard = new List<FlockRelayPeer>();
@@ -786,6 +788,38 @@ namespace Flock.Tests.PlayMode
         }
 
         [UnityTest]
+        public IEnumerator OpenRelay_KeepsTheStunServersFlockListed_ForADirectLinkToAsk()
+        {
+            FlockMultiplayerProvider multiplayer = SignedInAs(A);
+            _server.StunUrls.Add("stun:127.0.0.1:3479");
+            _server.StunUrls.Add("stuns:127.0.0.1:5349");
+            List<FlockMultiplayerSession> held = new List<FlockMultiplayerSession>();
+            yield return Hosted(multiplayer, held);
+
+            Task<FlockRelayConnection> opening = held[0].OpenRelayAsync();
+            yield return Done(opening, "the relay opened");
+            Assert.IsFalse(opening.IsFaulted, opening.Exception?.InnerException?.Message);
+            Assert.AreEqual(new[] { "127.0.0.1:3479" }, opening.Result.StunServers.Select(server => server.ToString()).ToArray(), "The UDP STUN server Flock listed, looked up");
+        }
+
+        [UnityTest]
+        public IEnumerator OpenRelay_AStunServerWhoseNameCannotBeLookedUp_IsLeftOut_AndTheRelayOpens()
+        {
+            FlockMultiplayerProvider multiplayer = SignedInAs(A);
+            _server.StunUrls.Add("stun:refused.stun.test:3478");
+            _server.StunUrls.Add("stun:127.0.0.1:3479");
+            // The resolver refusing a name throws as the lookup starts, as Dns.GetHostAddressesAsync does for a malformed one.
+            multiplayer.Sessions.RelayTiming.NameLookUpForTesting = host => throw new ArgumentException("refused by the resolver: " + host);
+            List<FlockMultiplayerSession> held = new List<FlockMultiplayerSession>();
+            yield return Hosted(multiplayer, held);
+
+            Task<FlockRelayConnection> opening = held[0].OpenRelayAsync();
+            yield return Done(opening, "the relay opened");
+            Assert.IsFalse(opening.IsFaulted, opening.Exception?.InnerException?.ToString());
+            Assert.AreEqual(new[] { "127.0.0.1:3479" }, opening.Result.StunServers.Select(server => server.ToString()).ToArray(), "The one that could not be looked up left out");
+        }
+
+        [UnityTest]
         public IEnumerator OpenRelay_TwoCallers_ShareOneReservation()
         {
             FlockMultiplayerProvider multiplayer = SignedInAs(A);
@@ -931,6 +965,19 @@ namespace Flock.Tests.PlayMode
             Task<FlockRelayConnection> opening = held[0].OpenRelayAsync();
             yield return Done(opening, "refused");
             Assert.AreEqual(FlockRelayFailure.TooManyLogins, ReasonOf(opening));
+        }
+
+        [UnityTest]
+        public IEnumerator OpenRelay_TheSeatDrewTheMostLogins_FailsTooManyLogins_NamingTheSeat()
+        {
+            FlockMultiplayerProvider multiplayer = SignedInAs(A);
+            List<FlockMultiplayerSession> held = new List<FlockMultiplayerSession>();
+            yield return Hosted(multiplayer, held);
+            _server.AnswerNext(FakeSessionServer.RelayCredentials, FakeSessionServer.Refused(429, "multiplayer.seat_mint_limit"));
+            Task<FlockRelayConnection> opening = held[0].OpenRelayAsync();
+            yield return Done(opening, "refused");
+            Assert.AreEqual(FlockRelayFailure.TooManyLogins, ReasonOf(opening));
+            StringAssert.Contains("seat", opening.Exception.InnerException.Message, "Says the seat's allowance is used, not the minute's");
         }
 
         [UnityTest]

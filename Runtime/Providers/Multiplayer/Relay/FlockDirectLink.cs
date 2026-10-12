@@ -8,7 +8,7 @@ using Flock.Logging;
 
 namespace Flock.Providers
 {
-    /// <summary>Tries to reach one relayed peer directly, from a UDP socket of its own: learns the address the relay server sees it at, offers that and its LAN address through the relay, sends probes at the peer's addresses while the peer sends at its own, and once a probe is answered carries the netcode's packets directly. Stays on the relay for good when no answer comes, and goes back to it when the direct path goes quiet.</summary>
+    /// <summary>Tries to reach one relayed peer directly, from a UDP socket of its own: learns the address the relay server or a STUN server Flock lists sees it at, offers that and its LAN address through the relay, sends probes at the peer's addresses while the peer sends at its own, and once a probe is answered carries the netcode's packets directly. Stays on the relay for good when no answer comes, and goes back to it when the direct path goes quiet.</summary>
     internal sealed class FlockDirectLink
     {
         internal sealed class Timing
@@ -47,6 +47,9 @@ namespace Flock.Providers
 
         private readonly Timing _timing;
         private readonly IPEndPoint _relayServer;
+        // Where the socket's own address is asked: the STUN servers Flock lists, then the relay server. A relay server may answer only
+        // some of a device's ports (Cloudflare's answered about one in three, measured), and asking again from the same port changes nothing.
+        private readonly List<IPEndPoint> _addressServers;
         private readonly Action<byte[]> _sendThroughTheRelay;
         private readonly Action<byte[], int, int> _handToTheNetcode;
         private readonly IFlockLogger _logger;
@@ -81,12 +84,15 @@ namespace Flock.Providers
         private long _nextKeepAliveAt;
         private long _lastHeardAt;
 
-        /// <summary>Starts at once: asks the relay server at <paramref name="relayServer"/> for this socket's address, then offers through <paramref name="sendThroughTheRelay"/>.</summary>
-        internal FlockDirectLink(IPEndPoint relayServer, Action<byte[]> sendThroughTheRelay, Action<byte[], int, int> handToTheNetcode, IFlockLogger logger, string peerName)
+        /// <summary>Starts at once: asks <paramref name="stunServers"/> and the relay server at <paramref name="relayServer"/> for this socket's address, then offers through <paramref name="sendThroughTheRelay"/>.</summary>
+        internal FlockDirectLink(IPEndPoint relayServer, IReadOnlyList<IPEndPoint> stunServers, Action<byte[]> sendThroughTheRelay, Action<byte[], int, int> handToTheNetcode, IFlockLogger logger, string peerName)
         {
             _timing = TimingForTesting ?? new Timing();
             _offersForTesting = Interlocked.Exchange(ref NextLinkOffersForTesting, null);
             _relayServer = relayServer;
+            _addressServers = new List<IPEndPoint>(stunServers ?? new IPEndPoint[0]);
+            if (!_addressServers.Contains(relayServer))
+                _addressServers.Add(relayServer);
             _sendThroughTheRelay = sendThroughTheRelay;
             _handToTheNetcode = handToTheNetcode;
             _logger = logger;
@@ -97,10 +103,9 @@ namespace Flock.Providers
                 random.GetBytes(_addressTransaction);
             }
             _addressRequest = FlockDirectAddresses.StunRequest(_addressTransaction);
-            Socket socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+            Socket socket = FlockUdpSockets.Open();
             try
             {
-                socket.Bind(new IPEndPoint(IPAddress.Any, 0));
                 socket.ReceiveTimeout = Math.Max(1, (int)_timing.Tick.TotalMilliseconds);
             }
             catch
@@ -139,6 +144,18 @@ namespace Flock.Providers
 
         internal int LocalPortForTesting => _localPort;
 
+        internal AddressFamily FamilyForTesting => _socket.AddressFamily;
+
+        /// <summary>The address a server said it sees this link's socket at; null before an answer.</summary>
+        internal IPEndPoint PublicAddressForTesting
+        {
+            get
+            {
+                lock (_gate)
+                    return _publicAddress;
+            }
+        }
+
         /// <summary>True while probes go out: both offers are known and no answer has come yet.</summary>
         internal bool IsProbingForTesting
         {
@@ -146,6 +163,16 @@ namespace Flock.Providers
             {
                 lock (_gate)
                     return _stage == Stage.Probing;
+            }
+        }
+
+        /// <summary>The addresses the peer offered and those its probes came from; null before its offer.</summary>
+        internal List<IPEndPoint> TheirAddressesForTesting
+        {
+            get
+            {
+                lock (_gate)
+                    return _theirAddresses == null ? null : new List<IPEndPoint>(_theirAddresses);
             }
         }
 
@@ -247,9 +274,9 @@ namespace Flock.Providers
                     }
                     else
                     {
-                        EndPoint from = new IPEndPoint(IPAddress.Any, 0);
+                        EndPoint from = FlockUdpSockets.AnySender(_socket);
                         int count = _socket.ReceiveFrom(buffer, ref from);
-                        Heard(buffer, count, (IPEndPoint)from);
+                        Heard(buffer, count, FlockUdpSockets.AsHeard(from));
                     }
                 }
                 catch (SocketException)
@@ -281,7 +308,7 @@ namespace Flock.Providers
                 HeardMessage(buffer, count, from);
                 return;
             }
-            if (from.Equals(_relayServer))
+            if (_addressServers.Contains(from))
             {
                 IPEndPoint seenAt = FlockDirectAddresses.PublicEndpointInStunAnswer(buffer, count, _addressTransaction);
                 if (seenAt != null)
@@ -334,7 +361,7 @@ namespace Flock.Providers
                     // An answer proves both ways: this link's probe reached the peer, and the peer's answer came back.
                     try
                     {
-                        _socket.Connect(from);
+                        _socket.Connect(FlockUdpSockets.Toward(_socket, from));
                     }
                     catch (SocketException)
                     {
@@ -366,13 +393,14 @@ namespace Flock.Providers
                             break;
                         if (_addressAsks >= _timing.AddressAsks)
                         {
-                            // The relay server did not say where it sees this socket: the LAN address alone is offered.
+                            // No server said where it sees this socket: the LAN address alone is offered.
                             AddressesKnown(now);
                             break;
                         }
                         _addressAsks++;
                         _nextAddressAskAt = now + FlockRelayClock.Ticks(_timing.AskAddressEvery);
-                        SendTo(_addressRequest, _relayServer);
+                        foreach (IPEndPoint server in _addressServers)
+                            SendTo(_addressRequest, server);
                         break;
                     case Stage.Offering:
                         OfferWhenDue(now);
@@ -485,7 +513,7 @@ namespace Flock.Providers
             try
             {
                 if (_direct == null)
-                    _socket.SendTo(bytes, to);
+                    _socket.SendTo(bytes, FlockUdpSockets.Toward(_socket, to));
                 else if (to.Equals(_direct))
                     _socket.Send(bytes, 0, bytes.Length, SocketFlags.None);
             }

@@ -80,6 +80,7 @@ multiplayer.invalid_join_token
 multiplayer.mint_rate_limited
 multiplayer.not_a_participant
 multiplayer.not_host
+multiplayer.seat_mint_limit
 multiplayer.session_full
 multiplayer.session_not_found
 multiplayer.target_not_a_participant

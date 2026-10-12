@@ -244,7 +244,7 @@ namespace Flock.Tests.PlayMode
             Assert.IsFalse(started.IsFaulted, started.Exception?.InnerException?.ToString());
             Assert.AreEqual(FlockNetcodeStartOutcome.CouldNotStart, started.Result.Outcome);
             Assert.AreEqual(0, _server.Count(FakeSessionServer.Publish), "A host that is gone is not published");
-            Assert.IsFalse(held[0].Relay.HandsArrivalsOverForTesting, "Its bridge closed");
+            Assert.IsFalse(held[0].Relay.HandsArrivalsOver, "Its bridge closed");
         }
 
         [UnityTest]
@@ -274,7 +274,7 @@ namespace Flock.Tests.PlayMode
             hosting.Manager.Shutdown();
             yield return FlockTestWait.Until(() => bridge.IsClosed, "the bridge closed with the netcode", 5f);
             Assert.IsTrue(hosting.Session.Relay.IsOpen, "The relay is the session's, open until it ends");
-            Assert.IsFalse(hosting.Session.Relay.HandsArrivalsOverForTesting, "Arrivals are no longer handed to the closed bridge");
+            Assert.IsFalse(hosting.Session.Relay.HandsArrivalsOver, "Arrivals are no longer handed to the closed bridge");
         }
 
         [UnityTest]
@@ -789,7 +789,7 @@ namespace Flock.Tests.PlayMode
             Assert.AreEqual(FlockNetcodeStartOutcome.Refused, started.Result.Outcome);
             Assert.AreEqual("full", started.Result.RefusedReason);
             Assert.IsTrue(started.Result.ThroughRelay);
-            Assert.IsFalse(held[0].Relay.HandsArrivalsOverForTesting, "The player's bridge closed");
+            Assert.IsFalse(held[0].Relay.HandsArrivalsOver, "The player's bridge closed");
             Assert.IsTrue(held[0].Relay.IsOpen, "The relay stays the session's");
         }
 
@@ -843,7 +843,7 @@ namespace Flock.Tests.PlayMode
             Assert.IsInstanceOf<Flock.Exceptions.FlockValidationException>(second.Exception.InnerException);
             StringAssert.Contains("already runs through this session's relay", second.Exception.InnerException.Message);
             Assert.IsTrue(first.IsConnectedClient, "The first connection keeps its place");
-            Assert.IsTrue(held[0].Relay.HandsArrivalsOverForTesting, "And its bridge");
+            Assert.IsTrue(held[0].Relay.HandsArrivalsOver, "And its bridge");
         }
 
         [UnityTest]
@@ -854,11 +854,11 @@ namespace Flock.Tests.PlayMode
             List<FlockRelayConnection> relays = new List<FlockRelayConnection>();
             yield return PlayerAgainstARelayedHost(new FlockNetcodeOptions { Relay = FlockRelayUse.Always }, (host, port) => RelayedOnThisMachine(host, port), started, held, relays);
             Assert.AreEqual(FlockNetcodeStartOutcome.Connected, started[0].Result.Outcome);
-            Assert.IsTrue(held[0].Relay.HandsArrivalsOverForTesting, "Precondition: the bridge takes the relay's arrivals");
+            Assert.IsTrue(held[0].Relay.HandsArrivalsOver, "Precondition: the bridge takes the relay's arrivals");
 
             NetworkManager client = _managers.Last();
             client.Shutdown();
-            yield return FlockTestWait.Until(() => !held[0].Relay.HandsArrivalsOverForTesting, "the bridge closed with the netcode", 5f);
+            yield return FlockTestWait.Until(() => !held[0].Relay.HandsArrivalsOver, "the bridge closed with the netcode", 5f);
         }
     }
 }

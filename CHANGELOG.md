@@ -6,6 +6,43 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.84.0]
+
+Players connect through Flock's relay when it runs on Cloudflare's managed relay, which gives each player's relay address an IP of its
+own and, from some networks, answers only some of the ports a device sends from.
+
+### Added
+- `FlockErrorCode.MultiplayerSeatMintLimit` (`multiplayer.seat_mint_limit`), with a hint: a seat in a session may draw at most 10
+  relay logins.
+
+### Fixed
+- A relayed player could not reach its host on a relay that gives each address an IP of its own: the host let in only addresses on
+  its own relay IP. A player now tells Flock its relay address for its seat before connecting, and the host lets each seated
+  player's address in. While the host takes players through its relay, it reads the session every 2 seconds for this (these reads
+  are not billed, and share the 120 a minute each player may make); heartbeats alone come every 20 seconds.
+- Opening the relay failed from networks where the relay server answers only some of a device's ports (measured with Cloudflare's
+  from two networks: about one port in three, each port every time or never). The address is now reserved from whichever of
+  several sockets the server answers first; a relay that answers none of them is still asked from a new socket, as before.
+- A relayed player's direct path learned no address of its own on such a relay, so it offered its LAN address alone. Each direct
+  path now also asks the STUN servers Flock lists.
+- A phone on mobile data never heard Cloudflare's STUN server, so it could not learn its public address and reached other
+  players directly less often (measured on one carrier: no answer to the SDK's IPv4 sockets, every answer to dual-stack ones, on the
+  same phone and network). The SDK's sockets to relay servers, STUN servers and other players are now dual-stack (IPv6 carrying IPv4)
+  where the platform allows, and plain IPv4 where it does not; every address the SDK publishes or offers is still IPv4.
+- Flock refusing relay logins because the player's seat has drawn the most it may (10) now fails with `relay_too_many_logins` and
+  says so, rather than as any other refusal.
+
+### Changed
+- A player whose relay address Flock will not take (a Flock from before this version, or none reachable at that moment) still
+  connects, and the log says so: on a relay that gives every address one IP (coturn) it is let in as before. It is asked once,
+  without retries, so the connect never waits on it.
+- A host's relay address is let open to at most 65 other relay IPs (the most players a host takes through its relay, and the host);
+  a seated player's address past that is refused without asking the relay, and the log says so once.
+- A host on 1.83.0 or earlier does not read players' relay addresses, so players on another relay IP cannot reach it; on a relay
+  that gives every address one IP nothing changes.
+
+Released together with the Protokite Playtest at the same version (no changes to it).
+
 ## [1.83.0]
 
 With `FlockNetcodeOptions.Relay` left at `WhenNeeded`, a player who connected through Flock's relay now moves to a direct path

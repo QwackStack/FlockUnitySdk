@@ -26,6 +26,10 @@ namespace Flock.Providers
         {
             internal TimeSpan NameLookUpWait = TimeSpan.FromSeconds(5);
             internal TimeSpan AnswerWait = TimeSpan.FromSeconds(5);
+            // A relay server may answer only some of a device's ports, so the reservation is made from one of this many sockets it answered, a round at a time.
+            internal int SocketsTriedAtOnce = 8;
+            internal int RoundsOfSocketsTried = 3;
+            internal TimeSpan SocketRoundWait = TimeSpan.FromSeconds(1);
             // The reservation is renewed at half the time the relay grants, and at least this often.
             internal TimeSpan LongestBetweenReservationRenewals = TimeSpan.FromMinutes(4);
             internal TimeSpan RenewOpeningsEvery = TimeSpan.FromMinutes(4);
@@ -63,17 +67,20 @@ namespace Flock.Providers
         private readonly object _gate = new object();
         private readonly List<FlockRelayRequest> _handedOver = new List<FlockRelayRequest>();
         private readonly List<TaskCompletionSource<bool>> _callersWaiting = new List<TaskCompletionSource<bool>>();
+        // Openings asked and not yet answered, so a second caller waits for the first; and IPs the relay refused, not asked again.
+        private readonly Dictionary<uint, Task> _openingsAsked = new Dictionary<uint, Task>();
+        private readonly HashSet<uint> _openingsRefused = new HashSet<uint>();
 
         // The relay thread's own.
         private byte[] _received;
 
-        private FlockRelayConnection(FlockRelayLogin login, IPEndPoint server, Timing timing, IFlockLogger logger)
+        private FlockRelayConnection(FlockRelayLogin login, IPEndPoint server, Socket answered, Timing timing, IFlockLogger logger)
         {
             _login = login;
             _timing = timing;
             _logger = logger;
             ServerEndpoint = server;
-            _socket = new FlockRelaySocket(server);
+            _socket = answered != null ? new FlockRelaySocket(answered) : new FlockRelaySocket(server);
             _requests = new FlockRelayRequests(login, _socket, timing);
             _packets = new FlockRelayPackets(_socket);
             _renewals = new FlockRelayRenewals(_requests, _packets, timing, logger, Lose);
@@ -88,8 +95,14 @@ namespace Flock.Providers
         /// <summary>This player's address on the relay; the host publishes it, and players send to it.</summary>
         internal FlockRelayPeer Address => _address;
 
-        /// <summary>The relay server's address and port; it also answers a STUN request with the address it saw the request come from.</summary>
+        /// <summary>The relay server's address and port; it also answers a STUN request with the address it saw the request come from, at least from the ports it answers at all.</summary>
         internal IPEndPoint ServerEndpoint { get; }
+
+        /// <summary>The STUN servers Flock listed with the login, looked up; a direct link asks them as well as the relay server where it sees the link's socket. Set before the connection is handed out.</summary>
+        internal IReadOnlyList<IPEndPoint> StunServers { get; set; } = new IPEndPoint[0];
+
+        /// <summary>True while a bridge hears what arrives, rather than the store <see cref="TryReceive"/> reads.</summary>
+        internal bool HandsArrivalsOver => _packets.HandsArrivalsOver;
 
         internal bool IsOpen => Volatile.Read(ref _state) == StateOpen;
 
@@ -113,7 +126,8 @@ namespace Flock.Providers
 
         internal int LocalPortForTesting => _socket.LocalPort;
 
-        internal bool HandsArrivalsOverForTesting => _packets.HandsArrivalsOver;
+        internal System.Net.Sockets.AddressFamily SocketFamilyForTesting => _socket.FamilyForTesting;
+
 
         /// <summary>Whether the block arrived packets wait in has been made, which happens when the first one is kept.</summary>
         internal bool KeepsPacketsForTesting => _packets.KeepsPacketsForTesting;
@@ -124,13 +138,17 @@ namespace Flock.Providers
             IPAddress server = await FlockNameLookup.FindIpv4Async(login.Host, timing.NameLookUpWait, timing.NameLookUpForTesting, cancellationToken);
             if (server == null)
                 throw new FlockRelayException(FlockRelayFailure.Unreachable, $"The relay server's name {login.Host} could not be looked up within {timing.NameLookUpWait.TotalSeconds:0.#} s.");
+            IPEndPoint endpoint = new IPEndPoint(server, login.Port);
+            // Reserved from a socket the server answered; when none was, from a new one as before, and the reservation's own wait judges the server.
+            Socket answered = await Task.Run(() => FlockRelaySocket.FindOneTheServerAnswers(endpoint, timing.SocketsTriedAtOnce, timing.RoundsOfSocketsTried, timing.SocketRoundWait, cancellationToken));
             FlockRelayConnection connection;
             try
             {
-                connection = new FlockRelayConnection(login, new IPEndPoint(server, login.Port), timing, logger);
+                connection = new FlockRelayConnection(login, endpoint, answered, timing, logger);
             }
             catch (SocketException failure)
             {
+                answered?.Close();
                 throw new FlockRelayException(FlockRelayFailure.Unreachable, $"No way to send to the relay at {login}: {failure.SocketErrorCode}.", failure);
             }
             using (cancellationToken.Register(connection.Close))
@@ -144,24 +162,71 @@ namespace Flock.Providers
         }
 
         /// <summary>Lets packets in from, and out to, every relay address sharing the IP of the host's relay address. The host and every player call it with the host's address; the relay renews it until closed.</summary>
-        internal Task OpenToHostAsync(FlockRelayPeer hostAddress, CancellationToken cancellationToken = default)
+        internal Task OpenToHostAsync(FlockRelayPeer hostAddress, CancellationToken cancellationToken = default) => OpenToAsync(hostAddress, cancellationToken);
+
+        /// <summary>Lets packets in from, and out to, every relay address sharing <paramref name="address"/>'s IP, renewed until closed: the host's address for everyone, and each seated player's for the host, since a relay may give each address an IP of its own. A call for an IP being asked waits for that request; one the relay refused is refused again without asking.</summary>
+        internal Task OpenToAsync(FlockRelayPeer address, CancellationToken cancellationToken = default)
         {
             if (!IsOpen)
                 return Task.FromException(NotOpen());
-            if (_packets.IsOpenedTo(hostAddress.Address))
+            uint ip = address.Address;
+            if (_packets.IsOpenedTo(ip))
                 return Task.CompletedTask;
-            TaskCompletionSource<bool> done = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-            uint ip = hostAddress.Address;
-            FlockRelayRequest request = new FlockRelayRequest(FlockRelayWire.CreatePermissionMethod, (code, words, answer) => Opened(ip, code, words, done),
-                new KeyValuePair<ushort, byte[]>(FlockRelayWire.XorPeerAddressAttribute, FlockRelayWire.AddressValue(new FlockRelayPeer(ip, 0))));
+            Task asked;
             lock (_gate)
             {
                 if (HasStopped)
                     return Task.FromException(NotOpen());
-                _callersWaiting.Add(done);
-                _handedOver.Add(request);
+                if (_openingsRefused.Contains(ip))
+                    return Task.FromException(new FlockRelayException(FlockRelayFailure.OpenRefused, $"The relay refused to open to {address.Ip} before."));
+                if (!_openingsAsked.TryGetValue(ip, out asked))
+                {
+                    int most = MostOpeningsForTesting ?? MostOpenings;
+                    if (_packets.OpeningsCount + _openingsAsked.Count >= most)
+                    {
+                        // Remembered as a refusal, so seats naming ever more addresses cannot make the relay renew openings without end.
+                        _openingsRefused.Add(ip);
+                        return Task.FromException(new FlockRelayException(FlockRelayFailure.OpenRefused, $"This relay address already lets in {most} IPs, the most it does; {address.Ip} is not let in."));
+                    }
+                    TaskCompletionSource<bool> done = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                    FlockRelayRequest request = new FlockRelayRequest(FlockRelayWire.CreatePermissionMethod, (code, words, answer) => Opened(ip, code, words, done),
+                        new KeyValuePair<ushort, byte[]>(FlockRelayWire.XorPeerAddressAttribute, FlockRelayWire.AddressValue(new FlockRelayPeer(ip, 0))));
+                    _callersWaiting.Add(done);
+                    _handedOver.Add(request);
+                    asked = done.Task;
+                    _openingsAsked[ip] = asked;
+                }
             }
-            return WaitAsync(done.Task, cancellationToken);
+            return WaitAsync(asked, cancellationToken);
+        }
+
+        /// <summary>The most IPs one relay address is opened to: one for each player a host's bridge takes, and the host's own.</summary>
+        internal const int MostOpenings = FlockRelayBridge.MostPlayers + 1;
+
+        /// <summary>Stands in for <see cref="MostOpenings"/>, so a test can reach it with a few addresses.</summary>
+        internal static int? MostOpeningsForTesting;
+
+        /// <summary>True while the relay lets packets in from <paramref name="address"/>'s IP.</summary>
+        internal bool IsOpenTo(FlockRelayPeer address) => _packets.IsOpenedTo(address.Address);
+
+        /// <summary>True once the relay refused to open to <paramref name="address"/>'s IP; it is not asked again.</summary>
+        internal bool RefusedToOpenTo(FlockRelayPeer address)
+        {
+            lock (_gate)
+                return _openingsRefused.Contains(address.Address);
+        }
+
+        /// <summary>Set by the sessions owner, on the main thread, once its often read for players joining through this relay was refused; not started again for it.</summary>
+        internal bool ReadForPlayersRefused { get; set; }
+
+        /// <summary>Openings asked and not answered yet.</summary>
+        internal int OpeningsAskedForTesting
+        {
+            get
+            {
+                lock (_gate)
+                    return _openingsAsked.Count;
+            }
         }
 
         /// <summary>Sends one packet to <paramref name="to"/> through the relay; false when the relay is not open, the packet is empty or over <see cref="MostBytesInAPacket"/> bytes, or <paramref name="to"/>'s IP was never opened.</summary>
@@ -302,12 +367,18 @@ namespace Flock.Providers
 
         private void Opened(uint ip, int code, string words, TaskCompletionSource<bool> done)
         {
+            // Opened before the request is forgotten, so a caller in between finds it open rather than asking again.
+            if (code == 0 && _packets.AddOpening(ip))
+                _renewals.KeepOpening(ip, FlockRelayClock.Now());
             lock (_gate)
+            {
                 _callersWaiting.Remove(done);
+                _openingsAsked.Remove(ip);
+                if (code == 403)
+                    _openingsRefused.Add(ip);
+            }
             if (code == 0)
             {
-                if (_packets.AddOpening(ip))
-                    _renewals.KeepOpening(ip, FlockRelayClock.Now());
                 done.TrySetResult(true);
                 return;
             }

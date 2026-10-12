@@ -75,6 +75,7 @@ namespace Flock.Exceptions
         MultiplayerMintRateLimited,                 // multiplayer.mint_rate_limited
         MultiplayerNotAParticipant,                 // multiplayer.not_a_participant
         MultiplayerNotHost,                         // multiplayer.not_host
+        MultiplayerSeatMintLimit,                   // multiplayer.seat_mint_limit
         MultiplayerSessionFull,                     // multiplayer.session_full
         MultiplayerSessionNotFound,                 // multiplayer.session_not_found
         MultiplayerTargetNotAParticipant,           // multiplayer.target_not_a_participant

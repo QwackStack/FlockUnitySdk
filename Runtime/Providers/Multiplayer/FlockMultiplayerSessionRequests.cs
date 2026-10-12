@@ -91,6 +91,15 @@ namespace Flock.Providers
                 "Publish session connection", cancellationToken, actsForSignIn: signInNumber);
         }
 
+        // The seat's own, sent once: the connect goes on without it, so a retry's wait would only hold the player up.
+        internal Task<SessionRecord> PublishSeatConnectionAsync(int signInNumber, string sessionId, Dictionary<string, object> connection, CancellationToken cancellationToken)
+        {
+            PublishConnectionBody body = new PublishConnectionBody { ConnectionInfo = connection };
+            return ExecuteAsync(async () => RequireSession(await FlockHttpClient.PostAsync<GenericResponse<SessionRecord>>(
+                Url(FlockEndpoints.SessionSeatConnection(sessionId)), body, Client.GetBaseHeaders(), cancellationToken)),
+                "Publish seat connection", cancellationToken, maxRetriesOverride: 0, actsForSignIn: signInNumber);
+        }
+
         internal Task<JoinTokenRecord> RequestJoinTokenAsync(int signInNumber, string sessionId, CancellationToken cancellationToken)
         {
             return ExecuteAsync(async () =>

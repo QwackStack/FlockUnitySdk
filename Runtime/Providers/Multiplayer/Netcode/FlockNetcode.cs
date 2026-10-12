@@ -361,8 +361,10 @@ namespace Flock.Providers
             return new FlockNetcodeStartResult(FlockNetcodeStartOutcome.StartedAsHost, true, address, port, published, throughRelay: bridge != null, relayFailureReason: relayFailure);
         }
 
-        // The host's address on the relay, opened to the relay's own IP: every player reserves on this relay server, so their addresses share it.
-        // With goesDirect (WhenNeeded), each player let in through it is offered a direct path; Always keeps every address hidden behind the relay.
+        // The host's address on the relay, opened to the relay's own IP, which a relay that gives every address one IP shares with every player,
+        // and to each seated player's relay address its seat names, for a relay that gives each address an IP of its own (the session is read
+        // every 2 s meanwhile). With goesDirect (WhenNeeded), each player let in through it is offered a direct path; Always keeps every address
+        // hidden behind the relay.
         private static async Task<FlockRelayBridge> OpenRelayForPlayersAsync(FlockMultiplayerSession session, NetworkManager networkManager, UnityTransport transport, ushort port,
             FlockJoinChecks checks, bool goesDirect, CancellationToken cancellationToken)
         {
@@ -456,6 +458,7 @@ namespace Flock.Providers
             {
                 FlockRelayConnection relay = await session.OpenRelayOnAsync(relayServer, cancellationToken);
                 await relay.OpenToHostAsync(host, cancellationToken);
+                await TellTheHostTheRelayAddressAsync(session, relay, cancellationToken);
                 bridge = FlockRelayBridge.ToTheHost(relay, host, FlockClient.Instance.Logger, goesDirect);
             }
             catch (FlockRelayException failure)
@@ -478,6 +481,20 @@ namespace Flock.Providers
             else
                 bridge.Close();
             return result;
+        }
+
+        // The host's relay lets this player in once it knows the player's relay address, since a relay may give each address an IP of its own.
+        // Flock not taking it (an older Flock, or none reachable now) leaves the player to a relay that gives every address one IP, so it is said and the connect goes on.
+        private static async Task TellTheHostTheRelayAddressAsync(FlockMultiplayerSession session, FlockRelayConnection relay, CancellationToken cancellationToken)
+        {
+            try
+            {
+                await session.PublishSeatRelayAddressAsync(relay, cancellationToken);
+            }
+            catch (FlockException failure) when (!session.HasEnded)
+            {
+                Warn($"This player's relay address could not be given to the host ({failure.Message}); a relay that gives each address an IP of its own will not let it in.");
+            }
         }
 
         // Connects to the host at address:port with a join token; through the relay, that is the bridge and relayedHost is who it stands in for.
