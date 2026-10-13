@@ -41,6 +41,14 @@ own and, from some networks, answers only some of the ports a device sends from.
 - A host on 1.83.0 or earlier does not read players' relay addresses, so players on another relay IP cannot reach it; on a relay
   that gives every address one IP nothing changes.
 
+### Documentation
+- A [Multiplayer guide](Docs~/multiplayer.md): which setup fits each kind of game (local co-op, online co-op with friends,
+  matchmaking with strangers, friends matched together, streamers and competitive play, other networking), then parties,
+  matchmaking, sessions, connecting players over Netcode for GameObjects, the relay and direct paths, host changes, what is
+  billed and today's limits. Every example compiles against Netcode for GameObjects 1.x and 2.x.
+- The README has a Multiplayer section and feature, and names Netcode for GameObjects 1.x or 2.x as the one extra package
+  multiplayer needs to connect players.
+
 Released together with the Protokite Playtest at the same version (no changes to it).
 
 ## [1.83.0]
