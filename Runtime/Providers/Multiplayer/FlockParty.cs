@@ -129,16 +129,33 @@ namespace Flock.Providers
 
         internal void RaiseSearchEnded(FlockMatchmakingResult result) => FlockEvents.InvokeEach(SearchEnded, result, $"{nameof(FlockParty)}.{nameof(SearchEnded)}");
 
-        // Takes a newer reading of the party, then says what changed; events are raised once everything is in place.
-        internal void Update(PartyRecord party, IReadOnlyList<string> memberIds)
+        /// <summary>What a newer reading changed, raised by the owner once the SDK's own state follows the reading.</summary>
+        internal readonly struct ReadingChanges
+        {
+            internal ReadingChanges(bool members, bool leader)
+            {
+                Members = members;
+                Leader = leader;
+            }
+
+            internal bool Members { get; }
+            internal bool Leader { get; }
+        }
+
+        // Takes a newer reading of the party and says what it changed; nothing is raised until the owner calls RaiseChanges.
+        internal ReadingChanges TakeNewerReading(PartyRecord party, IReadOnlyList<string> memberIds)
         {
             bool membersChanged = !SameMembers(memberIds);
             bool leaderChanged = !string.Equals(LeaderPlayerId, party.LeaderPlayerId, StringComparison.Ordinal);
             CopyFrom(party, memberIds);
+            return new ReadingChanges(membersChanged, leaderChanged);
+        }
 
-            if (membersChanged)
+        internal void RaiseChanges(ReadingChanges changes)
+        {
+            if (changes.Members)
                 FlockEvents.InvokeEach(MembersChanged, $"{nameof(FlockParty)}.{nameof(MembersChanged)}");
-            if (leaderChanged)
+            if (changes.Leader)
                 FlockEvents.InvokeEach(LeaderChanged, $"{nameof(FlockParty)}.{nameof(LeaderChanged)}");
         }
 

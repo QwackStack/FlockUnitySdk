@@ -303,8 +303,23 @@ namespace Flock.Providers
         internal Task PublishSeatRelayAddressAsync(FlockRelayConnection relay, CancellationToken cancellationToken = default)
             => _owner.PublishSeatRelayAddressAsync(this, relay, cancellationToken);
 
-        // Takes a newer reading of the session, then says what changed; events are raised once everything is in place.
-        internal void Update(SessionRecord session)
+        /// <summary>What a newer reading changed, raised by the owner once the SDK's own state follows the reading.</summary>
+        internal readonly struct ReadingChanges
+        {
+            internal ReadingChanges(bool players, bool host, bool connection)
+            {
+                Players = players;
+                Host = host;
+                Connection = connection;
+            }
+
+            internal bool Players { get; }
+            internal bool Host { get; }
+            internal bool Connection { get; }
+        }
+
+        // Takes a newer reading of the session and says what it changed; nothing is raised until the owner calls RaiseChanges.
+        internal ReadingChanges TakeNewerReading(SessionRecord session)
         {
             IReadOnlyList<string> seated = SeatedPlayers(session);
             bool playersChanged = !SamePlayers(seated);
@@ -314,12 +329,16 @@ namespace Flock.Providers
             CopyFrom(session);
             // A publish moves the epoch; hosting moving on clears the address without moving it.
             bool connectionChanged = connectionEpochMoved || hadConnection != (Connection != null);
+            return new ReadingChanges(playersChanged, hostChanged, connectionChanged);
+        }
 
-            if (playersChanged)
+        internal void RaiseChanges(ReadingChanges changes)
+        {
+            if (changes.Players)
                 FlockEvents.InvokeEach(PlayersChanged, $"{nameof(FlockMultiplayerSession)}.{nameof(PlayersChanged)}");
-            if (hostChanged)
+            if (changes.Host)
                 FlockEvents.InvokeEach(HostChanged, $"{nameof(FlockMultiplayerSession)}.{nameof(HostChanged)}");
-            if (connectionChanged)
+            if (changes.Connection)
                 FlockEvents.InvokeEach(ConnectionChanged, $"{nameof(FlockMultiplayerSession)}.{nameof(ConnectionChanged)}");
         }
 

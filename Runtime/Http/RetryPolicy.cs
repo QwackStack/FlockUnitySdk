@@ -64,19 +64,17 @@ namespace Flock.Http
                     // Cancellation isn't a failure — never retry it, never log it as one.
                     throw;
                 }
-                catch (Exception ex) when (attempt <= maxRetries)
+                catch (Exception ex)
                 {
-                    if (ex is FlockAuthException || ex is FlockValidationException || ex is FlockSerializationException)
+                    // A failure that is never retried is the caller's to report, so it is not warned about whatever the retry setting.
+                    if (!IsWorthRetrying(ex, retryAmbiguousFailures))
                         throw;
-
-                    // Don't retry permanent 4xx (404, 409, etc.) — the server's answer won't change.
-                    if (ex is FlockNetworkException net && FlockNetworkException.IsPermanentStatus(net.StatusCode))
+                    if (attempt > maxRetries)
+                    {
+                        string failedNote = ex is FlockNetworkException ? " (couldn't reach the server)" : string.Empty;
+                        _logger?.LogWarning($"Operation failed after {attempt} attempt(s){failedNote}: {ex.Message}");
                         throw;
-
-                    // Non-idempotent callers only retry failures the server provably didn't process (408/429);
-                    // ambiguous ones (client timeout, dropped connection, 5xx) might have committed, so surface them.
-                    if (!retryAmbiguousFailures && !IsNotProcessed(ex))
-                        throw;
+                    }
 
                     TimeSpan wait = ResolveDelay(ex, delay);
                     string note = ex is FlockNetworkException ? " Can't reach the server (connectivity) — retries keep failing until it's back." : string.Empty;
@@ -88,13 +86,21 @@ namespace Flock.Http
                         _policy.MaxDelay.TotalSeconds
                     ));
                 }
-                catch (Exception ex)
-                {
-                    string note = ex is FlockNetworkException ? " (couldn't reach the server)" : string.Empty;
-                    _logger?.LogWarning($"Operation failed after {attempt} attempt(s){note}: {ex.Message}");
-                    throw;
-                }
             }
+        }
+
+        private static bool IsWorthRetrying(Exception ex, bool retryAmbiguousFailures)
+        {
+            if (ex is FlockAuthException || ex is FlockValidationException || ex is FlockSerializationException)
+                return false;
+
+            // Don't retry permanent 4xx (404, 409, etc.) — the server's answer won't change.
+            if (ex is FlockNetworkException net && FlockNetworkException.IsPermanentStatus(net.StatusCode))
+                return false;
+
+            // Non-idempotent callers only retry failures the server provably didn't process (408/429);
+            // ambiguous ones (client timeout, dropped connection, 5xx) might have committed, so surface them.
+            return retryAmbiguousFailures || IsNotProcessed(ex);
         }
 
         // 408/429 mean the server rejected the request before processing it, so a retry can't double-apply.

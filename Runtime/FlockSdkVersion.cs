@@ -3,6 +3,6 @@ namespace Flock
 {
     internal static class FlockSdkVersion
     {
-        internal const string Current = "1.84.0";
+        internal const string Current = "1.85.0";
     }
 }
