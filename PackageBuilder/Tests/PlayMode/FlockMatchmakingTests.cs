@@ -530,6 +530,31 @@ namespace Flock.Tests.PlayMode
         }
 
         [UnityTest]
+        public IEnumerator AMembersChangedHandler_SeesTheSameRefreshsSearchState()
+        {
+            // The search's own check waits ten minutes, so only the party refresh brings the ticket.
+            FlockMultiplayerProvider multiplayer = SignedInAs(A, partyRefreshSeconds: 0.3, checkSeconds: 600);
+            FakePartyServer.Party party = _server.Parties.MadeBy(B);
+            _server.Parties.Joins(party, A);
+            Task<FlockParty> mine = multiplayer.GetMyPartyAsync();
+            yield return Done(mine, "the party");
+            FlockParty held = mine.Result;
+            yield return FlockTestWait.Until(() => _server.Count(FakeMatchmakingServer.Current) >= 1, "A refresh read the player's search");
+            _server.QueuedBy(FakeMatchmakingServer.TrioId, B, party);
+            yield return FlockTestWait.Until(() => held.IsSearching, "The leader's search was followed");
+            List<bool> searchingSeen = new List<bool>();
+            held.MembersChanged += () => searchingSeen.Add(held.IsSearching);
+            List<string> ended = new List<string>();
+            held.SearchEnded += result => ended.Add(result.Outcome);
+
+            // C joins, which stops the party's search, and one refresh brings both.
+            _server.Parties.Joins(party, C);
+            yield return FlockTestWait.Until(() => searchingSeen.Count == 1 && ended.Count == 1, "A refresh showed C and the search's end");
+            CollectionAssert.AreEqual(new[] { false }, searchingSeen, "Inside MembersChanged the search already reads as ended");
+            CollectionAssert.AreEqual(new[] { FlockMatchmakingOutcome.PartyChanged }, ended);
+        }
+
+        [UnityTest]
         public IEnumerator AMembersFindMatch_WaitsForTheLeadersSearch_AndReturnsItsMatch()
         {
             FlockMultiplayerProvider multiplayer = SignedInAs(A);

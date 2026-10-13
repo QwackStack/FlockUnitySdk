@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.85.0]
+
+How a session or party ending is read, the order a session's and a party's events are raised in, and a refusal the SDK warned
+about only under some retry settings.
+
+### Fixed
+- A session or party could end with the wrong reason when the game had left another one and that leave had not answered yet.
+  The game's own leave (or a party's disband) counted for whatever session or party ended next, so a session the server
+  ended or a party the player was removed from read as `Left`. A leave now counts only for the session or party it was for.
+- An earlier leave answering late made the SDK forget a newer one, so a session or party the game had just left or disbanded
+  could end with the server's reason (`host_left`, `Removed`) instead of `Left` or `Disbanded`. Only a leave's own answer
+  forgets it now.
+- Three more ways a party or session ended ignored the game's own leave still on its way, and now give it: a party replaced by
+  creating or joining another (it ended `Removed`), a party call answered `party.not_found` (it ended `Removed`; a disband answered
+  so ends `Disbanded`), and a session that could not be read to learn why it ended (it ended `dropped`). Each now ends as `Left`
+  (or `Disbanded`).
+- `GetSessionAsync` of a session the player is no longer seated in was sent again whenever the held session's heartbeat or a
+  change answered while it was on its way, and could fail with "The session kept changing" after five tries. It is now taken
+  as it was read: such a session cannot change the one held.
+- A session's `PlayersChanged`, `HostChanged` and `ConnectionChanged` were raised before the heartbeats followed a new interval
+  from the same reading, and before a host's relay was asked to let in the players that reading newly seated. They are now
+  raised once both have followed the reading, so a handler that calls back into the SDK finds it up to date.
+- A party's `MembersChanged` and `LeaderChanged` from a party refresh were raised before the same refresh's search was taken in,
+  so on a member's game a handler read `IsSearching` from before it (true for a search the refresh showed ended as
+  `party_changed`). They are now raised after the search state follows the refresh; `SearchStarted` and `SearchEnded` come first.
+- A failure the SDK never retries (a refusal such as 404 or 409, a validation or sign-in failure, or an ambiguous failure of a
+  call that must not be sent twice) was logged as the warning "Operation failed after N attempt(s)" when retries were off or
+  when it came on the last try, and was not logged otherwise. It is now never logged by the retry handling, whatever the retry
+  setting; the call still fails with it. A failure that is retried and runs out of tries is still logged. A heartbeat finding the
+  player's seat gone, which ends the session as `Dropped`, so logs nothing at warning or error level with any retry setting.
+
+
 ## [1.84.0]
 
 Players connect through Flock's relay when it runs on Cloudflare's managed relay, which gives each player's relay address an IP of its

@@ -3,6 +3,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Flock.Exceptions;
 using Flock.Http;
+using Flock.Tests.Support;
 using NUnit.Framework;
 
 namespace Flock.Tests
@@ -165,6 +166,57 @@ namespace Flock.Tests
                     CancellationToken.None, retryAmbiguousFailures: true, maxRetriesOverride: 0)));
 
             Assert.AreEqual(1, calls);
+        }
+
+        private static RetryHandler NoDelayHandler(int maxRetries, RecordingFlockLogger logger)
+            => new RetryHandler(new RetryPolicy { MaxRetries = maxRetries, InitialDelay = TimeSpan.Zero, MaxDelay = TimeSpan.Zero, UseJitter = false }, logger);
+
+        // A failure that is never retried is the caller's to report: with retries off it is not warned about, as with them on.
+        [Test]
+        public void ANeverRetriedFailure_IsNotWarnedAbout_WithRetriesOff()
+        {
+            RecordingFlockLogger logger = new RecordingFlockLogger();
+            RetryHandler handler = NoDelayHandler(0, logger);
+
+            Assert.Throws<FlockNetworkException>(() => Run(() =>
+                handler.ExecuteAsync<int>(() => throw new FlockNetworkException("not found", 404), CancellationToken.None)));
+            Assert.Throws<FlockValidationException>(() => Run(() =>
+                handler.ExecuteAsync<int>(() => throw new FlockValidationException("bad request"), CancellationToken.None)));
+            Assert.Throws<FlockNetworkException>(() => Run(() =>
+                handler.ExecuteAsync<int>(() => throw new FlockNetworkException("server error", 500), CancellationToken.None, retryAmbiguousFailures: false)));
+
+            CollectionAssert.IsEmpty(logger.Warnings);
+        }
+
+        // A refusal landing on the last try is not warned about either; only the retry before it is.
+        [Test]
+        public void ANeverRetriedFailure_OnTheLastTry_IsNotWarnedAbout()
+        {
+            RecordingFlockLogger logger = new RecordingFlockLogger();
+            RetryHandler handler = NoDelayHandler(1, logger);
+            int calls = 0;
+
+            Assert.Throws<FlockNetworkException>(() => Run(() =>
+                handler.ExecuteAsync<int>(() => { calls++; throw calls == 1 ? new FlockNetworkException("server error", 500) : new FlockNetworkException("not found", 404); },
+                    CancellationToken.None)));
+
+            Assert.AreEqual(2, calls);
+            Assert.AreEqual(1, logger.Warnings.Count, "Only the retry: " + string.Join(" | ", logger.Warnings));
+            StringAssert.StartsWith("Attempt 1 failed", logger.Warnings[0]);
+        }
+
+        // The control: a failure it retries and ran out of tries for is warned about once.
+        [Test]
+        public void ARetriedFailure_ThatRanOutOfTries_IsWarnedAboutOnce()
+        {
+            RecordingFlockLogger logger = new RecordingFlockLogger();
+            RetryHandler handler = NoDelayHandler(0, logger);
+
+            Assert.Throws<FlockNetworkException>(() => Run(() =>
+                handler.ExecuteAsync<int>(() => throw new FlockNetworkException("timeout"), CancellationToken.None)));
+
+            Assert.AreEqual(1, logger.Warnings.Count);
+            StringAssert.StartsWith("Operation failed after 1 attempt(s)", logger.Warnings[0]);
         }
     }
 }

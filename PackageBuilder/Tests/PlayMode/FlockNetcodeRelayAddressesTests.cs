@@ -62,6 +62,28 @@ namespace Flock.Tests.PlayMode
         }
 
         [UnityTest]
+        public IEnumerator AHostsPlayersChanged_FindsTheRelayAlreadyOpeningToTheNewlySeatedPlayer()
+        {
+            const string C = "player-c";
+            Hosting hosting = new Hosting();
+            yield return RelayedHostOnItsOwnIp(hosting);
+            FlockRelayConnection relay = hosting.Session.Relay;
+            FlockRelayPeer joining = new FlockRelayPeer(0xCB007133, 5000);
+            Assert.AreEqual(OtherRelayIp, joining.ToString().Split(':')[0], "Precondition: the joining player's relay address is on the relay's other IP");
+            Assert.IsTrue(relay.OpeningsAskedForTesting == 0 && !relay.IsOpenTo(joining), "Precondition: nothing opened or asked yet");
+            bool openingSeen = false;
+            hosting.Session.PlayersChanged += () => openingSeen = relay.OpeningsAskedForTesting > 0 || relay.IsOpenTo(joining);
+
+            // One reading brings a newly seated player whose seat already names its relay address.
+            _server.Joins(hosting.OnServer, C);
+            _server.PublishesSeat(hosting.OnServer, C, SeatOnTheRelay(joining));
+            Task<FlockMultiplayerSession> read = _h.Client.Multiplayer.GetSessionAsync(hosting.Session.Id);
+            yield return Done(read, "the session was read");
+            Assert.IsTrue(hosting.Session.Players.Any(player => player.PlayerId == C), "Precondition: the reading seated the player");
+            Assert.IsTrue(openingSeen, "Inside the handler the relay is already opening to the new player's relay address");
+        }
+
+        [UnityTest]
         public IEnumerator AHost_ReadsTheSessionOften_OnlyWhileItTakesPlayersThroughItsRelay()
         {
             Hosting hosting = new Hosting();

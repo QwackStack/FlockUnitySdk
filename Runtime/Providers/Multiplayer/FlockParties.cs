@@ -23,8 +23,9 @@ namespace Flock.Providers
         private int _readsSent;
         // Reads numbered at or below this change nothing when they land.
         private int _readsSettledThrough;
-        // A leave or disband of the held party on its way: a reading that finds the player out is its doing, not a removal.
+        // A leave or disband on its way, and the party it is for: a reading that finds the player out of that party is its doing, not a removal.
         private FlockPartyEndReason _endingByThisGame;
+        private string _endingPartyId;
         // Flock shut down or was reset: an answer still on its way holds nothing.
         private bool _stopped;
 
@@ -82,7 +83,7 @@ namespace Flock.Providers
         internal async Task LeaveAsync(FlockParty party, CancellationToken cancellationToken)
         {
             RequireRunning(party);
-            _endingByThisGame = FlockPartyEndReason.Left;
+            MarkEndingByThisGame(party, FlockPartyEndReason.Left);
             try
             {
                 await _requests.LeaveAsync(party.SignInNumber, party.Id, cancellationToken);
@@ -93,7 +94,7 @@ namespace Flock.Providers
             }
             finally
             {
-                _endingByThisGame = FlockPartyEndReason.None;
+                ForgetEndingOf(party.Id);
             }
             SettleReadsSentSoFar(party.SignInNumber);
             End(party, FlockPartyEndReason.Left);
@@ -121,17 +122,36 @@ namespace Flock.Providers
         internal async Task DisbandAsync(FlockParty party, CancellationToken cancellationToken)
         {
             RequireRunning(party);
-            _endingByThisGame = FlockPartyEndReason.Disbanded;
+            MarkEndingByThisGame(party, FlockPartyEndReason.Disbanded);
             try
             {
                 await SendChangeAsync(party, () => _requests.DisbandAsync(party.SignInNumber, party.Id, cancellationToken));
             }
             finally
             {
-                _endingByThisGame = FlockPartyEndReason.None;
+                ForgetEndingOf(party.Id);
             }
             End(party, FlockPartyEndReason.Disbanded);
         }
+
+        private void MarkEndingByThisGame(FlockParty party, FlockPartyEndReason reason)
+        {
+            _endingByThisGame = reason;
+            _endingPartyId = party.Id;
+        }
+
+        // Only a party's own answer forgets its mark, so an earlier call answered late leaves a newer one in place.
+        private void ForgetEndingOf(string partyId)
+        {
+            if (_endingPartyId != partyId)
+                return;
+            _endingByThisGame = FlockPartyEndReason.None;
+            _endingPartyId = null;
+        }
+
+        // Why a party the player is found out of ended: this game's own leave or disband of that party, else a removal.
+        private FlockPartyEndReason EndingOf(FlockParty party)
+            => _endingPartyId == party.Id ? _endingByThisGame : FlockPartyEndReason.Removed;
 
         internal Task<FlockMatchmakingResult> FindMatchAsync(FlockParty party, string queueName, FlockMatchmakingOptions options, CancellationToken cancellationToken)
             => _matchmaking.FindForPartyAsync(party, queueName, options, cancellationToken);
@@ -183,7 +203,7 @@ namespace Flock.Providers
             }
             catch (FlockException gone) when (gone.ErrorCode == FlockErrorCode.PartyNotFound)
             {
-                End(party, FlockPartyEndReason.Removed);
+                End(party, EndingOf(party));
                 throw;
             }
             SettleReadsSentSoFar(party.SignInNumber);
@@ -212,9 +232,18 @@ namespace Flock.Providers
             return new PartyRead(number, signInNumber, party);
         }
 
-        /// <summary>The one place a reading changes the party; holds the party when a call asked for it (<paramref name="playerId"/> given), else returns the held one or null.</summary>
+        /// <summary>Takes a reading and raises what it changed; holds the party when a call asked for it (<paramref name="playerId"/> given), else returns the held one or null.</summary>
         private FlockParty Apply(PartyRead read, string playerId)
         {
+            FlockParty party = Take(read, playerId, out FlockParty.ReadingChanges changes);
+            party?.RaiseChanges(changes);
+            return party;
+        }
+
+        /// <summary>The one place a reading changes the party; what it changed is raised by the caller, once the SDK's own state follows it.</summary>
+        private FlockParty Take(PartyRead read, string playerId, out FlockParty.ReadingChanges changes)
+        {
+            changes = default;
             // A party from a sign-in that ended is over first; that sign-in's late readings are older than any newer one.
             EndIfSignInEnded();
             if (read.Number <= _readsSettledThrough)
@@ -224,32 +253,27 @@ namespace Flock.Providers
             PartyDetailRecord party = read.Party;
             if (_held != null && party != null && _held.Id == party.Id)
             {
-                _held.Update(party, MemberIds(party));
+                changes = _held.TakeNewerReading(party, MemberIds(party));
                 if (playerId != null)
                     KeepRefreshing();
                 return _held;
             }
             // In no party now, or in another one than the one held.
             if (_held != null)
-                End(_held, _endingByThisGame != FlockPartyEndReason.None ? _endingByThisGame : FlockPartyEndReason.Removed);
+                End(_held, EndingOf(_held));
             if (party == null || playerId == null)
                 return null;
             return Hold(read.SignInNumber, playerId, party, MemberIds(party));
         }
 
+        // Anything held here is another party, which this one replaces: a reading of the held party is taken by Take.
         private FlockParty Hold(int signInNumber, string playerId, PartyRecord party, IReadOnlyList<string> memberIds)
         {
             EndIfSignInEnded();
-            if (_held != null && _held.Id == party.Id)
-            {
-                _held.Update(party, memberIds);
-            }
-            else
-            {
-                if (_held != null)
-                    End(_held, FlockPartyEndReason.Removed);
-                _held = new FlockParty(this, signInNumber, playerId, party, memberIds);
-            }
+            // A party replaced while this game's leave of it is on its way was left, not removed.
+            if (_held != null)
+                End(_held, EndingOf(_held));
+            _held = new FlockParty(this, signInNumber, playerId, party, memberIds);
             KeepRefreshing();
             return _held;
         }
@@ -301,11 +325,15 @@ namespace Flock.Providers
             return new PartyRefresh(party, ticket);
         }
 
+        // The refresh's ticket is taken before the party's own events, so a handler of either finds both readings in place.
         private void TakeRefresh(PartyRefresh refresh)
         {
-            FlockParty party = Apply(refresh.Party, null);
-            if (party != null)
-                _matchmaking.TakePartyReading(party, refresh.Ticket);
+            FlockParty party = Take(refresh.Party, null, out FlockParty.ReadingChanges changes);
+            if (party == null)
+                return;
+            _matchmaking.TakePartyReading(party, refresh.Ticket);
+            if (!party.HasEnded)
+                party.RaiseChanges(changes);
         }
 
         private void StopRefreshing()

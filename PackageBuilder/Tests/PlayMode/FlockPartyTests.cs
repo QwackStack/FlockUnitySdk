@@ -781,6 +781,67 @@ namespace Flock.Tests.PlayMode
         }
 
         [UnityTest]
+        public IEnumerator ALeaveOnItsWayForOneParty_LeavesAnotherPartysRemovalARemoval()
+        {
+            FlockMultiplayerProvider multiplayer = SignedInAs(A);
+            Task<FlockParty> first = multiplayer.CreatePartyAsync();
+            yield return Done(first, "the first party was made");
+            FakePartyServer.Held leaveAnswer = _server.HoldNext(FakePartyServer.Leave);
+            Task leave = first.Result.LeaveAsync();
+            yield return FlockTestWait.Until(() => leaveAnswer.Arrived, "The first party's leave is on its way");
+            FakePartyServer.Party theirs = _server.MadeBy(B);
+            Task<FlockParty> joined = multiplayer.JoinPartyAsync(theirs.InviteCode);
+            yield return Done(joined, "B's party was joined");
+            Assert.IsFalse(joined.IsFaulted, "Precondition: joined");
+            List<FlockPartyEndReason> ended = new List<FlockPartyEndReason>();
+            joined.Result.Ended += ended.Add;
+
+            // B removes A while the first party's leave is still on its way, and this game reads its party.
+            _server.Removes(theirs, A);
+            Task<FlockParty> mine = multiplayer.GetMyPartyAsync();
+            yield return Done(mine, "the player's party was read");
+            Assert.IsNull(mine.Result, "Precondition: in no party");
+            CollectionAssert.AreEqual(new[] { FlockPartyEndReason.Removed }, ended, "A removal from B's party is a removal, not the first party's leave");
+
+            leaveAnswer.Release();
+            yield return Done(leave, "the first party's leave finished");
+            CollectionAssert.AreEqual(new[] { FlockPartyEndReason.Removed }, ended, "And stays so");
+            Assert.AreEqual(FlockPartyEndReason.Left, first.Result.EndReason, "The first was left");
+        }
+
+        [UnityTest]
+        public IEnumerator ALeaveAnsweredForAnEarlierParty_KeepsTheNewerDisbandThisGames()
+        {
+            FlockMultiplayerProvider multiplayer = SignedInAs(A);
+            Task<FlockParty> first = multiplayer.CreatePartyAsync();
+            yield return Done(first, "the first party was made");
+            FakePartyServer.Held leaveAnswer = _server.HoldNext(FakePartyServer.Leave);
+            Task leave = first.Result.LeaveAsync();
+            yield return FlockTestWait.Until(() => leaveAnswer.Arrived, "The first party's leave is on its way");
+            Task<FlockParty> second = multiplayer.CreatePartyAsync();
+            yield return Done(second, "the second party was made");
+            Assert.AreEqual(FlockPartyEndReason.Left, first.Result.EndReason, "A party replaced while this game's leave of it is on its way was left, not removed");
+            List<FlockPartyEndReason> ended = new List<FlockPartyEndReason>();
+            second.Result.Ended += ended.Add;
+
+            FakePartyServer.Held disbandAnswer = _server.HoldNext(FakePartyServer.Disband);
+            Task disband = second.Result.DisbandAsync();
+            yield return FlockTestWait.Until(() => disbandAnswer.Arrived, "The disband is on its way");
+            leaveAnswer.Release();
+            yield return Done(leave, "the first party's leave finished");
+
+            // A read finds the second party gone before its disband answers.
+            Task<FlockParty> mine = multiplayer.GetMyPartyAsync();
+            yield return Done(mine, "the player's party was read");
+            Assert.IsNull(mine.Result, "Precondition: in no party");
+            CollectionAssert.AreEqual(new[] { FlockPartyEndReason.Disbanded }, ended, "The first leave's answer did not forget the disband: it is this game's");
+
+            disbandAnswer.Release();
+            yield return Done(disband, "the disband finished");
+            CollectionAssert.AreEqual(new[] { FlockPartyEndReason.Disbanded }, ended, "Ended once");
+        }
+
+        [UnityTest]
         public IEnumerator AChangeToAPartyThatIsGone_EndsItAsRemoved_AndSaysWhy()
         {
             FlockMultiplayerProvider multiplayer = SignedInAs(A);
@@ -794,6 +855,48 @@ namespace Flock.Tests.PlayMode
             yield return Done(kick, "the kick was refused");
             Assert.AreEqual(FlockErrorCode.PartyNotFound, Failure<FlockException>(kick).ErrorCode);
             Assert.AreEqual(FlockPartyEndReason.Removed, party.EndReason);
+        }
+
+        [UnityTest]
+        public IEnumerator ADisbandAnsweredPartyNotFound_EndsThePartyAsDisbanded()
+        {
+            FlockMultiplayerProvider multiplayer = SignedInAs(A);
+            Task<FlockParty> created = multiplayer.CreatePartyAsync();
+            yield return Done(created, "the party was made");
+            FlockParty party = created.Result;
+            List<FlockPartyEndReason> ended = new List<FlockPartyEndReason>();
+            party.Ended += ended.Add;
+
+            _server.AnswerNext(FakePartyServer.Disband, FakePartyServer.Refused(404, "party.not_found"));
+            Task disband = party.DisbandAsync();
+            yield return Done(disband, "the disband was refused");
+            Assert.AreEqual(FlockErrorCode.PartyNotFound, Failure<FlockException>(disband).ErrorCode, "The call says the party was gone");
+            CollectionAssert.AreEqual(new[] { FlockPartyEndReason.Disbanded }, ended, "Gone already is what disbanding asks for");
+        }
+
+        [UnityTest]
+        public IEnumerator AChangeAnsweredPartyNotFound_WhileThisGamesLeaveIsOnItsWay_EndsThePartyAsLeft()
+        {
+            FlockMultiplayerProvider multiplayer = SignedInAs(A);
+            Task<FlockParty> created = multiplayer.CreatePartyAsync();
+            yield return Done(created, "the party was made");
+            FlockParty party = created.Result;
+            List<FlockPartyEndReason> ended = new List<FlockPartyEndReason>();
+            party.Ended += ended.Add;
+            FakePartyServer.Held leaveAnswer = _server.HoldNext(FakePartyServer.Leave);
+            Task leave = party.LeaveAsync();
+            yield return FlockTestWait.Until(() => leaveAnswer.Arrived, "The leave is on its way");
+
+            // The party is gone by the time a change the game sent meanwhile reaches the server.
+            _server.AnswerNext(FakePartyServer.Kick, FakePartyServer.Refused(404, "party.not_found"));
+            Task kick = party.KickAsync(B);
+            yield return Done(kick, "the kick was refused");
+            Assert.AreEqual(FlockErrorCode.PartyNotFound, Failure<FlockException>(kick).ErrorCode, "Precondition: refused as gone");
+            CollectionAssert.AreEqual(new[] { FlockPartyEndReason.Left }, ended, "Gone because this game left it");
+
+            leaveAnswer.Release();
+            yield return Done(leave, "the leave finished");
+            CollectionAssert.AreEqual(new[] { FlockPartyEndReason.Left }, ended, "Ended once");
         }
 
         [UnityTest]

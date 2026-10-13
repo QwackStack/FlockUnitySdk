@@ -167,6 +167,77 @@ namespace Flock.Tests.PlayMode
             Assert.IsNull(multiplayer.Sessions.Held);
         }
 
+        [UnityTest]
+        public IEnumerator AReadOfASessionThePlayerLeft_IsNotReadAgainForTheHeldSessionsAnswers()
+        {
+            FlockMultiplayerProvider multiplayer = SignedInAs(A);
+            FakeSessionServer.Session theirs = _server.HostedBy(B);
+            _server.Joins(theirs, A);
+            _server.Leaves(theirs, A);
+            _server.HeartbeatSeconds = 1;
+            Task<FlockMultiplayerSession> mine = multiplayer.HostSessionAsync();
+            yield return Done(mine, "hosted");
+
+            FakeSessionServer.Held answer = _server.HoldNext(FakeSessionServer.Read);
+            Task<FlockMultiplayerSession> read = multiplayer.GetSessionAsync(theirs.Id);
+            yield return FlockTestWait.Until(() => answer.Arrived, "The past session's read is on its way");
+            // The held session's heartbeat is answered while that read is on its way, and its answer is taken.
+            _server.Joins(_server.ById(mine.Result.Id), C);
+            yield return FlockTestWait.Until(() => Ids(mine.Result).Contains(C), "A heartbeat's answer was taken");
+            answer.Release();
+            yield return Done(read, "the past session was read");
+
+            Assert.IsFalse(read.IsFaulted, "Read");
+            Assert.AreEqual(1, _server.Count(FakeSessionServer.Read), "Read once: the held session's answers say nothing about it");
+            Assert.AreEqual(FlockMultiplayerSessionEndReason.Left, read.Result.EndReason, "Handed back ended as left");
+            Assert.AreSame(mine.Result, multiplayer.Sessions.Held, "The held session is untouched");
+            Assert.IsFalse(mine.Result.HasEnded);
+        }
+
+        [UnityTest]
+        public IEnumerator AReadSentBeforeLeaving_DoesNotBringTheSessionBack()
+        {
+            FlockMultiplayerProvider multiplayer = SignedInAs(A);
+            List<FlockMultiplayerSession> held = new List<FlockMultiplayerSession>();
+            yield return HostWithB(multiplayer, held);
+            FlockMultiplayerSession session = held[0];
+
+            FakeSessionServer.Held answer = _server.HoldNext(FakeSessionServer.Read);
+            Task<FlockMultiplayerSession> read = multiplayer.GetSessionAsync(session.Id);
+            yield return FlockTestWait.Until(() => answer.Arrived, "A read that sees the player seated is on its way");
+            Task leave = session.LeaveAsync();
+            yield return Done(leave, "left");
+            answer.Release();
+            yield return Done(read, "the read finished");
+
+            Assert.IsFalse(read.IsFaulted, "Read");
+            Assert.IsNull(multiplayer.Sessions.Held, "The older read did not take the session back up");
+            Assert.IsTrue(read.Result.HasEnded, "What it handed back has ended");
+            Assert.IsNull(multiplayer.Sessions.HeartbeatIntervalForTesting, "No heartbeat runs for it");
+        }
+
+        [UnityTest]
+        public IEnumerator AReadSentBeforeRejoining_DoesNotEndTheSessionAgain()
+        {
+            FlockMultiplayerProvider multiplayer = SignedInAs(A);
+            FakeSessionServer.Session onServer = _server.HostedBy(B);
+            Task<FlockMultiplayerSession> joined = multiplayer.JoinSessionAsync(onServer.Code);
+            yield return Done(joined, "joined");
+            _server.Drops(onServer, A);
+
+            FakeSessionServer.Held answer = _server.HoldNext(FakeSessionServer.Read);
+            Task<FlockMultiplayerSession> read = multiplayer.GetSessionAsync(onServer.Id);
+            yield return FlockTestWait.Until(() => answer.Arrived, "A read that sees the seat dropped is on its way");
+            Task<FlockMultiplayerSession> rejoined = multiplayer.JoinSessionAsync(onServer.Code);
+            yield return Done(rejoined, "joined again");
+            Assert.AreSame(joined.Result, rejoined.Result, "Precondition: the same session, seated again");
+            answer.Release();
+            yield return Done(read, "the read finished");
+
+            Assert.IsFalse(joined.Result.HasEnded, "A read sent before rejoining says nothing about the seat now");
+            Assert.AreSame(joined.Result, multiplayer.Sessions.Held);
+        }
+
         // ---- one seat at a time ----
 
         [UnityTest]
@@ -274,6 +345,24 @@ namespace Flock.Tests.PlayMode
             // The hand-over clears the old host's address, so ConnectionChanged follows HostChanged and sees no connection.
             CollectionAssert.AreEqual(new[] { "connection direct", "players " + A + "," + B + "," + C, "host " + B + " isHost=False", "connection " }, seen);
             CollectionAssert.AreEqual(new[] { A, B }, before.Select(player => player.PlayerId).ToArray(), "A list handed out earlier keeps its players");
+        }
+
+        [UnityTest]
+        public IEnumerator Events_SeeTheHeartbeatAlreadyFollowingTheReading()
+        {
+            FlockMultiplayerProvider multiplayer = SignedInAs(A);
+            Task<FlockMultiplayerSession> hosted = multiplayer.HostSessionAsync();
+            yield return Done(hosted, "hosted");
+            Assert.AreEqual(TimeSpan.FromSeconds(20), multiplayer.Sessions.HeartbeatIntervalForTesting, "Precondition: the first interval");
+            TimeSpan? intervalSeen = null;
+            hosted.Result.PlayersChanged += () => intervalSeen = multiplayer.Sessions.HeartbeatIntervalForTesting;
+
+            // One reading brings a new player and a new interval together.
+            _server.HeartbeatSeconds = 8;
+            _server.Joins(_server.ById(hosted.Result.Id), B);
+            Task<FlockMultiplayerSession> read = multiplayer.GetSessionAsync(hosted.Result.Id);
+            yield return Done(read, "read");
+            Assert.AreEqual(TimeSpan.FromSeconds(8), intervalSeen, "Inside the handler the heartbeat already follows the reading's interval");
         }
 
         [UnityTest]
@@ -462,6 +551,57 @@ namespace Flock.Tests.PlayMode
         }
 
         [UnityTest]
+        public IEnumerator ALeaveOnItsWayForOneSession_LeavesAnotherSessionsEndAsTheServerGivesIt()
+        {
+            FlockMultiplayerProvider multiplayer = SignedInAs(A);
+            Task<FlockMultiplayerSession> first = multiplayer.HostSessionAsync();
+            yield return Done(first, "the first was hosted");
+            FakeSessionServer.Held leaveAnswer = _server.HoldNext(FakeSessionServer.Leave);
+            Task leave = first.Result.LeaveAsync();
+            yield return FlockTestWait.Until(() => leaveAnswer.Arrived, "The first's leave is on its way");
+            Task<FlockMultiplayerSession> second = multiplayer.HostSessionAsync();
+            yield return Done(second, "the second was hosted");
+
+            // The second expires on the server while the first's leave is still on its way, and this game reads it.
+            _server.Ends(_server.ById(second.Result.Id), "expired");
+            Task<FlockMultiplayerSession> read = multiplayer.GetSessionAsync(second.Result.Id);
+            yield return Done(read, "the second was read");
+            Assert.AreEqual("expired", second.Result.EndReason, "The second ends with the server's reason, not as the first's leave");
+
+            leaveAnswer.Release();
+            yield return Done(leave, "the first's leave finished");
+            Assert.AreEqual("expired", second.Result.EndReason, "And stays so");
+            Assert.AreEqual(FlockMultiplayerSessionEndReason.MovedToAnotherSession, first.Result.EndReason, "The first stays as it ended");
+        }
+
+        [UnityTest]
+        public IEnumerator ALeaveAnsweredForAnEarlierSession_KeepsTheNewerLeaveThisGames()
+        {
+            FlockMultiplayerProvider multiplayer = SignedInAs(A);
+            Task<FlockMultiplayerSession> first = multiplayer.HostSessionAsync();
+            yield return Done(first, "the first was hosted");
+            FakeSessionServer.Held firstLeave = _server.HoldNext(FakeSessionServer.Leave);
+            Task leftFirst = first.Result.LeaveAsync();
+            yield return FlockTestWait.Until(() => firstLeave.Arrived, "The first's leave is on its way");
+            Task<FlockMultiplayerSession> second = multiplayer.HostSessionAsync();
+            yield return Done(second, "the second was hosted");
+
+            // The second is left too, alone, which closes it as host_left on the server.
+            FakeSessionServer.Held secondLeave = _server.HoldNext(FakeSessionServer.Leave);
+            Task leftSecond = second.Result.LeaveAsync();
+            yield return FlockTestWait.Until(() => secondLeave.Arrived, "The second's leave is on its way");
+            firstLeave.Release();
+            yield return Done(leftFirst, "the first's leave finished");
+
+            Task<FlockMultiplayerSession> read = multiplayer.GetSessionAsync(second.Result.Id);
+            yield return Done(read, "the second was read");
+            Assert.AreEqual(FlockMultiplayerSessionEndReason.Left, second.Result.EndReason, "The first leave's answer did not forget the second: the game's own leave is left");
+            secondLeave.Release();
+            yield return Done(leftSecond, "the second's leave finished");
+            Assert.AreEqual(FlockMultiplayerSessionEndReason.Left, second.Result.EndReason, "And stays so");
+        }
+
+        [UnityTest]
         public IEnumerator Ending_EndsAsEndedByHost()
         {
             FlockMultiplayerProvider multiplayer = SignedInAs(A);
@@ -518,6 +658,30 @@ namespace Flock.Tests.PlayMode
             Task<FlockMultiplayerSessionJoinToken> asked = hosted.Result.RequestJoinTokenAsync();
             yield return Done(asked, "the call found the session gone");
             Assert.AreEqual(FlockMultiplayerSessionEndReason.Dropped, hosted.Result.EndReason);
+        }
+
+        [UnityTest]
+        public IEnumerator ASessionNoLongerReadable_WhileThisGamesLeaveIsOnItsWay_EndsAsLeft()
+        {
+            FlockMultiplayerProvider multiplayer = SignedInAs(A);
+            List<FlockMultiplayerSession> held = new List<FlockMultiplayerSession>();
+            yield return HostWithB(multiplayer, held);
+            List<string> ended = new List<string>();
+            held[0].Ended += ended.Add;
+            FakeSessionServer.Held leaveAnswer = _server.HoldNext(FakeSessionServer.Leave);
+            Task leave = held[0].LeaveAsync();
+            yield return FlockTestWait.Until(() => leaveAnswer.Arrived, "The leave is on its way");
+
+            // A call the game sent meanwhile finds the seat gone, and the read that would say why is refused.
+            _server.AnswerNext(FakeSessionServer.Read, FakeSessionServer.Refused(404, "multiplayer.session_not_found"));
+            Task<FlockMultiplayerSessionJoinToken> asked = held[0].RequestJoinTokenAsync();
+            yield return Done(asked, "the call found the seat gone");
+            Assert.AreEqual(2, _server.Count(FakeSessionServer.Read), "Precondition: the read that seated B, then one to learn why");
+            CollectionAssert.AreEqual(new[] { FlockMultiplayerSessionEndReason.Left }, ended, "Gone because this game left it");
+
+            leaveAnswer.Release();
+            yield return Done(leave, "the leave finished");
+            CollectionAssert.AreEqual(new[] { FlockMultiplayerSessionEndReason.Left }, ended, "Ended once");
         }
 
         // ---- sign-in ----
@@ -980,11 +1144,35 @@ namespace Flock.Tests.PlayMode
             yield return HostWithB(multiplayer, held);
             List<string> ended = new List<string>();
             held[0].Ended += ended.Add;
+            int warnings = _h.Logger.Warnings.Count;
+            int errors = _h.Logger.Errors.Count;
 
             _server.Drops(_server.ById(held[0].Id), A);
             yield return FlockTestWait.Until(() => ended.Count == 1, "The next heartbeat found the seat gone");
             CollectionAssert.AreEqual(new[] { FlockMultiplayerSessionEndReason.Dropped }, ended, "A reading said why");
             Assert.IsNull(multiplayer.Sessions.Held);
+            // An ending the session's events tell the game is not a failure: nothing is warned or logged as an error (the test client runs with retries off).
+            Assert.AreEqual(warnings, _h.Logger.Warnings.Count, string.Join(" | ", _h.Logger.Warnings));
+            Assert.AreEqual(errors, _h.Logger.Errors.Count, string.Join(" | ", _h.Logger.Errors));
+        }
+
+        [UnityTest]
+        public IEnumerator AHeartbeatThatFindsTheSeatGone_WithRetriesOn_WarnsNothingEither()
+        {
+            FlockMultiplayerProvider multiplayer = SignedInAs(A, retries: 3);
+            _server.HeartbeatSeconds = 1;
+            List<FlockMultiplayerSession> held = new List<FlockMultiplayerSession>();
+            yield return HostWithB(multiplayer, held);
+            List<string> ended = new List<string>();
+            held[0].Ended += ended.Add;
+            int warnings = _h.Logger.Warnings.Count;
+            int errors = _h.Logger.Errors.Count;
+
+            _server.Drops(_server.ById(held[0].Id), A);
+            yield return FlockTestWait.Until(() => ended.Count == 1, "The next heartbeat found the seat gone");
+            CollectionAssert.AreEqual(new[] { FlockMultiplayerSessionEndReason.Dropped }, ended);
+            Assert.AreEqual(warnings, _h.Logger.Warnings.Count, string.Join(" | ", _h.Logger.Warnings));
+            Assert.AreEqual(errors, _h.Logger.Errors.Count, string.Join(" | ", _h.Logger.Errors));
         }
 
         [UnityTest]
