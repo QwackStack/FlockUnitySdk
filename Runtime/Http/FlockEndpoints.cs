@@ -94,6 +94,39 @@ namespace Flock.Http
             return $"notification_template/by-name{query}";
         }
 
+        // Matchmaking — the queue list needs only the API key; queues are found by name from it, since no by-name route exists.
+        public const string MatchmakingQueues = "matchmaking/queues";
+        // The ticket routes act as the signed-in player; a party member finds the ticket the leader made through "current".
+        public const string MatchmakingTicket = "matchmaking/ticket";
+        public const string MatchmakingTicketCurrent = "matchmaking/ticket/current";
+        public static string MatchmakingTicketById(string ticketId) => $"matchmaking/ticket/{Uri.EscapeDataString(ticketId)}";
+
+        // Parties — every route acts as the signed-in player; only the two reads carry the members.
+        public const string Party = "party";
+        public const string PartyJoin = "party/join";
+        public const string PartyMine = "party/me";
+        public static string PartyById(string partyId) => $"party/{Uri.EscapeDataString(partyId)}";
+        public static string PartyLeave(string partyId) => $"{PartyById(partyId)}/leave";
+        public static string PartyKick(string partyId) => $"{PartyById(partyId)}/kick";
+        public static string PartyTransfer(string partyId) => $"{PartyById(partyId)}/transfer";
+
+        // Multiplayer sessions — every route acts as the signed-in player and answers with the whole session.
+        public const string Sessions = "multiplayer/sessions";
+        public const string SessionJoin = "multiplayer/sessions/join";
+        public const string SessionCurrent = "multiplayer/sessions/current";
+        public static string SessionById(string sessionId) => $"multiplayer/sessions/{Uri.EscapeDataString(sessionId)}";
+        public static string SessionLeave(string sessionId) => $"{SessionById(sessionId)}/leave";
+        public static string SessionHeartbeat(string sessionId) => $"{SessionById(sessionId)}/heartbeat";
+        public static string SessionEnd(string sessionId) => $"{SessionById(sessionId)}/end";
+        public static string SessionHost(string sessionId) => $"{SessionById(sessionId)}/host";
+        public static string SessionConnection(string sessionId) => $"{SessionById(sessionId)}/connection-info";
+        // How to reach the signed-in player, for its own seat; the host reads it.
+        public static string SessionSeatConnection(string sessionId) => $"{SessionById(sessionId)}/participants/me/connection-info";
+        public static string SessionJoinToken(string sessionId) => $"{SessionById(sessionId)}/join-token";
+        public static string SessionVerifyJoinToken(string sessionId) => $"{SessionById(sessionId)}/verify-join-token";
+        // The servers a player connects through: always the STUN server a direct connection asks its public address of.
+        public const string RelayCredentials = "multiplayer/relay-credentials";
+
         // Assets
         public const string Asset = "asset";
         public static string AssetById(string assetId) => $"asset/{assetId}";

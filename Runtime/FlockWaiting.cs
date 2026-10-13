@@ -26,6 +26,18 @@ namespace Flock
 #endif
         }
 
+        /// <summary>Waits for <paramref name="work"/> until the caller gives up; true when it finished first. The work goes on either way.</summary>
+        // No RunContinuationsAsynchronously: Task.WhenAny over such a source never finished in a WebGL player (measured).
+        internal static async Task<bool> FinishedBeforeGivenUpAsync(Task work, CancellationToken cancellationToken)
+        {
+            if (work.IsCompleted || !cancellationToken.CanBeCanceled)
+                return true;
+            TaskCompletionSource<bool> givenUp = new TaskCompletionSource<bool>();
+            using (cancellationToken.Register(() => givenUp.TrySetResult(true)))
+                await Task.WhenAny(work, givenUp.Task);
+            return work.IsCompleted;
+        }
+
         /// <summary>Waits by yielding to the next frame until the time has passed; throws when cancelled.</summary>
         internal static async Task DelayInFramesAsync(TimeSpan wait, CancellationToken cancellationToken)
         {

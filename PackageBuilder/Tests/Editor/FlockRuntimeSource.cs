@@ -8,14 +8,14 @@ namespace Flock.Tests.Editor
     /// <summary>Reads the package's own Runtime source, for tests that fail a pattern the code must not use.</summary>
     internal static class FlockRuntimeSource
     {
-        /// <summary>Each code line (comments left out) that matches, as "file:line: text", in every Runtime file but the one allowed to.</summary>
-        internal static List<string> LinesMatching(Regex pattern, string fileAllowedTo)
+        /// <summary>Each code line (comments left out) that matches, as "file:line: text", in every Runtime file but the ones allowed to.</summary>
+        internal static List<string> LinesMatching(Regex pattern, params string[] filesAllowedTo)
         {
             List<string> found = new List<string>();
             string runtime = Folder();
             foreach (string file in Directory.GetFiles(runtime, "*.cs", SearchOption.AllDirectories))
             {
-                if (Path.GetFileName(file) == fileAllowedTo)
+                if (System.Array.IndexOf(filesAllowedTo, Path.GetFileName(file)) >= 0)
                     continue;
                 found.AddRange(Matches(file, pattern, runtime));
             }

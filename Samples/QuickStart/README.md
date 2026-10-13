@@ -14,11 +14,11 @@ analytics event, and read your player data.
 
 - Device login — `FlockClient.Instance.Authentication.LoginWithDeviceAsync(...)`
 - The authenticated player — `CurrentPlayerId`, `CurrentSessionId`
-- A test analytics event — `Analytics.LogEvent(...)`
+- A test analytics event — `Analytics.TrackEvent(...)`
 - Reading player data — `Player.GetAllDataAsync()`
 
 ## What it doesn't show
 
-Player-data **writes**. Those go through your project's generated commands (run **Flock > Sync
-Schemas** to produce typed accessors), which are specific to your backend schema — a dedicated
-per-feature sample will cover that.
+Player-data **writes**. Those go through your project's generated commands (run **Sync** on the **Codegen** tab of
+**Flock > Settings** to produce typed accessors), which are specific to your backend schema — a dedicated
+per-feature sample will cover that. The multiplayer samples are in `Samples/Multiplayer`.

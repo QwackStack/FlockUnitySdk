@@ -1,0 +1,28 @@
+{
+    "name": "Flock.Samples.Multiplayer",
+    "rootNamespace": "Flock.Samples",
+    "references": [
+        "Flock.Runtime",
+        "Flock.Multiplayer.Netcode",
+        "Unity.Netcode.Runtime",
+        "Unity.Networking.Transport"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "FLOCK_NETCODE_FOR_GAMEOBJECTS",
+        "!FLOCK_NO_MULTIPLAYER"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.netcode.gameobjects",
+            "expression": "[1.0.0,3.0.0)",
+            "define": "FLOCK_NETCODE_FOR_GAMEOBJECTS"
+        }
+    ],
+    "noEngineReferences": false
+}

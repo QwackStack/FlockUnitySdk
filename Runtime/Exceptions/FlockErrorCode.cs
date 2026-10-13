@@ -56,8 +56,43 @@ namespace Flock.Exceptions
         // log_event.*
         LogEventGameNotFound,                       // log_event.game_not_found
 
+        // matchmaking.*
+        MatchmakingAlreadyQueued,                   // matchmaking.already_queued
+        MatchmakingMatchNotFound,                   // matchmaking.match_not_found
+        MatchmakingNotPartyLeader,                  // matchmaking.not_party_leader
+        MatchmakingPartyTooLarge,                   // matchmaking.party_too_large
+        MatchmakingPlayerNotEligible,               // matchmaking.player_not_eligible
+        MatchmakingQueueNotFound,                   // matchmaking.queue_not_found
+        MatchmakingTicketNotCancelable,             // matchmaking.ticket_not_cancelable
+        MatchmakingTicketNotFound,                  // matchmaking.ticket_not_found
+        MatchmakingVersionMismatch,                 // matchmaking.version_mismatch
+
+        // multiplayer.*
+        MultiplayerAlreadyInSession,                // multiplayer.already_in_session
+        MultiplayerInvalidJoinCode,                 // multiplayer.invalid_join_code
+        MultiplayerInvalidJoinToken,                // multiplayer.invalid_join_token
+        MultiplayerJoinCodeUnavailable,             // multiplayer.join_code_unavailable
+        MultiplayerMintRateLimited,                 // multiplayer.mint_rate_limited
+        MultiplayerNotAParticipant,                 // multiplayer.not_a_participant
+        MultiplayerNotHost,                         // multiplayer.not_host
+        MultiplayerSeatMintLimit,                   // multiplayer.seat_mint_limit
+        MultiplayerSessionFull,                     // multiplayer.session_full
+        MultiplayerSessionNotFound,                 // multiplayer.session_not_found
+        MultiplayerTargetNotAParticipant,           // multiplayer.target_not_a_participant
+        MultiplayerVersionMismatch,                 // multiplayer.version_mismatch
+
         // notification_template.*
         NotificationTemplateNotFound,               // notification_template.not_found
+
+        // party.*
+        PartyAlreadyInParty,                        // party.already_in_party
+        PartyCannotKickLeader,                      // party.cannot_kick_leader
+        PartyFull,                                  // party.full
+        PartyInvalidInviteCode,                     // party.invalid_invite_code
+        PartyNotAMember,                            // party.not_a_member
+        PartyNotFound,                              // party.not_found
+        PartyNotPartyLeader,                        // party.not_party_leader
+        PartyTargetNotAMember,                      // party.target_not_a_member
 
         // player.*
         PlayerAccountAlreadyLinked,                 // player.account_already_linked

@@ -132,6 +132,16 @@ def stage(project, excluded_ids, all_providers):
 
 
 def make_project(project):
+    # The folder is overwritten, so it must be empty or one this script made: a real project would lose its packages.
+    manifest = os.path.join(project, 'Packages', 'manifest.json')
+    if os.path.isdir(project) and os.listdir(project):
+        try:
+            with open(manifest, encoding='utf-8') as f:
+                ours = json.load(f) == {'dependencies': PACKAGES}
+        except (OSError, ValueError):
+            ours = False
+        if not ours:
+            sys.exit('%s is not empty and is not a project this script made; give --project an empty folder.' % project)
     os.makedirs(os.path.join(project, 'Packages'), exist_ok=True)
     os.makedirs(os.path.join(project, 'ProjectSettings'), exist_ok=True)
     with open(os.path.join(project, 'Packages', 'manifest.json'), 'w', encoding='utf-8') as f:

@@ -15,6 +15,7 @@ The Flock Unity SDK provides access to Flock's game backend services from Unity 
   - [Code-Based Configuration](#code-based-configuration)
 - [Quick Start](#quick-start)
 - [Feature guides](#feature-guides)
+- [Multiplayer](#multiplayer)
 - [Playtesting with Protokite](#playtesting-with-protokite)
 - [Error handling](#error-handling)
 - [Offline caching](#offline-caching)
@@ -36,6 +37,7 @@ The Flock Unity SDK provides access to Flock's game backend services from Unity 
 - Player ban lookup
 - Notification inbox (list, unread count, mark read), server-side scheduling of dashboard-authored templates, and push device-token registration
 - Asset listing and lookup by ID
+- Multiplayer — parties, matchmaking and sessions, with players connected over Netcode for GameObjects 1.x or 2.x, directly or through Flock's relay, and a new host taking over when the host leaves
 - Analytics (gameplay events, session tracking, transactions, diagnostics — no-op safe when disabled)
 - Automatic retry with exponential backoff
 - Offline-safe init (no network at startup) — plus disk-cached static content that keeps serving without network after one online session
@@ -55,6 +57,7 @@ The SDK is distributed through the Flock website — download the latest release
 
 - **Unity 2020.3 or newer.**
 - **Newtonsoft Json for Unity** (`com.unity.nuget.newtonsoft-json`, 3.0.2+) — the SDK depends on it for serialization. Installing through the Package Manager git URL resolves this automatically; if you import the `.unitypackage` instead, add it first via **Window > Package Manager > + → Add package by name** using `com.unity.nuget.newtonsoft-json`.
+- **Netcode for GameObjects 1.x or 2.x** (`com.unity.netcode.gameobjects`) — only to connect players in multiplayer. The SDK's netcode support compiles only when it is installed; parties, matchmaking and sessions work without it.
 
 ## Setup
 
@@ -172,11 +175,35 @@ Per-feature usage and examples live in their own guides:
 | [Leaderboards](Docs~/leaderboards.md) | Standings, my-rank, around-me by board name; windows, board config, score formatting |
 | [Assets](Docs~/assets.md) | Listing/lookup, typed downloads, disk cache, preloading |
 | [Notifications](Docs~/notifications.md) | Player inbox, unread badge event, scheduling a template for later, pending-schedule tracking |
+| [Multiplayer](Docs~/multiplayer.md) | Parties, matchmaking, sessions, connecting players over Netcode for GameObjects, Flock's relay and direct paths, host changes, other networking |
 | [Analytics](Docs~/analytics.md) | Gameplay events, sessions, transactions, diagnostics, exception capture, consent, unexpected-termination detection |
 | [SDK Events](Docs~/events.md) | The `FlockEvents` hub — lifecycle, auth, and session events |
 | [Codegen](Docs~/codegen.md) | Sync Schemas, generated templates/configs/shops/achievements, content catalog |
 | [Error handling](Docs~/errors.md) | The `FlockException` hierarchy, `.ErrorCode`, and the full coded-error list |
 | [HTTP and your own providers](Docs~/http.md) | Your game's identity for another Qwacks service, requests with or without an answer to read, retrying the way the SDK does, streamed file uploads, a provider of your own |
+
+## Multiplayer
+
+Friends form a party, find a match together (or join a friend's game by its code), and play in a session that one of
+them hosts. The SDK keeps each seat, follows the party, the search and the session in the background, and connects the
+players over Netcode for GameObjects: directly on the host's network, through Flock's relay from anywhere else. When
+the host leaves, another player takes over.
+
+```csharp
+FlockMultiplayerProvider multiplayer = FlockClient.Instance.Multiplayer;
+
+// One player hosts and reads out the code; a friend joins it.
+FlockMultiplayerSession session = await multiplayer.HostSessionAsync();
+joinCodeLabel.text = session.JoinCode;
+// ...on the friend's game: FlockMultiplayerSession session = await multiplayer.JoinSessionAsync(typedCode);
+
+// Both games then start the netcode: the host hosts, the friend connects.
+FlockNetcodeStartResult started = await session.StartNetcodeAsync(NetworkManager.Singleton);
+```
+
+Install Netcode for GameObjects 1.x or 2.x, check the dashboard's multiplayer settings, and make a queue for each mode
+your game matches players in. The [Multiplayer guide](Docs~/multiplayer.md) covers parties, matchmaking, every outcome,
+the relay and host changes; the `Samples/Multiplayer` folder has a Play With Friends and a Quick Match sample.
 
 ## Playtesting with Protokite
 

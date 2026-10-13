@@ -43,7 +43,7 @@ namespace Flock.Tests.Editor
             Assert.GreaterOrEqual(FlockRuntimeSource.LinesMatchingIn("AndroidTokenStore.cs", new Regex(@"Call<sbyte\[\]>")).Count, 2,
                 "Precondition: the scan reads the Android token store");
 
-            List<string> found = FlockRuntimeSource.LinesMatching(JavaCallReadingBytes, null);
+            List<string> found = FlockRuntimeSource.LinesMatching(JavaCallReadingBytes);
             Assert.IsEmpty(found, "Read Java's bytes as sbyte[] through FlockJavaBytes: " + string.Join("; ", found));
         }
     }

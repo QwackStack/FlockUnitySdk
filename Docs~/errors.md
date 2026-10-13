@@ -11,7 +11,7 @@ All SDK exceptions derive from `FlockException` (namespace `Flock.Exceptions`).
 | Type | Thrown when |
 |------|-------------|
 | `FlockException` | Base type — catch this to handle any SDK failure. |
-| `FlockAuthException` | Authentication/authorization failure (HTTP 401/403). |
+| `FlockAuthException` | Authentication failure (HTTP 401, which the SDK first answers with a token refresh) or a permission refusal (HTTP 403, which it never does). |
 | `FlockValidationException` | The request was rejected (HTTP 400/422) — bad input, business-rule violation. |
 | `FlockNetworkException` | Any other non-2xx (404, 409, 5xx, …) or a transport failure (timeout, no connection). Carries `RetryAfter` on 429/503. |
 | `FlockSerializationException` | A 2xx response body couldn't be parsed into the expected type (malformed/empty JSON). |
@@ -95,6 +95,7 @@ catch (FlockException ex) when (ex.IsAlreadyRegistered())
 | Enum member | Wire code |
 |-------------|-----------|
 | `AnalyticsCurrencyNotFound` | `analytics.currency_not_found` |
+| `AnalyticsInvalidCurrencyId` | `analytics.invalid_currency_id` |
 | `AnalyticsPlayerNotFound` | `analytics.player_not_found` |
 | `AnalyticsSessionNotFound` | `analytics.session_not_found` |
 | `AssetAssetNotFound` | `asset.asset_not_found` |
@@ -108,6 +109,7 @@ catch (FlockException ex) when (ex.IsAlreadyRegistered())
 | `GameCommandPlayerDataNotFound` | `game_command.player_data_not_found` |
 | `GameCommandPlayerDataNotLinkedToTemplate` | `game_command.player_data_not_linked_to_template` |
 | `GameCommandPlayerTemplateNotFound` | `game_command.player_template_not_found` |
+| `GameCommandRateLimited` | `game_command.rate_limited` |
 | `GameCommandTemplateValidationFailed` | `game_command.template_validation_failed` |
 | `GameConfigConfigNotFound` | `game_config.config_not_found` |
 | `GameConfigFeatureConfigNotFound` | `game_config.feature_config_not_found` |
@@ -118,8 +120,37 @@ catch (FlockException ex) when (ex.IsAlreadyRegistered())
 | `GamePatchPatchNotFound` | `game_patch.patch_not_found` |
 | `GameVersionGameVersionByNameNotFound` | `game_version.game_version_by_name_not_found` |
 | `GameVersionGameVersionNotFound` | `game_version.game_version_not_found` |
+| `LeaderboardNotFound` | `leaderboard.not_found` |
 | `LogEventGameNotFound` | `log_event.game_not_found` |
+| `MatchmakingAlreadyQueued` | `matchmaking.already_queued` |
+| `MatchmakingMatchNotFound` | `matchmaking.match_not_found` |
+| `MatchmakingNotPartyLeader` | `matchmaking.not_party_leader` |
+| `MatchmakingPartyTooLarge` | `matchmaking.party_too_large` |
+| `MatchmakingPlayerNotEligible` | `matchmaking.player_not_eligible` |
+| `MatchmakingQueueNotFound` | `matchmaking.queue_not_found` |
+| `MatchmakingTicketNotCancelable` | `matchmaking.ticket_not_cancelable` |
+| `MatchmakingTicketNotFound` | `matchmaking.ticket_not_found` |
+| `MatchmakingVersionMismatch` | `matchmaking.version_mismatch` |
+| `MultiplayerAlreadyInSession` | `multiplayer.already_in_session` |
+| `MultiplayerInvalidJoinCode` | `multiplayer.invalid_join_code` |
+| `MultiplayerInvalidJoinToken` | `multiplayer.invalid_join_token` |
+| `MultiplayerJoinCodeUnavailable` | `multiplayer.join_code_unavailable` |
+| `MultiplayerMintRateLimited` | `multiplayer.mint_rate_limited` |
+| `MultiplayerNotAParticipant` | `multiplayer.not_a_participant` |
+| `MultiplayerNotHost` | `multiplayer.not_host` |
+| `MultiplayerSessionFull` | `multiplayer.session_full` |
+| `MultiplayerSessionNotFound` | `multiplayer.session_not_found` |
+| `MultiplayerTargetNotAParticipant` | `multiplayer.target_not_a_participant` |
+| `MultiplayerVersionMismatch` | `multiplayer.version_mismatch` |
 | `NotificationTemplateNotFound` | `notification_template.not_found` |
+| `PartyAlreadyInParty` | `party.already_in_party` |
+| `PartyCannotKickLeader` | `party.cannot_kick_leader` |
+| `PartyFull` | `party.full` |
+| `PartyInvalidInviteCode` | `party.invalid_invite_code` |
+| `PartyNotAMember` | `party.not_a_member` |
+| `PartyNotFound` | `party.not_found` |
+| `PartyNotPartyLeader` | `party.not_party_leader` |
+| `PartyTargetNotAMember` | `party.target_not_a_member` |
 | `PlayerAccountAlreadyLinked` | `player.account_already_linked` |
 | `PlayerAccountNotLinked` | `player.account_not_linked` |
 | `PlayerAppleAccountAlreadyRegistered` | `player.apple_account_already_registered` |
@@ -144,6 +175,8 @@ catch (FlockException ex) when (ex.IsAlreadyRegistered())
 | `PlayerBanPlayerNotFound` | `player_ban.player_not_found` |
 | `PlayerDataNotFound` | `player_data.not_found` |
 | `PlayerDataPlayerNotFound` | `player_data.player_not_found` |
+| `PlayerInventoryAlreadyUsed` | `player_inventory.already_used` |
+| `PlayerInventoryInventoryEntryNotFound` | `player_inventory.inventory_entry_not_found` |
 | `PlayerInventoryPlayerNotFound` | `player_inventory.player_not_found` |
 | `PlayerTemplateNotFound` | `player_template.not_found` |
 | `PlayerTemplateNotFoundByName` | `player_template.not_found_by_name` |
@@ -151,7 +184,10 @@ catch (FlockException ex) when (ex.IsAlreadyRegistered())
 | `ShopCurrencyTemplateNotFound` | `shop.currency_template_not_found` |
 | `ShopInsufficientFunds` | `shop.insufficient_funds` |
 | `ShopItemNotFound` | `shop.item_not_found` |
+| `ShopMalformedReward` | `shop.malformed_reward` |
+| `ShopPackGrantsNothing` | `shop.pack_grants_nothing` |
 | `ShopPlayerNotFound` | `shop.player_not_found` |
+| `ShopRewardCurrencyNotHeld` | `shop.reward_currency_not_held` |
 | `ShopShopNotFound` | `shop.shop_not_found` |
 | `ShopWalletNotFound` | `shop.wallet_not_found` |
 | `ShopItemShopItemNotFound` | `shop_item.shop_item_not_found` |

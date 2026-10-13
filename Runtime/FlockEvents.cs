@@ -223,16 +223,21 @@ namespace Flock
         private static void InvokeOne(Action handler, string eventName)
         {
             try { handler(); }
-            catch (Exception ex) { LogSubscriberException(eventName, ex); }
+            catch (Exception ex) { LogSubscriberException($"{nameof(FlockEvents)}.{eventName}", ex); }
         }
 
         private static void InvokeOne<T>(Action<T> handler, T payload, string eventName)
         {
             try { handler(payload); }
-            catch (Exception ex) { LogSubscriberException(eventName, ex); }
+            catch (Exception ex) { LogSubscriberException($"{nameof(FlockEvents)}.{eventName}", ex); }
         }
 
-        private static void Invoke(Action handlers, string eventName)
+        private static void Invoke(Action handlers, string eventName) => InvokeEach(handlers, $"{nameof(FlockEvents)}.{eventName}");
+
+        private static void Invoke<T>(Action<T> handlers, T payload, string eventName) => InvokeEach(handlers, payload, $"{nameof(FlockEvents)}.{eventName}");
+
+        /// <summary>Hands an event to each of its handlers in turn; one that throws is logged and the rest still run.</summary>
+        internal static void InvokeEach(Action handlers, string eventName)
         {
             if (handlers == null)
             {
@@ -255,7 +260,8 @@ namespace Flock
             }
         }
 
-        private static void Invoke<T>(Action<T> handlers, T payload, string eventName)
+        /// <summary>Hands an event and its value to each of its handlers in turn; one that throws is logged and the rest still run.</summary>
+        internal static void InvokeEach<T>(Action<T> handlers, T payload, string eventName)
         {
             if (handlers == null)
             {
@@ -283,7 +289,7 @@ namespace Flock
         // Read through FlockExceptionText: a ToString that throws here would escape the catch into the SDK code raising the event.
         private static void LogSubscriberException(string eventName, Exception exception)
         {
-            Debug.LogError($"[Flock] FlockEvents.{eventName} subscriber threw: {FlockExceptionText.FullText(exception)}");
+            Debug.LogError($"[Flock] {eventName} subscriber threw: {FlockExceptionText.FullText(exception)}");
         }
     }
 }

@@ -6,6 +6,398 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.84.0]
+
+Players connect through Flock's relay when it runs on Cloudflare's managed relay, which gives each player's relay address an IP of its
+own and, from some networks, answers only some of the ports a device sends from.
+
+### Added
+- `FlockErrorCode.MultiplayerSeatMintLimit` (`multiplayer.seat_mint_limit`), with a hint: a seat in a session may draw at most 10
+  relay logins.
+
+### Fixed
+- A relayed player could not reach its host on a relay that gives each address an IP of its own: the host let in only addresses on
+  its own relay IP. A player now tells Flock its relay address for its seat before connecting, and the host lets each seated
+  player's address in. While the host takes players through its relay, it reads the session every 2 seconds for this (these reads
+  are not billed, and share the 120 a minute each player may make); heartbeats alone come every 20 seconds.
+- Opening the relay failed from networks where the relay server answers only some of a device's ports (measured with Cloudflare's
+  from two networks: about one port in three, each port every time or never). The address is now reserved from whichever of
+  several sockets the server answers first; a relay that answers none of them is still asked from a new socket, as before.
+- A relayed player's direct path learned no address of its own on such a relay, so it offered its LAN address alone. Each direct
+  path now also asks the STUN servers Flock lists.
+- A phone on mobile data never heard Cloudflare's STUN server, so it could not learn its public address and reached other
+  players directly less often (measured on one carrier: no answer to the SDK's IPv4 sockets, every answer to dual-stack ones, on the
+  same phone and network). The SDK's sockets to relay servers, STUN servers and other players are now dual-stack (IPv6 carrying IPv4)
+  where the platform allows, and plain IPv4 where it does not; every address the SDK publishes or offers is still IPv4.
+- Flock refusing relay logins because the player's seat has drawn the most it may (10) now fails with `relay_too_many_logins` and
+  says so, rather than as any other refusal.
+
+### Changed
+- A player whose relay address Flock will not take (a Flock from before this version, or none reachable at that moment) still
+  connects, and the log says so: on a relay that gives every address one IP (coturn) it is let in as before. It is asked once,
+  without retries, so the connect never waits on it.
+- A host's relay address is let open to at most 65 other relay IPs (the most players a host takes through its relay, and the host);
+  a seated player's address past that is refused without asking the relay, and the log says so once.
+- A host on 1.83.0 or earlier does not read players' relay addresses, so players on another relay IP cannot reach it; on a relay
+  that gives every address one IP nothing changes.
+
+### Documentation
+- A [Multiplayer guide](Docs~/multiplayer.md): which setup fits each kind of game (local co-op, online co-op with friends,
+  matchmaking with strangers, friends matched together, streamers and competitive play, other networking), then parties,
+  matchmaking, sessions, connecting players over Netcode for GameObjects, the relay and direct paths, host changes, what is
+  billed and today's limits. Every example compiles against Netcode for GameObjects 1.x and 2.x.
+- The README has a Multiplayer section and feature, and names Netcode for GameObjects 1.x or 2.x as the one extra package
+  multiplayer needs to connect players.
+
+Released together with the Protokite Playtest at the same version (no changes to it).
+
+## [1.83.0]
+
+With `FlockNetcodeOptions.Relay` left at `WhenNeeded`, a player who connected through Flock's relay now moves to a direct path
+to the host when the two can reach each other, and keeps the relay ready in case that path stops.
+
+### Added
+- Direct paths for relayed players, with nothing for the game to change. Once the host has let a relayed player in, each side asks
+  Flock's relay server where it sees it, the two swap those addresses (and their LAN ones) through the relay, and each sends small
+  probes to the other's; once a probe is answered both ways, the netcode's packets go directly. When none is answered (a router
+  that gives each destination a port of its own on both sides, or a firewall that drops them), the packets stay on the relay. A
+  direct path that goes quiet for 4 seconds goes back to the relay, and the other end follows. With Enable Debug Logs on, the log
+  says which happened.
+- Only with `WhenNeeded`: `Always` keeps every player on the relay, and players on the host's network still connect directly as
+  before.
+
+### Changed
+- With `WhenNeeded`, the host learns a relayed player's address once it has let the player in, and the player the host's (the host
+  already published its own). Use `Always` to keep addresses hidden.
+- A game on 1.82.0 or earlier in the same session as one on 1.83.0 stays on the relay with it; the messages it is handed are dropped
+  by Unity Transport without a log line.
+
+### Fixed
+- A relayed player whose game started its netcode again before the host noticed the old connection was gone could not connect with
+  Netcode for GameObjects 1.x: when the host let the old connection go while the new one was still being checked, it closed the
+  socket the new one came through. The host now keeps that socket for the new connection and lets it in there; a relay address
+  is forgotten only once no connection comes through it. With 2.x the new connection moved to another socket and connected.
+
+Released together with the Protokite Playtest at the same version (no changes to it).
+
+## [1.82.0]
+
+A game follows a change of host, or a relay that stopped working, by shutting its netcode down and calling `StartNetcodeAsync`
+again: the new host hosts and the other players connect to it.
+
+### Added
+- `FlockMultiplayerSession.RelayLost`, raised once on the main thread when this device's address on Flock's relay stops working
+  mid-session, with a `FlockRelayFailure` reason (such as `relay_lost`). Connections through it are gone; start the netcode again
+  to open another. It is not raised when the session ends.
+- `FlockNetcodeStartOutcome.Restarted`: a start the game replaced by starting the netcode again on the same NetworkManager.
+
+### Changed
+- `StartNetcodeAsync` waits (at most 5 seconds) for a shutdown of the NetworkManager already under way, so `Shutdown()` and
+  `StartNetcodeAsync` can follow each other in one frame; it used to refuse. After such a wait, a netcode still running, or a
+  ConnectionApprovalCallback of the game's own on a host, is refused through the returned task rather than thrown at the call.
+- Starting the netcode again on a NetworkManager while an earlier start is still under way ends the earlier one with `restarted`
+  (or as cancelled, when its own caller cancelled it) and waits for it to stop what it started.
+- After a change of host, `StartNetcodeAsync` takes the part the session gives this device once any shutdown has finished: the new
+  host hosts on the relay address it had as a player, with no new relay login, and the others wait for it to say where it is.
+- Relay channels are renewed only while they are used: a player who left, or a netcode that stopped, lets its channel lapse.
+
+Released together with the Protokite Playtest at the same version (no changes to it).
+
+## [1.81.0]
+
+A player who shares the host's public address but cannot reach the host on that network now connects through Flock's relay
+instead of failing.
+
+### Fixed
+- With `FlockNetcodeOptions.Relay` left at `WhenNeeded`, a player sharing the host's public address connected only to the host's
+  address on that network, and failed once Unity Transport's connect attempts ran out (a minute by default) wherever that address
+  does not answer: Wi-Fi that keeps its devices apart (schools, offices, hotels), or a mobile carrier putting many phones behind one
+  address. It now tries that address for at least two of Unity Transport's connect attempts and 3 seconds, then goes through the
+  relay. A host that answered is never left for the relay: one that refuses the player, or checks it slowly, is waited for there, and
+  a netcode the game stopped is not started again.
+- A host that knew only its LAN address no longer counts as being on this player's network: a `WhenNeeded` player goes through the
+  relay. `FlockDirectAddress.IsLan` is unchanged; its description now says it is also true for the only address the host knew.
+
+- A session that ends while a player tries the host's network ends `StartNetcodeAsync` with `session_ended`.
+
+### Changed
+- When the try on the host's network is given up, Netcode for GameObjects raises its own stop for it (`OnClientStopped`) before
+  the relay's connection starts. A game whose own connect attempts run out first (a short `MaxConnectAttempts`) also sees Unity
+  Transport's "Failed to connect to server." error then, though the player goes on to connect through the relay.
+
+Released together with the Protokite Playtest at the same version (no changes to it).
+
+## [1.80.0]
+
+Players on different networks can now play together without forwarding a port: `StartNetcodeAsync` connects them through Flock's
+relay. Players on the host's own network still connect directly, and a game can send every player through the relay, or none.
+
+### Added
+- `FlockNetcodeOptions.Relay`, a `FlockRelayUse`: `WhenNeeded` (the default: players on the host's network connect directly,
+  everyone else through Flock's relay), `Always` (every player through the relay; the host publishes no address of its own and
+  listens on its loopback only) or `Never` (direct connections only). Set it the same on every player of a game.
+- `FlockNetcodeStartResult.ThroughRelay` and `RelayFailureReason`, the outcome `relay_failed`, the connection mode
+  `FlockMultiplayerConnectionMode.Relay`, and `FlockRelayFailure`, the reasons the relay could not be used.
+- A host opens its address on the relay as it starts and publishes it with the relay server it is on, where players reserve
+  theirs. Relayed packets reach Unity Transport through sockets on the device's own loopback, so its secure mode, timeouts and
+  simulator work as on a direct connection.
+- The host checks a relayed player's Flock join token like any other's, and binds a relay channel only to a player it let in; a
+  stranger on the relay is refused, and in a host full of them one never let in makes way after 30 seconds.
+
+### Changed
+- By default, a player off the host's network now connects through the relay instead of the host's public address (which only
+  worked where the host forwarded its port). Set `Relay` to `Never` for the earlier behaviour.
+- A host asks Flock for relay logins as it starts, unless `Relay` is `Never`. A game whose relay is switched off in the dashboard
+  publishes its direct address as before, without a warning; one whose studio's relay is paused publishes it and says why.
+- `FlockMultiplayerSessionConnection.FindDirectAddressAsync` also reads the direct addresses a relay connection holds.
+
+Released together with the Protokite Playtest at the same version (no changes to it).
+
+## [1.79.0]
+
+The groundwork for Flock's relay, which connects players on different networks: the SDK can now reserve an address on the relay
+for a session, open it to the host's relay address, and send and receive packets through it. Nothing public uses it yet; the next
+release plugs it into Netcode for GameObjects.
+
+### Added
+- An internal relay connection for a session, over UDP: logins Flock mints for the session's seat, the relay server's name looked up
+  within 5 s, an address reserved (answering the relay's login challenge, and its stale nonce with the new one; a request lost on
+  the way is sent again under its transaction, and given up on after 5 s), opened to the host's relay address, and kept alive on a
+  thread of its own (the address, the opening and each channel renewed before the relay lets them go). Packets ride in 4-byte
+  channel frames once a channel is bound to the peer; sending and taking one makes no garbage and never holds the game's thread.
+  The session's end gives the address back before `Ended` is raised, answering a stale nonce on the way. Each failure has a reason
+  of its own: a web player, a relay paused for the studio's bill, none offered for the game, too many logins in a minute, no seat
+  in the session, Flock or the relay out of reach, a refused login, a full relay, a refused opening, a lost relay.
+
+Released together with the Protokite Playtest's fix to its check of which video encoders the machine has (see its changelog).
+
+## [1.78.0]
+
+Two multiplayer samples, each one component to drop on an empty GameObject: play with friends by a session's code, or quick
+match.
+
+### Added
+- `Samples/Multiplayer`, compiled only with Netcode for GameObjects 1.x or 2.x installed and left out of a package built
+  without Multiplayer. `FlockPlayWithFriendsSample`: **Host** shows the session's code, **Join** takes a friend's.
+  `FlockQuickMatchSample`: **Find Match** searches the queue named in **Queue Name**, and **Cancel** stops the search. Both sign
+  in with the device (registering it the first time), start Netcode for GameObjects for the session with `StartNetcodeAsync`
+  (the NetworkManager given, else the scene's, else one they make on **Port**), list the players, send a **Wave** over the
+  netcode that the host passes on to the others, and **Leave** (**End Session** for the host). A start that fails gives the
+  seat up. Each says it connects on a LAN or where the host's port is forwarded to it.
+
+### Fixed
+- The Quick Start sample's README named `Analytics.LogEvent` and a **Flock > Sync Schemas** menu that no longer exist.
+
+## [1.77.0]
+
+A host started with `StartNetcodeAsync` lets in only the session's players: each joining player's game sends a join token
+Flock gives it, and the host checks it with Flock before the player is in.
+
+### Added
+- On the host, `StartNetcodeAsync` installs Netcode for GameObjects' connection approval: a joining player is held while Flock
+  checks their join token (the frame is never held), then let in or refused with a reason the player's game is told. One
+  connection a player: the same player connecting again while still connected is refused. When Flock's answer does not come in
+  time (2 s before the NetworkManager's Client Connection Buffer Timeout, and at most 8 s, so a player on the default 10 s hears
+  it), or cannot be read, the player is refused rather than let in unchecked.
+- On a joining player, `StartNetcodeAsync` asks Flock for a join token once the host is known and sends it in front of the
+  game's own `NetworkConfig.ConnectionData`, with connection approval turned on as the host needs; both are put back once the
+  connect has ended. A refused player gets the new outcome `FlockNetcodeStartOutcome.Refused` with
+  `FlockNetcodeStartResult.RefusedReason`, a `FlockNetcodeRefusedReason` value (`no_join_token`, `join_token_invalid`,
+  `already_connected`, `flock_unreachable`, `session_ended`, `not_host`, `refused_by_the_game`, `game_check_failed`), the
+  game's own reason, or Netcode for GameObjects' own words when the host's netcode turned the player away itself (such as
+  "Client-1 disconnected by server." between builds whose netcode settings differ).
+- `FlockNetcodeOptions.ApproveJoiningPlayer`: the game's own check on the host, run once Flock has let a player in, with a
+  `FlockJoiningPlayer` (`PlayerId`, `ClientId`, and the game's own `ConnectionData` without the token) and Netcode for
+  GameObjects' approval response, which arrives approved with the player object the config names.
+- `session.PlayerForConnection(clientId)`: the Flock player behind a Netcode for GameObjects connection on the host, the host's
+  own included.
+
+### Changed
+- A NetworkManager that already has a `ConnectionApprovalCallback` is refused by `StartNetcodeAsync` on the host, with a message
+  naming `FlockNetcodeOptions.ApproveJoiningPlayer`. When the netcode stops, the NetworkManager's approval is put back as the
+  game had it, unless the game set a check of its own meanwhile.
+- A host on this version refuses players on 1.76.0, which connect with connection approval off.
+
+## [1.76.0]
+
+A session's players can connect their netcode directly: the host says where it is, and the others wait for that and connect.
+With Netcode for GameObjects installed, one call does both.
+
+### Added
+- `FlockMultiplayerSession.PublishDirectConnectionAsync(port, cancellationToken)`: the host publishes how to reach it, mode
+  `FlockMultiplayerConnectionMode.Direct`, with its public address (one request to the STUN server Flock lists) or, when that
+  is unknown, its LAN address, and the port. Outside a LAN, players reach it only when that port is forwarded to the host.
+- `FlockMultiplayerSession.WaitForConnectionAsync(timeout, cancellationToken)`: waits until the host has published and returns
+  `Connection`, or null when the time runs out or the session ends. The session is read every 2 s while it waits.
+- `FlockMultiplayerSessionConnection.FindDirectAddressAsync(cancellationToken)`: where this device connects, a
+  `FlockDirectAddress` (`Address`, `Port`, `IsLan`): the host's LAN address when this device shares its public address, the
+  published address otherwise; null for a connection that is not a usable direct one.
+- With Netcode for GameObjects 1.x or 2.x installed: `session.StartNetcodeAsync(networkManager, options, cancellationToken)`.
+  The host starts as host on Unity Transport's port and publishes; a player waits for the host (`FlockNetcodeOptions.WaitForHost`,
+  60 s), connects to it and returns once connected. `FlockNetcodeStartResult.Outcome` says how it ended
+  (`FlockNetcodeStartOutcome`: `started_as_host`, `connected`, `host_never_published`, `session_ended`, `could_not_connect`,
+  `could_not_start`, `not_direct`). The package does not depend on Netcode for GameObjects: these calls exist only where it is
+  installed. Not in a web player.
+
+### Fixed
+- `TryGetValue` and `TryGetData` return false for a number too large for the type asked for, instead of throwing.
+
+## [1.75.0]
+
+A game can find a match by queue name, alone or as a party, and gets the session the match seats its players in.
+
+### Added
+- `FlockClient.Instance.Multiplayer.FindMatchAsync(queueName, options, cancellationToken)`: searches alone in the queue with
+  that exact name and hands back a `FlockMatchmakingResult`. When players are matched, its `Session` is the session the match
+  seats them in, held like any other (the longest waiting player hosts), and `PlayerIds` lists them. A search that ends
+  without a match is an outcome, not an error: `FlockMatchmakingOutcome.Expired` (nobody found within 5 minutes),
+  `PartyChanged` or `Cancelled` (stopped by another game). Cancelling the token cancels the search on the server, and a
+  match that landed meanwhile gives its seat up; the game can search again at once. A search of the player's own left by an
+  earlier launch is cancelled first.
+- `FlockParty.FindMatchAsync(queueName, options, cancellationToken)`: the leader's game searches as the party, matched as
+  one unit and never split; another member's game waits for the leader's search and gets the same match.
+- `FlockParty.SearchStarted`, `SearchEnded` and `IsSearching`: every member's game hears the party's search, through its
+  own call or the party's refresh, including a party matched between two refreshes. A search that ended before the game
+  got the party is not reported; one still running then is. `SearchEnded` is raised before the game's `FindMatchAsync`
+  returns.
+- `FlockMatchmakingOptions.Attributes`, passed to the server as given.
+
+### Changed
+- The party refresh also reads the player's own matchmaking ticket, one more request each refresh while in a party.
+- `CreatePartyAsync`, `JoinPartyAsync` and `GetMyPartyAsync` read the player's own matchmaking ticket once when they hand
+  over a party the game did not hold yet, so a search the leader makes right after is never taken for an old one.
+  Cancelling the call's token stops only that read; the party is handed over.
+- Quitting cancels a running search without waiting, so it matches nobody who has gone.
+- The `MatchmakingAlreadyQueued` hint now says what is left once the SDK replaces the player's own earlier search.
+
+## [1.74.0]
+
+Sessions keep their players seated for as long as the game runs, and a game can find its session again after a restart.
+Players on different builds of a game no longer end up in one session unless the host allows it.
+
+### Added
+- Heartbeats: while a session is held, the SDK keeps the player's seat with a heartbeat at the interval the server gives
+  for the game's timeouts (set in the game's multiplayer settings in the Flock dashboard). Each heartbeat's answer updates
+  the session, so `PlayersChanged`, `HostChanged` and `ConnectionChanged` are raised without the game reading it. Nothing to
+  call or set. A heartbeat the server refuses for a reason other than the seat being gone logs one warning and stops; the
+  next `GetSessionAsync` or `GetMySessionAsync` starts them again.
+- `FlockClient.Instance.Multiplayer.GetMySessionAsync`: the session the player is seated in, found without its id (after a
+  restart, or one a party leader's game made), or null when seated nowhere. A session held until then that the player is no
+  longer seated in ends, with the reason the server gives.
+- `HostSessionAsync(sameVersionOnly: false)` lets players on any build join. By default a session keeps to its host's Game
+  Version, and a player whose game sends another one is refused with `MultiplayerVersionMismatch`.
+- `FlockErrorCode.MultiplayerVersionMismatch` and `MatchmakingVersionMismatch`, with hints.
+
+### Changed
+- When hosting moves, `Connection` is cleared until the new host publishes, and `ConnectionChanged` is raised for it.
+- A game paused past the timeouts (a phone on the home screen, a browser tab in the background, a desktop window that lost
+  focus with Run In Background off) sends no heartbeats, so the server gives its seat up; the first heartbeat after it comes
+  back ends the session, as `dropped` while others kept it going, or with the session's own reason if it closed meanwhile.
+
+### Removed
+- `FlockErrorCode.MultiplayerExtrasPaused`: the server no longer sends it.
+
+## [1.73.0]
+
+Sessions: a player hosts a game others join with a code, says how to reach it, and the SDK keeps the session up to date
+from every answer. Heartbeats are not in this version yet, so after about a minute the server moves hosting on and then
+gives the seats up.
+
+### Added
+- `FlockClient.Instance.Multiplayer.HostSessionAsync` (seats 2 to 16, 8 when not given, and the game's own data),
+  `JoinSessionAsync` (by join code; letter case does not matter) and `GetSessionAsync` (a session the player holds or once
+  held a seat in; one that is over gives the session's own reason, so a host who left last reads `host_left`). A player
+  holds one seat at a time: hosting or joining another session ends the one held.
+- `FlockMultiplayerSession`: `JoinCode`, `HostPlayerId`, `IsHost`, `Players` (longest seated first; when the host leaves,
+  the first of the others hosts), `MaxPlayers`, `Data` (read one value with `TryGetData<T>`), `Connection` (how to reach
+  the host: a `Mode` and its `Values`, null until the host publishes), and `LeaveAsync`, `EndAsync`, `MakeHostAsync`,
+  `PublishConnectionAsync`, `RequestJoinTokenAsync` (a token proving the player's seat, good for 60 s) and
+  `VerifyJoinTokenAsync` (the host learns which player a token belongs to).
+- `FlockMultiplayerSession` events: `PlayersChanged`, `HostChanged`, `ConnectionChanged`, and `Ended` with a reason from
+  `FlockMultiplayerSessionEndReason` (`ended_by_host`, `host_left`, `expired`, `empty`, `left`, `dropped`,
+  `moved_to_another_session`, `signed_out`; the server can add reasons, so keep a default). `Ended` is raised once, and not
+  when Flock shuts down or the game quits. A session that has ended refuses its calls.
+- Quitting the game gives the player's seat up without waiting, so the other players see it at once.
+
+### Changed
+- The session error hints name the calls to use (`JoinSessionAsync`, `GetSessionAsync`, `RequestJoinTokenAsync`,
+  `HostSessionAsync`).
+
+### Fixed
+- A party whose player signed out, or another signed in, could end as `Left` or `Disbanded` after it had already read as
+  `SignedOut`, when a leave or disband answered in the same frame. It now stays `SignedOut`.
+- An answer to a party change that landed after another player signed in made that player's party read go out again.
+
+### Known limits
+- No heartbeats yet: by default the server hands hosting on from a host it has not heard from in 60 seconds and gives up
+  a seat it has not heard from in 90 (the game's multiplayer settings in the Flock dashboard can change both), so a session
+  lasts about a minute for its players. Heartbeats come in a later version and will be sent for you.
+- The session changes only when a call answers (any call, or `GetSessionAsync`); nothing reads it in the background yet.
+- After hosting moves, `Connection` can still show the previous host's address until the new host publishes.
+
+## [1.72.0]
+
+Parties: players group up with an invite code, and the SDK keeps the party up to date. And a retried call never goes
+out as a player who signed in after it was made.
+
+### Added
+- `FlockClient.Instance.Multiplayer.CreatePartyAsync`, `JoinPartyAsync` (by invite code; letter case does not matter) and
+  `GetMyPartyAsync` (the player's party, or null). A party lasts until the player leaves it, across launches, so call
+  `GetMyPartyAsync` after signing in; it returns the same `FlockParty` object while the party lasts.
+- `FlockParty`: `InviteCode`, `LeaderPlayerId`, `IsLeader`, `Members` (in the order they joined), `MaxSize`, `Settings`
+  (read one value with `TryGetSetting<T>`), and `LeaveAsync`, `KickAsync`, `MakeLeaderAsync`, `UpdateAsync` and
+  `DisbandAsync`. New settings replace all of the old ones.
+- `FlockParty` events: `MembersChanged`, `LeaderChanged`, and `Ended` with a `FlockPartyEndReason` (`Left`, `Disbanded`,
+  `Removed` when the server no longer lists the player, `SignedOut` when the sign-in ended). `Ended` is raised once, and
+  not when Flock shuts down. A party that has ended refuses its calls.
+- **Party Refresh Seconds** in **Flock > Settings** (`FlockInitConfig.PartyRefreshInterval`, default 10): how often a held
+  party is read again. Each read is one API call per player; 0 turns it off, and the party then changes only when the game
+  calls `GetMyPartyAsync`. A party is also read again after each change the game makes, so its events come the same way
+  whether this game or another player changed it.
+
+- `FlockProviderBase`: `SignInToActFor` and an `actsForSignIn` argument on `ExecuteAsync`, `ExecuteWithoutResultAsync` and
+  the snapshot reads, for a provider of your own whose calls act as the signed-in player.
+
+### Changed
+- The party error hints name the calls to use (`GetMyPartyAsync`, `LeaveAsync`, `MakeLeaderAsync`, `DisbandAsync`).
+
+### Fixed
+- A call that acts as the signed-in player, retried after a timeout, a 5xx, a 408 or a 429, could go out as the next
+  player when another signed in (or this one signed out) while it waited, since each try takes the sign-in current at that
+  moment: an account link or unlink, a token revoke, a password reset or email verification, any notification call, the
+  leaderboard's "my rank" and "around me", a shop purchase or consume. Such a try is now cancelled
+  (`OperationCanceledException`) and never sent. Calls that need only the game's key (catalogs, config, public boards) and
+  player-data writes, which name their row, still retry as before. A shop purchase also takes its sign-in with its player
+  id, and records its analytics only for that sign-in, so neither the purchase nor its started, failed or completed record
+  goes to a player who signed in after it began.
+
+## [1.71.0]
+
+The multiplayer entry point, ahead of its calls, and one fewer wasted request for every refusal that means "not allowed".
+
+### Added
+- `FlockClient.Instance.Multiplayer`, the entry point for multiplayer. It has no calls of its own in this version.
+
+### Changed
+- A request refused with 403 is no longer answered with a token refresh and sent again. A 403 means the player may not do
+  this (for example, a player who is not the host), never that the sign-in has lapsed, which the backend answers with 401.
+  Such a refusal is now one request, where it also cost a token refresh and a second send; the debug log no longer says the
+  access token expired; and a 403 that came while the refresh token had lapsed no longer signs the player out. The
+  exception is still a `FlockAuthException` with `StatusCode` 403.
+
+## [1.70.0]
+
+The first step of matchmaking and multiplayer support: the SDK now recognises every refusal the matchmaking, party and
+multiplayer session services send, ahead of the calls that use them.
+
+### Added
+- `FlockErrorCode` members for the 27 refusals those services can send: 8 `Matchmaking...` (for example
+  `MatchmakingAlreadyQueued`), 11 `Multiplayer...` (for example `MultiplayerSessionFull`, `MultiplayerNotHost`) and 8
+  `Party...` (for example `PartyInvalidInviteCode`), each with a hint saying what to do next. The two "not the party
+  leader" refusals have separate members: `MatchmakingNotPartyLeader` for a search, `PartyNotPartyLeader` for the party.
+- A 404 from these services usually means "not yours, or no longer live" (a session the player has no seat in, a search
+  that belongs to someone else), and their hints say so.
+
 ## [1.69.0]
 
 No changes for games. Every release now carries `FlockSDK-<version>.unitypackage` and `ProtokitePlaytest-<version>.unitypackage`

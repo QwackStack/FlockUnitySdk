@@ -25,6 +25,7 @@ namespace Protokite.Playtest.Tests
             ProtokitePlaytestVideoEncoders.ReadProcessArchitectureForTesting = null;
             ProtokitePlaytestVideoEncoders.LookForEncodersForTesting = null;
             ProtokitePlaytestVideoEncoders.LongestWaitForAnAnswerForTesting = null;
+            ProtokitePlaytestVideoEncoders.WaitForTheAnswerForTesting = null;
             ProtokitePlaytestVideoEncoders.ResetForNewLaunch();
         }
 
@@ -207,6 +208,37 @@ namespace Protokite.Playtest.Tests
                 answer.Set();
                 Assert.IsTrue(looking.Join(TimeSpan.FromSeconds(10)));
                 Assert.IsNull(ProtokitePlaytestVideoEncoders.WhyThisPcRecordsNoVideo(false), "An answer that comes late still counts for the launch");
+            }
+            finally
+            {
+                answer.Set();
+            }
+        }
+
+        [Test]
+        public void AWaitThatWakesEarly_IsWaitedAgain_SoTheCheckAgreesItsTimeIsUp()
+        {
+            ManualResetEventSlim answer = new ManualResetEventSlim();
+            int waits = 0;
+            try
+            {
+                ProtokitePlaytestVideoEncoders.LongestWaitForAnAnswerForTesting = TimeSpan.FromMilliseconds(300);
+                ProtokitePlaytestVideoEncoders.LookForEncodersForTesting = () =>
+                {
+                    answer.Wait(TimeSpan.FromSeconds(10));
+                    return new KeyValuePair<List<ProtokitePlaytestEncoderFound>, string>(new List<ProtokitePlaytestEncoderFound> { OnTheGraphicsCard("A Slow Encoder") }, null);
+                };
+                // Every wait wakes after a quarter of its time, as a coarse timer can wake before the time it was given.
+                ProtokitePlaytestVideoEncoders.WaitForTheAnswerForTesting = (looking, left) =>
+                {
+                    waits++;
+                    looking.Join(TimeSpan.FromTicks(left.Ticks / 4));
+                };
+
+                Assert.IsNull(ProtokitePlaytestVideoEncoders.EncodersOnThisPc(out string whyNone));
+                Assert.AreEqual(ProtokitePlaytestVideoEncoders.NoAnswerInTime, whyNone);
+                Assert.IsTrue(ProtokitePlaytestVideoEncoders.FinishedLookingForEncoders(), "Told there was no answer in time, the check agrees its time is up");
+                Assert.Greater(waits, 1, "Control: the wait woke early and was waited again");
             }
             finally
             {

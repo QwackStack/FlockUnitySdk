@@ -121,6 +121,11 @@ namespace Flock.Config
         [Tooltip("Per-request timeout in seconds for SDK HTTP calls. Caps how long one attempt can hang before failing (and being retried). Default 30. Asset downloads use UnityWebRequest and are unaffected.")]
         public float httpTimeoutSeconds = 30f;
 
+        [Header("Multiplayer")]
+        [Tooltip("How often, in seconds, the player's party is read again while the game holds it, to see who joined, left or leads. Each read is one API call per player (about 6 a minute at 10). 0 turns it off: the party then changes only when the game calls GetMyPartyAsync.")]
+        [Min(0f)]
+        public float partyRefreshSeconds = 10f;
+
         [Header("Initialization")]
         [Tooltip(
             "When ON, the SDK initializes itself automatically at startup (before the first scene " +
@@ -189,6 +194,7 @@ namespace Flock.Config
                 EnableOfflineCache = enableOfflineCache,
                 OfflineCacheDirectory = offlineCacheDirectory,
                 HttpTimeout = TimeSpan.FromSeconds(httpTimeoutSeconds),
+                PartyRefreshInterval = TimeSpan.FromSeconds(partyRefreshSeconds),
             };
         }
 

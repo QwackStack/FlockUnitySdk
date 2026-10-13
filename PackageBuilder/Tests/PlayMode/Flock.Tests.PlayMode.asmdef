@@ -6,7 +6,11 @@
         "Flock.Tests.Support",
         "UnityEngine.TestRunner",
         "UnityEditor.TestRunner",
-        "Unity.Newtonsoft.Json"
+        "Unity.Newtonsoft.Json",
+        "Flock.Multiplayer.Netcode",
+        "Flock.Samples.Multiplayer",
+        "Unity.Netcode.Runtime",
+        "Unity.Networking.Transport"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
@@ -20,6 +24,17 @@
     "defineConstraints": [
         "UNITY_INCLUDE_TESTS"
     ],
-    "versionDefines": [],
+    "versionDefines": [
+        {
+            "name": "com.unity.netcode.gameobjects",
+            "expression": "[1.0.0,3.0.0)",
+            "define": "FLOCK_NETCODE_FOR_GAMEOBJECTS"
+        },
+        {
+            "name": "com.unity.transport",
+            "expression": "[1.0.0,2.0.0)",
+            "define": "FLOCK_UNITY_TRANSPORT_1"
+        }
+    ],
     "noEngineReferences": false
 }

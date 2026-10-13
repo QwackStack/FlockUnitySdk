@@ -53,7 +53,7 @@ namespace Flock.Providers
                 PlayerScopedKey($"inbox_{unreadOnly}_p{page}_l{limit}"),
                 async () => await FlockHttpClient.GetAsync<PaginatedResponse<Notification>>(
                     $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.Notification}{query}", Client.GetBaseHeaders(), cancellationToken),
-                "Fetch notifications", cancellationToken);
+                "Fetch notifications", cancellationToken, actsForSignIn: SignInToActFor);
 
             RaiseNewNotifications(inbox != null ? inbox.Items : null);
             return inbox;
@@ -74,7 +74,7 @@ namespace Flock.Providers
                     ValidateResponse(response);
                     return response.Result;
                 },
-                "Fetch unread notification count", cancellationToken);
+                "Fetch unread notification count", cancellationToken, actsForSignIn: SignInToActFor);
 
             SetUnreadCount(result.Count);
             return result.Count;
@@ -97,7 +97,7 @@ namespace Flock.Providers
                     ValidateResponse(response);
                     return response.Result;
                 },
-                "Fetch notification summary", cancellationToken);
+                "Fetch notification summary", cancellationToken, actsForSignIn: SignInToActFor);
 
             RaiseNewNotifications(summary != null ? summary.Items : null);
             SetUnreadCount(summary.UnreadCount);
@@ -125,7 +125,7 @@ namespace Flock.Providers
                     $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.NotificationReadById(notificationId)}", EmptyBody(), Client.GetBaseHeaders(), cancellationToken);
                 ValidateResponse(response);
                 return response.Result;
-            }, "Mark notification read", cancellationToken);
+            }, "Mark notification read", cancellationToken, actsForSignIn: SignInToActFor);
         }
 
         /// <summary>Marks every unread notification read and returns how many changed. Unread is zero afterwards, so this raises <see cref="FlockEvents.OnUnreadCountChanged"/>.</summary>
@@ -139,7 +139,7 @@ namespace Flock.Providers
                     $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.NotificationReadAll}", EmptyBody(), Client.GetBaseHeaders(), cancellationToken);
                 ValidateResponse(response);
                 return response.Result;
-            }, "Mark all notifications read", cancellationToken);
+            }, "Mark all notifications read", cancellationToken, actsForSignIn: SignInToActFor);
 
             SetUnreadCount(0);
             return result.Updated;
@@ -215,7 +215,7 @@ namespace Flock.Providers
                     $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.DeviceTokenRegister}", request, Client.GetBaseHeaders(), cancellationToken);
                 ValidateResponse(response);
                 return response.Result;
-            }, "Register device token", cancellationToken);
+            }, "Register device token", cancellationToken, actsForSignIn: SignInToActFor);
         }
 
         /// <summary>Stops push going to this token. Returns whether the server deactivated one.</summary>
@@ -235,7 +235,7 @@ namespace Flock.Providers
                     $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.DeviceTokenUnregister}", request, Client.GetBaseHeaders(), cancellationToken);
                 ValidateResponse(response);
                 return response.Result;
-            }, "Unregister device token", cancellationToken);
+            }, "Unregister device token", cancellationToken, actsForSignIn: SignInToActFor);
 
             return result.Deactivated;
         }
@@ -360,7 +360,7 @@ namespace Flock.Providers
             },
             // Not idempotent: a re-sent schedule after an ambiguous failure creates a second reminder the game
             // can't cancel, because it only ever learns one scheduled id. Surface the failure instead.
-            "Schedule notification", cancellationToken, idempotent: false);
+            "Schedule notification", cancellationToken, idempotent: false, actsForSignIn: SignInToActFor);
 
             TrackPending(scheduled, templateName, templateId);
             return scheduled;
@@ -399,7 +399,7 @@ namespace Flock.Providers
 
                 return await FlockHttpClient.GetAsync<PaginatedResponse<ScheduledNotification>>(
                     url, Client.GetBaseHeaders(), cancellationToken);
-            }, "List scheduled notifications", cancellationToken);
+            }, "List scheduled notifications", cancellationToken, actsForSignIn: SignInToActFor);
         }
 
         /// <summary>Cancels every pending schedule the player has and returns how many the server actually cancelled. Entries the server no longer recognises are dropped rather than failing the batch.</summary>
@@ -477,7 +477,7 @@ namespace Flock.Providers
                     $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.NotificationScheduleById(scheduledId)}", Client.GetBaseHeaders(), cancellationToken);
                 ValidateResponse(response);
                 return response.Result;
-            }, "Cancel scheduled notification", cancellationToken);
+            }, "Cancel scheduled notification", cancellationToken, actsForSignIn: SignInToActFor);
 
             UntrackPending(scheduledId);
             return cancelled;

@@ -312,7 +312,7 @@ namespace Flock.Providers
                     $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.PlayerPasswordReset}",
                     new PlayerPasswordResetRequest { Email = email, Code = code, NewPassword = newPassword },
                     Client.GetBaseHeaders(), cancellationToken),
-                "Password reset", cancellationToken, idempotent: false);
+                "Password reset", cancellationToken, idempotent: false, actsForSignIn: SignInToActFor);
         }
 
         /// <summary>Emails a verification code to the player's address. No sign-in guard — the bearer token rides along automatically when present.</summary>
@@ -323,7 +323,7 @@ namespace Flock.Providers
                     $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.PlayerEmailSendVerification}",
                     new object(),
                     Client.GetBaseHeaders(), cancellationToken),
-                "Send email verification", cancellationToken, idempotent: false);
+                "Send email verification", cancellationToken, idempotent: false, actsForSignIn: SignInToActFor);
         }
 
         /// <summary>Marks the player's email verified using the code from <see cref="SendEmailVerificationAsync"/>; throws on a bad or expired code.</summary>
@@ -335,7 +335,7 @@ namespace Flock.Providers
                     $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.PlayerEmailVerify}",
                     new PlayerEmailVerifyRequest { Code = code },
                     Client.GetBaseHeaders(), cancellationToken),
-                "Verify email", cancellationToken, idempotent: false);
+                "Verify email", cancellationToken, idempotent: false, actsForSignIn: SignInToActFor);
         }
 
         /// <summary>Revokes the signed-in player's refresh token server-side (logout hardening / killing a stolen token).
@@ -349,7 +349,7 @@ namespace Flock.Providers
                     $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.PlayerTokenRevoke}",
                     new object(),
                     Client.GetBaseHeaders(), cancellationToken),
-                "Token revoke", cancellationToken, idempotent: false);
+                "Token revoke", cancellationToken, idempotent: false, actsForSignIn: SignInToActFor);
 
             if (response == null || !response.Revoked)
                 throw new FlockAuthException("Token revoke was not confirmed by the server");
@@ -380,7 +380,7 @@ namespace Flock.Providers
                 () => FlockHttpClient.GetAsync<PlayerAccountsResponse>(
                     $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.PlayerAccounts}",
                     Client.GetBaseHeaders(), cancellationToken),
-                "List linked accounts", cancellationToken);
+                "List linked accounts", cancellationToken, actsForSignIn: SignInToActFor);
             return ReadAccounts(response);
         }
 
@@ -444,7 +444,7 @@ namespace Flock.Providers
                 () => FlockHttpClient.PostAsync<PlayerAccountsResponse>(
                     $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.PlayerUnlink(wire)}",
                     new object(), Client.GetBaseHeaders(), cancellationToken),
-                $"Unlink {wire}", cancellationToken, idempotent: false);
+                $"Unlink {wire}", cancellationToken, idempotent: false, actsForSignIn: SignInToActFor);
 
             List<PlayerLinkedAccount> accounts = ReadAccounts(response);
             Client.Logger.LogInfo($"Unlinked {wire} from player: {Client.CurrentPlayerId}");
@@ -467,7 +467,7 @@ namespace Flock.Providers
             PlayerAccountsResponse response = await ExecuteAsync(
                 () => FlockHttpClient.PostAsync<PlayerAccountsResponse>(
                     $"{Client.GetVersionedApiUrl()}/{endpoint}", body, Client.GetBaseHeaders(), cancellationToken),
-                context, cancellationToken, idempotent: false);
+                context, cancellationToken, idempotent: false, actsForSignIn: SignInToActFor);
 
             List<PlayerLinkedAccount> accounts = ReadAccounts(response);
             Client.Logger.LogInfo($"{context} succeeded for player: {Client.CurrentPlayerId}");

@@ -7,6 +7,73 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 It is released with the Flock SDK, at the Flock SDK's version.
 
 
+## [1.83.0]
+
+No changes to the Protokite Playtest package: this version is released together with the Flock SDK's direct paths for relayed
+players.
+
+## [1.82.0]
+
+No changes to the Protokite Playtest package: this version is released together with the Flock SDK's support for host changes
+with Netcode for GameObjects.
+
+## [1.81.0]
+
+No changes to the Protokite Playtest package: this version is released together with the Flock SDK's relay fallback for players
+on the host's network.
+
+## [1.80.0]
+
+No changes to the Protokite Playtest package: this version is released together with the Flock SDK's relay for Netcode for
+GameObjects.
+
+## [1.79.0]
+
+### Fixed
+- The check of which video encoders the machine has could give up waiting a few milliseconds before its own deadline, and then
+  still answer that its time was not up, so the two said different things for a moment. Its wait now ends only once the platform
+  has answered or the deadline has passed, and the deadline reads a clock that setting the system clock does not move.
+
+## [1.78.0]
+
+No changes to the Protokite Playtest package: this version is released together with the Flock SDK's multiplayer samples. The
+package's heavy-analytics tests now close the scene their setup saves and unload the scenes they load.
+
+## [1.77.0]
+
+No changes to the Protokite Playtest package: this version is released together with the Flock SDK's join verification.
+
+## [1.76.0]
+
+No changes to the Protokite Playtest package: this version is released together with the Flock SDK's connecting players.
+
+## [1.75.0]
+
+No changes to the Protokite Playtest package: this version is released together with the Flock SDK's matchmaking.
+
+## [1.74.0]
+
+No changes to the Protokite Playtest package: this version is released together with the Flock SDK's sessions, part two.
+
+## [1.73.0]
+
+No changes to the Protokite Playtest package: this version is released together with the Flock SDK's sessions, part one.
+
+## [1.72.0]
+
+No changes to the Protokite Playtest package: this version is released together with the Flock SDK's parties and its
+fix to retried calls.
+
+## [1.71.0]
+
+No changes to the Protokite Playtest package: this version is released together with the Flock SDK's multiplayer entry
+point and its change to 403 refusals.
+
+## [1.70.0]
+
+No changes to the Protokite Playtest package: this version is released together with the Flock SDK's new matchmaking,
+party and session error codes.
+
 ## [1.69.0]
 
 No changes to the Protokite Playtest package: this version is released together with the Flock SDK's automated release
