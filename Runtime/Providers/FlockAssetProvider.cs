@@ -99,7 +99,7 @@ namespace Flock.Providers
             if (_assetsById.TryGetValue(assetId, out AssetSchema indexed))
                 return indexed;
 
-            if (Application.internetReachability == NetworkReachability.NotReachable
+            if (!IsServerReachable()
                 && TryLoadDiskIndex()
                 && _assetsById.TryGetValue(assetId, out AssetSchema offline))
                 return offline;
@@ -186,8 +186,8 @@ namespace Flock.Providers
                     $"({_cache.MaxSizeBytes} bytes); caching disabled for this asset.");
                 cacheEnabled = false;
             }
-            bool tryGetCachedFileUrl = _cache.TryGetCachedFileUrl(asset.Id, asset.UpdatedAt, out string cachedUrl);
-            bool cacheHit = cacheEnabled && tryGetCachedFileUrl;
+            string cachedUrl = null;
+            bool cacheHit = cacheEnabled && _cache.TryGetCachedFileUrl(asset.Id, asset.UpdatedAt, out cachedUrl);
             string sourceUrl = cacheHit ? cachedUrl : asset.S3DownloadUrl;
 
             return await Client.RetryHandler.ExecuteAsync(async () =>
@@ -364,10 +364,11 @@ namespace Flock.Providers
         }
 
         // Reports literal on-disk presence; does not consult EnableAssetCache.
+        /// <summary>Whether this version of the asset is on disk. Asking does not count as a use, so it does not change what is evicted next.</summary>
         public bool IsCached(string assetId, DateTime updatedAt)
         {
             if (string.IsNullOrEmpty(assetId)) return false;
-            return _cache.TryGetCachedFileUrl(assetId, updatedAt, out _);
+            return _cache.Contains(assetId, updatedAt);
         }
 
         public bool IsCached(AssetSchema asset)
@@ -429,8 +430,8 @@ namespace Flock.Providers
             return DownloadToCacheAsync(asset, null, cancellationToken);
         }
 
-        // Writes the asset to the disk cache without decoding bytes into a managed object.
-        // Used by PreloadAsync to avoid a full byte[] allocation.
+        // Writes the asset to the disk cache without decoding it into a texture, clip or string. Used by PreloadAsync.
+        // The download is still held in memory whole (UnityWebRequest's buffer) before it is written.
         private async Task DownloadToCacheAsync(AssetSchema asset, IProgress<float> progress, CancellationToken cancellationToken)
         {
             try

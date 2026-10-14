@@ -189,6 +189,12 @@ namespace Flock.Editor.Codegen
                 error = $"Generated Code Path must start with 'Assets/'. Got: '{raw}'.";
                 return false;
             }
+            // A sync wipes this folder, so a path that climbs back out of Assets would wipe something else.
+            if (Array.Exists(normalized.Split('/'), part => part == ".." || part == "."))
+            {
+                error = $"Generated Code Path may not contain '.' or '..'. Got: '{raw}'.";
+                return false;
+            }
 
             resolved = normalized;
             error = null;

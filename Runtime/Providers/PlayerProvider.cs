@@ -46,7 +46,9 @@ namespace Flock.Providers
                 return;
 
             if (_playerDataByPlayerCache.TryGetValue(data.PlayerId, out Dictionary<string, PlayerData> byTemplate))
-                byTemplate[data.PlayerTemplateId] = data;
+                byTemplate[data.PlayerTemplateId] = data.LeaderboardRefusals != null && data.LeaderboardRefusals.Count > 0
+                    ? data.WithoutLeaderboardRefusals()
+                    : data;
         }
 
         // Last-known cached row by player-data id (cache is template-keyed, so this is a linear scan). Used by offline writes to echo current state.

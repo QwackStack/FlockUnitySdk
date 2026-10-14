@@ -14,7 +14,7 @@ namespace Flock.Editor.Codegen
         // before the emitters wipe and rewrite — never returns a partial or empty snapshot.
         public static async Task<FlockSchemaSnapshot> FetchAsync(FlockConfigAsset config)
         {
-            string baseUrl = (config.apiUrl ?? "").TrimEnd('/');
+            string baseUrl = FlockInitConfig.TrimApiUrl(config.apiUrl) ?? "";
             Dictionary<string, string> bootstrapHeaders = new Dictionary<string, string>
             {
                 { "X-Flock-API-Key", config.ApiKey }

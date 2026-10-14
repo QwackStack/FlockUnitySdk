@@ -92,7 +92,7 @@ namespace Flock.Config
         [Tooltip("Cache asset downloads on disk, keyed by asset ID + UpdatedAt. Disable on WebGL — persistentDataPath there does not support synchronous writes.")]
         public bool enableAssetCache = true;
 
-        [Tooltip("Absolute path for the asset cache. Leave empty to default to Application.persistentDataPath/flock_assets.")]
+        [Tooltip("Absolute path for the asset cache. Leave empty to default to Application.persistentDataPath/Flock/flock_assets.")]
         public string assetCacheDirectory = "";
 
         [Tooltip("Maximum size of the on-disk asset cache, in MB. 0 means unlimited; LRU eviction otherwise.")]
@@ -105,7 +105,7 @@ namespace Flock.Config
         public int assetDownloadRetryCount = 3;
 
         [Header("Offline Cache")]
-        [Tooltip("Snapshot read-API responses to disk and serve them when the network is unavailable. Disable on WebGL — persistentDataPath there does not support synchronous writes.")]
+        [Tooltip("Snapshot read-API responses to disk and serve them when the network is unavailable.")]
         public bool enableOfflineCache = true;
 
         [Tooltip("Absolute path for snapshot storage. Leave empty to default to Application.persistentDataPath/Flock/snapshots.")]
@@ -220,6 +220,19 @@ namespace Flock.Config
             }
         }
 #endif
+
+        /// <summary>IsValid, and the Game Version ID baked, which init needs: without it the SDK refuses to start.</summary>
+        public bool IsReadyToPlay(out string errorMessage)
+        {
+            if (!IsValid(out errorMessage))
+                return false;
+            if (string.IsNullOrEmpty(gameVersionId))
+            {
+                errorMessage = "Game Version is not resolved yet: open Flock > Settings while online so its ID is baked";
+                return false;
+            }
+            return true;
+        }
 
         public bool IsValid(out string errorMessage)
         {

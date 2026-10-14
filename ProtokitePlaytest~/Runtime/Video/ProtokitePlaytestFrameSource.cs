@@ -29,8 +29,8 @@ namespace Protokite.Playtest
         /// <summary>False while as many frames are on their way as the source can hold; a frame asked for then would be dropped.</summary>
         bool IsReadyForAnotherFrame { get; }
 
-        /// <summary>Asks for the frame the game has just drawn, to be shown at <paramref name="timestampMs"/>. Call at the end of a frame.</summary>
-        void CaptureFrame(long timestampMs);
+        /// <summary>Asks for the frame the game has just drawn, to be shown at <paramref name="timestampMs"/>; false when none could be asked for (a screen with no size). Call at the end of a frame.</summary>
+        bool CaptureFrame(long timestampMs);
 
         /// <summary>Moves the frames that have arrived since the last call into <paramref name="frames"/>, oldest first.</summary>
         void TakeCapturedFrames(List<ProtokitePlaytestCapturedFrame> frames);

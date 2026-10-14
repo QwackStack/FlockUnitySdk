@@ -74,7 +74,10 @@ namespace Flock
             return folders;
         }
 
-        /// <summary>Deletes everything in the folder, its lock last, then the folder, and lets go of it. When anything could not be deleted the lock file stays, so a later launch finds the folder again. Returns whether the folder is gone.</summary>
+        /// <summary>Runs once, between deleting the next folder's lock and removing the folder, where a test makes the removal fail.</summary>
+        internal static Action BeforeNextFolderRemovalForTesting;
+
+        /// <summary>Deletes everything in the folder, its lock last, then the folder, and lets go of it. When anything could not be deleted the lock file stays, and it comes back when the folder cannot go without it, so a later launch finds the folder again. Returns whether the folder is gone.</summary>
         internal bool DeleteEverything()
         {
             bool everythingElseDeleted = true;
@@ -102,14 +105,28 @@ namespace Flock
             if (!everythingElseDeleted)
                 return false;
 
+            string lockPath = System.IO.Path.Combine(Path, LockFileName);
             try
             {
-                FlockSavedFiles.Delete(System.IO.Path.Combine(Path, LockFileName));
+                FlockSavedFiles.Delete(lockPath);
+                Action hook = BeforeNextFolderRemovalForTesting;
+                BeforeNextFolderRemovalForTesting = null;
+                hook?.Invoke();
                 FlockSavedFiles.DeleteFolder(Path, false);
                 return true;
             }
             catch (Exception)
             {
+                // The folder could not go once its lock had. Without the lock no later launch would take it over, and what is in it
+                // would stay for good, so the lock is put back.
+                try
+                {
+                    if (Directory.Exists(Path) && !File.Exists(lockPath))
+                        FlockSavedFiles.WriteBytes(lockPath, new byte[0]);
+                }
+                catch (Exception)
+                {
+                }
                 return false;
             }
         }

@@ -159,7 +159,7 @@ namespace Protokite.Playtest
             return text != null && long.TryParse(text.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out long bytes) ? bytes : (long?)null;
         }
 
-        /// <summary>The session saved in a run, or null when none was saved or it names no session. couldNotRead says why a file that is there could not be read.</summary>
+        /// <summary>The session saved in a run, or null when none was saved or it names no session. couldNotRead says why a file that is there could not be read, or parsed: such a run is kept, since deleting a recording cannot be undone.</summary>
         internal static ProtokitePlaytestSavedSession ReadSession(string runFolder, out string couldNotRead)
         {
             string text = ReadSmallFile(Path.Combine(runFolder, SessionFileName), out couldNotRead);
@@ -178,8 +178,9 @@ namespace Protokite.Playtest
                     FlockGameVersionId = saved[GameVersionIdKey]?.Type == JTokenType.String ? (string)saved[GameVersionIdKey] : null
                 };
             }
-            catch (JsonException)
+            catch (JsonException ex)
             {
+                couldNotRead = $"{Path.Combine(runFolder, SessionFileName)} holds no session that can be read ({ex.Message}); its recording is kept until making room deletes it.";
                 return null;
             }
         }
@@ -253,7 +254,10 @@ namespace Protokite.Playtest
             }
         }
 
-        /// <summary>Deletes the run, its lock last, and lets go of it; the lock file stays when anything could not be deleted. True when the folder is gone.</summary>
+        /// <summary>Runs once, between deleting the next run's lock and removing its folder, where a test makes the removal fail.</summary>
+        internal static Action BeforeNextFolderRemovalForTesting;
+
+        /// <summary>Deletes the run, its lock last, and lets go of it; the lock file stays when anything could not be deleted, and comes back when the folder cannot go without it. True when the folder is gone.</summary>
         internal bool DeleteEverything()
         {
             bool everythingElseDeleted = true;
@@ -284,14 +288,28 @@ namespace Protokite.Playtest
             Dispose();
             if (!everythingElseDeleted)
                 return false;
+            string lockPath = Path.Combine(FolderPath, LockFileName);
             try
             {
-                File.Delete(Path.Combine(FolderPath, LockFileName));
+                File.Delete(lockPath);
+                Action hook = BeforeNextFolderRemovalForTesting;
+                BeforeNextFolderRemovalForTesting = null;
+                hook?.Invoke();
                 Directory.Delete(FolderPath, false);
                 return true;
             }
             catch (Exception ex) when (IsFileProblem(ex))
             {
+                // The folder could not go once its lock had. Without the lock no later launch would find the run, and what is in it
+                // would stay for good, so the lock is put back.
+                try
+                {
+                    if (Directory.Exists(FolderPath) && !File.Exists(lockPath))
+                        File.WriteAllBytes(lockPath, new byte[0]);
+                }
+                catch (Exception putBack) when (IsFileProblem(putBack))
+                {
+                }
                 return false;
             }
         }

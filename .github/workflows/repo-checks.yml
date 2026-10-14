@@ -204,14 +204,13 @@ jobs:
           fi
 
       - name: No shipped file mentions another engine's SDK
-        # CHANGELOG.md is excluded because its released entries are a published record and one of
-        # them names another engine on purpose. .github/workflows/ is excluded because this very
-        # step has to contain the words it searches for.
+        # .github/workflows/ is excluded because this very step has to contain the words it searches for.
+        # CHANGELOG.md is checked like everything else: it ships, and its one such entry was reworded.
         run: |
           set -euo pipefail
 
           HITS=$(git ls-files -z \
-            | grep -zvE '^(CHANGELOG[.]md|[.]github/workflows/)' \
+            | grep -zvE '^[.]github/workflows/' \
             | xargs -0 grep -IinE 'unreal|blueprint|godot|[.]uplugin' || true)
 
           if [ -n "$HITS" ]; then

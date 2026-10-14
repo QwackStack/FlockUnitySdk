@@ -28,7 +28,7 @@ namespace Flock.Tests
         }
 
         [Test]
-        public void TheReleaseCarriesEveryProviderTheEditorTheSamplesAndTheDocs()
+        public void TheReleaseCarriesEveryProviderTheEditorAndTheSamples()
         {
             FlockPackageBuilder.PackageContents release = FlockPackageBuilder.ReleaseContents("9.8.7", "release-out");
 
@@ -36,7 +36,6 @@ namespace Flock.Tests
             Assert.AreEqual("release-out", release.OutputFolder);
             Assert.IsTrue(release.IncludeEditor, "The editor ships");
             Assert.IsTrue(release.IncludeSamples, "The samples ship");
-            Assert.IsTrue(release.IncludeDocs, "The docs ship");
             Assert.IsNotEmpty(FlockProviderManifest.Providers, "Control: there are providers to ship");
             foreach (FlockProviderManifest.Entry entry in FlockProviderManifest.Providers)
                 Assert.IsTrue(release.SelectedProviders.TryGetValue(entry.Id, out bool selected) && selected, entry.Id + " ships in the release");

@@ -40,7 +40,7 @@ private void HandleSessionEnded(FlockSessionEndedArgs args)
 |-------|-----------|-------------|
 | `OnInitialized` | `Action` | `FlockClient.Create` success — raised right after the singleton is set, so `FlockClient.Instance` is usable inside handlers. Replayed immediately if you subscribe after init (e.g. under auto-init). |
 | `OnInitializationFailed` | `Action<Exception>` | A failed `FlockClient.Create` attempt (still thrown to direct callers; the auto-init path logs instead). Replayed to late subscribers from `FlockClient.InitializationError`. The "already initialized" misuse guard does not raise it. |
-| `OnShutdown` | `Action` | `FlockClient.Shutdown()` — raised after tokens are cleared and the singleton is gone. Always the last event; every `FlockEvents` subscription is wiped right after. |
+| `OnShutdown` | `Action` | `FlockClient.Shutdown()` — raised once the client has let go of its tokens (the saved sign-in stays for the next `Create`) and the singleton is gone. Always the last event; every `FlockEvents` subscription is wiped right after. |
 
 **Auth**
 

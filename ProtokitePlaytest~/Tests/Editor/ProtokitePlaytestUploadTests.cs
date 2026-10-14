@@ -1436,5 +1436,36 @@ namespace Protokite.Playtest.Tests
 
             public void Dispose() => _inner.Dispose();
         }
+
+        // A fresh link mends an expired one, a storage that had a moment and no answer while the file is there; nothing else.
+        [Test]
+        public void AFreshLinkIsAskedForOnlyWhereOneCanHelp()
+        {
+            string video = Path.Combine(Path.GetTempPath(), "protokite-fresh-link-" + Guid.NewGuid().ToString("N") + ".mp4");
+            File.WriteAllBytes(video, new byte[] { 1 });
+            try
+            {
+                FlockFileUploadOutcome Answered(int status, string body = null)
+                    => new FlockFileUploadOutcome { Result = FlockHttpResult.Success, StatusCode = status, Body = body };
+                FlockFileUploadOutcome noAnswer = new FlockFileUploadOutcome { Result = FlockHttpResult.ConnectionError };
+
+                Assert.IsTrue(ProtokitePlaytest.AFreshLinkCouldHelp(Answered(403, "<Error><Code>AccessDenied</Code><Message>Request has expired</Message></Error>"), video), "An expired link");
+                Assert.IsTrue(ProtokitePlaytest.AFreshLinkCouldHelp(Answered(403), video), "A 403 that says nothing");
+                Assert.IsFalse(ProtokitePlaytest.AFreshLinkCouldHelp(Answered(403, "<Error><Code>SignatureDoesNotMatch</Code></Error>"), video),
+                    "A content type the link was not signed for meets a fresh link the same way");
+                foreach (int status in new[] { 408, 429, 500, 503 })
+                    Assert.IsTrue(ProtokitePlaytest.AFreshLinkCouldHelp(Answered(status), video), $"HTTP {status}");
+                foreach (int status in new[] { 400, 404, 413 })
+                    Assert.IsFalse(ProtokitePlaytest.AFreshLinkCouldHelp(Answered(status), video), $"HTTP {status}");
+                Assert.IsTrue(ProtokitePlaytest.AFreshLinkCouldHelp(noAnswer, video), "No answer, with the file there");
+                File.Delete(video);
+                Assert.IsFalse(ProtokitePlaytest.AFreshLinkCouldHelp(noAnswer, video), "No answer because the file is gone");
+            }
+            finally
+            {
+                if (File.Exists(video))
+                    File.Delete(video);
+            }
+        }
     }
 }

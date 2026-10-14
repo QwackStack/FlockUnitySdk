@@ -38,13 +38,19 @@ namespace Protokite.Playtest.Tests
         public void WaitForTheEncoderToCatchUp(int mostMilliseconds = 500)
             => SpinWait.SpinUntil(() => BlocksReturned >= Asked.Count - 1, mostMilliseconds);
 
-        public void CaptureFrame(long timestampMs)
+        /// <summary>True stands in for a screen with no size (a minimized window): a frame asked for is not captured.</summary>
+        public bool ScreenHasNoSize;
+
+        public bool CaptureFrame(long timestampMs)
         {
+            if (ScreenHasNoSize)
+                return false;
             Asked.Add(timestampMs);
             byte[] pixels = new byte[ProtokitePlaytestNv12.FrameLength(Width, Height)];
             for (int i = 0; i < pixels.Length; i++)
                 pixels[i] = (byte)(timestampMs + i);
             (HoldFrames ? _onTheirWay : _arrived).Add(new ProtokitePlaytestCapturedFrame(pixels, timestampMs));
+            return true;
         }
 
         public void LetFramesArrive()

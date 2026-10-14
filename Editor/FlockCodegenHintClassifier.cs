@@ -124,14 +124,14 @@ namespace Flock.Editor
 
             if (state == FlockCodegenSyncState.NeverSynced)
             {
-                text.Append("\nFix: author the schema in the Flock dashboard, then run Flock > Settings > Codegen > Sync Schemas.");
+                text.Append("\nFix: author the schema in the Flock dashboard, then run Flock > Settings > Code Generation > Sync Schemas.");
             }
             else
             {
                 text.Append("\nCodegen last synced");
                 if (!string.IsNullOrEmpty(syncedGameVersionId))
                     text.Append($" for game version ID '{syncedGameVersionId}'");
-                text.Append(". Fix: if you added or renamed this in the dashboard since, re-run Flock > Settings > Codegen > Sync Schemas.");
+                text.Append(". Fix: if you added or renamed this in the dashboard since, re-run Flock > Settings > Code Generation > Sync Schemas.");
             }
 
             return text.ToString();

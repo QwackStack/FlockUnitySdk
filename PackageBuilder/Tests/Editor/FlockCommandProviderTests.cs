@@ -698,5 +698,43 @@ namespace Flock.Tests.Editor
                     "A write that never becomes deliverable must eventually drop rather than block the queue for the life of the app.");
             }
         }
+
+        // ---- A write reports the leaderboards that turned its score away; the cached row does not keep them ----
+        [Test]
+        public void UpdatePlayerDataField_ReportsTheLeaderboardsThatRefusedIt()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                PrimeCachedRow(h, "player-a", "tpl-1", "pd-1", new List<DataField> { Field("coins", "1") });
+                string row = RowJson("player-a", "tpl-1", "pd-1", new List<DataField> { Field("coins", "9000") });
+                string refused = row.Substring(0, row.Length - 1) + ",\"leaderboard_refusals\":[" +
+                    "{\"leaderboard_id\":\"lb-1\",\"leaderboard_name\":\"Daily\",\"reason\":\"gain_limit\",\"retryable\":true,\"retry_after_seconds\":120}," +
+                    "{\"leaderboard_id\":\"lb-2\",\"leaderboard_name\":\"AllTime\",\"reason\":\"score_bounds\",\"retryable\":false,\"retry_after_seconds\":null}]}";
+                transport.On("game_command", FlockFakeTransport.Ok(refused));
+
+                PlayerData written = h.Run(() => h.Client.Commands.UpdatePlayerDataFieldAsync("pd-1", "coins", 9000));
+
+                Assert.AreEqual(2, written.LeaderboardRefusals.Count, "Both refusals are reported.");
+                LeaderboardRefusal daily = written.LeaderboardRefusals[0];
+                Assert.AreEqual("Daily", daily.LeaderboardName, "By the board's name.");
+                Assert.AreEqual("lb-1", daily.LeaderboardId);
+                Assert.AreEqual(LeaderboardRefusalReasons.GainLimit, daily.Reason, "With the reason as the server spelled it.");
+                Assert.IsTrue(daily.Retryable);
+                Assert.AreEqual(120, daily.RetryAfterSeconds, "In two minutes.");
+                LeaderboardRefusal allTime = written.LeaderboardRefusals[1];
+                Assert.AreEqual(LeaderboardRefusalReasons.ScoreBounds, allTime.Reason);
+                Assert.IsFalse(allTime.Retryable);
+                Assert.IsNull(allTime.RetryAfterSeconds, "With no wait to give.");
+
+                PlayerData cached = h.Run(() => h.Client.Player.GetMyDataByTemplateAsync("tpl-1"));
+                Assert.AreEqual("9000", cached.Data[0].Value.ToString(), "Precondition: the cache holds the write.");
+                Assert.AreEqual(0, cached.LeaderboardRefusals.Count, "The cached row keeps the write, not its refusals.");
+                Assert.AreEqual(2, written.LeaderboardRefusals.Count, "And the caller's answer keeps them.");
+                Assert.AreEqual("score_bounds", LeaderboardRefusalReasons.ScoreBounds, "The constants are the server's spelling.");
+                Assert.AreEqual("gain_limit", LeaderboardRefusalReasons.GainLimit);
+            }
+        }
     }
 }

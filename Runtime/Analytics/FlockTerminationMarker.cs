@@ -18,5 +18,16 @@ namespace Flock.Analytics
 
         [JsonProperty("exception_count")]
         public int ExceptionCount { get; set; }
+
+        // The server's id for the session, once it registered; null before.
+        [JsonProperty("server_session_id")]
+        public string ServerSessionId { get; set; }
+
+        // The launch's own versions, so the next launch reports the ones that ended, not its own.
+        [JsonProperty("app_version")]
+        public string AppVersion { get; set; }
+
+        [JsonProperty("sdk_version")]
+        public string SdkVersion { get; set; }
     }
 }

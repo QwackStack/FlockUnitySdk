@@ -24,33 +24,16 @@ namespace Flock.Auth
         private const int CipherEncryptMode = 1;
         private const int CipherDecryptMode = 2;
 
-        public override void Save(string accessToken, string refreshToken)
-        {
-            FlockSavedFiles.CreateFolder(FlockUtil.FlockFilePath);
-            FlockSavedFiles.WriteBytes(FlockUtil.AccessTokenPath, Encrypt(accessToken));
-            FlockSavedFiles.WriteBytes(FlockUtil.RefreshTokenPath, Encrypt(refreshToken));
-        }
+        private readonly FlockTokenFile _file = new FlockTokenFile(FlockUtil.FlockFilePath, Encrypt, Decrypt);
 
-        public override StoredTokens Load()
-        {
-            if (!File.Exists(FlockUtil.AccessTokenPath) || !File.Exists(FlockUtil.RefreshTokenPath))
-                return null;
-            return new StoredTokens
-            {
-                AccessToken = Decrypt(File.ReadAllBytes(FlockUtil.AccessTokenPath)),
-                RefreshToken = Decrypt(File.ReadAllBytes(FlockUtil.RefreshTokenPath))
-            };
-        }
+        public override void Save(string accessToken, string refreshToken) => _file.Save(accessToken, refreshToken);
 
-        public override void Clear()
-        {
-            if (File.Exists(FlockUtil.AccessTokenPath)) FlockSavedFiles.Delete(FlockUtil.AccessTokenPath);
-            if (File.Exists(FlockUtil.RefreshTokenPath)) FlockSavedFiles.Delete(FlockUtil.RefreshTokenPath);
-        }
+        public override StoredTokens Load() => _file.Load();
 
-        private static byte[] Encrypt(string token)
+        public override void Clear() => _file.Clear();
+
+        private static byte[] Encrypt(byte[] plain)
         {
-            byte[] plain = Encoding.UTF8.GetBytes(token);
             using (AndroidJavaObject key = LoadOrCreateKey())
             using (AndroidJavaClass cipherClass = new AndroidJavaClass("javax.crypto.Cipher"))
             using (AndroidJavaObject cipher = cipherClass.CallStatic<AndroidJavaObject>("getInstance", Transformation))
@@ -66,7 +49,7 @@ namespace Flock.Auth
             }
         }
 
-        private static string Decrypt(byte[] data)
+        private static byte[] Decrypt(byte[] data)
         {
             byte[] iv = new byte[IvLength];
             byte[] ct = new byte[data.Length - IvLength];
@@ -80,8 +63,7 @@ namespace Flock.Auth
             using (AndroidJavaObject cipher = cipherClass.CallStatic<AndroidJavaObject>("getInstance", Transformation))
             {
                 cipher.Call("init", CipherDecryptMode, key, spec);
-                byte[] plain = FlockJavaBytes.FromJava(cipher.Call<sbyte[]>("doFinal", FlockJavaBytes.ForJava(ct)));
-                return Encoding.UTF8.GetString(plain);
+                return FlockJavaBytes.FromJava(cipher.Call<sbyte[]>("doFinal", FlockJavaBytes.ForJava(ct)));
             }
         }
 

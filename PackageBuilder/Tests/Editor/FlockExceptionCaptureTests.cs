@@ -580,6 +580,22 @@ namespace Flock.Tests.Editor
             }
         }
 
+        // The next launch's report names the session by the id the server knows it by.
+        [Test]
+        public void TheCrashMarkerLearnsTheServersSessionIdWhenTheSessionRegisters()
+        {
+            using (FlockTestClient sdk = CreateTracking())
+            {
+                sdk.Transport.On(FlockEndpoints.AnalyticsSessions, FlockFakeTransport.Ok("{\"session_id\":\"srv-registered\"}"));
+                sdk.LoginAs("player-1");
+                sdk.Run(() => sdk.Client.Analytics.InitializeAsync(CancellationToken.None));
+                sdk.Run(() => sdk.Client.Analytics.StartSessionAsync());
+
+                Assert.AreEqual("srv-registered", Marker(sdk).ServerSessionId);
+                Assert.AreEqual(Application.version, Marker(sdk).AppVersion);
+            }
+        }
+
         [Test]
         public void GrantingConsentStartsTheCrashMarker()
         {

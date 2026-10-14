@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 It is released with the Flock SDK, at the Flock SDK's version.
 
 
+## [1.86.0]
+
+### Fixed
+- A run folder that cannot be removed keeps its lock, so a later launch finds it again.
+- A recording whose session file cannot be parsed is kept for the disk budget to settle, where one naming no session is
+  still deleted.
+- Removing earlier runs that held no video is reported.
+- A fresh upload link is asked for only where one can help: an expired link, a storage that had a moment, or no answer while
+  the file is still there.
+- No frame is encoded once the size limit is reached, and a frame the screen could not give is not counted as asked for.
+- The rating buttons follow the server's range.
+
+## [1.85.0]
+
+No changes to the Protokite Playtest package: this version is released together with the Flock SDK's fixes to how a session or
+party ending is read.
+
+## [1.84.0]
+
+No changes to the Protokite Playtest package: this version is released together with the Flock SDK's support for Cloudflare's
+managed relay.
+
 ## [1.83.0]
 
 No changes to the Protokite Playtest package: this version is released together with the Flock SDK's direct paths for relayed

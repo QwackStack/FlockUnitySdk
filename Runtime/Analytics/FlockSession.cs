@@ -477,7 +477,8 @@ namespace Flock.Analytics
 
         private void SaveState()
         {
-            if (!_config.PersistSessionOnDisk || !_active)
+            // No record path: a launch holding no folder keeps nothing on disk.
+            if (!_config.PersistSessionOnDisk || !_active || string.IsNullOrEmpty(_stateFilePath))
                 return;
 
             try

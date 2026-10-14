@@ -187,6 +187,9 @@ namespace Protokite.Playtest.Tests
             Assert.Greater(box.layout.width, 100f, "The box a player types into takes room: with no theme it had none, and a click missed it (measured)");
             Assert.Greater(box.layout.height, 10f);
 
+            Assert.IsNotNull(form.Q<Button>(ProtokitePlaytestFormView.ChoiceName("rating", 4)), "A rating offers one to five");
+            Assert.IsNull(form.Q<Button>(ProtokitePlaytestFormView.ChoiceName("rating", 5)), "And no sixth, which the server refuses");
+
             title.value = "It crashed on level two";
             form.Q<TextField>(ProtokitePlaytestFormView.AnswerName("steps")).value = "Jump twice";
             Press(ProtokitePlaytestFormView.ChoiceName("rating", 2));

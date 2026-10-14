@@ -107,7 +107,7 @@ namespace Protokite.Playtest
             }
         }
 
-        private static string DescribeEarlierRecordings(ProtokitePlaytestEarlierRecordings found)
+        internal static string DescribeEarlierRecordings(ProtokitePlaytestEarlierRecordings found)
         {
             List<string> parts = new List<string>();
             if (found.CutOffVideosFinished > 0)
@@ -118,6 +118,8 @@ namespace Protokite.Playtest
                 parts.Add($"deleted because no Protokite session started for them: {found.RecordingsDeletedWithNoSession}");
             if (found.TestVideosKept > 0)
                 parts.Add($"test videos kept: {found.TestVideosKept}");
+            if (found.EmptyRunsRemoved > 0)
+                parts.Add($"folders holding no video removed: {found.EmptyRunsRemoved}");
             return parts.Count == 0 ? null : "Recordings earlier launches left, " + string.Join("; ", parts) + ".";
         }
 

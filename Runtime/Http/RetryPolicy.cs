@@ -14,7 +14,7 @@ namespace Flock.Http
         /// <summary>Wait time before the first retry.</summary>
         public TimeSpan InitialDelay { get; set; } = TimeSpan.FromSeconds(1);
 
-        /// <summary>Upper bound on delay between retries, regardless of backoff growth.</summary>
+        /// <summary>Upper bound on delay between retries, regardless of backoff growth, jitter or a Retry-After hint.</summary>
         public TimeSpan MaxDelay { get; set; } = TimeSpan.FromSeconds(30);
 
         /// <summary>Each retry multiplies the previous delay by this factor.</summary>
@@ -108,7 +108,7 @@ namespace Flock.Http
             => ex is FlockNetworkException net && (net.StatusCode == 408 || net.StatusCode == 429);
 
         // Honors a server Retry-After hint when present (bounded by MaxDelay), else jittered backoff.
-        private TimeSpan ResolveDelay(Exception ex, TimeSpan baseDelay)
+        internal TimeSpan ResolveDelay(Exception ex, TimeSpan baseDelay)
         {
             if (ex is FlockNetworkException net && net.RetryAfter.HasValue)
             {
@@ -118,16 +118,19 @@ namespace Flock.Http
             return CalculateDelay(baseDelay);
         }
 
+        // Jitter is applied after the backoff reached MaxDelay, so the jittered wait is capped again.
         private TimeSpan CalculateDelay(TimeSpan baseDelay)
         {
-            if (!_policy.UseJitter)
-                return baseDelay;
-
-            double roll;
-            lock (_randomLock)
-                roll = _random.NextDouble();
-            double jitterFactor = 0.75 + (roll * 0.5); // ±25%
-            return TimeSpan.FromSeconds(baseDelay.TotalSeconds * jitterFactor);
+            TimeSpan delay = baseDelay;
+            if (_policy.UseJitter)
+            {
+                double roll;
+                lock (_randomLock)
+                    roll = _random.NextDouble();
+                double jitterFactor = 0.75 + (roll * 0.5); // ±25%
+                delay = TimeSpan.FromSeconds(baseDelay.TotalSeconds * jitterFactor);
+            }
+            return delay < _policy.MaxDelay ? delay : _policy.MaxDelay;
         }
     }
 }

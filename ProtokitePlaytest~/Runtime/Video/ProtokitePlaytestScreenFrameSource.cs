@@ -111,21 +111,22 @@ namespace Protokite.Playtest
             PlaceThePicture(0, 0);
         }
 
-        public void CaptureFrame(long timestampMs)
+        public bool CaptureFrame(long timestampMs)
         {
             if (!IsReadyForAnotherFrame)
-                return;
+                return false;
             // A window resized or a phone turned mid-recording is recorded in the same video size, at its own shape (see CaptureFromTexture).
             if (_screen == null || _screen.width != Screen.width || _screen.height != Screen.height)
             {
                 if (Screen.width <= 0 || Screen.height <= 0)
-                    return;
+                    return false;
                 ReleaseScreenTexture();
                 _screen = new RenderTexture(Screen.width, Screen.height, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB) { name = "Protokite Playtest screen" };
                 _screen.Create();
             }
             ScreenCapture.CaptureScreenshotIntoRenderTexture(_screen);
             CaptureFromTexture(_screen, timestampMs);
+            return true;
         }
 
         /// <summary>Scales a texture to the video's size, converts it and asks for it back. The screen's frames come this way.</summary>

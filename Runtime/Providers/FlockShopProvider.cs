@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -175,7 +176,7 @@ namespace Flock.Providers
             return result;
         }
 
-        /// <summary>Buys a shop item. Returns the inventory row plus anything the purchase granted immediately (Granted/Wallet).</summary>
+        /// <summary>Buys a shop item. Returns the inventory row plus anything the purchase granted immediately (Granted/Wallet); the wallet is also written into the cached player data.</summary>
         public async Task<PurchaseResult> PurchaseAsync(
             string shopItemId, string playerId = null,
             CancellationToken cancellationToken = default)
@@ -189,14 +190,7 @@ namespace Flock.Providers
             int? purchaser = SignInToActFor;
 
             ShopItem shopItem = await GetItemAsync(shopItemId, cancellationToken);
-            try
-            {
-                await RecordPurchaseAsync(shopItem, shopItemId, nameof(PurchaseStatus.Started), purchaser, cancellationToken);
-            }
-            catch
-            {
-                Client.Logger.LogWarning("Failed to record purchase analytics");
-            }
+            RecordPurchaseInTheBackground(shopItem, shopItemId, nameof(PurchaseStatus.Started), purchaser);
 
             // Purchase is non-idempotent: an ambiguous failure may mean the charge already cleared, so surface it rather than re-send (double-charge). Only 408/429 (not processed) retry.
             PurchaseResult result;
@@ -216,61 +210,64 @@ namespace Flock.Providers
             }
             catch
             {
-                try
-                {
-                    await RecordPurchaseAsync(shopItem, shopItemId, nameof(PurchaseStatus.Failed), purchaser, cancellationToken);
-                }
-                catch
-                {
-                    Client.Logger.LogWarning("Failed to record failed-purchase analytics");
-                }
+                RecordPurchaseInTheBackground(shopItem, shopItemId, nameof(PurchaseStatus.Failed), purchaser);
                 throw;
             }
 
-            if (Client.Analytics != null && shopItem != null)
-            {
-                try
-                {
-                    await RecordPurchaseAsync(shopItem, shopItemId, nameof(PurchaseStatus.Purchased), purchaser, cancellationToken);
-                }
-                catch
-                {
-                    Client.Logger.LogWarning("Failed to record purchase analytics");
-                }
-            }
-
+            RecordPurchaseInTheBackground(shopItem, shopItemId, nameof(PurchaseStatus.Purchased), purchaser);
+            ApplyWalletToPlayerCache(result?.Wallet);
             return result;
         }
 
-        // A purchase's record goes to its purchaser or nowhere: the transaction route takes the player from the sign-in.
-        private async Task RecordPurchaseAsync(ShopItem shopItem, string shopItemId, string status, int? purchaser, CancellationToken cancellationToken)
+        // The purchase never waits on its records: they are analytics, and their sending and retries must not hold up or fail
+        // a purchase. A record goes to its purchaser or nowhere, since the transaction names the player signed in when it is sent.
+        private async void RecordPurchaseInTheBackground(ShopItem shopItem, string shopItemId, string status, int? purchaser)
         {
-            if (purchaser != SignInToActFor)
+            if (Client.Analytics == null || shopItem == null || purchaser != SignInToActFor)
                 return;
-            await Client.Analytics.RecordTransactionAsync(
-                new AnalyticsTransactionRequest
-                {
-                    Amount = shopItem.Price,
-                    CurrencyCode = shopItem.Currency,
-                    ShopItemId = shopItemId,
-                    TransactionType = nameof(TransactionType.Purchase),
-                    Status = status
-                }, cancellationToken);
+            try
+            {
+                await Client.Analytics.RecordTransactionAsync(
+                    new AnalyticsTransactionRequest
+                    {
+                        Amount = shopItem.Price,
+                        CurrencyCode = shopItem.Currency,
+                        ShopItemId = shopItemId,
+                        TransactionType = nameof(TransactionType.Purchase),
+                        Status = status
+                    });
+            }
+            catch (Exception ex)
+            {
+                Client.Logger.LogWarning($"Could not record the purchase's {status} transaction: {ex.Message}");
+            }
         }
 
-        /// <summary>Consumes an owned inventory item, granting its rewards. Returns the updated row plus what was granted.</summary>
+        // The wallet a purchase or consume reports is the player's balance now. Without this the cached row keeps the old
+        // one, and a read-modify-write would put it back over the purchase. No wallet means no currency moved: nothing to write.
+        private void ApplyWalletToPlayerCache(PlayerData wallet)
+        {
+#if !FLOCK_NO_PLAYER
+            if (wallet != null && !string.IsNullOrEmpty(wallet.Id))
+                Client.Player?.ApplyServerPlayerData(wallet);
+#endif
+        }
+
+        /// <summary>Consumes an owned inventory item, granting its rewards. Returns the updated row plus what was granted; the wallet is also written into the cached player data.</summary>
         public async Task<ConsumeResult> ConsumeAsync(
             string inventoryId, CancellationToken cancellationToken = default)
         {
             RequireNotEmpty(inventoryId, "Inventory ID");
 
             // Consuming grants currency, so it carries the same double-spend risk as a purchase: an ambiguous failure surfaces rather than being re-sent. Only 408/429 (provably not processed) retry.
-            return await ExecuteAsync(async () =>
+            ConsumeResult result = await ExecuteAsync(async () =>
             {
                 // Route takes no request body — an empty object keeps the POST well-formed.
                 return await FlockHttpClient.PostAsync<ConsumeResult>(
                     $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.PlayerInventoryConsume(inventoryId)}", new { }, Client.GetBaseHeaders(), cancellationToken);
             }, "Consume inventory item", cancellationToken, idempotent: false, actsForSignIn: SignInToActFor);
+            ApplyWalletToPlayerCache(result?.Wallet);
+            return result;
         }
 
         public async Task<PaginatedResponse<PlayerInventory>> GetPlayerInventoryAsync(

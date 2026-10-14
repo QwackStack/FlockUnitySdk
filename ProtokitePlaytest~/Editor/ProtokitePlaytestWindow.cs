@@ -189,7 +189,7 @@ namespace Protokite.Playtest.Editor
                 EditorStyles.wordWrappedMiniLabel);
         }
 
-        /// <summary>The line under Open Feedback Form, saying when it can open.</summary>
+        /// <summary>The player's answer about upload networks, as the window shows it.</summary>
         internal static string UploadNetworkAnswerAsRead(ProtokitePlaytestUploadNetworkChoice answer)
         {
             switch (answer)
@@ -200,6 +200,7 @@ namespace Protokite.Playtest.Editor
             }
         }
 
+        /// <summary>The line under Open Feedback Form, saying when it can open.</summary>
         internal static string FeedbackFormNote(bool playing, bool canOpen, bool isOpen, bool consentQuestionOpen)
         {
             if (!playing)

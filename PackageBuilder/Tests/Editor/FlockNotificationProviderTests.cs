@@ -1,12 +1,17 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
+using System.IO;
+using System.Threading.Tasks;
 using Flock.Exceptions;
 using Flock.Http;
 using Flock.Models;
+using Flock.Providers;
 using Flock.Tests.Support;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
+using UnityEngine.TestTools;
 
 namespace Flock.Tests.Editor
 {
@@ -1294,6 +1299,263 @@ namespace Flock.Tests.Editor
                 int cancelled = h.Run(() => h.Client.Notification.CancelAllScheduledAsync());
 
                 Assert.AreEqual(0, cancelled);
+            }
+        }
+
+        // ================= sign-ins and game versions =================
+
+        // A held answer resumes on the editor loop, so a test waiting for it yields frames rather than blocking.
+        private static IEnumerator Finished(Task task)
+        {
+            return FlockTestWait.Until(() => task.IsCompleted, "The call finished once its answer was let through.");
+        }
+
+        // ---- What the player has seen and the reminders they can cancel survive a new game version ----
+        // A new build ships a new game version, which deletes every other version's cached answers. State is not cache.
+        [Test]
+        public void State_SurvivesANewGameVersion()
+        {
+            FlockFakeTransport transport = ScheduleTransport();
+            transport.OnSequence("notification?page=", FlockFakeTransport.Ok(InboxSeedBody), FlockFakeTransport.Ok(InboxOneNewBody));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+                h.Run(() => h.Client.Notification.ScheduleAsync("GameplayTest", DeliverAt));
+                h.Run(() => h.Client.Notification.GetInboxAsync());
+
+                h.Client.SnapshotStore.PruneOtherVersions("next-version");
+
+                Assert.AreEqual(1, h.Client.Notification.GetPendingSchedules().Count, "The reminder is still there to cancel.");
+                List<string> raised = new List<string>();
+                Action<Notification> handler = n => raised.Add(n.Id);
+                FlockEvents.OnNotificationReceived += handler;
+                try
+                {
+                    h.Run(() => h.Client.Notification.GetInboxAsync());
+                    CollectionAssert.AreEqual(new[] { "n-2" }, raised, "The watermark is still there: the new row is announced, not taken as a first fetch.");
+                }
+                finally { FlockEvents.OnNotificationReceived -= handler; }
+            }
+        }
+
+        // ---- Start-up moves an earlier build's notification state out of its version's tree before the prune ----
+        [Test]
+        public void StartUp_RescuesAnEarlierBuildsNotificationState()
+        {
+            string dir = Path.Combine(Path.GetTempPath(), "flock_test_" + Guid.NewGuid().ToString("N"));
+            FlockSnapshotStore earlier = new FlockSnapshotStore(dir, null);
+            List<PendingSchedule> kept = new List<PendingSchedule>
+            {
+                new PendingSchedule { Id = "sched-old", TemplateName = "GameplayTest", TemplateId = "tmpl-1", DeliverAt = DeliverAtWire }
+            };
+            Assert.IsTrue(earlier.Write("old-version/notification", "pending_schedules_player-a", kept));
+            Assert.IsTrue(earlier.Write("old-version/notification", "inbox_False_p1_l50_player-a", kept), "A cached answer beside it.");
+
+            using (FlockTestClient h = FlockTestClient.Create(new FlockFakeTransport(), config => config.OfflineCacheDirectory = dir))
+            {
+                h.LoginAs("player-a");
+
+                List<PendingSchedule> pending = h.Client.Notification.GetPendingSchedules();
+                Assert.AreEqual(1, pending.Count, "The earlier build's reminder is kept to cancel.");
+                Assert.AreEqual("sched-old", pending[0].Id);
+                Assert.IsFalse(Directory.Exists(Path.Combine(dir, "old-version")), "The earlier version's tree was pruned.");
+                Assert.IsFalse(h.Client.SnapshotStore.TryRead($"{FlockSnapshotStore.StateScope}/notification",
+                    "inbox_False_p1_l50_player-a", out List<PendingSchedule> _), "Cache was not moved with it.");
+            }
+        }
+
+        // ---- A reply that lands after another sign-in raises nothing, and moves nobody's watermark ----
+        [UnityTest]
+        public IEnumerator Received_ALateReplyAfterAnotherSignInRaisesNothing()
+        {
+            const string aSeen = "{\"id\":\"a-1\",\"title\":\"A\",\"created_at\":\"2026-08-01T00:00:00Z\"}";
+            const string aNew = "{\"id\":\"a-9\",\"title\":\"A new\",\"created_at\":\"2026-08-20T00:00:00Z\"}";
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.OnSequence("notification?page=",
+                FlockFakeTransport.Ok("{\"items\":[" + aSeen + "],\"total\":1,\"page\":1,\"limit\":50}"),
+                FlockFakeTransport.Ok("{\"items\":[{\"id\":\"b-1\",\"title\":\"B\",\"created_at\":\"2026-08-12T00:00:00Z\"}],\"total\":1,\"page\":1,\"limit\":50}"),
+                FlockFakeTransport.Ok("{\"items\":[" + aNew + "," + aSeen + "],\"total\":2,\"page\":1,\"limit\":50}"),
+                FlockFakeTransport.Ok("{\"items\":[{\"id\":\"b-2\",\"title\":\"B new\",\"created_at\":\"2026-08-15T00:00:00Z\"}," +
+                                      "{\"id\":\"b-1\",\"title\":\"B\",\"created_at\":\"2026-08-12T00:00:00Z\"}],\"total\":2,\"page\":1,\"limit\":50}"),
+                FlockFakeTransport.Ok("{\"items\":[" + aNew + "," + aSeen + "],\"total\":2,\"page\":1,\"limit\":50}"));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.SetReachable(true);
+                h.LoginAs("player-a");
+                h.Run(() => h.Client.Notification.GetInboxAsync());   // A has seen up to the 1st
+                h.LoginAs("player-b");
+                h.Run(() => h.Client.Notification.GetInboxAsync());   // B has seen up to the 12th
+
+                List<string> raised = new List<string>();
+                Action<Notification> handler = n => raised.Add(n.Id);
+                FlockEvents.OnNotificationReceived += handler;
+                try
+                {
+                    h.LoginAs("player-a");
+                    transport.GateNext("notification?page=");
+                    Task asked = h.Client.Notification.GetInboxAsync();
+                    h.LoginAs("player-b");
+                    transport.ReleaseGate();
+                    yield return Finished(asked);
+                    CollectionAssert.IsEmpty(raised, "A's mail is not announced to B.");
+
+                    h.Run(() => h.Client.Notification.GetInboxAsync());
+                    CollectionAssert.AreEqual(new[] { "b-2" }, raised, "B's own newer row is still announced: B's watermark did not move.");
+
+                    h.LoginAs("player-a");
+                    h.Run(() => h.Client.Notification.GetInboxAsync());
+                    CollectionAssert.AreEqual(new[] { "b-2", "a-9" }, raised, "A hears of its own new mail when it is back: A's watermark did not move either.");
+                }
+                finally { FlockEvents.OnNotificationReceived -= handler; }
+            }
+        }
+
+        // ---- Each player's first count is reported, even when it equals the last player's ----
+        [Test]
+        public void UnreadCount_EachPlayersFirstCountIsReported()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.NotificationUnreadCount, FlockFakeTransport.Ok("{\"result\":{\"count\":3}}"));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.SetReachable(true);
+                List<int> raised = new List<int>();
+                Action<int> handler = count => raised.Add(count);
+                FlockEvents.OnUnreadCountChanged += handler;
+                try
+                {
+                    h.LoginAs("player-a");
+                    h.Run(() => h.Client.Notification.GetUnreadCountAsync());
+                    h.Run(() => h.Client.Notification.GetUnreadCountAsync());
+                    h.LoginAs("player-b");
+                    h.Run(() => h.Client.Notification.GetUnreadCountAsync());
+
+                    CollectionAssert.AreEqual(new[] { 3, 3 }, raised, "A's count once, then B's own, though the number is the same.");
+                }
+                finally { FlockEvents.OnUnreadCountChanged -= handler; }
+            }
+        }
+
+        // ---- A count read for a sign-in that has ended is not the next player's ----
+        [UnityTest]
+        public IEnumerator UnreadCount_ALateReplyAfterAnotherSignInRaisesNothing()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.NotificationUnreadCount, FlockFakeTransport.Ok("{\"result\":{\"count\":5}}"));
+            transport.On(FlockEndpoints.NotificationReadAll, FlockFakeTransport.Ok("{\"result\":{\"updated\":5}}"));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.SetReachable(true);
+                List<int> raised = new List<int>();
+                Action<int> handler = count => raised.Add(count);
+                FlockEvents.OnUnreadCountChanged += handler;
+                try
+                {
+                    h.LoginAs("player-a");
+                    transport.GateNext(FlockEndpoints.NotificationUnreadCount);
+                    Task count = h.Client.Notification.GetUnreadCountAsync();
+                    h.LoginAs("player-b");
+                    transport.ReleaseGate();
+                    yield return Finished(count);
+
+                    h.LoginAs("player-a");
+                    transport.GateNext(FlockEndpoints.NotificationReadAll);
+                    Task readAll = h.Client.Notification.MarkAllReadAsync();
+                    h.LoginAs("player-b");
+                    transport.ReleaseGate();
+                    yield return Finished(readAll);
+
+                    CollectionAssert.IsEmpty(raised, "Neither A's count nor A's mark-all-read reaches B's badge.");
+                }
+                finally { FlockEvents.OnUnreadCountChanged -= handler; }
+            }
+        }
+
+        // ---- A schedule belongs to the sign-in it was asked under, not the one current after the template lookup ----
+        [UnityTest]
+        public IEnumerator Schedule_ASignInDuringTheTemplateLookupSendsNothing()
+        {
+            FlockFakeTransport transport = ScheduleTransport();
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.SetReachable(true);
+                h.LoginAs("player-a");
+                transport.GateNext(FlockEndpoints.NotificationTemplate);
+                Task scheduling = h.Client.Notification.ScheduleAsync("GameplayTest", DeliverAt);
+                h.LoginAs("player-b");
+                transport.ReleaseGate();
+                yield return Finished(scheduling);
+
+                Assert.IsTrue(scheduling.IsCanceled, "The schedule ends cancelled with its sign-in.");
+                Assert.AreEqual(0, transport.CountTo(FlockEndpoints.NotificationSchedule), "No reminder was made for B.");
+                Assert.AreEqual(0, h.Client.Notification.GetPendingSchedules().Count, "Nor tracked for B.");
+            }
+        }
+
+        // ---- Cancel-all never reaches the next player's reminders, even falling back to the local list ----
+        [UnityTest]
+        public IEnumerator CancelAll_ASignInMidWalkNeverCancelsTheNextPlayersReminders()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.NotificationScheduleById("sched-a"), FlockFakeTransport.Ok(ScheduledBody.Replace("sched-1", "sched-a")));
+            transport.On(FlockEndpoints.NotificationScheduleById("sched-1"), FlockFakeTransport.Ok(ScheduledBody));
+            // The server's list cannot be read, so the walk falls back to what this install tracked.
+            transport.On(FlockEndpoints.NotificationSchedule + "?", FlockFakeTransport.Status(500, "{}"));
+            transport.On(FlockEndpoints.NotificationTemplate, FlockFakeTransport.Ok(TemplateBody));
+            transport.OnSequence(FlockEndpoints.NotificationSchedule,
+                FlockFakeTransport.Ok(ScheduledBody), FlockFakeTransport.Ok(ScheduledBody.Replace("sched-1", "sched-a")));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.SetReachable(true);
+                h.LoginAs("player-b");
+                h.Run(() => h.Client.Notification.ScheduleAsync("GameplayTest", DeliverAt));   // B's reminder, sched-1
+                h.LoginAs("player-a");
+                h.Run(() => h.Client.Notification.ScheduleAsync("GameplayTest", DeliverAt));   // A's reminder, sched-a
+
+                transport.GateNext(FlockEndpoints.NotificationSchedule + "?");
+                Task cancelling = h.Client.Notification.CancelAllScheduledAsync();
+                h.LoginAs("player-b");
+                transport.ReleaseGate();
+                yield return Finished(cancelling);
+
+                Assert.IsTrue(cancelling.IsCanceled, "The walk ends cancelled with A's sign-in.");
+                Assert.AreEqual(0, transport.CountTo(FlockEndpoints.NotificationScheduleById("sched-1")), "B's reminder was never cancelled.");
+                Assert.AreEqual(1, h.Client.Notification.GetPendingSchedules().Count, "And B still tracks it.");
+                h.LoginAs("player-a");
+                Assert.AreEqual(1, h.Client.Notification.GetPendingSchedules().Count, "A's stays tracked for A's next try.");
+            }
+        }
+
+        // ---- A schedule or cancel answered after another sign-in is tracked for the player it was sent for ----
+        [UnityTest]
+        public IEnumerator Schedule_AnAnswerAfterAnotherSignInIsTrackedForItsPlayer()
+        {
+            FlockFakeTransport transport = ScheduleTransport(FlockFakeTransport.Ok(ScheduledBody));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.SetReachable(true);
+                h.LoginAs("player-a");
+                transport.GateNext(FlockEndpoints.NotificationSchedule);
+                Task scheduling = h.Client.Notification.ScheduleAsync("GameplayTest", DeliverAt);
+                yield return FlockTestWait.Until(() => transport.CountTo(FlockEndpoints.NotificationSchedule) == 1, "the schedule is on its way");
+                h.LoginAs("player-b");
+                transport.ReleaseGate();
+                yield return Finished(scheduling);
+
+                Assert.AreEqual(0, h.Client.Notification.GetPendingSchedules().Count, "B's list did not take A's reminder.");
+                h.LoginAs("player-a");
+                Assert.AreEqual(1, h.Client.Notification.GetPendingSchedules().Count, "A's list has it, to cancel.");
+
+                transport.GateNext(FlockEndpoints.NotificationScheduleById("sched-1"));
+                Task cancelling = h.Client.Notification.CancelScheduledAsync("sched-1");
+                yield return FlockTestWait.Until(() => transport.CountTo(FlockEndpoints.NotificationScheduleById("sched-1")) == 1, "the cancel is on its way");
+                h.LoginAs("player-b");
+                transport.ReleaseGate();
+                yield return Finished(cancelling);
+
+                h.LoginAs("player-a");
+                Assert.AreEqual(0, h.Client.Notification.GetPendingSchedules().Count, "A's list no longer holds the cancelled reminder.");
             }
         }
     }

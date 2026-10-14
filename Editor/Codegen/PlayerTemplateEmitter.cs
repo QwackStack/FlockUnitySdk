@@ -104,7 +104,8 @@ namespace Flock.Editor.Codegen
             return sb.ToString();
         }
 
-        private static string SerializeTypedSchema(TypedSchema field, string baseIndent)
+        /// <summary>A schema field as C# initializer text; the game config emitter writes its fields with it too.</summary>
+        internal static string SerializeTypedSchema(TypedSchema field, string baseIndent)
         {
             StringBuilder sb = new StringBuilder();
             sb.Append("new TypedSchema { ");

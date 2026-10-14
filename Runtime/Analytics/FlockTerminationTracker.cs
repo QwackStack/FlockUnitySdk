@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using Flock.Logging;
 using Newtonsoft.Json;
+using UnityEngine;
 
 namespace Flock.Analytics
 {
@@ -56,7 +57,9 @@ namespace Flock.Analytics
                 SessionId = null,
                 LastState = StateForeground,
                 LastAliveUtc = DateTime.UtcNow,
-                ExceptionCount = 0
+                ExceptionCount = 0,
+                AppVersion = Application.version,
+                SdkVersion = FlockSdkVersion.Current
             };
             _pendingExceptionCount = 0;
             _tracking = true;
@@ -72,7 +75,17 @@ namespace Flock.Analytics
             if (!_tracking)
                 return;
             _marker.SessionId = sessionId;
+            _marker.ServerSessionId = null;
             FoldPendingExceptions();
+            SaveMarker();
+        }
+
+        /// <summary>The session reached the server: the report names the id the server knows it by.</summary>
+        internal void NoteSessionRegistered(string serverSessionId)
+        {
+            if (!_tracking)
+                return;
+            _marker.ServerSessionId = serverSessionId;
             SaveMarker();
         }
 
@@ -82,6 +95,7 @@ namespace Flock.Analytics
             if (!_tracking)
                 return;
             _marker.SessionId = null;
+            _marker.ServerSessionId = null;
             FoldPendingExceptions();
             SaveMarker();
         }

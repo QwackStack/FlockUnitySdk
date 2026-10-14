@@ -9,39 +9,14 @@ namespace Flock.Auth
 {
     public class WindowsTokenStore : ITokenStore
     {
-        public override void Save(string accessToken, string refreshToken)
-        {
-            FlockSavedFiles.CreateFolder(FlockUtil.FlockFilePath);
-            FlockSavedFiles.WriteBytes(FlockUtil.AccessTokenPath, Protect(accessToken));
-            FlockSavedFiles.WriteBytes(FlockUtil.RefreshTokenPath, Protect(refreshToken));
-        }
+        private readonly FlockTokenFile _file = new FlockTokenFile(FlockUtil.FlockFilePath,
+            plain => Dpapi(plain, encrypt: true), sealedBytes => Dpapi(sealedBytes, encrypt: false));
 
-        public override StoredTokens Load()
-        {
-            if (!File.Exists(FlockUtil.AccessTokenPath) || !File.Exists(FlockUtil.RefreshTokenPath))
-                return null;
-            return new StoredTokens
-            {
-                AccessToken = Unprotect(File.ReadAllBytes(FlockUtil.AccessTokenPath)),
-                RefreshToken = Unprotect(File.ReadAllBytes(FlockUtil.RefreshTokenPath))
-            };
-        }
+        public override void Save(string accessToken, string refreshToken) => _file.Save(accessToken, refreshToken);
 
-        public override void Clear()
-        {
-            if (File.Exists(FlockUtil.AccessTokenPath))
-            {
-                FlockSavedFiles.Delete(FlockUtil.AccessTokenPath);
-            }
-            if (File.Exists(FlockUtil.RefreshTokenPath))
-            {
-                FlockSavedFiles.Delete(FlockUtil.RefreshTokenPath);
-            }
-        }
+        public override StoredTokens Load() => _file.Load();
 
-        private byte[] Protect(string token) => Dpapi(Encoding.UTF8.GetBytes(token), encrypt: true);
-
-        private string Unprotect(byte[] data) => Encoding.UTF8.GetString(Dpapi(data, encrypt: false));
+        public override void Clear() => _file.Clear();
 
         private static byte[] Dpapi(byte[] input, bool encrypt)
         {

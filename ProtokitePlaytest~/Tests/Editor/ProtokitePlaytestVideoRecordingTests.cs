@@ -357,14 +357,25 @@ namespace Protokite.Playtest.Tests
             Assert.Less(source.Asked.Last(), 1000);
         }
 
+        // The file's type, the movie's header the first frame carries, then room for ten frames of 40 bytes and their fragment headers, and a little more.
+        private static long RoomForTenFrames()
+        {
+            long fileType = ProtokitePlaytestMp4TestFiles.MakeVideoBytes(Path.GetTempPath(), 0, 0, false).Length;
+            long movieHeader = new ProtokitePlaytestMp4File().BytesFor(ProtokitePlaytestMp4TestFiles.MakeEncodedFrame(0, 40)) - ProtokitePlaytestMp4File.FrameHeaderBytes - 40;
+            return fileType + movieHeader + 10 * (ProtokitePlaytestMp4File.FrameHeaderBytes + 40) + 30;
+        }
+
+        private static int EncodesSoFar(FakeH264Encoder encoder)
+        {
+            lock (encoder.Calls)
+                return encoder.Calls.Count(call => call.StartsWith("encode ", StringComparison.Ordinal));
+        }
+
         [Test]
         public void TheSizeLimitIsNeverPassed()
         {
             FakeFrameSource source = new FakeFrameSource();
-            // The file's type, the movie's header the first frame carries, then room for ten frames of 40 bytes and their fragment headers, and a little more.
-            long fileType = ProtokitePlaytestMp4TestFiles.MakeVideoBytes(Path.GetTempPath(), 0, 0, false).Length;
-            long movieHeader = new ProtokitePlaytestMp4File().BytesFor(ProtokitePlaytestMp4TestFiles.MakeEncodedFrame(0, 40)) - ProtokitePlaytestMp4File.FrameHeaderBytes - 40;
-            long limit = fileType + movieHeader + 10 * (ProtokitePlaytestMp4File.FrameHeaderBytes + 40) + 30;
+            long limit = RoomForTenFrames();
             ProtokitePlaytestVideoRecording recording = Start(source, new FakeH264Encoder(), Settings(s => s.MaxBytes = limit));
             ProtokitePlaytestVideoStopReason? stop = null;
             for (int i = 0; i < 600 && stop == null; i++)
@@ -382,6 +393,42 @@ namespace Protokite.Playtest.Tests
             Assert.Greater(new FileInfo(FinishedPath).Length, limit - ProtokitePlaytestMp4File.FrameHeaderBytes - 40, "And no frame that fitted was left out");
             Assert.IsTrue(ProtokitePlaytestMp4TestFiles.Read(FinishedPath, out Mp4FileRead read));
             Assert.AreEqual(10, read.Frames.Count);
+        }
+
+        // Past the size limit no frame is written, so the frames already waiting are not encoded either: an encode costs the game time.
+        [Test]
+        public void NoFrameIsEncodedOnceTheSizeLimitIsReached()
+        {
+            FakeFrameSource source = new FakeFrameSource();
+            FakeH264Encoder encoder = new FakeH264Encoder();
+            ProtokitePlaytestVideoRecording recording = Start(source, encoder, Settings(s => s.MaxBytes = RoomForTenFrames()));
+            Play(recording, 40, pacedBy: source);
+            Assert.IsTrue(SpinWait.SpinUntil(() => EncodesSoFar(encoder) == 10, Plenty), "Precondition: ten frames encoded, every one fitting");
+
+            // Four more reach the encoder together: the first finds the limit, and the three behind it are never encoded.
+            source.HoldFrames = true;
+            Play(recording, 16);
+            source.LetFramesArrive();
+            recording.AddFrame(SixtyFps);
+            Assert.IsTrue(SpinWait.SpinUntil(() => source.BlocksReturned >= 14, Plenty), "Every frame went through the encoding thread");
+            recording.StopCapturing(ProtokitePlaytestVideoStopReason.ReachedSizeLimit);
+            Assert.IsTrue(recording.WaitUntilWritten(Plenty));
+            Assert.AreEqual(11, EncodesSoFar(encoder), "The ten that fit and the one that found the limit");
+            Assert.AreEqual(10, recording.Summary().FramesWritten);
+        }
+
+        // A screen with no size (a minimized window) gives no frame, so none is counted as asked for: the self-test reads that count as proof of capturing.
+        [Test]
+        public void AFrameTheScreenCouldNotGiveIsNotCountedAsAskedFor()
+        {
+            FakeFrameSource source = new FakeFrameSource { ScreenHasNoSize = true };
+            ProtokitePlaytestVideoRecording recording = Start(source, new FakeH264Encoder(), Settings());
+            Play(recording, 60);
+            Assert.AreEqual(0, recording.FramesAskedFor);
+            source.ScreenHasNoSize = false;
+            Play(recording, 60, pacedBy: source);
+            Assert.AreEqual(15, recording.FramesAskedFor, "A second's frames once the screen has a size again");
+            StopAndWait(recording);
         }
 
         // Falling behind

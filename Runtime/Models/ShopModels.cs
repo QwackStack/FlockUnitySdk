@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Newtonsoft.Json;
 
@@ -7,6 +8,16 @@ namespace Flock.Models
     public static class ShopItemRewardTypes
     {
         public const string Currency = "currency";
+    }
+
+    /// <summary>Where a purchase has got to. A wallet purchase is born paid; the others belong to real-money checkouts, whose result comes later. Strings rather than an enum: the server can add a status, and an unknown one must not break reading the purchase.</summary>
+    public static class PurchaseResultStatuses
+    {
+        public const string Pending = "pending";
+        public const string Paid = "paid";
+        public const string Failed = "failed";
+        public const string Expired = "expired";
+        public const string Refunded = "refunded";
     }
 
     // One thing a reward-bearing shop item grants. Code is a currency code from the game version's currency config — the same namespace ShopItem.Currency draws from.
@@ -30,6 +41,14 @@ namespace Flock.Models
 
         [JsonProperty("item_type")]
         public string ItemType { get; set; }
+
+        /// <summary>Where the purchase has got to: one of <see cref="PurchaseResultStatuses"/>. Paid when the server leaves it out, as its schema does.</summary>
+        [JsonProperty("status", NullValueHandling = NullValueHandling.Ignore)]
+        public string Status { get; set; } = PurchaseResultStatuses.Paid;
+
+        /// <summary>True when the purchase is paid, so what it grants is the player's. A pending one has handed nothing over yet.</summary>
+        [JsonIgnore]
+        public bool IsPaid => string.Equals(Status, PurchaseResultStatuses.Paid, StringComparison.Ordinal);
 
         [JsonProperty("inventory")]
         public PlayerInventory Inventory { get; set; }

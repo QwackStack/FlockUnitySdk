@@ -8,7 +8,7 @@ var shop = await FlockClient.Instance.Shop.GetByIdAsync("shop-id");
 var item = await FlockClient.Instance.Shop.GetItemAsync("shop-item-id");
 var items = await FlockClient.Instance.Shop.GetItemsByShopAsync("shop-id");
 // Same retry contract as AddGameFunds (money mutation) — ambiguous failures throw; catch them.
-// On throw, a Failed analytics event is recorded automatically. Catch FlockException and check
+// Started, Purchased and Failed transactions are recorded as it goes, never waited on. Catch FlockException and check
 // e.Code for specific reasons (e.g. FlockErrorCode.ShopInsufficientFunds, ShopWalletNotFound).
 // playerId is optional — omit it to use the signed-in player (CurrentPlayerId).
 PurchaseResult purchase = await FlockClient.Instance.Shop.PurchaseAsync("shop-item-id");
@@ -30,6 +30,10 @@ foreach (ShopItemReward reward in purchase.Granted)
 PlayerInventory row = purchase.Inventory;
 PlayerData wallet = purchase.Wallet;
 
+// A wallet purchase is paid at once; a real-money checkout can come back pending and hands nothing over until it is paid.
+if (!purchase.IsPaid)
+    Debug.Log($"Purchase is {purchase.Status}");
+
 // Consume an owned item to collect its rewards.
 ConsumeResult consumed = await FlockClient.Instance.Shop.ConsumeAsync(row.Id);
 foreach (ShopItemReward reward in consumed.Granted)
@@ -45,6 +49,11 @@ foreach (ShopItemReward reward in item.Rewards)
 is a string compared against `ShopItemRewardTypes.Currency` rather than an enum: rewards are stored as
 typed entries so new kinds can appear without a schema migration, and an unknown value must not break
 deserialization.
+
+`Status` is one of `PurchaseResultStatuses` (`pending`, `paid`, `failed`, `expired`, `refunded`), a string for the same
+reason as `reward.Type`; it reads `paid` when the server leaves it out. A purchase or consume that reports a wallet also
+writes it into the cached player data, so the next `GetMyDataByTemplateAsync` reads the new balance rather than the one
+from before.
 
 `ConsumeAsync` moves currency, so it carries the same money safety as a purchase — an ambiguous failure
 throws rather than being re-sent, and only provably-unprocessed failures (408/429) retry. Catch

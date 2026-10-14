@@ -1,4 +1,5 @@
 using System;
+using System.Threading.Tasks;
 using Flock.Exceptions;
 using Flock.Http;
 using Flock.Models;
@@ -292,6 +293,133 @@ namespace Flock.Tests.Editor
                 Assert.AreEqual(1, item.Rewards.Count);
                 Assert.AreEqual("GOLD", item.Rewards[0].Code);
                 Assert.AreEqual(500, item.Rewards[0].Amount);
+            }
+        }
+
+        // The wallet row as the server sends it, string-typed so the test does not lean on the number converter.
+        private static string WalletJson(string gold)
+            => "{\"id\":\"pd-1\",\"player_template_id\":\"curr-tpl\",\"player_id\":\"player-a\"," +
+               "\"data\":[{\"field_name\":\"gold\",\"type\":\"string\",\"value\":\"" + gold + "\"}]}";
+
+        // Primes the cached wallet the way a read would, then returns the transport so a test can route the purchase.
+        private static void PrimeCachedWallet(FlockTestClient h, string gold)
+        {
+            h.Transport.On("player_data?page=", FlockFakeTransport.Ok("{\"items\":[" + WalletJson(gold) + "],\"total\":1,\"page\":1,\"limit\":100}"));
+            PlayerData primed = h.Run(() => h.Client.Player.GetMyDataByTemplateAsync("curr-tpl"));
+            Assert.AreEqual(gold, primed.Data[0].Value.ToString(), "Precondition: the wallet is cached with the old balance.");
+        }
+
+        private static string CachedGold(FlockTestClient h)
+            => h.Run(() => h.Client.Player.GetMyDataByTemplateAsync("curr-tpl")).Data[0].Value.ToString();
+
+        // ---- A purchase writes the wallet it returns into the cached player data ----
+        // Without it the next read serves the balance from before the purchase, and a read-modify-write puts it back.
+        [Test]
+        public void Purchase_WritesItsWalletToThePlayerCache()
+        {
+            FlockFakeTransport transport = WithItem();
+            transport.On(FlockEndpoints.ShopTransaction, FlockFakeTransport.Ok(
+                "{\"purchase_id\":\"pur-1\",\"item_type\":\"currency_pack\",\"wallet\":" + WalletJson("500") + "}"));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+                PrimeCachedWallet(h, "100");
+
+                h.Run(() => h.Client.Shop.PurchaseAsync("item-1"));
+
+                Assert.AreEqual("500", CachedGold(h), "The cached wallet reads the balance the purchase reported.");
+                Assert.AreEqual(1, transport.CountTo("player_data?page="), "Read from the cache, not fetched again.");
+            }
+        }
+
+        // ---- A consume writes its wallet too ----
+        [Test]
+        public void Consume_WritesItsWalletToThePlayerCache()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.PlayerInventoryConsume("inv-1"), FlockFakeTransport.Ok(
+                "{\"inventory\":{\"id\":\"inv-1\",\"player_id\":\"player-a\",\"shop_item_id\":\"item-1\",\"status\":\"used\"}," +
+                "\"granted\":[{\"type\":\"currency\",\"code\":\"GOLD\",\"amount\":250}],\"wallet\":" + WalletJson("350") + "}"));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+                PrimeCachedWallet(h, "100");
+
+                h.Run(() => h.Client.Shop.ConsumeAsync("inv-1"));
+
+                Assert.AreEqual("350", CachedGold(h), "The cached wallet reads the balance the consume reported.");
+            }
+        }
+
+        // ---- No wallet means no currency moved: the cached row is left as it is, never blanked ----
+        [Test]
+        public void Purchase_WithoutAWallet_LeavesTheCacheAlone()
+        {
+            FlockFakeTransport transport = WithItem();
+            transport.On(FlockEndpoints.ShopTransaction, FlockFakeTransport.Ok("{\"purchase_id\":\"pur-2\",\"item_type\":\"cosmetic\"}"));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+                PrimeCachedWallet(h, "100");
+
+                h.Run(() => h.Client.Shop.PurchaseAsync("item-1"));
+
+                Assert.AreEqual("100", CachedGold(h));
+            }
+        }
+
+        // ---- A purchase never waits on its analytics records ----
+        // They are sent as it goes; a record held up (or retrying) must neither delay the purchase's answer nor fail it.
+        [Test]
+        public void Purchase_DoesNotWaitForItsRecords()
+        {
+            FlockFakeTransport transport = WithItem();
+            transport.On(FlockEndpoints.ShopTransaction, FlockFakeTransport.Ok("{\"purchase_id\":\"pur-1\",\"item_type\":\"currency_pack\"}"));
+            transport.On(FlockEndpoints.AnalyticsTransactions, FlockFakeTransport.Ok("{}"));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+                transport.GateNext(FlockEndpoints.AnalyticsTransactions);
+
+                Task<PurchaseResult> purchase = h.Client.Shop.PurchaseAsync("item-1");
+                bool answered = purchase.Wait(TimeSpan.FromSeconds(5));
+                transport.ReleaseGate();
+
+                Assert.IsTrue(answered, "The purchase answered while its records were still on their way.");
+                Assert.AreEqual("pur-1", purchase.Result.PurchaseId);
+                Assert.AreEqual(2, transport.CountTo(FlockEndpoints.AnalyticsTransactions), "Both records were still sent: started and purchased.");
+            }
+        }
+
+        // ---- The purchase reports where it has got to ----
+        [Test]
+        public void Purchase_ReadsItsStatus()
+        {
+            FlockFakeTransport transport = WithItem();
+            transport.OnSequence(FlockEndpoints.ShopTransaction,
+                FlockFakeTransport.Ok("{\"purchase_id\":\"pur-2\",\"item_type\":\"standard\",\"status\":\"pending\"}"),
+                FlockFakeTransport.Ok("{\"purchase_id\":\"pur-3\",\"item_type\":\"standard\"}"),
+                FlockFakeTransport.Ok("{\"purchase_id\":\"pur-4\",\"item_type\":\"standard\",\"status\":null}"));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                PurchaseResult pending = h.Run(() => h.Client.Shop.PurchaseAsync("item-1"));
+                Assert.AreEqual(PurchaseResultStatuses.Pending, pending.Status, "The status is read as the server spelled it.");
+                Assert.IsFalse(pending.IsPaid, "A pending purchase is not paid.");
+
+                PurchaseResult unsaid = h.Run(() => h.Client.Shop.PurchaseAsync("item-1"));
+                Assert.AreEqual(PurchaseResultStatuses.Paid, unsaid.Status, "A status left out reads as paid, the schema's default.");
+                Assert.IsTrue(unsaid.IsPaid);
+
+                PurchaseResult empty = h.Run(() => h.Client.Shop.PurchaseAsync("item-1"));
+                Assert.IsTrue(empty.IsPaid, "A null status reads as left out.");
+                Assert.AreEqual("paid", PurchaseResultStatuses.Paid, "The constant is the schema's spelling.");
             }
         }
     }

@@ -7,6 +7,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Flock.Analytics;
 using Flock.Http;
+using Flock.Logging;
+using Flock.Models;
 using Flock.Interfaces;
 using Flock.Providers;
 using Flock.Tests.Support;
@@ -352,6 +354,186 @@ namespace Flock.Tests.Editor
             Assert.AreEqual(2, (int)extra["unhandled_exception_count"]);
             Assert.IsFalse(SentEvents(transport).Any(e => (string)e["event_name"] == "app_termination"), "Not on the Game Metrics dashboards");
             Assert.IsFalse(File.Exists(Path.Combine(ended.Path, FlockAnalyticsLaunches.TerminationMarkerFileName)), "Reported once");
+        }
+
+        // ---- Diagnostics with no queue, data JSON cannot hold, the termination report, transactions, the version ----
+
+        [Test]
+        public void WithTheQueueOffADiagnosticEntryIsSentAtOnce()
+        {
+            FlockFakeTransport transport = Start(config => config.AnalyticsConfig.CacheFailedEvents = false);
+
+            _h.Client.Analytics.LogDiagnosticEvent("no_queue_diagnostic");
+
+            CollectionAssert.Contains(SentLogEvents(transport).Select(e => (string)e["message"]).ToArray(), "no_queue_diagnostic",
+                "With nothing to queue it, the entry goes at once rather than being dropped");
+            Assert.IsFalse(_h.Logger.Debugs.Exists(line => line == "Log event queued"), "It was not queued, so the log does not say so");
+        }
+
+        private sealed class CannotBeWritten
+        {
+            public CannotBeWritten Itself => this;
+        }
+
+        [Test]
+        public void ADiagnosticEntryWhoseDataJsonCannotHoldIsSentWithoutIt()
+        {
+            FlockFakeTransport transport = Start();
+
+            Assert.DoesNotThrow(() => _h.Client.Analytics.LogDiagnosticEvent("odd_data",
+                new Dictionary<string, object> { { "loop", new CannotBeWritten() } }));
+            Flush();
+
+            JObject sent = SentLogEvents(transport).Single(e => (string)e["message"] == "odd_data");
+            Assert.IsTrue(sent["data"]["extra_data"] == null || sent["data"]["extra_data"].Type == JTokenType.Null, "Its data was left out");
+            Assert.IsTrue(_h.Logger.Warnings.Exists(line => line.Contains("odd_data") && line.Contains("left out")), "And it says so");
+        }
+
+        [Test]
+        public void ACrashReportNamesTheEndedLaunchsVersionsAndTheServersSessionId()
+        {
+            FlockLaunchFolder ended = FlockLaunchFolder.Create(Path.Combine(_folder, FlockAnalyticsLaunches.LaunchesFolderName));
+            File.WriteAllText(Path.Combine(ended.Path, FlockAnalyticsLaunches.TerminationMarkerFileName),
+                "{\"session_id\":\"s-local\",\"server_session_id\":\"srv-ended\",\"last_state\":\"foreground\",\"last_alive_utc\":\"2026-09-27T10:05:00Z\"," +
+                "\"exception_count\":0,\"app_version\":\"0.9.1\",\"sdk_version\":\"1.70.0\"}");
+            ended.Dispose();
+
+            FlockFakeTransport transport = Start();
+            _h.LoginAs("player-a");
+            _h.Run(() => _h.Client.Analytics.InitializeAsync(CancellationToken.None));
+            Flush();
+
+            JObject extra = (JObject)SentLogEvents(transport).Single(e => (string)e["message"] == "app_termination")["data"]["extra_data"];
+            Assert.AreEqual("srv-ended", (string)extra["previous_session_id"], "The id the server knows the session by");
+            Assert.AreEqual("0.9.1", (string)extra["app_version"], "The ended launch's version, not this one's");
+            Assert.AreEqual("1.70.0", (string)extra["sdk_version"]);
+        }
+
+        [Test]
+        public void TheCrashMarkerHoldsTheLaunchsVersionsAndTheServersSessionId()
+        {
+            string marker = Path.Combine(_folder, "marker.json");
+            Directory.CreateDirectory(_folder);
+            FlockTerminationTracker tracker = new FlockTerminationTracker(new NullFlockLogger(), true, marker);
+            tracker.BeginTracking();
+            tracker.NoteSessionStarted("s-local");
+            tracker.NoteSessionRegistered("srv-1");
+            FlockTerminationMarker read = FlockTerminationTracker.ReadMarker(marker, new NullFlockLogger());
+            tracker.StopTracking();
+
+            Assert.AreEqual("srv-1", read.ServerSessionId);
+            Assert.AreEqual(Application.version, read.AppVersion);
+            Assert.AreEqual(FlockSdkVersion.Current, read.SdkVersion);
+        }
+
+        [Test]
+        public void ATransactionTheServerMayHoldIsNeverSentAgain()
+        {
+            FlockFakeTransport transport = Start(config => config.RetryPolicy = new RetryPolicy { MaxRetries = 2, InitialDelay = TimeSpan.Zero, MaxDelay = TimeSpan.Zero });
+            _h.LoginAs("player-a");
+            transport.On(FlockEndpoints.AnalyticsTransactions, FlockFakeTransport.Status(500, "{}"));
+            Assert.Catch<Exception>(() => _h.Run(() => _h.Client.Analytics.RecordTransactionAsync(new AnalyticsTransactionRequest { Amount = 5 })));
+            Assert.AreEqual(1, transport.CountTo(FlockEndpoints.AnalyticsTransactions), "A 500 may already be stored, so it is not sent again");
+
+            transport.On(FlockEndpoints.AnalyticsTransactions, FlockFakeTransport.Status(429, "{}"));
+            Assert.Catch<Exception>(() => _h.Run(() => _h.Client.Analytics.RecordTransactionAsync(new AnalyticsTransactionRequest { Amount = 5 })));
+            Assert.AreEqual(1 + 3, transport.CountTo(FlockEndpoints.AnalyticsTransactions), "A 429 provably was not, so it is retried");
+        }
+
+        [Test]
+        public void ALogEventCarriesTheGameVersionsId()
+        {
+            FlockFakeTransport transport = Start();
+            _h.Client.Analytics.LogDiagnosticEvent("versioned");
+            Flush();
+
+            JObject sent = SentLogEvents(transport).Single(e => (string)e["message"] == "versioned");
+            Assert.AreEqual(_h.Client.GameVersionId, (string)sent["data"]["game_version"], "The ID, as the request header carries");
+        }
+
+        [Test]
+        public void ALaunchThatHoldsNoFolderKeepsNothingOnDisk()
+        {
+            Directory.CreateDirectory(_folder);
+            // A file where the launches folder goes: no launch folder or lock can be made under it.
+            File.WriteAllText(Path.Combine(_folder, FlockAnalyticsLaunches.LaunchesFolderName), "not a folder");
+            FlockAnalyticsLaunches launch = FlockAnalyticsLaunches.Start(_folder, null);
+            try
+            {
+                Assert.IsFalse(launch.IsHoldingItsFolder, "Precondition: the launch holds no folder");
+                Assert.IsNull(launch.Folder);
+                Assert.IsNull(launch.SessionStatePath);
+                Assert.IsNull(launch.TerminationMarkerPath);
+            }
+            finally
+            {
+                launch.Dispose();
+            }
+        }
+
+        // ---- Delivery: one player a batch, refused content sent apart, a longer wait after answered failures ----
+
+        [Test]
+        public void TwoPlayersEventsAreNeverSentInOneBatch()
+        {
+            FlockFakeTransport transport = Start();
+            _h.LoginAs("player-a");
+            _h.Client.Analytics.TrackEvent("a_first");
+            _h.LoginAs("player-b");
+            _h.Client.Analytics.TrackEvent("b_first");
+            Flush();
+
+            foreach (FlockHttpRequest request in transport.AllTo(FlockEndpoints.AnalyticsEvents))
+            {
+                string[] players = ((JArray)JObject.Parse(request.JsonBody)["events"]).Select(e => (string)e["player_id"]).Distinct().ToArray();
+                Assert.AreEqual(1, players.Length, "One player a batch: " + request.JsonBody);
+            }
+            CollectionAssert.AreEquivalent(new[] { "a_first", "b_first" }, SentEvents(transport).Select(e => (string)e["event_name"]).ToArray());
+        }
+
+        [Test]
+        public void ABatchRefusedForWhatItHoldsIsSentOneEntryAtATime()
+        {
+            FlockFakeTransport transport = Start();
+            _h.LoginAs("player-a");
+            // The server refuses any body holding the bad entry, as it does for one field it will not take.
+            transport.Default(request => request.Url.Contains(FlockEndpoints.AnalyticsEvents) && request.JsonBody.Contains("\"bad\"")
+                ? FlockFakeTransport.Status(422, "{\"detail\":[{\"loc\":[\"body\"],\"msg\":\"bad\"}]}")
+                : FlockFakeTransport.Ok("{}"));
+            _h.Client.Analytics.TrackEvent("good_one");
+            _h.Client.Analytics.TrackEvent("bad");
+            _h.Client.Analytics.TrackEvent("good_two");
+            Flush();
+
+            string[] delivered = transport.AllTo(FlockEndpoints.AnalyticsEvents)
+                .Where(r => !r.JsonBody.Contains("\"bad\""))
+                .SelectMany(r => ((JArray)JObject.Parse(r.JsonBody)["events"]).Select(e => (string)e["event_name"]))
+                .ToArray();
+            CollectionAssert.AreEquivalent(new[] { "good_one", "good_two" }, delivered, "The good entries are delivered");
+            Assert.AreEqual(0, ((FlockAnalyticsProvider)_h.Client.Analytics).PendingAnalyticsEventCountForTesting, "And the bad one is dropped, not kept for ever");
+        }
+
+        [Test]
+        public void ThePeriodicFlushWaitsLongerAfterAnAnsweredFailureAndNotAfterAnUnansweredOne()
+        {
+            FlockFakeTransport transport = Start(config => config.AnalyticsConfig.EventBufferFlushIntervalSeconds = 10f);
+            _h.LoginAs("player-a");
+            FlockAnalyticsProvider analytics = (FlockAnalyticsProvider)_h.Client.Analytics;
+            transport.On(FlockEndpoints.AnalyticsEvents, FlockFakeTransport.Status(503, "{}"));
+            _h.Client.Analytics.TrackEvent("waiting");
+
+            _h.Run(() => analytics.FlushOnTheIntervalAsync(0));
+            Assert.AreEqual(20.0, analytics.FlushWaitSecondsForTesting, 0.001, "An answered failure doubles the wait");
+            _h.Run(() => analytics.FlushOnTheIntervalAsync(0));
+            Assert.AreEqual(40.0, analytics.FlushWaitSecondsForTesting, 0.001, "And again");
+
+            transport.On(FlockEndpoints.AnalyticsEvents, FlockFakeTransport.Offline());
+            _h.Run(() => analytics.FlushOnTheIntervalAsync(0));
+            Assert.AreEqual(40.0, analytics.FlushWaitSecondsForTesting, 0.001, "An unanswered one spent nothing, so the wait stays");
+
+            transport.On(FlockEndpoints.AnalyticsEvents, FlockFakeTransport.Ok("{}"));
+            _h.Run(() => analytics.FlushOnTheIntervalAsync(0));
+            Assert.AreEqual(0.0, analytics.FlushWaitSecondsForTesting, 0.001, "A delivery brings it back");
         }
     }
 }

@@ -114,7 +114,7 @@ namespace Flock.Editor.Codegen
             }
 
             AssetDatabase.CreateAsset(catalog, assetPath);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(catalog);
             Debug.Log($"[Flock Codegen] Catalog: {catalog.shops.Count} shop(s), {catalog.configs.Count} config(s), {catalog.templates.Count} template(s), {catalog.achievements.Count} achievement(s) → {assetPath}");
             return catalog.shops.Count + catalog.configs.Count + catalog.templates.Count + catalog.achievements.Count;
         }

@@ -124,46 +124,6 @@ namespace Flock.Providers
             }
         }
 
-        // Clears a scope except keys starting with one of these prefixes - a scope is shared by every player, so
-        // per-player state cant survive a plain DeleteScope. Filenames are "{sanitized key}_{hash}".
-        public void DeleteScopeExcept(string scope, params string[] keepKeyPrefixes)
-        {
-            try
-            {
-                string path = Path.Combine(_root, SanitizeScope(scope));
-                if (!Directory.Exists(path))
-                    return;
-
-                List<string> keep = new List<string>();
-                foreach (string prefix in keepKeyPrefixes ?? new string[0])
-                {
-                    if (!string.IsNullOrEmpty(prefix))
-                        keep.Add(Sanitize(prefix));
-                }
-
-                foreach (string file in Directory.EnumerateFiles(path))
-                {
-                    string name = Path.GetFileName(file);
-                    bool preserve = false;
-                    foreach (string prefix in keep)
-                    {
-                        if (name.StartsWith(prefix, StringComparison.Ordinal))
-                        {
-                            preserve = true;
-                            break;
-                        }
-                    }
-
-                    if (!preserve)
-                        TryDelete(file);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger?.LogWarning($"Snapshot scope delete failed for {scope}: {ex.Message}");
-            }
-        }
-
         /// <summary>Moves pre-fix state out of the version-scoped tree and under <see cref="StateScope"/>. Returns how many files were rescued.</summary>
         /// <remarks>
         /// <para>
@@ -209,6 +169,65 @@ namespace Flock.Providers
             if (moved > 0)
                 _logger?.LogWarning($"Rescued {moved} queued write file(s) into '{StateScope}' — they would " +
                                     "otherwise have been deleted by this build's game-version change.");
+            return moved;
+        }
+
+        /// <summary>Moves the files of one category whose keys start with one of <paramref name="keyPrefixes"/> out of every version's tree and under <see cref="StateScope"/>, keeping their names so each key reads the same there. Returns how many files were rescued.</summary>
+        /// <remarks>
+        /// For a category that holds cache and state side by side, as notifications did until 1.86.0: the cache stays to be
+        /// pruned, the state moves. Like <see cref="MigrateLegacyState"/> it has to run before the prune, and a file already at
+        /// the destination wins.
+        /// </remarks>
+        public int MigrateLegacyStateFiles(string category, params string[] keyPrefixes)
+        {
+            if (string.IsNullOrEmpty(category) || keyPrefixes == null || keyPrefixes.Length == 0 || !Directory.Exists(_root))
+                return 0;
+
+            List<string> prefixes = new List<string>();
+            foreach (string prefix in keyPrefixes)
+                if (!string.IsNullOrEmpty(prefix))
+                    prefixes.Add(Sanitize(prefix));
+
+            string sanitized = Sanitize(category);
+            string to = Path.Combine(_root, StateScope, sanitized);
+            int moved = 0;
+            try
+            {
+                foreach (string versionDir in Directory.EnumerateDirectories(_root))
+                {
+                    if (string.Equals(Path.GetFileName(versionDir), StateScope, StringComparison.Ordinal))
+                        continue;
+                    string legacy = Path.Combine(versionDir, sanitized);
+                    if (!Directory.Exists(legacy))
+                        continue;
+
+                    foreach (string file in Directory.EnumerateFiles(legacy))
+                    {
+                        string name = Path.GetFileName(file);
+                        if (!prefixes.Exists(prefix => name.StartsWith(prefix, StringComparison.Ordinal)))
+                            continue;
+                        try
+                        {
+                            string destination = Path.Combine(to, name);
+                            if (File.Exists(destination)) FlockSavedFiles.Delete(file);
+                            else
+                            {
+                                FlockSavedFiles.CreateFolder(to);
+                                FlockSavedFiles.Move(file, destination);
+                                moved++;
+                            }
+                        }
+                        catch { }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning($"Legacy state migration failed for {category}: {ex.Message}");
+            }
+
+            if (moved > 0)
+                _logger?.LogInfo($"Moved {moved} '{category}' state file(s) into '{StateScope}', where a game-version change keeps them.");
             return moved;
         }
 

@@ -17,8 +17,7 @@ namespace Flock.Tests.Editor
     // Behavioral coverage for account linking through the real FlockClient + FlockAuthProvider,
     // driven by a scripted fake transport. Asserts the outgoing request SHAPE (route segments and
     // exact snake_case body fields), the root — not enveloped — response contract, the bearer-only
-    // guards, the linked-account events, and how a linked email credential opens the password-reset
-    // gate. Hermetic — no backend.
+    // guards and the linked-account events. Hermetic — no backend.
     public class FlockAccountLinkingTests
     {
         private const string PrefAccessToken = "Flock.AccessToken";
@@ -430,100 +429,6 @@ namespace Flock.Tests.Editor
 
             FlockException ex = Assert.Throws<FlockNetworkException>(() => Run(() => client.Authentication.UnlinkAsync(FlockCredentialProvider.Google)));
             Assert.AreEqual(FlockErrorCode.PlayerAccountNotLinked, ex.ErrorCode);
-        }
-
-        // ---- Password-reset gate widening ----
-
-        [Test]
-        public void LinkEmail_UnblocksPasswordReset_OnDeviceSession()
-        {
-            ScriptedAdapter adapter = LinkAdapter(AccountsBody("device_id", "email"));
-            FlockClient client = SignedInClient(adapter);
-
-            // Device login alone leaves the email-only flow gated.
-            Assert.Throws<FlockAuthException>(() => Run(() => client.Authentication.ResetPasswordAsync("p@x.com", "123456", "new-pw")));
-
-            Run(() => client.Authentication.LinkEmailAsync("p@x.com", "pw"));
-
-            Assert.DoesNotThrow(() => Run(() => client.Authentication.ResetPasswordAsync("p@x.com", "123456", "new-pw")));
-        }
-
-        [Test]
-        public void GetLinkedAccounts_WithoutEmail_KeepsPasswordResetGated()
-        {
-            ScriptedAdapter adapter = LinkAdapter(AccountsBody("device_id", "google"));
-            FlockClient client = SignedInClient(adapter);
-
-            Run(() => client.Authentication.GetLinkedAccountsAsync());
-
-            Assert.Throws<FlockAuthException>(() => Run(() => client.Authentication.ResetPasswordAsync("p@x.com", "123456", "new-pw")));
-        }
-
-        [Test]
-        public void UnlinkEmail_ReclosesPasswordResetGate()
-        {
-            // The server hands back the post-unlink list, so the flag re-derives itself on every call.
-            int calls = 0;
-            ScriptedAdapter adapter = new ScriptedAdapter(request =>
-            {
-                if (request.Url.Contains(FlockEndpoints.PlayerLogin))
-                    return Ok(LoginBody("player-a", MakeJwt("player-a", 3600), "refresh-1"));
-                if (IsAccountRoute(request.Url))
-                {
-                    calls++;
-                    return Ok(calls == 1 ? AccountsBody("device_id", "email") : AccountsBody("device_id"));
-                }
-                return Ok("{}");
-            });
-            FlockClient client = SignedInClient(adapter);
-
-            Run(() => client.Authentication.LinkEmailAsync("p@x.com", "pw"));
-            Assert.DoesNotThrow(() => Run(() => client.Authentication.ResetPasswordAsync("p@x.com", "123456", "new-pw")));
-
-            Run(() => client.Authentication.UnlinkAsync(FlockCredentialProvider.Email));
-            Assert.Throws<FlockAuthException>(() => Run(() => client.Authentication.ResetPasswordAsync("p@x.com", "123456", "new-pw")));
-        }
-
-        [Test]
-        public void PlayerSwitchWithoutLogout_ClearsLinkedEmailGate()
-        {
-            // Signing in as someone else must not carry the previous player's linked-email answer over,
-            // even when the game never called Logout() in between.
-            ScriptedAdapter adapter = LinkAdapter(AccountsBody("device_id", "email"));
-            FlockClient client = SignedInClient(adapter);
-            Run(() => client.Authentication.LinkEmailAsync("p@x.com", "pw"));
-            Assert.DoesNotThrow(() => Run(() => client.Authentication.ResetPasswordAsync("p@x.com", "123456", "new-pw")));
-
-            Run(() => client.Authentication.LoginWithDeviceAsync("device-2"));
-
-            Assert.Throws<FlockAuthException>(() => Run(() => client.Authentication.ResetPasswordAsync("p@x.com", "123456", "new-pw")));
-        }
-
-        [Test]
-        public void SessionRestore_ClearsLinkedEmailGate()
-        {
-            ScriptedAdapter adapter = LinkAdapter(AccountsBody("device_id", "email"));
-            FlockClient client = SignedInClient(adapter);
-            Run(() => client.Authentication.LinkEmailAsync("p@x.com", "pw"));
-
-            // A restore re-establishes the session from disk, where the device method was persisted —
-            // the flag is not persisted alongside it, so it must not survive.
-            Assert.IsTrue(Run(() => client.Authentication.TryRestoreSessionAsync()));
-
-            Assert.Throws<FlockAuthException>(() => Run(() => client.Authentication.ResetPasswordAsync("p@x.com", "123456", "new-pw")));
-        }
-
-        [Test]
-        public void Logout_ClearsLinkedEmailGate()
-        {
-            ScriptedAdapter adapter = LinkAdapter(AccountsBody("device_id", "email"));
-            FlockClient client = SignedInClient(adapter);
-            Run(() => client.Authentication.LinkEmailAsync("p@x.com", "pw"));
-
-            client.Authentication.Logout();
-            Run(() => client.Authentication.LoginWithDeviceAsync("device-1"));
-
-            Assert.Throws<FlockAuthException>(() => Run(() => client.Authentication.ResetPasswordAsync("p@x.com", "123456", "new-pw")));
         }
     }
 }

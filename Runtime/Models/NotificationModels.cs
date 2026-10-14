@@ -259,7 +259,7 @@ namespace Flock.Models
         public bool Deactivated { get; set; }
     }
 
-    /// <summary>A scheduled notification this install created, remembered locally because the API has no route for a game to list its own pending schedules.</summary>
+    /// <summary>A scheduled notification this install created, remembered locally as the fallback for when the server's schedule list cannot be read.</summary>
     public class PendingSchedule
     {
         [JsonProperty("id")]

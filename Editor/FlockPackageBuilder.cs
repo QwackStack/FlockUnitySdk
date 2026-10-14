@@ -19,7 +19,6 @@ namespace Flock.Editor
         private string _outputPath = "Build";
         private bool _includeEditor = true;
         private bool _includeSamples = true;
-        private bool _includeDocs = true;
         private string _statusMessage = "";
         private MessageType _statusType = MessageType.None;
         private double _statusTimer;
@@ -160,7 +159,6 @@ namespace Flock.Editor
 
             _includeEditor = EditorGUILayout.Toggle("Editor", _includeEditor);
             _includeSamples = EditorGUILayout.Toggle("Samples", _includeSamples);
-            _includeDocs = EditorGUILayout.Toggle("Documentation", _includeDocs);
 
             EditorGUILayout.EndVertical();
 
@@ -321,12 +319,20 @@ namespace Flock.Editor
                 return;
             }
 
+            // The staged package carries package.json, so the version goes in first; a build that fails puts it back.
+            string packageJsonPath = Path.Combine(sourceRoot, "package.json");
+            string packageJsonBefore = File.Exists(packageJsonPath) ? File.ReadAllText(packageJsonPath) : null;
             SaveVersionToPackageJson(sourceRoot.Replace('\\', '/').TrimEnd('/'));
 
-            string built = Build(new PackageContents(_version, _outputPath, _includeEditor, _includeSamples, _includeDocs, _providerSelection),
+            string built = Build(new PackageContents(_version, _outputPath, _includeEditor, _includeSamples, _providerSelection),
                 out string problem);
             if (built == null)
             {
+                if (packageJsonBefore != null)
+                {
+                    File.WriteAllText(packageJsonPath, packageJsonBefore);
+                    AssetDatabase.Refresh();
+                }
                 ShowStatus(problem, MessageType.Error);
                 return;
             }
@@ -341,24 +347,22 @@ namespace Flock.Editor
             public string OutputFolder { get; }
             public bool IncludeEditor { get; }
             public bool IncludeSamples { get; }
-            public bool IncludeDocs { get; }
             public IReadOnlyDictionary<string, bool> SelectedProviders { get; }
 
-            public PackageContents(string version, string outputFolder, bool includeEditor, bool includeSamples, bool includeDocs,
+            public PackageContents(string version, string outputFolder, bool includeEditor, bool includeSamples,
                 IDictionary<string, bool> selectedProviders)
             {
                 Version = version;
                 OutputFolder = outputFolder;
                 IncludeEditor = includeEditor;
                 IncludeSamples = includeSamples;
-                IncludeDocs = includeDocs;
                 SelectedProviders = new Dictionary<string, bool>(selectedProviders);
             }
         }
 
         /// <summary>What a release carries: every provider, the editor, the samples and the docs, at this version.</summary>
         internal static PackageContents ReleaseContents(string version, string outputFolder)
-            => new PackageContents(version, outputFolder, true, true, true,
+            => new PackageContents(version, outputFolder, true, true,
                 FlockProviderManifest.Providers.ToDictionary(entry => entry.Id, entry => true));
 
         /// <summary>For batch mode: -executeMethod Flock.Editor.FlockPackageBuilder.BuildReleaseFromCommandLine -releaseOut &lt;folder&gt;; exits 0 only when both release packages were built.</summary>
@@ -484,7 +488,6 @@ namespace Flock.Editor
                     if (relative.StartsWith("Editor/") && contents.IncludeEditor) return true;
                     if (relative.StartsWith("Samples~/") && contents.IncludeSamples) return true;
                     if (relative.StartsWith("Samples/") && contents.IncludeSamples) return true;
-                    if (relative.StartsWith("Documentation~/") && contents.IncludeDocs) return true;
                     if (relative == "package.json") return true;
                     if (relative == "package.json.meta") return true;
                     if (relative == "CHANGELOG.md") return true;
@@ -758,7 +761,8 @@ namespace Flock.Editor
         {
             _statusMessage = message;
             _statusType = type;
-            _statusTimer = EditorApplication.timeSinceStartup + 5;
+            // An error stays until the next action; anything else fades after 5 seconds.
+            _statusTimer = type == MessageType.Error ? double.MaxValue : EditorApplication.timeSinceStartup + 5;
             Repaint();
         }
     }

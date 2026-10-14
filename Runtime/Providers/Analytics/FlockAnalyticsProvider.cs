@@ -50,7 +50,9 @@ namespace Flock.Providers
         {
             _config = client.InitConfig.AnalyticsConfig;
             _launches = client.AnalyticsLaunches;
-            _eventCache = TryCreateCache<AnalyticsEventRequest>(client, FlockAnalyticsLaunches.AnalyticsEventsQueueName, _config.CacheFailedEvents);
+            // One player's events a batch: the server refuses a whole batch for one entry whose player it does not know.
+            _eventCache = TryCreateCache<AnalyticsEventRequest>(client, FlockAnalyticsLaunches.AnalyticsEventsQueueName, _config.CacheFailedEvents,
+                request => request.PlayerId);
             _logEventCache = TryCreateCache<LogEventRequest>(client, FlockAnalyticsLaunches.LogEventsQueueName, _config.CacheFailedEvents);
             _sessionEndCache = TryCreateCache<FlockSessionSnapshot>(client, FlockAnalyticsLaunches.SessionEndsQueueName, _config.PersistSessionOnDisk);
 
@@ -61,7 +63,7 @@ namespace Flock.Providers
 
             // Enabled is resolved once here so the tracker itself stays platform-agnostic and testable:
             // needs disk persistence, and Editor/WebGL are excluded (Stop isn't a death; WebGL has no reliable lifecycle).
-            bool terminationTrackingEnabled = _config.PersistSessionOnDisk
+            bool terminationTrackingEnabled = _config.PersistSessionOnDisk && _launches.IsHoldingItsFolder
                 && (!Application.isEditor || TrackTerminationInTheEditorForTesting)
                 && Application.platform != RuntimePlatform.WebGLPlayer;
             _terminationTracker = new FlockTerminationTracker(client.Logger, terminationTrackingEnabled, _launches.TerminationMarkerPath,
@@ -87,9 +89,10 @@ namespace Flock.Providers
             }
         }
 
-        private IEventCache<T> TryCreateCache<T>(FlockClient client, string subfolder, bool enabled) where T : class
+        private IEventCache<T> TryCreateCache<T>(FlockClient client, string subfolder, bool enabled, Func<T, string> sendTogetherKey = null) where T : class
         {
-            if (!enabled)
+            // A launch that holds no folder keeps nothing on disk: no later launch could take a lockless folder over.
+            if (!enabled || !_launches.IsHoldingItsFolder)
                 return null;
 
             try
@@ -97,7 +100,7 @@ namespace Flock.Providers
                 return new FlockEventCache<T>(
                     _launches.Folder,
                     subfolder,
-                    _config.MaxCachedEvents, _config.CacheFlushBatchSize, client.Logger);
+                    _config.MaxCachedEvents, _config.CacheFlushBatchSize, client.Logger, sendTogetherKey);
             }
             catch (Exception ex)
             {
@@ -428,6 +431,7 @@ namespace Flock.Providers
                 if (_session.IsActive && _session.SessionId == localSessionId)
                 {
                     _session.SetServerSessionId(serverSessionId);
+                    _terminationTracker.NoteSessionRegistered(serverSessionId);
                     Client.Logger.LogInfo($"Session registered with server: {serverSessionId}");
                     return serverSessionId;
                 }
@@ -693,7 +697,8 @@ namespace Flock.Providers
                 Data = new LogEventDataSchema
                 {
                     Type = type,
-                    GameVersion = Client.InitConfig.GameVersion,
+                    // The ID, as the request's X-Game-Version-ID header: the server stores the header's and falls back to this.
+                    GameVersion = Client.InitConfig.GameVersionId,
                     LogicalExpression = logicalExpression,
                     ErrorMessage = errorMessage,
                     ErrorCode = errorCode,
@@ -714,26 +719,60 @@ namespace Flock.Providers
             return new List<string>(lines);
         }
 
-        // Enqueue only — delivery happens on the flush triggers (interval/pause/end/login).
+        // Queued, and delivered on the flush triggers (interval/pause/end/login). With no queue (CacheFailedEvents off, or a
+        // launch holding no folder) or one that could not keep it, it is sent at once, and a failure loses it. Never throws.
         private void EnqueueLog(LogEventRequest request)
         {
             if (!ConsentGiven())
                 return;
 
-            EnsureSerializable(request, "log_event");
-            _logEventCache?.Enqueue(request);
-            Client.Logger.LogDebug("Log event queued");
+            if (!TryKeepWritable(request))
+                return;
+            if (_logEventCache?.Enqueue(request) != null)
+            {
+                Client.Logger.LogDebug("Log event queued");
+                return;
+            }
+            SendLogEventAtOnce(request);
         }
 
-        // Kept as an escape hatch for ad-hoc, critical sends that must bypass the buffer.
-        // Public APIs go through the cache; the buffered flush uses the batch endpoint.
-        private Task SendLogEventAsync(LogEventRequest request, CancellationToken cancellationToken)
+        // A diagnostics call never throws into the game: data JSON cannot hold is left out, and the entry still goes.
+        private bool TryKeepWritable(LogEventRequest request)
         {
-            return ExecuteWithoutResultAsync(
-                () => FlockHttpClient.PostAsync(
-                    $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.LogEventSingle}",
-                    request, Client.GetBaseHeaders(), cancellationToken),
-                "Log event (single)", cancellationToken);
+            try
+            {
+                EnsureSerializable(request, "log_event");
+                return true;
+            }
+            catch (FlockValidationException ex)
+            {
+                Client.Logger.LogWarning($"Log event '{request.Message}': its extra and error data were left out, since {ex.Message}");
+                request.Data.ExtraData = null;
+                request.Data.ErrorData = null;
+            }
+            try
+            {
+                EnsureSerializable(request, "log_event");
+                return true;
+            }
+            catch (FlockValidationException ex)
+            {
+                Client.Logger.LogWarning($"Log event dropped: {ex.Message}");
+                return false;
+            }
+        }
+
+        private async void SendLogEventAtOnce(LogEventRequest request)
+        {
+            try
+            {
+                await SendLogEventsAsync(new List<LogEventRequest> { request }, CancellationToken.None).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
+                Client.Logger.LogDebug("Log event sent (nothing queues it)");
+            }
+            catch (Exception ex)
+            {
+                Client.Logger.LogWarning($"Log event '{request.Message}' could not be sent, and nothing queues it: {ex.Message}");
+            }
         }
 
         private Task SendLogEventsAsync(IReadOnlyList<LogEventRequest> requests, CancellationToken cancellationToken)
@@ -761,18 +800,6 @@ namespace Flock.Providers
             {
                 throw new FlockValidationException($"'{label}' has non-serializable parameters: {ex.Message}", ex);
             }
-        }
-        // Kept as an escape hatch for ad-hoc, critical sends that must bypass the buffer.
-        // Public APIs go through the cache; the buffered flush uses the batch endpoint.
-        private Task SendEventAsync(
-            AnalyticsEventRequest eve,
-            CancellationToken cancellationToken)
-        {
-            return ExecuteWithoutResultAsync(
-                () => FlockHttpClient.PostAsync(
-                    $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.AnalyticsEventsSingle}",
-                    eve, Client.GetBaseHeaders(), cancellationToken),
-                "Track single event", cancellationToken);
         }
         private Task SendEventsAsync(
             IReadOnlyList<AnalyticsEventRequest> events,
@@ -921,15 +948,87 @@ namespace Flock.Providers
                 () => FlockHttpClient.PostAsync(
                     $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.AnalyticsTransactions}",
                     request, Client.GetBaseHeaders(), cancellationToken),
-                "Record transaction", cancellationToken);
+                // Sent like a purchase: a transaction the server may already hold is never sent again (only 408 and 429 are),
+                // or its revenue would count twice.
+                "Record transaction", cancellationToken, idempotent: false);
 
             Client.Logger.LogDebug($"Transaction recorded: {request.Amount} {request.CurrencyCode}");
         }
 
+        /// <summary>The longest the periodic flush waits, however long the server has been failing.</summary>
+        internal const double MaxFlushWaitSeconds = 900.0;
+
+        // The periodic flush waits longer each time it meets a failure the server answered, doubling up to MaxFlushWaitSeconds,
+        // so an outage is not met with a request every interval from every player; a delivery, or an empty queue, brings it back.
+        private readonly object _flushWaitLock = new object();
+        private double _flushWaitSeconds;
+        private double _nextIntervalFlushAt;
+
+        internal double FlushWaitSecondsForTesting
+        {
+            get { lock (_flushWaitLock) return _flushWaitSeconds; }
+        }
+
         private void HandleFlushInterval()
         {
-            FlushCacheInBackground();
+            double now = Time.realtimeSinceStartupAsDouble;
+            lock (_flushWaitLock)
+            {
+                if (now < _nextIntervalFlushAt)
+                    return;
+            }
+            FlushOnTheIntervalInBackground(now);
         }
+
+        private async void FlushOnTheIntervalInBackground(double startedAt)
+        {
+            try
+            {
+                await FlushOnTheIntervalAsync(startedAt).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
+            }
+            catch (Exception ex)
+            {
+                Client.Logger.LogWarning($"Background flush failed: {ex.Message}");
+            }
+        }
+
+        internal int PendingAnalyticsEventCountForTesting => _eventCache?.PendingCount ?? 0;
+
+        /// <summary>The periodic flush, then the wait before the next one, from what it met.</summary>
+        internal async Task FlushOnTheIntervalAsync(double startedAt)
+        {
+            try
+            {
+                CancellationToken token = _session?.SessionToken ?? CancellationToken.None;
+                await FlushAllAsync(token, false).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            UpdateFlushWait(startedAt);
+        }
+
+        private void UpdateFlushWait(double startedAt)
+        {
+            bool answered = Ended(_sessionEndCache, FlockDrainEnding.StoppedAnswered) || Ended(_eventCache, FlockDrainEnding.StoppedAnswered)
+                || Ended(_logEventCache, FlockDrainEnding.StoppedAnswered);
+            bool unanswered = Ended(_sessionEndCache, FlockDrainEnding.StoppedUnanswered) || Ended(_eventCache, FlockDrainEnding.StoppedUnanswered)
+                || Ended(_logEventCache, FlockDrainEnding.StoppedUnanswered);
+            bool stillQueued = (_sessionEndCache?.PendingCount ?? 0) + (_eventCache?.PendingCount ?? 0) + (_logEventCache?.PendingCount ?? 0) > 0;
+            double interval = _config.EventBufferFlushIntervalSeconds;
+            lock (_flushWaitLock)
+            {
+                if (!stillQueued || (!answered && !unanswered))
+                    _flushWaitSeconds = 0.0;
+                // An unanswered failure spent nothing on the server, so there is nothing to stretch the wait for.
+                else if (answered)
+                    _flushWaitSeconds = Math.Min(Math.Max(_flushWaitSeconds, interval) * 2.0, Math.Max(MaxFlushWaitSeconds, interval));
+                _nextIntervalFlushAt = startedAt + _flushWaitSeconds;
+            }
+        }
+
+        private static bool Ended<T>(IEventCache<T> cache, FlockDrainEnding ending) where T : class
+            => cache != null && cache.PendingCount > 0 && cache.LastDrainEnding == ending;
 
         private void HandleSessionPaused()
         {
@@ -1043,9 +1142,8 @@ namespace Flock.Providers
             if (marker == null)
                 return true;
 
-            // No queue means the report could never be delivered; no consent means the data
-            // must be discarded. Either way, drop the marker instead of retrying.
-            if (_logEventCache == null || !_hasConsent)
+            // No consent means the data must be discarded: drop the marker instead of retrying.
+            if (!_hasConsent)
             {
                 FlockTerminationTracker.DeleteMarker(markerPath, Client.Logger);
                 return true;
@@ -1056,15 +1154,26 @@ namespace Flock.Providers
             {
                 { "classification", classification },
                 { "last_alive_at", marker.LastAliveUtc.ToString("o") },
-                { "unhandled_exception_count", marker.ExceptionCount },
-                { "app_version", Application.version },
-                { "sdk_version", FlockSdkVersion.Current }
+                { "unhandled_exception_count", marker.ExceptionCount }
             };
-            // Left out for a launch that ended with no session running: before sign-in, or after one ended.
-            if (!string.IsNullOrEmpty(marker.SessionId))
-                details["previous_session_id"] = marker.SessionId;
+            // The ended launch's own versions, which a marker from before 1.86.0 does not hold.
+            if (!string.IsNullOrEmpty(marker.AppVersion))
+                details["app_version"] = marker.AppVersion;
+            if (!string.IsNullOrEmpty(marker.SdkVersion))
+                details["sdk_version"] = marker.SdkVersion;
+            // The server's id when the session registered, else the local one; left out when no session was running.
+            string previousSessionId = string.IsNullOrEmpty(marker.ServerSessionId) ? marker.SessionId : marker.ServerSessionId;
+            if (!string.IsNullOrEmpty(previousSessionId))
+                details["previous_session_id"] = previousSessionId;
             LogEventRequest report = BuildLogEvent(LogEventType.Debug, FlockTerminationTracker.EventName, extraData: details);
 
+            // With no queue it is sent at once, as every log event is then, and the marker goes after it was handed over.
+            if (_logEventCache == null)
+            {
+                SendLogEventAtOnce(report);
+                FlockTerminationTracker.DeleteMarker(markerPath, Client.Logger);
+                return true;
+            }
             string handle = _logEventCache.Enqueue(report);
             if (handle != null)
             {

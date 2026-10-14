@@ -131,8 +131,8 @@ namespace Flock.Editor.Codegen
                 sb.AppendLine("    {");
                 foreach (ShopItemEntry entry in items)
                 {
-                    string priceLabel = entry.Price > 0 ? $"{entry.Price} {entry.Currency}" : "free";
-                    sb.AppendLine($"        /// <summary>{priceLabel} — {entry.ShopName}</summary>");
+                    // No price: prices change on the dashboard without a sync, and the drift hash leaves them out.
+                    sb.AppendLine($"        /// <summary>Sold in {entry.ShopName}.</summary>");
                     sb.AppendLine($"        {entry.Member},");
                 }
                 sb.AppendLine("    }");

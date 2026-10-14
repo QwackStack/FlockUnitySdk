@@ -110,14 +110,14 @@ namespace Flock.Analytics
         private FlockLaunchFolder _thisLaunch;
         private List<FlockEndedLaunch> _endedLaunches = new List<FlockEndedLaunch>();
 
-        /// <summary>This launch's folder. The event queues are its subfolders.</summary>
+        /// <summary>This launch's folder, null when it holds none. The event queues are its subfolders.</summary>
         internal string Folder { get; private set; }
 
-        /// <summary>False when this launch's lock could not be taken; nothing was taken over then.</summary>
+        /// <summary>False when this launch's lock could not be taken; nothing was taken over then, and nothing is kept on disk.</summary>
         internal bool IsHoldingItsFolder => _thisLaunch != null;
 
-        internal string SessionStatePath => Path.Combine(Folder, SessionStateFileName);
-        internal string TerminationMarkerPath => Path.Combine(Folder, TerminationMarkerFileName);
+        internal string SessionStatePath => Folder == null ? null : Path.Combine(Folder, SessionStateFileName);
+        internal string TerminationMarkerPath => Folder == null ? null : Path.Combine(Folder, TerminationMarkerFileName);
 
         private FlockAnalyticsLaunches(string analyticsFolder)
         {
@@ -136,8 +136,8 @@ namespace Flock.Analytics
             launches._thisLaunch = FlockLaunchFolder.Create(launchesFolder);
             if (launches._thisLaunch == null)
             {
-                // A launch that cannot show it is running takes over nothing, so it cannot take a running launch's files either.
-                launches.Folder = Path.Combine(launchesFolder, "unheld-" + Guid.NewGuid().ToString("N"));
+                // A launch that cannot show it is running takes over nothing, so it cannot take a running launch's files either. It
+                // keeps none of its own: a folder with no lock is one no later launch would ever take over or delete.
                 return launches;
             }
             launches.Folder = launches._thisLaunch.Path;

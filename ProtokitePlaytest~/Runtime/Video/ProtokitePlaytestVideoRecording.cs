@@ -263,8 +263,8 @@ namespace Protokite.Playtest
                 case ProtokitePlaytestFrameDecision.Capture:
                     if (_source.IsReadyForAnotherFrame)
                     {
-                        _source.CaptureFrame(timestampMs);
-                        _framesAskedFor++;
+                        if (_source.CaptureFrame(timestampMs))
+                            _framesAskedFor++;
                     }
                     else
                         _framesNotReadyInTime++;
@@ -396,7 +396,8 @@ namespace Protokite.Playtest
 
         private void EncodeFrame(ProtokitePlaytestCapturedFrame frame, List<ProtokitePlaytestEncodedFrame> encoded)
         {
-            if (_couldNotWrite)
+            // Past the size limit no frame is written, so none is worth encoding.
+            if (_couldNotWrite || _sizeLimitReached)
                 return;
             _beforeEachEncodeForTesting?.Invoke();
             // A disk that has stopped for a while leaves frames waiting; past the limit they are dropped before encoding, never

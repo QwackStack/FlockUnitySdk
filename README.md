@@ -55,7 +55,7 @@ The SDK is distributed through the Flock website — download the latest release
 
 ## Requirements
 
-- **Unity 2020.3 or newer.**
+- **Unity 2021.3 or newer.**
 - **Newtonsoft Json for Unity** (`com.unity.nuget.newtonsoft-json`, 3.0.2+) — the SDK depends on it for serialization. Installing through the Package Manager git URL resolves this automatically; if you import the `.unitypackage` instead, add it first via **Window > Package Manager > + → Add package by name** using `com.unity.nuget.newtonsoft-json`.
 - **Netcode for GameObjects 1.x or 2.x** (`com.unity.netcode.gameobjects`) — only to connect players in multiplayer. The SDK's netcode support compiles only when it is installed; parties, matchmaking and sessions work without it.
 

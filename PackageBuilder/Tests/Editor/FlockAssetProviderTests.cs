@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Flock.Models;
 using Flock.Providers;
+using Flock.Tests.Support;
 using NUnit.Framework;
 
 namespace Flock.Tests.Editor
@@ -78,7 +79,7 @@ namespace Flock.Tests.Editor
                 return result;
             foreach (AssetSchema asset in assets)
             {
-                if (asset != null && !cache.TryGetCachedFileUrl(asset.Id, asset.UpdatedAt, out _))
+                if (asset != null && !cache.Contains(asset.Id, asset.UpdatedAt))
                     result.Add(asset);
             }
             return result;
@@ -139,6 +140,82 @@ namespace Flock.Tests.Editor
 
             Assert.IsFalse(_cache.TryGetCachedFileUrl("asset-abc", v1, out _));
             Assert.IsTrue(_cache.TryGetCachedFileUrl("asset-abc", v2, out _));
+        }
+
+        // ---- Asking whether an asset is cached does not count as a use ----
+        // A preload screen asks about every asset; if asking stamped them, the least recently used would no longer go first.
+        [Test]
+        public void IsCached_DoesNotChangeWhatIsEvictedNext()
+        {
+            DateTime v = new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+            using (FlockTestClient h = FlockTestClient.Create(new FlockFakeTransport(), config =>
+            {
+                config.AssetCacheDirectory = _tempDir;
+                config.AssetCacheMaxSizeMB = 1;
+            }))
+            {
+                // Another holder of the same folder fills it, the way an earlier download would have.
+                FlockAssetCache cache = new FlockAssetCache(_tempDir, 1);
+                Assert.IsTrue(cache.Write("old", v, new byte[400 * 1024]));
+                Assert.IsTrue(cache.Write("newer", v, new byte[400 * 1024]));
+                foreach (System.IO.FileInfo file in new System.IO.DirectoryInfo(_tempDir).GetFiles("*.cache"))
+                    file.LastWriteTimeUtc = file.Name.StartsWith("old") ? DateTime.UtcNow.AddHours(-2) : DateTime.UtcNow.AddHours(-1);
+
+                Assert.IsTrue(h.Client.Asset.IsCached("old", v), "Precondition: it is there.");
+                Assert.IsTrue(cache.Write("third", v, new byte[400 * 1024]));
+
+                Assert.IsFalse(cache.Contains("old", v), "The least recently used went first, though it was asked about.");
+                Assert.IsTrue(cache.Contains("newer", v));
+                Assert.IsTrue(cache.Contains("third", v));
+            }
+        }
+
+        // ---- A read, unlike a question, does count as a use ----
+        [Test]
+        public void TryGetCachedFileUrl_CountsAsAUse()
+        {
+            FlockAssetCache cache = new FlockAssetCache(_tempDir, 1);
+            DateTime v = new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+            cache.Write("old", v, new byte[400 * 1024]);
+            cache.Write("newer", v, new byte[400 * 1024]);
+            foreach (System.IO.FileInfo file in new System.IO.DirectoryInfo(_tempDir).GetFiles("*.cache"))
+                file.LastWriteTimeUtc = file.Name.StartsWith("old") ? DateTime.UtcNow.AddHours(-2) : DateTime.UtcNow.AddHours(-1);
+
+            Assert.IsTrue(cache.TryGetCachedFileUrl("old", v, out _));
+            cache.Write("third", v, new byte[400 * 1024]);
+
+            Assert.IsTrue(cache.Contains("old", v), "Read just now, so kept.");
+            Assert.IsFalse(cache.Contains("newer", v), "The least recently used went instead.");
+        }
+
+        // ---- A file larger than the whole budget is not kept, and nothing is evicted for it ----
+        [Test]
+        public void Write_LargerThanTheBudget_IsNotKept()
+        {
+            FlockAssetCache cache = new FlockAssetCache(_tempDir, 1);
+            DateTime v = new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+            Assert.IsTrue(cache.Write("small", v, new byte[] { 1 }));
+
+            Assert.IsFalse(cache.Write("big", v, new byte[2 * 1024 * 1024]), "Not kept.");
+            Assert.IsFalse(cache.Contains("big", v));
+            Assert.IsTrue(cache.Contains("small", v), "Nothing else was evicted for it.");
+        }
+
+        // ---- Making room never evicts the file just kept, whatever the other files' times say ----
+        [Test]
+        public void Write_MakingRoomNeverEvictsTheFileJustKept()
+        {
+            FlockAssetCache cache = new FlockAssetCache(_tempDir, 1);
+            DateTime v = new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+            Assert.IsTrue(cache.Write("other", v, new byte[600 * 1024]));
+            // The other file reads as used later than the next one: a clock moved back.
+            foreach (System.IO.FileInfo file in new System.IO.DirectoryInfo(_tempDir).GetFiles("*.cache"))
+                file.LastWriteTimeUtc = DateTime.UtcNow.AddHours(1);
+
+            Assert.IsTrue(cache.Write("taken", v, new byte[600 * 1024]));
+
+            Assert.IsTrue(cache.Contains("taken", v), "The file just kept is still there to read.");
+            Assert.IsFalse(cache.Contains("other", v), "The other made room for it.");
         }
     }
 }

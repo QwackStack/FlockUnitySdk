@@ -5,7 +5,7 @@ using UnityEngine;
 
 namespace Flock.Editor.Codegen
 {
-    /// <summary>Emits the generated <c>SchemasManifest</c> — GameVersionId plus a content hash that the build guard and CI Verify compare against to detect drift.</summary>
+    /// <summary>Emits the generated <c>SchemasManifest</c>: the GameVersionId the build guard compares with the baked one, and the content hash CI Verify compares to detect drift.</summary>
     internal static class ManifestEmitter
     {
         internal const string FileName = "SchemasManifest.g.cs";

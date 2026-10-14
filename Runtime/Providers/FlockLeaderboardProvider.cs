@@ -14,7 +14,7 @@ namespace Flock.Providers
     {
         private const string SnapshotCategory = "leaderboard";
 
-        // Name → board memo: every read resolves a name to an ID first, and that shouldn't cost a round trip each time.
+        // Name → board memo for GetByNameAsync and the id lookup; the reads themselves go by name, one request each.
         private readonly Dictionary<string, Leaderboard> _boardsByName = new Dictionary<string, Leaderboard>();
 
         public FlockLeaderboardProvider(FlockClient client) : base(client) { }
