@@ -6,6 +6,61 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.87.0]
+
+Follow-ups to the 1.86.0 review. Two API changes, both in `Analytics`.
+
+### Changed
+
+- **`FlushAsync` returns a `FlockFlushResult`** instead of nothing: `Sent` counts the queued entries the server took,
+  `Refused` the entries dropped because the server refused them for good, `FirstRefusal` says why the first went, and
+  `NothingLost` is the one answer most callers want. An `await FlushAsync()` that ignores the result still compiles; a type
+  implementing `IAnalyticProvider` has to return it.
+- **`GetExceptionCaptureCoverage()`** on `Analytics` says what the exception capture hears right now (`Enabled`,
+  `LoggedExceptions`, `UnhandledExceptions`, `UnobservedTaskExceptions`, `IsComplete`): everything false with analytics off,
+  Capture Exceptions off in Flock > Settings, or before the SDK runs. A tool that provokes an exception to see it reported
+  reads it first.
+- **CI** runs the suites in two legs, each as a studio would have them: Unity 6000.3.16f1 with Netcode for GameObjects
+  2.13.3 and Unity Transport 2.7.3, and Unity 2021.3.45f2 with 1.14.1 and 1.5.0, with the Protokite Playtest package
+  installed in both, so the netcode PlayMode tests and the playtest's tests compile and run; each leg checks that every test
+  assembly ran, and that the netcode tests did.
+
+### Fixed
+
+- **The periodic flush's wait** no longer doubles for a queue the pass did not drain: with nobody signed in, the gameplay
+  events queue kept the ending of an older drain, and every interval read it as the server failing again, up to the
+  15-minute wait. And a 401 no longer counts as the server struggling: it is about the sign-in.
+- **Diagnostic entries sent past a queue that cannot keep them** (a disk refusing every write) are bounded at 100 a launch;
+  past that they are dropped with one warning, so a failing disk never turns every entry into a metered request.
+- **A saved sign-in file that cannot be read** is said out loud (a warning naming the file) rather than read silently as "no
+  saved sign-in".
+- **Batches of one player's events** no longer parse a queued file they skip on every batch that skips it: a file read once keeps
+  its player's key for the drain. Seen with three or more players' events queued at once (a file of the third player was parsed
+  by the first player's batch and again by the second's).
+- **The Package Builder** puts `package.json` back byte for byte after a failed build (its byte order mark included).
+- **Player features** are documented as kept in memory per player for the run (`Docs~/game-config.md` and the provider),
+  which is what the code has done since they were added; nothing changed in behaviour.
+- **A `FindMatchAsync` still searching when the game quits** now ends as cancelled. The search was cancelled on the server,
+  but the task the game awaited never finished, so code after the `await` never ran.
+- **A party member's `FindMatchAsync` waiting for the leader** now ends (`FlockValidationException`) when the party ends first,
+  or when the player comes to lead it. It waited for good, checked every 3 seconds, and refused every later search.
+- **A search being made when the player signs out or another signs in** no longer refuses the next player's `FindMatchAsync`
+  until its first request answers.
+- **A queue deleted and made again under the same name** is found by its new id: the queue list kept for the launch is read
+  again when the server no longer knows an id from it. Before, every search of that name was refused until a relaunch.
+- **A party call no longer waits out retries of the player's search reading**: the reading a create, join or `GetMyPartyAsync`
+  makes is sent once (its callers repeat it), so a failing matchmaking route no longer delays every party call.
+- **A matched answer that carries no match** is logged as such, not blamed on the dashboard's "make a session on a match"
+  setting.
+- **A shop item priced in real money** sent through `PurchaseAsync` now fails with its own code,
+  `FlockErrorCode.ShopRealCurrencyNeedsCheckout`, and a hint, instead of `Unknown`: the server refuses it because the call only
+  spends game currencies from the wallet. The shop guide no longer says such a purchase can come back `pending`; it never
+  could through this call.
+- **The docs' purchase examples** (README, `Docs~/errors.md`) called `PurchaseAsync(shopId, itemId)`, which sends the item id as
+  the player id; they now pass the shop item id alone. `Docs~/codegen.md` shows the typed purchase returning `PurchaseResult`.
+- **Purchase and consume made offline** are tested: each is sent at most once, throws, and is not sent when the network
+  comes back.
+
 ## [1.86.0]
 
 Fixes found while writing the SDK guide, across the core, the editor and the Protokite Playtest package. The minimum

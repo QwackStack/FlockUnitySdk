@@ -100,8 +100,16 @@ way.
 await FlockClient.Instance.Analytics.StartSessionAsync();
 await FlockClient.Instance.Analytics.EndSessionAsync();
 
-// Optional: awaitable drain of everything queued (waits for a flush already sending, then sends what is left)
-await FlockClient.Instance.Analytics.FlushAsync();
+// Optional: awaitable drain of everything queued (waits for a flush already sending, then sends what is left).
+// The result counts what this call sent and what the server refused for good (those entries are dropped);
+// entries a transient failure left queued are in neither count.
+FlockFlushResult flushed = await FlockClient.Instance.Analytics.FlushAsync();
+if (!flushed.NothingLost)
+    Debug.LogWarning($"{flushed.Refused} analytics entries were refused: {flushed.FirstRefusal}");
+
+// What the exception capture hears right now (nothing with analytics or Capture Exceptions off): a tool that
+// provokes an exception to see it reported reads this first.
+FlockExceptionCaptureCoverage capture = FlockClient.Instance.Analytics.GetExceptionCaptureCoverage();
 
 // Transactions: immediate send, requires a signed-in player
 await FlockClient.Instance.Analytics.RecordTransactionAsync(new AnalyticsTransactionRequest {

@@ -49,7 +49,7 @@ A client-side throw (`"deviceId cannot be null or empty"`) has no status, code o
 ```csharp
 try
 {
-    await FlockClient.Instance.Shop.PurchaseAsync(shopId, itemId);
+    await FlockClient.Instance.Shop.PurchaseAsync(shopItemId);
 }
 catch (FlockException ex) when (ex.ErrorCode == FlockErrorCode.ShopInsufficientFunds)
 {
@@ -187,6 +187,7 @@ catch (FlockException ex) when (ex.IsAlreadyRegistered())
 | `ShopMalformedReward` | `shop.malformed_reward` |
 | `ShopPackGrantsNothing` | `shop.pack_grants_nothing` |
 | `ShopPlayerNotFound` | `shop.player_not_found` |
+| `ShopRealCurrencyNeedsCheckout` | `shop.real_currency_needs_checkout` |
 | `ShopRewardCurrencyNotHeld` | `shop.reward_currency_not_held` |
 | `ShopShopNotFound` | `shop.shop_not_found` |
 | `ShopWalletNotFound` | `shop.wallet_not_found` |

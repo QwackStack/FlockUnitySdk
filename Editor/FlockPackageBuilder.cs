@@ -319,20 +319,18 @@ namespace Flock.Editor
                 return;
             }
 
-            // The staged package carries package.json, so the version goes in first; a build that fails puts it back.
+            // The staged package carries package.json, so the version goes in first; a build that fails puts it back, byte for
+            // byte, so the file comes back exactly as it was (its byte order mark and line endings included).
             string packageJsonPath = Path.Combine(sourceRoot, "package.json");
-            string packageJsonBefore = File.Exists(packageJsonPath) ? File.ReadAllText(packageJsonPath) : null;
+            byte[] packageJsonBefore = KeepFileBytes(packageJsonPath);
             SaveVersionToPackageJson(sourceRoot.Replace('\\', '/').TrimEnd('/'));
 
             string built = Build(new PackageContents(_version, _outputPath, _includeEditor, _includeSamples, _providerSelection),
                 out string problem);
             if (built == null)
             {
-                if (packageJsonBefore != null)
-                {
-                    File.WriteAllText(packageJsonPath, packageJsonBefore);
+                if (PutFileBytesBack(packageJsonPath, packageJsonBefore))
                     AssetDatabase.Refresh();
-                }
                 ShowStatus(problem, MessageType.Error);
                 return;
             }
@@ -736,6 +734,18 @@ namespace Flock.Editor
                 Debug.LogWarning($"Failed to read package.json version: {ex.Message}");
                 return null;
             }
+        }
+
+        /// <summary>The file's bytes as they are, or null when it is not there: what a build that fails puts back.</summary>
+        internal static byte[] KeepFileBytes(string path) => File.Exists(path) ? File.ReadAllBytes(path) : null;
+
+        /// <summary>Puts a kept file back byte for byte (its byte order mark and line endings with it); false when nothing was kept.</summary>
+        internal static bool PutFileBytesBack(string path, byte[] kept)
+        {
+            if (kept == null)
+                return false;
+            File.WriteAllBytes(path, kept);
+            return true;
         }
 
         private void SaveVersionToPackageJson(string sourceRoot)

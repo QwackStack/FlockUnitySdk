@@ -6,6 +6,7 @@ using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Flock.Analytics;
+using Flock.Exceptions;
 using Flock.Http;
 using Flock.Logging;
 using Flock.Models;
@@ -534,6 +535,127 @@ namespace Flock.Tests.Editor
             transport.On(FlockEndpoints.AnalyticsEvents, FlockFakeTransport.Ok("{}"));
             _h.Run(() => analytics.FlushOnTheIntervalAsync(0));
             Assert.AreEqual(0.0, analytics.FlushWaitSecondsForTesting, 0.001, "A delivery brings it back");
+        }
+
+        [Test]
+        public void ThePeriodicFlushWaitDoesNotGrowForAQueueThePassDidNotDrain()
+        {
+            FlockFakeTransport transport = Start(config => config.AnalyticsConfig.EventBufferFlushIntervalSeconds = 10f);
+            _h.LoginAs("player-a");
+            FlockAnalyticsProvider analytics = (FlockAnalyticsProvider)_h.Client.Analytics;
+            transport.On(FlockEndpoints.AnalyticsEvents, FlockFakeTransport.Status(503, "{}"));
+            _h.Client.Analytics.TrackEvent("waiting");
+            _h.Run(() => analytics.FlushOnTheIntervalAsync(0));
+            Assert.AreEqual(20.0, analytics.FlushWaitSecondsForTesting, 0.001, "Precondition: an answered failure doubled the wait");
+
+            // Signed out, the events queue is not drained: its old ending says nothing about the server now.
+            _h.Client.Authentication.Logout();
+            Assert.IsTrue(analytics.PendingAnalyticsEventCountForTesting > 0, "Precondition: the event is still queued");
+            _h.Run(() => analytics.FlushOnTheIntervalAsync(0));
+            _h.Run(() => analytics.FlushOnTheIntervalAsync(0));
+            Assert.AreEqual(20.0, analytics.FlushWaitSecondsForTesting, 0.001, "A pass that drained nothing leaves the wait as it was");
+        }
+
+        [Test]
+        public void ASignInFailureIsNotTheServerStrugglingSoTheWaitStays()
+        {
+            string folder = Path.Combine(Path.GetTempPath(), "FlockEventCacheTests", Guid.NewGuid().ToString("N"));
+            try
+            {
+                FlockEventCache<LogEventRequest> cache = new FlockEventCache<LogEventRequest>(folder, "log_events", 100, 10, null);
+                cache.Enqueue(new LogEventRequest { Message = "waiting" });
+
+                Task Refuse(IReadOnlyList<LogEventRequest> batch, CancellationToken token) => throw new FlockAuthException("signed out") { StatusCode = 401 };
+                cache.FlushAsync(Refuse, CancellationToken.None, false).GetAwaiter().GetResult();
+                Assert.AreEqual(FlockDrainEnding.StoppedUnanswered, cache.LastDrainEnding, "A 401 is about the sign-in, not the server");
+
+                Task Struggle(IReadOnlyList<LogEventRequest> batch, CancellationToken token) => throw new FlockNetworkException("down", 503);
+                cache.FlushAsync(Struggle, CancellationToken.None, false).GetAwaiter().GetResult();
+                Assert.AreEqual(FlockDrainEnding.StoppedAnswered, cache.LastDrainEnding, "Control: a 503 the server answered is");
+            }
+            finally
+            {
+                if (Directory.Exists(folder))
+                    Directory.Delete(folder, true);
+            }
+        }
+
+        [Test]
+        public void FlushAsyncReportsWhatWasSentAndWhatTheServerRefused()
+        {
+            FlockFakeTransport transport = Start();
+            _h.LoginAs("player-a");
+            transport.Default(request => request.Url.Contains(FlockEndpoints.AnalyticsEvents) && request.JsonBody.Contains("\"bad\"")
+                ? FlockFakeTransport.Status(422, "{\"detail\":[{\"loc\":[\"body\"],\"msg\":\"bad\"}]}")
+                : FlockFakeTransport.Ok("{}"));
+            _h.Client.Analytics.TrackEvent("good_one");
+            _h.Client.Analytics.TrackEvent("bad");
+            _h.Client.Analytics.TrackEvent("good_two");
+
+            FlockFlushResult flushed = _h.Run(() => _h.Client.Analytics.FlushAsync());
+            Assert.AreEqual(2, flushed.Sent, "The two good entries were taken");
+            Assert.AreEqual(1, flushed.Refused, "and the bad one refused");
+            Assert.IsFalse(flushed.NothingLost);
+            Assert.IsNotNull(flushed.FirstRefusal, "with the refusal's own words");
+
+            FlockFlushResult again = _h.Run(() => _h.Client.Analytics.FlushAsync());
+            Assert.AreEqual(0, again.Sent, "Nothing left to send");
+            Assert.AreEqual(0, again.Refused);
+            Assert.IsTrue(again.NothingLost);
+            Assert.IsNull(again.FirstRefusal);
+
+            // A batch taken whole counts every entry in it.
+            _h.Client.Analytics.TrackEvent("later_one");
+            _h.Client.Analytics.TrackEvent("later_two");
+            FlockFlushResult whole = _h.Run(() => _h.Client.Analytics.FlushAsync());
+            Assert.AreEqual(2, whole.Sent, "Both went in one batch");
+            Assert.IsTrue(whole.NothingLost);
+
+            // A transient failure keeps the entry queued: in neither count.
+            transport.On(FlockEndpoints.AnalyticsEvents, FlockFakeTransport.Offline());
+            _h.Client.Analytics.TrackEvent("kept");
+            FlockFlushResult deferred = _h.Run(() => _h.Client.Analytics.FlushAsync());
+            Assert.AreEqual(0, deferred.Sent);
+            Assert.AreEqual(0, deferred.Refused);
+            Assert.IsTrue(deferred.NothingLost, "Nothing was lost: it waits for a later flush");
+            Assert.AreEqual(1, ((FlockAnalyticsProvider)_h.Client.Analytics).PendingAnalyticsEventCountForTesting);
+        }
+
+        [Test]
+        public void ABatchOfOnePlayersEventsReadsAnotherPlayersFilesOnce()
+        {
+            string folder = Path.Combine(Path.GetTempPath(), "FlockEventCacheTests", Guid.NewGuid().ToString("N"));
+            try
+            {
+                // Three players, so a file skipped by one batch is met again by the next: a0, b0, c0, c1, c2, a1 queued in that order.
+                // A's batch skips B's and C's files; B's batch, built next, meets C's three files again and must not parse them again.
+                FlockEventCache<AnalyticsEventRequest> cache = new FlockEventCache<AnalyticsEventRequest>(folder, "analytics_events", 100, 100, null,
+                    request => request.PlayerId);
+                cache.Enqueue(new AnalyticsEventRequest { PlayerId = "a", EventName = "a0" });
+                cache.Enqueue(new AnalyticsEventRequest { PlayerId = "b", EventName = "b0" });
+                for (int i = 0; i < 3; i++)
+                    cache.Enqueue(new AnalyticsEventRequest { PlayerId = "c", EventName = "c" + i });
+                cache.Enqueue(new AnalyticsEventRequest { PlayerId = "a", EventName = "a1" });
+
+                List<string> sent = new List<string>();
+                Task Take(IReadOnlyList<AnalyticsEventRequest> batch, CancellationToken token)
+                {
+                    foreach (AnalyticsEventRequest request in batch)
+                        sent.Add(request.EventName);
+                    return Task.CompletedTask;
+                }
+                cache.FlushAsync(Take, CancellationToken.None, false).GetAwaiter().GetResult();
+
+                CollectionAssert.AreEqual(new[] { "a0", "a1", "b0", "c0", "c1", "c2" }, sent, "One player a batch, the oldest player's batch first");
+                // A's batch parses all six (five first met there); B's parses b0 alone, skipping C's three by their kept keys; C's parses its
+                // three to send them: ten. Parsing a skipped file again on every batch makes thirteen.
+                Assert.AreEqual(10, cache.FilesReadForTesting, "A file read once keeps its key for the rest of the drain");
+            }
+            finally
+            {
+                if (Directory.Exists(folder))
+                    Directory.Delete(folder, true);
+            }
         }
     }
 }

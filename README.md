@@ -223,7 +223,7 @@ Every SDK call throws on failure — there are no result/error return types. Ser
 ```csharp
 try
 {
-    await FlockClient.Instance.Shop.PurchaseAsync(shopId, itemId);
+    await FlockClient.Instance.Shop.PurchaseAsync(shopItemId);
 }
 catch (FlockException ex) when (ex.ErrorCode == FlockErrorCode.ShopInsufficientFunds)
 {

@@ -126,5 +126,31 @@ namespace Flock.Tests
             StringAssert.DoesNotContain(themeGuid, staged);
             StringAssert.Contains("guid: 0000000000000000e000000000000000", staged, "Unity's own script reference is left as it is");
         }
+
+        // A failed build puts package.json back as it was, byte for byte: through text its byte order mark would be lost.
+        [Test]
+        public void AKeptFileComesBackByteForByte()
+        {
+            string path = Path.Combine(Path.GetTempPath(), "FlockPackageBuilderTests", System.Guid.NewGuid().ToString("N") + ".json");
+            Directory.CreateDirectory(Path.GetDirectoryName(path));
+            try
+            {
+                byte[] withMark = new byte[] { 0xEF, 0xBB, 0xBF }.Concat(System.Text.Encoding.UTF8.GetBytes("{\r\n  \"version\": \"1.0.0\"\r\n}\r\n")).ToArray();
+                File.WriteAllBytes(path, withMark);
+
+                byte[] kept = FlockPackageBuilder.KeepFileBytes(path);
+                File.WriteAllText(path, "{\"version\":\"9.9.9\"}");
+                Assert.IsTrue(FlockPackageBuilder.PutFileBytesBack(path, kept));
+
+                CollectionAssert.AreEqual(withMark, File.ReadAllBytes(path), "The mark and the line endings come back with it");
+                Assert.IsNull(FlockPackageBuilder.KeepFileBytes(path + ".missing"), "A file that is not there keeps nothing");
+                Assert.IsFalse(FlockPackageBuilder.PutFileBytesBack(path, null), "and nothing is put back for it");
+            }
+            finally
+            {
+                if (File.Exists(path))
+                    File.Delete(path);
+            }
+        }
     }
 }

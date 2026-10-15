@@ -91,11 +91,13 @@ namespace Flock.Providers
         public void LogEvent(string message, Dictionary<string, object> extraData = null)
             => LogDiagnosticEvent(message, extraData);
 
-        public Task FlushAsync(CancellationToken cancellationToken = default)
+        public Task<Flock.Analytics.FlockFlushResult> FlushAsync(CancellationToken cancellationToken = default)
         {
             this.Client.Logger.LogDebug("Analytics is disabled, FlushAsync is a no-op");
-            return Task.CompletedTask;
+            return Task.FromResult(Flock.Analytics.FlockFlushResult.Nothing);
         }
+
+        public Flock.Analytics.FlockExceptionCaptureCoverage GetExceptionCaptureCoverage() => Flock.Analytics.FlockExceptionCaptureCoverage.Nothing;
 
         public Task RecordTransactionAsync(double amount, string currencyCode = "USD", string shopItemId = null, int quantity = 1,
             string transactionType = "purchase", string status = "completed", string paymentProvider = null,

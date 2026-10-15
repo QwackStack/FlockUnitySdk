@@ -1,8 +1,14 @@
 name: Tests
 
-# EditMode tests, run against a throwaway project generated here rather than against any checked-in
-# consuming project — the tests live in this repo (PackageBuilder/Tests/), so the only thing a project
-# is needed for is to give Unity something to open and a manifest to resolve the package through.
+# EditMode and PlayMode tests, run against a throwaway project generated here rather than against any checked-in
+# consuming project — the tests live in this repo (PackageBuilder/Tests/ and ProtokitePlaytest~/Tests/), so the only
+# thing a project is needed for is to give Unity something to open and a manifest to resolve the packages through.
+#
+# Two legs, each the pair a studio actually has, and the pair the netcode work was measured on: Unity 6000.3.16f1 with
+# Netcode for GameObjects 2.13.3 (Unity Transport 2.7.3), and Unity 2021.3.45f2, the declared floor, with 1.14.1
+# (Unity Transport 1.5.0; 2021.3 takes 1.14.1 at most). Without the netcode the eleven netcode PlayMode files compile
+# out and pass by absence; without the Protokite Playtest package its test assemblies never compile. Both are installed
+# in both legs, and the last step checks that every test assembly ran and that the netcode tests did.
 #
 # Requires a Unity licence, so it cannot run on a pull request from a fork: GitHub withholds secrets
 # there. Those runs are skipped rather than failed, and reviewed by running the suite locally.
@@ -17,11 +23,30 @@ permissions:
 
 jobs:
   tests:
-    name: EditMode and PlayMode
+    name: EditMode and PlayMode (${{ matrix.leg }})
     # Fork PRs get no secrets, so the licence would be empty and every such run would redline for a
     # reason the contributor cannot fix.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
+    strategy:
+      # One leg failing must not hide the other's answer.
+      fail-fast: false
+      matrix:
+        include:
+          # The versions are the ones the real consuming projects resolve against each editor, not guesses: 6000.3 from
+          # FlockUnityProject, 2021.3 from the multiplayer players' Project2021.
+          - leg: unity-6000-netcode-2
+            editor: 6000.3.16f1
+            netcode: 2.13.3
+            transport: 2.7.3
+            newtonsoft: 3.2.2
+            testframework: 1.6.0
+          - leg: unity-2021-netcode-1
+            editor: 2021.3.45f2
+            netcode: 1.14.1
+            transport: 1.5.0
+            newtonsoft: 3.2.1
+            testframework: 1.1.33
     steps:
       - name: Check out the package
         uses: actions/checkout@v4
@@ -36,30 +61,35 @@ jobs:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
         run: bash "package/Tooling~/check-unity-licence-secrets.sh"
 
-      - name: Turn the workspace itself into a project that consumes the package
+      - name: Turn the workspace itself into a project that consumes both packages
         # The project lives at the workspace root rather than in a subdirectory, so that projectPath
         # can be left unset below. Passing it a subdirectory made the action resolve it against the
         # container workspace twice — "Couldn't set project path to: /github/workspace/github/
         # workspace/test-project". Unset, it defaults to the workspace and resolves once.
         #
-        # "testables" is the load-bearing line. Both test assemblies are gated on UNITY_INCLUDE_TESTS,
-        # which Unity only defines for packages listed here — omit it and the assemblies never compile,
-        # the run finds zero tests, and it passes. Hence the test-count assertion further down.
+        # "testables" is the load-bearing line. Every test assembly is gated on UNITY_INCLUDE_TESTS,
+        # which Unity only defines for packages listed here — omit one and its assemblies never compile,
+        # the run finds no tests of theirs, and it passes. Hence the per-assembly assertion further down.
         #
-        # Package versions are the ones the real consuming project resolves against this editor, not
-        # guesses. The built-in modules cost nothing: they ship inside the editor image already.
+        # The playtest is copied out of ProtokitePlaytest~ first: Unity links no script to its class under a path
+        # with a "~" in it (the same step unity-packages.yml takes). The built-in modules cost nothing: they ship
+        # inside the editor image already.
         run: |
           set -euo pipefail
 
+          cp -R "package/ProtokitePlaytest~" protokite-playtest
           mkdir -p Packages ProjectSettings Assets
 
-          cat > Packages/manifest.json <<'JSON'
+          cat > Packages/manifest.json <<JSON
           {
-            "testables": ["com.flock.sdk"],
+            "testables": ["com.flock.sdk", "com.protokite.playtest"],
             "dependencies": {
               "com.flock.sdk": "file:../package",
-              "com.unity.nuget.newtonsoft-json": "3.2.2",
-              "com.unity.test-framework": "1.6.0",
+              "com.protokite.playtest": "file:../protokite-playtest",
+              "com.unity.netcode.gameobjects": "${{ matrix.netcode }}",
+              "com.unity.transport": "${{ matrix.transport }}",
+              "com.unity.nuget.newtonsoft-json": "${{ matrix.newtonsoft }}",
+              "com.unity.test-framework": "${{ matrix.testframework }}",
               "com.unity.modules.androidjni": "1.0.0",
               "com.unity.modules.animation": "1.0.0",
               "com.unity.modules.assetbundle": "1.0.0",
@@ -79,20 +109,20 @@ jobs:
           }
           JSON
 
-          cat > ProjectSettings/ProjectVersion.txt <<'TXT'
-          m_EditorVersion: 6000.3.16f1
+          cat > ProjectSettings/ProjectVersion.txt <<TXT
+          m_EditorVersion: ${{ matrix.editor }}
           TXT
 
-          echo "Generated a project at the workspace root, consuming package/:"
+          echo "Generated a project at the workspace root for ${{ matrix.leg }}, consuming package/ and protokite-playtest/:"
           cat Packages/manifest.json
 
       - name: Cache the Library folder
         uses: actions/cache@v4
         with:
           path: Library
-          key: Library-${{ hashFiles('package/**/*.cs', 'Packages/manifest.json') }}
+          key: Library-${{ matrix.leg }}-${{ hashFiles('package/**/*.cs', 'Packages/manifest.json') }}
           restore-keys: |
-            Library-
+            Library-${{ matrix.leg }}-
 
       - name: Run the tests
         # Pinned: @v4 moved to 4.4.0, which runs git in the workspace root, and this project's root is not a git
@@ -104,56 +134,24 @@ jobs:
           UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
         with:
           # projectPath is deliberately unset — see the note on the generate step above.
-          unityVersion: 6000.3.16f1
+          unityVersion: ${{ matrix.editor }}
           testMode: all
           artifactsPath: test-results
 
-      - name: Every mode actually found tests
+      - name: Every mode, every test assembly and the netcode tests actually ran
         # A green run that executed nothing is the failure this whole job exists to avoid, and it looks
         # identical to a green run that executed everything unless the count is checked. testMode "all"
         # writes one report per mode, so every report is checked — reading only the first would let an
-        # empty PlayMode run hide behind a healthy EditMode one.
+        # empty PlayMode run hide behind a healthy EditMode one. And a mode's total alone would let a
+        # whole assembly that never compiled (the playtest's, the netcode files') hide behind the rest, so
+        # each assembly this leg installs is looked for by name, and the netcode tests by theirs.
         if: always()
-        run: |
-          set -euo pipefail
-
-          # One report per mode, named after it. Naming the modes rather than globbing is what makes a
-          # mode that never ran a failure: a missing file is silence, and silence would otherwise pass.
-          # If testMode above changes, change this list with it.
-          EXPECTED="editmode playmode"
-
-          bad=0
-          for mode in $EXPECTED; do
-            report="test-results/${mode}-results.xml"
-
-            if [ ! -f "$report" ]; then
-              echo "::error::No $mode report at $report, so that mode did not run. Read the step above for the real failure, or update EXPECTED here if testMode changed."
-              bad=$((bad + 1))
-              continue
-            fi
-
-            total=$(grep -oE 'total="[0-9]+"' "$report" | head -1 | grep -oE '[0-9]+' || true)
-            if [ -z "$total" ]; then
-              echo "::error file=$report::Could not read a total from this report. If the format changed, update this step with it."
-              bad=$((bad + 1))
-              continue
-            fi
-
-            if [ "$total" -eq 0 ]; then
-              echo "::error file=$report::The $mode run reported 0 tests, which passes without testing anything. Usually the package stopped being listed under 'testables' in the generated manifest, so UNITY_INCLUDE_TESTS was never defined and the test assemblies were skipped."
-              bad=$((bad + 1))
-              continue
-            fi
-
-            echo "$total $mode tests ran."
-          done
-
-          [ "$bad" -eq 0 ]
+        run: bash "package/Tooling~/check-test-reports.sh" test-results "${{ matrix.leg }}"
 
       - name: Upload the results
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: test-results
+          name: test-results-${{ matrix.leg }}
           path: test-results
           if-no-files-found: warn

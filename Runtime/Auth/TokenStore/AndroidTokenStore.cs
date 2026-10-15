@@ -24,7 +24,8 @@ namespace Flock.Auth
         private const int CipherEncryptMode = 1;
         private const int CipherDecryptMode = 2;
 
-        private readonly FlockTokenFile _file = new FlockTokenFile(FlockUtil.FlockFilePath, Encrypt, Decrypt);
+        private readonly FlockTokenFile _file = new FlockTokenFile(FlockUtil.FlockFilePath, Encrypt, Decrypt,
+            message => Debug.LogWarning("[Flock SDK] " + message));
 
         public override void Save(string accessToken, string refreshToken) => _file.Save(accessToken, refreshToken);
 

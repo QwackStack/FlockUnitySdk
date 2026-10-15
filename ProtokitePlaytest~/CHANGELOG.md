@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 It is released with the Flock SDK, at the Flock SDK's version.
 
 
+## [1.87.0]
+
+### Fixed
+- The self-test's exception step is SKIPPED, naming Capture Exceptions in Flock > Settings, when the Flock SDK is not
+  capturing exceptions; it passed while nothing was reported.
+
 ## [1.86.0]
 
 ### Fixed

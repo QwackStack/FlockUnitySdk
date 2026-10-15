@@ -46,6 +46,10 @@ namespace Flock.Providers
         /// <summary>Whether this provider's exception capture is listening to Unity.</summary>
         internal bool IsListeningForExceptions => _exceptionCapture != null && _exceptionCapture.IsListening;
 
+        /// <summary>What the capture hears now: nothing unless it is listening, and no logged exception while Unity's logger is off.</summary>
+        public FlockExceptionCaptureCoverage GetExceptionCaptureCoverage()
+            => new FlockExceptionCaptureCoverage(IsListeningForExceptions, Debug.unityLogger.logEnabled);
+
         public FlockAnalyticsProvider(FlockClient client) : base(client)
         {
             _config = client.InitConfig.AnalyticsConfig;
@@ -719,8 +723,13 @@ namespace Flock.Providers
             return new List<string>(lines);
         }
 
+        /// <summary>The most entries a launch sends at once past a queue that could not keep them; log events are metered, and a disk that refuses every write must not turn each entry into a request.</summary>
+        internal const int MostSentPastAFailedQueue = 100;
+        private int _sentPastAFailedQueue;
+
         // Queued, and delivered on the flush triggers (interval/pause/end/login). With no queue (CacheFailedEvents off, or a
-        // launch holding no folder) or one that could not keep it, it is sent at once, and a failure loses it. Never throws.
+        // launch holding no folder) it is sent at once, and a failure loses it. With a queue that could not keep it (a disk
+        // refusing the write) it is sent at once too, up to MostSentPastAFailedQueue a launch, and dropped past that. Never throws.
         private void EnqueueLog(LogEventRequest request)
         {
             if (!ConsentGiven())
@@ -728,11 +737,24 @@ namespace Flock.Providers
 
             if (!TryKeepWritable(request))
                 return;
-            if (_logEventCache?.Enqueue(request) != null)
+            if (_logEventCache == null)
+            {
+                SendLogEventAtOnce(request);
+                return;
+            }
+            if (_logEventCache.Enqueue(request) != null)
             {
                 Client.Logger.LogDebug("Log event queued");
                 return;
             }
+            if (_sentPastAFailedQueue >= MostSentPastAFailedQueue)
+            {
+                if (_sentPastAFailedQueue == MostSentPastAFailedQueue)
+                    Client.Logger.LogWarning($"Log event '{request.Message}' dropped: the queue cannot keep entries and {MostSentPastAFailedQueue} were already sent past it this launch, the most a launch sends that way. Later ones this launch are dropped.");
+                _sentPastAFailedQueue++;
+                return;
+            }
+            _sentPastAFailedQueue++;
             SendLogEventAtOnce(request);
         }
 
@@ -850,40 +872,72 @@ namespace Flock.Providers
         /// now, instead of waiting for the next flush trigger. The one real await in the
         /// tracking surface — resolves when the send attempts finish, a flush already
         /// running included. Transient failures keep records queued for a later flush; never throws.
+        /// The result counts what this call sent and what the server refused for good.
         /// </summary>
-        public Task FlushAsync(CancellationToken cancellationToken = default)
+        public async Task<FlockFlushResult> FlushAsync(CancellationToken cancellationToken = default)
         {
-            return FlushAllAsync(cancellationToken, true);
+            FlushPass pass = await FlushAllAsync(cancellationToken, true).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
+            return pass.Result;
         }
 
-        private async Task FlushAllAsync(CancellationToken token, bool waitForRunningFlushes)
+        /// <summary>One pass over the queues: what it sent and refused, and which queues it drained at all.</summary>
+        private struct FlushPass
         {
+            public FlockFlushResult Result;
+            public bool SessionEndsDrained;
+            public bool EventsDrained;
+            public bool LogEventsDrained;
+
+            public bool AnythingDrained => SessionEndsDrained || EventsDrained || LogEventsDrained;
+        }
+
+        /// <summary>One queue's part of a pass: whether it was drained at all, and what that sent and refused.</summary>
+        private struct QueueDrain
+        {
+            public bool Drained;
+            public FlockFlushResult Result;
+        }
+
+        private async Task<FlushPass> FlushAllAsync(CancellationToken token, bool waitForRunningFlushes)
+        {
+            FlushPass pass = new FlushPass { Result = FlockFlushResult.Nothing };
             // Session ends first: rare, small, and the most important record — the quit
             // time budget must not be spent draining a large event backlog before them.
-            await TryFlush(_sessionEndCache, SendSessionEndsAsync, token, waitForRunningFlushes).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
+            QueueDrain ends = await TryFlush(_sessionEndCache, SendSessionEndsAsync, token, waitForRunningFlushes).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
+            pass.SessionEndsDrained = ends.Drained;
+            pass.Result = pass.Result.Plus(ends.Result);
             // Gameplay events wait for a signed-in player: a pre-sign-in placeholder is refused (404) with its whole batch.
             if (Client.IsAuthenticated)
-                await TryFlush(_eventCache, SendEventsAsync, token, waitForRunningFlushes).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
-            await TryFlush(_logEventCache, SendLogEventsAsync, token, waitForRunningFlushes).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
+            {
+                QueueDrain events = await TryFlush(_eventCache, SendEventsAsync, token, waitForRunningFlushes).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
+                pass.EventsDrained = events.Drained;
+                pass.Result = pass.Result.Plus(events.Result);
+            }
+            QueueDrain logs = await TryFlush(_logEventCache, SendLogEventsAsync, token, waitForRunningFlushes).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
+            pass.LogEventsDrained = logs.Drained;
+            pass.Result = pass.Result.Plus(logs.Result);
+            return pass;
         }
 
-        private async Task TryFlush<T>(
+        private async Task<QueueDrain> TryFlush<T>(
             IEventCache<T> cache,
             Func<IReadOnlyList<T>, CancellationToken, Task> sender,
             CancellationToken token,
             bool waitForARunningFlush = false) where T : class
         {
+            QueueDrain drain = new QueueDrain { Drained = false, Result = FlockFlushResult.Nothing };
             // Egress is consent-gated too - withdrawal stops transmission, not just collection. Gated here and
             // not in FlushAllAsync because session ends also flush directly. Nothing is deleted (decisions.md 5).
             if (!_hasConsent)
-                return;
+                return drain;
 
             if (cache == null || cache.PendingCount == 0)
-                return;
+                return drain;
 
+            drain.Drained = true;
             try
             {
-                await cache.FlushAsync(sender, token, waitForARunningFlush).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
+                drain.Result = await cache.FlushAsync(sender, token, waitForARunningFlush).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
             }
             catch (OperationCanceledException)
             {
@@ -892,6 +946,7 @@ namespace Flock.Providers
             {
                 Client.Logger.LogDebug($"Cache flush deferred: {ex.Message}");
             }
+            return drain;
         }
 
         public async Task RecordTransactionAsync(
@@ -997,30 +1052,35 @@ namespace Flock.Providers
         /// <summary>The periodic flush, then the wait before the next one, from what it met.</summary>
         internal async Task FlushOnTheIntervalAsync(double startedAt)
         {
+            FlushPass pass = default;
             try
             {
                 CancellationToken token = _session?.SessionToken ?? CancellationToken.None;
-                await FlushAllAsync(token, false).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
+                pass = await FlushAllAsync(token, false).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
             }
             catch (OperationCanceledException)
             {
             }
-            UpdateFlushWait(startedAt);
+            UpdateFlushWait(startedAt, pass);
         }
 
-        private void UpdateFlushWait(double startedAt)
+        private void UpdateFlushWait(double startedAt, FlushPass pass)
         {
-            bool answered = Ended(_sessionEndCache, FlockDrainEnding.StoppedAnswered) || Ended(_eventCache, FlockDrainEnding.StoppedAnswered)
-                || Ended(_logEventCache, FlockDrainEnding.StoppedAnswered);
-            bool unanswered = Ended(_sessionEndCache, FlockDrainEnding.StoppedUnanswered) || Ended(_eventCache, FlockDrainEnding.StoppedUnanswered)
-                || Ended(_logEventCache, FlockDrainEnding.StoppedUnanswered);
+            // Only a queue this pass drained says anything about the server now: one it skipped (the events queue with nobody
+            // signed in) keeps the ending of an older drain, which must not stretch the wait pass after pass.
+            bool answered = (pass.SessionEndsDrained && Ended(_sessionEndCache, FlockDrainEnding.StoppedAnswered))
+                || (pass.EventsDrained && Ended(_eventCache, FlockDrainEnding.StoppedAnswered))
+                || (pass.LogEventsDrained && Ended(_logEventCache, FlockDrainEnding.StoppedAnswered));
+            bool unanswered = (pass.SessionEndsDrained && Ended(_sessionEndCache, FlockDrainEnding.StoppedUnanswered))
+                || (pass.EventsDrained && Ended(_eventCache, FlockDrainEnding.StoppedUnanswered))
+                || (pass.LogEventsDrained && Ended(_logEventCache, FlockDrainEnding.StoppedUnanswered));
             bool stillQueued = (_sessionEndCache?.PendingCount ?? 0) + (_eventCache?.PendingCount ?? 0) + (_logEventCache?.PendingCount ?? 0) > 0;
             double interval = _config.EventBufferFlushIntervalSeconds;
             lock (_flushWaitLock)
             {
-                if (!stillQueued || (!answered && !unanswered))
+                if (!stillQueued || (pass.AnythingDrained && !answered && !unanswered))
                     _flushWaitSeconds = 0.0;
-                // An unanswered failure spent nothing on the server, so there is nothing to stretch the wait for.
+                // An unanswered failure spent nothing on the server, and a pass that drained nothing learnt nothing: the wait stays.
                 else if (answered)
                     _flushWaitSeconds = Math.Min(Math.Max(_flushWaitSeconds, interval) * 2.0, Math.Max(MaxFlushWaitSeconds, interval));
                 _nextIntervalFlushAt = startedAt + _flushWaitSeconds;

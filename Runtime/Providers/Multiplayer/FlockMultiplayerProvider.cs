@@ -22,7 +22,7 @@ namespace Flock.Providers
             _repeatingCalls = new FlockRepeatingCalls(client);
             _queueNames = new FlockMatchmakingQueueNames(ReadQueuesAsync, client.Logger);
             _sessions = new FlockMultiplayerSessions(client, _repeatingCalls);
-            _matchmaking = new FlockMatchmaking(client, _repeatingCalls, _sessions, FindQueueIdAsync);
+            _matchmaking = new FlockMatchmaking(client, _repeatingCalls, _sessions, FindQueueIdAsync, _queueNames.ForgetQueue);
             _parties = new FlockParties(client, _repeatingCalls, _matchmaking, client.InitConfig.PartyRefreshInterval);
         }
 

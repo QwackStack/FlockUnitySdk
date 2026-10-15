@@ -20,12 +20,15 @@ namespace Flock.Auth
         private readonly string _folder;
         private readonly Func<byte[], byte[]> _seal;
         private readonly Func<byte[], byte[]> _open;
+        private readonly Action<string> _warn;
 
-        internal FlockTokenFile(string folder, Func<byte[], byte[]> seal, Func<byte[], byte[]> open)
+        /// <param name="warn">Told, in one sentence, when a file that is there cannot be read as a saved sign-in; null says nothing.</param>
+        internal FlockTokenFile(string folder, Func<byte[], byte[]> seal, Func<byte[], byte[]> open, Action<string> warn = null)
         {
             _folder = folder;
             _seal = seal;
             _open = open;
+            _warn = warn;
         }
 
         internal string FilePath => Path.Combine(_folder, FileName);
@@ -54,7 +57,12 @@ namespace Flock.Auth
             {
                 string[] lines = Encoding.UTF8.GetString(_open(File.ReadAllBytes(FilePath))).Split('\n');
                 if (lines.Length != 2 || lines[0].Length == 0)
+                {
+                    // Said out loud: read as "no saved sign-in" with nothing in the log, a lost file looks like one never saved.
+                    _warn?.Invoke($"The saved sign-in file {FilePath} could not be read as one: it holds {lines.Length} line(s) where 2 were expected" +
+                                  (lines.Length == 2 ? " and the first is empty" : "") + ". The player signs in again.");
                     return null;
+                }
                 return new StoredTokens { AccessToken = lines[0], RefreshToken = lines[1].Length == 0 ? null : lines[1] };
             }
             if (!File.Exists(AccessFilePath) || !File.Exists(RefreshFilePath))

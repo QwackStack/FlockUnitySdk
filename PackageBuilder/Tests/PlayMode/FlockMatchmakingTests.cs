@@ -370,6 +370,8 @@ namespace Flock.Tests.PlayMode
 
             yield return FlockTestWait.Until(() => _server.Count(FakeMatchmakingServer.Cancel) == 1, "The cancel went out");
             Assert.AreEqual("cancelled", TicketOf(A).Status, "Nobody who has gone is matched");
+            yield return Done(found, "the call was answered");
+            Assert.IsTrue(found.IsCanceled, "The call waiting for the search ends as cancelled");
         }
 
         [UnityTest]
@@ -403,7 +405,73 @@ namespace Flock.Tests.PlayMode
             Assert.AreEqual(0, _server.Count(FakeMatchmakingServer.Cancel), "Nothing sent while Flock shuts down");
         }
 
+        [UnityTest]
+        public IEnumerator AQueueMadeAgainUnderTheSameName_IsFoundByItsNewId()
+        {
+            FlockMultiplayerProvider multiplayer = SignedInAs(A);
+            CancellationTokenSource first = new CancellationTokenSource();
+            Task<FlockMatchmakingResult> found = multiplayer.FindMatchAsync(FakeMatchmakingServer.Duel, null, first.Token);
+            yield return FlockTestWait.Until(() => _server.Count(FakeMatchmakingServer.Create) == 1, "The search was made");
+            first.Cancel();
+            yield return Done(found, "cancelled");
+            Assert.AreEqual(1, _server.Count(FakeMatchmakingServer.Queues), "The queue list was read once");
+
+            const string newId = "01QUEUEDUELAGAIN0000000000";
+            _server.RemakesQueue(FakeMatchmakingServer.Duel, newId);
+            CancellationTokenSource again = new CancellationTokenSource();
+            Task<FlockMatchmakingResult> next = multiplayer.FindMatchAsync(FakeMatchmakingServer.Duel, null, again.Token);
+            yield return FlockTestWait.Until(() => _server.Count(FakeMatchmakingServer.Create) == 3 || next.IsCompleted, "Made again by the new id");
+            Assert.IsFalse(next.IsCompleted, "Searching: " + next.Exception?.InnerException?.Message);
+            Assert.AreEqual(2, _server.Count(FakeMatchmakingServer.Queues), "The list was read again");
+            Assert.AreEqual(newId, (string)JObject.Parse(_server.RequestsTo(FakeMatchmakingServer.Create)[2].JsonBody)["queue_id"]);
+            again.Cancel();
+            yield return Done(next, "cancelled");
+
+            // Counter: a queue deleted for good is refused on its code once the list is read again, without reading it twice.
+            _server.RemakesQueue(FakeMatchmakingServer.Trio, null);
+            Task<FlockMatchmakingResult> gone = multiplayer.FindMatchAsync(FakeMatchmakingServer.Trio);
+            yield return Done(gone, "refused");
+            Assert.AreEqual(FlockErrorCode.MatchmakingQueueNotFound, Failure<FlockException>(gone).ErrorCode);
+            Assert.AreEqual(3, _server.Count(FakeMatchmakingServer.Queues), "One more read of the list");
+            Assert.AreEqual(4, _server.Count(FakeMatchmakingServer.Create), "One more search, by the old id");
+        }
+
+        [UnityTest]
+        public IEnumerator AMatchedAnswerWithoutItsMatch_IsNotBlamedOnTheSetting()
+        {
+            FlockMultiplayerProvider multiplayer = SignedInAs(A);
+            Task<FlockMatchmakingResult> found = multiplayer.FindMatchAsync(FakeMatchmakingServer.Trio);
+            yield return FlockTestWait.Until(() => _server.Count(FakeMatchmakingServer.Create) == 1, "The search was made");
+            JObject body = new JObject
+            {
+                ["error"] = new JObject { ["code"] = JValue.CreateNull() },
+                ["response"] = new JObject { ["message"] = JValue.CreateNull(), ["code"] = JValue.CreateNull() },
+                ["result"] = new JObject { ["id"] = TicketOf(A).Id, ["status"] = "matched", ["party_id"] = JValue.CreateNull(), ["match"] = JValue.CreateNull() },
+            };
+            _server.AnswerNext(FakeMatchmakingServer.ReadTicket, new FlockHttpResponse { Result = FlockHttpResult.Success, StatusCode = 200, Body = body.ToString() });
+            yield return Done(found, "matched");
+            Assert.IsTrue(found.Result.IsMatched);
+            Assert.IsNull(found.Result.Session);
+            Assert.IsTrue(_h.Logger.Warnings.Any(line => line.Contains("carried no match")), "The warning says the answer carried no match");
+            Assert.IsFalse(_h.Logger.Warnings.Any(line => line.Contains("multiplayer settings")), "And does not blame the dashboard setting");
+        }
+
         // ---- a party ----
+
+        [UnityTest]
+        public IEnumerator APartyCallDoesNotWaitOutRetriesOfItsSearchReading()
+        {
+            FlockMultiplayerProvider multiplayer = SignedInAs(A, retries: 2, retryWaitMilliseconds: 2000);
+            FakePartyServer.Party party = _server.Parties.MadeBy(B);
+            _server.Parties.Joins(party, A);
+            _server.AnswerNext(FakeMatchmakingServer.Current, FakeMatchmakingServer.Refused(503, "server.unavailable"));
+            DateTime asked = DateTime.UtcNow;
+            Task<FlockParty> mine = multiplayer.GetMyPartyAsync();
+            yield return Done(mine, "the party");
+            Assert.Less((DateTime.UtcNow - asked).TotalSeconds, 1.5, "Handed over without waiting for a retry");
+            yield return RealSeconds(0.5f);
+            Assert.AreEqual(1, _server.Count(FakeMatchmakingServer.Current), "The reading was not tried again");
+        }
 
         [UnityTest]
         public IEnumerator TheLeader_QueuesTheParty_ChecksItsOwnTicket_AndHearsTheSearchStartAndEnd()
@@ -500,6 +568,56 @@ namespace Flock.Tests.PlayMode
             Assert.IsTrue(found.Result.IsMatched, "A match made after the game held the party is never taken for an old one");
             Assert.AreSame(found.Result.Session, multiplayer.Sessions.Held);
             CollectionAssert.AreEqual(new[] { "started", "ended matched" }, heard);
+        }
+
+        [UnityTest]
+        public IEnumerator AMembersCallWaitingForTheLeader_EndsWhenThePartyEnds()
+        {
+            FlockMultiplayerProvider multiplayer = SignedInAs(A);
+            FakePartyServer.Party party = _server.Parties.MadeBy(B);
+            _server.Parties.Joins(party, A);
+            Task<FlockParty> mine = multiplayer.GetMyPartyAsync();
+            yield return Done(mine, "the party");
+            FlockParty held = mine.Result;
+            Task<FlockMatchmakingResult> found = held.FindMatchAsync(null);
+            yield return RealSeconds(0.5f);
+            Assert.IsFalse(found.IsCompleted, "Waits for the leader");
+            Task left = held.LeaveAsync();
+            yield return Done(left, "left");
+            yield return Done(found, "the wait ended");
+            StringAssert.Contains("has ended (Left)", Failure<FlockValidationException>(found).Message);
+            int readings = _server.Count(FakeMatchmakingServer.Current);
+            yield return RealSeconds(0.6f);
+            Assert.AreEqual(readings, _server.Count(FakeMatchmakingServer.Current), "Nothing more is read");
+            CancellationTokenSource giveUp = new CancellationTokenSource();
+            Task<FlockMatchmakingResult> alone = multiplayer.FindMatchAsync(FakeMatchmakingServer.Duel, null, giveUp.Token);
+            yield return FlockTestWait.Until(() => _server.Count(FakeMatchmakingServer.Create) == 1, "A search alone can start");
+            giveUp.Cancel();
+            yield return Done(alone, "cancelled");
+        }
+
+        [UnityTest]
+        public IEnumerator AMemberWaitingForTheLeader_WhoComesToLead_IsToldToSearchItself()
+        {
+            FlockMultiplayerProvider multiplayer = SignedInAs(A);
+            FakePartyServer.Party party = _server.Parties.MadeBy(B);
+            _server.Parties.Joins(party, A);
+            Task<FlockParty> mine = multiplayer.GetMyPartyAsync();
+            yield return Done(mine, "the party");
+            FlockParty held = mine.Result;
+            Task<FlockMatchmakingResult> found = held.FindMatchAsync(null);
+            // The leader leaves on the server, so A leads; A's game learns it from its next reading of the party.
+            _server.Parties.Removes(party, B);
+            Task<FlockParty> again = multiplayer.GetMyPartyAsync();
+            yield return Done(again, "the party read again");
+            Assert.IsTrue(held.IsLeader, "A leads now");
+            yield return Done(found, "the wait ended");
+            StringAssert.Contains("leads the party now", Failure<FlockValidationException>(found).Message);
+            CancellationTokenSource giveUp = new CancellationTokenSource();
+            Task<FlockMatchmakingResult> own = held.FindMatchAsync(FakeMatchmakingServer.Trio, null, giveUp.Token);
+            yield return FlockTestWait.Until(() => _server.Count(FakeMatchmakingServer.Create) == 1, "The new leader's search is made");
+            giveUp.Cancel();
+            yield return Done(own, "cancelled");
         }
 
         [UnityTest]
@@ -786,9 +904,16 @@ namespace Flock.Tests.PlayMode
             Task<FlockMatchmakingResult> found = multiplayer.FindMatchAsync(FakeMatchmakingServer.Trio);
             yield return FlockTestWait.Until(() => making.Arrived, "The search is on its way");
             _h.LoginAs(C);
+            CancellationTokenSource giveUp = new CancellationTokenSource();
+            Task<FlockMatchmakingResult> next = multiplayer.FindMatchAsync(FakeMatchmakingServer.Trio, null, giveUp.Token);
+            yield return FlockTestWait.Until(() => _server.Count(FakeMatchmakingServer.Create) == 2 || next.IsCompleted, "The next player's search");
+            Assert.IsFalse(next.IsFaulted, "Not refused as already running: " + next.Exception?.InnerException?.Message);
             making.Release();
             yield return Done(found, "ended");
             Assert.IsTrue(found.IsCanceled, "Heard as a cancellation: the search was asked for by a sign-in that ended");
+            Assert.IsFalse(next.IsCompleted, "The next player's search still runs");
+            giveUp.Cancel();
+            yield return Done(next, "cancelled");
         }
 
         [UnityTest]

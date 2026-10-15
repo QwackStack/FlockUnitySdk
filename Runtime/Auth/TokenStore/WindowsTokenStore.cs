@@ -4,13 +4,15 @@ using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using UnityEngine;
 
 namespace Flock.Auth
 {
     public class WindowsTokenStore : ITokenStore
     {
         private readonly FlockTokenFile _file = new FlockTokenFile(FlockUtil.FlockFilePath,
-            plain => Dpapi(plain, encrypt: true), sealedBytes => Dpapi(sealedBytes, encrypt: false));
+            plain => Dpapi(plain, encrypt: true), sealedBytes => Dpapi(sealedBytes, encrypt: false),
+            message => Debug.LogWarning("[Flock SDK] " + message));
 
         public override void Save(string accessToken, string refreshToken) => _file.Save(accessToken, refreshToken);
 

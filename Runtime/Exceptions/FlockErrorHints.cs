@@ -56,6 +56,7 @@ namespace Flock.Exceptions
             { FlockErrorCode.GameConfigInvalidTag, "The backend does not accept that config tag. Valid tags are the SchemaTag values — if generated code is sending something else, re-run Flock > Settings > Code Generation > Sync Schemas." },
             { FlockErrorCode.ShopMalformedReward, "The item's stored reward cannot be granted, so the purchase was refused rather than half-applied. Fix that item's rewards in the Flock dashboard — no change to the call will work around it." },
             { FlockErrorCode.ShopPackGrantsNothing, "This currency pack has no rewards configured, so buying it would grant nothing. Add its rewards in the Flock dashboard, or take it off sale." },
+            { FlockErrorCode.ShopRealCurrencyNeedsCheckout, "This item is priced in a currency the game's currency config lists as real money, and Shop.PurchaseAsync only spends game currencies from the player's wallet. Price the item in a game currency in the Flock dashboard, or leave it out of what the game sells through Shop.PurchaseAsync." },
             { FlockErrorCode.GameMissingStudioId, "The game record has no studio attached. Fix it in the Flock dashboard — nothing in the Unity project can supply it." },
             { FlockErrorCode.LogEventGameNotFound, "The API key does not resolve to a game, so log events have nowhere to land. Check the API Key in Flock > Settings against the dashboard." },
             { FlockErrorCode.AssetAssetNotFound, "No asset by that id. Upload it in the Flock dashboard and publish it to this game version." },

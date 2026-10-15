@@ -141,6 +141,7 @@ namespace Flock.Exceptions
         ShopMalformedReward,                        // shop.malformed_reward
         ShopPackGrantsNothing,                      // shop.pack_grants_nothing
         ShopPlayerNotFound,                         // shop.player_not_found
+        ShopRealCurrencyNeedsCheckout,              // shop.real_currency_needs_checkout
         ShopRewardCurrencyNotHeld,                  // shop.reward_currency_not_held
         ShopShopNotFound,                           // shop.shop_not_found
         ShopWalletNotFound,                         // shop.wallet_not_found

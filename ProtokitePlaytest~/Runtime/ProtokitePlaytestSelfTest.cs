@@ -242,6 +242,9 @@ namespace Protokite.Playtest
                 return run.Skip("the Flock SDK's analytics is off, so exceptions are not reported. Turn on Analytics Enabled in Flock > Settings.");
             if (!run.Flock.Analytics.HasConsent)
                 return run.Skip("the game has not given the Flock SDK's analytics consent, so exceptions are not reported.");
+            // Read before raising anything: with the capture off the step would pass while nothing was reported.
+            if (!run.Flock.Analytics.GetExceptionCaptureCoverage().Enabled)
+                return run.Skip("the Flock SDK is not capturing exceptions (Capture Exceptions is off in Flock > Settings), so exceptions are not reported.");
             Debug.Log(LogPrefix + $"Self-test {run.Report.RunId}: the next two exceptions are raised on purpose.");
             for (int raised = 0; raised < 2; raised++)
                 Debug.LogException(new ProtokitePlaytestSelfTestException(run.Report.RunId));

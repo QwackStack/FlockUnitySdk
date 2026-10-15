@@ -36,8 +36,9 @@ namespace Flock.Analytics
         void Rewrite(Func<T, bool> shouldRewrite, Action<T> setAuthID);
 
         // Drains the cache one batch at a time via the supplied sender. With a flush already running it returns at once,
-        // or, asked to wait, waits for that flush and then sends what is left.
-        Task FlushAsync(
+        // or, asked to wait, waits for that flush and then sends what is left. Reports what this call sent and what the
+        // server refused; a flush left to one already running reports nothing.
+        Task<FlockFlushResult> FlushAsync(
             Func<IReadOnlyList<T>, CancellationToken, Task> sender,
             CancellationToken cancellationToken,
             bool waitForARunningFlush);

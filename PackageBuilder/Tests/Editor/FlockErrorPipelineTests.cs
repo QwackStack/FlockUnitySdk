@@ -108,6 +108,22 @@ namespace Flock.Tests
             Assert.AreEqual(404, ex.StatusCode);
         }
 
+        // A real-money item sent through the wallet purchase, body as the backend's shop settlement code builds it. The
+        // route's documented responses leave the code out, which is how the snapshot missed it until 2026-10-15.
+        [Test]
+        public void RealMoneyItemRefusal_ParsesToItsCode_WithItsHint()
+        {
+            const string body = "{\"detail\":{\"code\":\"shop.real_currency_needs_checkout\",\"message\":\"'USD' is a real currency and cannot be paid from a wallet; open a checkout with POST /v1/shop/checkout, or verify a store receipt with POST /v1/shop/validate-receipt\"}}";
+            FlockValidationException ex = Assert.Throws<FlockValidationException>(() =>
+                Send(new FlockHttpResponse { Result = FlockHttpResult.Success, StatusCode = 422, Body = body }));
+
+            Assert.AreEqual(FlockErrorCode.ShopRealCurrencyNeedsCheckout, ex.ErrorCode);
+            Assert.AreEqual(422, ex.StatusCode);
+            Assert.IsNotNull(ex.ServerMessage, "The server's own reason should survive parsing.");
+            Assert.AreEqual(FlockErrorHints.For(FlockErrorCode.ShopRealCurrencyNeedsCheckout), ex.Hint);
+            Assert.IsNotNull(ex.Hint);
+        }
+
         [Test]
         public void EmptyBody_Throws_Serialization()
             => Assert.Throws<FlockSerializationException>(() =>

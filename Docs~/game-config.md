@@ -10,6 +10,8 @@ var currency = await FlockClient.Instance.Config.GetCurrencyAsync();   // genera
 var gameplay = await FlockClient.Instance.Config.GetGameplayAsync();   // generated
 // Raw getters (GetAllAsync / GetByIdAsync / GetBySchemaAsync / GetGameConfigsAsync / GetPlayerFeaturesAsync)
 // are internal — the server returns a codegen-shaped payload, so generated accessors are the supported path.
+// A player's features are kept in memory for the run: the first read of a player fetches, later reads of the
+// same player answer from memory until ClearCache() or the next launch. They are never written to disk.
 
 // Config schemas are an internal/codegen concern — the Schema getters are not part of the public API.
 

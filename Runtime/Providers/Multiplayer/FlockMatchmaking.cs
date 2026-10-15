@@ -19,10 +19,13 @@ namespace Flock.Providers
         private readonly FlockRepeatingCalls _repeatingCalls;
         private readonly FlockMultiplayerSessions _sessions;
         private readonly Func<string, CancellationToken, Task<string>> _findQueueId;
+        private readonly Action<string> _forgetQueue;
         private TimeSpan _checkInterval = DefaultCheckInterval;
         private Search _search;
-        // A search's first request is on its way, so a second one is refused until it lands.
-        private bool _starting;
+        // The start on its way (its first request not answered yet), and the sign-in it was asked under: one of a sign-in that
+        // ended blocks nothing, and its end never clears a newer start.
+        private object _starting;
+        private int _startingSignInNumber;
         private int _readsSent;
         // Readings numbered at or below this change nothing when they land.
         private int _readsAppliedThrough;
@@ -35,13 +38,15 @@ namespace Flock.Providers
         // Flock shut down or was reset: an answer still on its way starts nothing.
         private bool _stopped;
 
-        internal FlockMatchmaking(FlockClient client, FlockRepeatingCalls repeatingCalls, FlockMultiplayerSessions sessions, Func<string, CancellationToken, Task<string>> findQueueId)
+        internal FlockMatchmaking(FlockClient client, FlockRepeatingCalls repeatingCalls, FlockMultiplayerSessions sessions, Func<string, CancellationToken, Task<string>> findQueueId,
+            Action<string> forgetQueue)
         {
             _client = client;
             _requests = new FlockMatchmakingRequests(client);
             _repeatingCalls = repeatingCalls;
             _sessions = sessions;
             _findQueueId = findQueueId;
+            _forgetQueue = forgetQueue;
         }
 
         internal int CurrentSignInNumber => _client.SignInNumber;
@@ -64,7 +69,7 @@ namespace Flock.Providers
         internal async Task<FlockMatchmakingResult> FindForPartyAsync(FlockParty party, string queueName, FlockMatchmakingOptions options, CancellationToken cancellationToken)
         {
             if (party.HasEnded)
-                throw new FlockValidationException($"This party has ended ({party.EndReason}). Create or join another, or get the player's current one with GetMyPartyAsync.");
+                throw PartyEnded(party);
             int signInNumber = RequireSignedIn();
             if (_search != null && _search.Party == party)
                 return await WaitAsync(_search, cancellationToken);
@@ -128,7 +133,7 @@ namespace Flock.Providers
             search.Finished.TrySetCanceled();
         }
 
-        /// <summary>The game is quitting: the search is cancelled without waiting, so it seats nobody who has gone.</summary>
+        /// <summary>The game is quitting: the search is cancelled without waiting, so it seats nobody who has gone, and the call waiting for it ends as cancelled.</summary>
         internal void CancelForQuit()
         {
             Search search = _search;
@@ -138,6 +143,8 @@ namespace Flock.Providers
             StopChecking(search);
             if (search.TicketId != null && !search.Ending)
                 FlockMultiplayerSessions.LetRun(_requests.CancelAsync(search.SignInNumber, search.TicketId, CancellationToken.None));
+            // The shutdown that follows finds no search left, so the call waiting for this one hears its end now.
+            search.Finished.TrySetCanceled();
         }
 
         /// <summary>Flock is shutting down: the search ends without a word to the game, which hears Flock's own shutdown.</summary>
@@ -155,12 +162,14 @@ namespace Flock.Providers
         // Makes the ticket and starts checking it; a caller that gives up while the ticket is on its way leaves nothing behind.
         private async Task<Search> StartAsync(int signInNumber, string playerId, FlockParty party, string queueName, FlockMatchmakingOptions options, CancellationToken cancellationToken)
         {
-            _starting = true;
+            object thisStart = new object();
+            _starting = thisStart;
+            _startingSignInNumber = signInNumber;
             try
             {
                 string queueId = await _findQueueId(queueName, cancellationToken);
                 RequireStillCurrent(signInNumber);
-                Task<TicketRecord> making = MakeTicketAsync(signInNumber, playerId, party?.Id, queueId, options?.Attributes, cancellationToken);
+                Task<TicketRecord> making = MakeTicketByNameAsync(signInNumber, playerId, party?.Id, queueName, queueId, options?.Attributes, cancellationToken);
                 if (!await FlockWaiting.FinishedBeforeGivenUpAsync(making, cancellationToken))
                 {
                     FlockMultiplayerSessions.LetRun(CancelOnceMadeAsync(signInNumber, making));
@@ -172,12 +181,31 @@ namespace Flock.Providers
             }
             finally
             {
-                _starting = false;
+                if (_starting == thisStart)
+                    _starting = null;
             }
         }
 
         // The player's own earlier search (an earlier launch's, or this party's when its leader searches again) is cancelled and
         // this one made once more; a party's search is never cancelled for a search alone, since one member's cancel stops it.
+        // The queue list kept for the launch named an id the server no longer knows (the queue was deleted, or made again under the
+        // same name): the list is read again, once, and the name looked up in it.
+        private async Task<TicketRecord> MakeTicketByNameAsync(int signInNumber, string playerId, string partyId, string queueName, string queueId,
+            IReadOnlyDictionary<string, object> attributes, CancellationToken givenUp)
+        {
+            try
+            {
+                return await MakeTicketAsync(signInNumber, playerId, partyId, queueId, attributes, givenUp);
+            }
+            catch (FlockException gone) when (gone.ErrorCode == FlockErrorCode.MatchmakingQueueNotFound && !givenUp.IsCancellationRequested)
+            {
+                _forgetQueue(queueId);
+                string again = await _findQueueId(queueName, CancellationToken.None);
+                RequireStillCurrent(signInNumber);
+                return await MakeTicketAsync(signInNumber, playerId, partyId, again, attributes, givenUp);
+            }
+        }
+
         private async Task<TicketRecord> MakeTicketAsync(int signInNumber, string playerId, string partyId, string queueId, IReadOnlyDictionary<string, object> attributes, CancellationToken givenUp)
         {
             try
@@ -337,6 +365,21 @@ namespace Flock.Providers
             search.Check = null;
         }
 
+        // The wait of a member's game ends: the party ended, or the player leads it now and starts its search themselves.
+        private void StopWaiting(Search search)
+        {
+            if (_search == search)
+                _search = null;
+            StopChecking(search);
+            search.Finished.TrySetException(search.Party.HasEnded
+                ? PartyEnded(search.Party)
+                : new FlockValidationException("This player leads the party now, so nobody else will start its search: start it with the party's FindMatchAsync and a queue name."));
+            _ = search.Finished.Task.Exception;
+        }
+
+        private static FlockValidationException PartyEnded(FlockParty party) =>
+            new FlockValidationException($"This party has ended ({party.EndReason}). Create or join another, or get the player's current one with GetMyPartyAsync.");
+
         // A check the server refused for good ends the search with that failure; the party's next reading follows its search again.
         private void CheckStopped(Search search, Exception failure)
         {
@@ -365,7 +408,8 @@ namespace Flock.Providers
         {
             try
             {
-                return await _requests.ReadCurrentAsync(signInNumber, cancellationToken);
+                // Sent once: every caller of a reading without the ticket's id repeats it, or only marks where the party's searches stand.
+                return await _requests.ReadCurrentAsync(signInNumber, cancellationToken, tryOnce: true);
             }
             catch (FlockException none) when (none.ErrorCode == FlockErrorCode.MatchmakingTicketNotFound)
             {
@@ -386,6 +430,12 @@ namespace Flock.Providers
         {
             if (search.TicketId == null)
             {
+                // A member's game waiting for the leader stops waiting once nobody else will start the party's search for it.
+                if (search.Party.HasEnded || search.Party.IsLeader)
+                {
+                    StopWaiting(search);
+                    return;
+                }
                 TakeCurrent(search.Party, reading);
                 return;
             }
@@ -433,7 +483,7 @@ namespace Flock.Providers
             if (ticket.Id == _partyTicketSeen && _partyTicketSettled)
                 return;
             // This game's own search on its way is begun by its own answer, not followed from a reading.
-            if (_starting)
+            if (IsStarting)
                 return;
             // A search alone runs here: the server queues a player once, so the party's is not this player's yet.
             if (_search != null && (_search.Party != party || _search.TicketId != null))
@@ -476,7 +526,12 @@ namespace Flock.Providers
 
         private async Task<FlockMultiplayerSession> MatchedSessionOrNoneAsync(TicketRecord ticket)
         {
-            string sessionId = ticket.Match?.ConnectionInfo?.SessionId;
+            if (ticket.Match == null)
+            {
+                _client.Logger.LogWarning("The server's answer named the search matched but carried no match, so its session is not known here. GetMySessionAsync finds it.");
+                return null;
+            }
+            string sessionId = ticket.Match.ConnectionInfo?.SessionId;
             if (string.IsNullOrEmpty(sessionId))
             {
                 _client.Logger.LogWarning("The match made no session: the game's multiplayer settings in the Flock dashboard create none on a match. The result names the matched players.");
@@ -545,9 +600,11 @@ namespace Flock.Providers
             return CurrentSignInNumber;
         }
 
+        private bool IsStarting => _starting != null && _startingSignInNumber == CurrentSignInNumber;
+
         private void RequireNoSearch()
         {
-            if (_starting || _search != null)
+            if (IsStarting || _search != null)
                 throw new FlockValidationException("A search for a match is already running here: this player's own, or the party's that this game follows. Wait for its result (the party's through its FindMatchAsync or SearchEnded), or cancel it through the token given to FindMatchAsync.");
         }
 

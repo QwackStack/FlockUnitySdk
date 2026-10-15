@@ -44,6 +44,13 @@ namespace Flock.Providers
             throw NotFound(queueName, queues);
         }
 
+        /// <summary>The server no longer knows <paramref name="queueId"/> (the queue was deleted, or made again under the same name): a list holding it is let go, so the next lookup reads the list again.</summary>
+        internal void ForgetQueue(string queueId)
+        {
+            if (_queues != null && _queues.Exists(queue => string.Equals(queue.Id, queueId, StringComparison.Ordinal)))
+                _queues = null;
+        }
+
         // A caller that gives up stops waiting at once; the read goes on for whoever else waits, and keeps what it reads.
         private async Task<List<MatchmakingQueue>> WaitForReadAsync(CancellationToken cancellationToken)
         {

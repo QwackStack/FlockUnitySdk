@@ -97,5 +97,26 @@ namespace Flock.Tests.Editor
             Assert.IsEmpty(Directory.GetFiles(_folder));
             Assert.IsNull(File().Load());
         }
+
+        // A file that is there but cannot be read as a saved sign-in is said out loud: read silently as "no saved sign-in", a lost
+        // file looks like one never saved.
+        [Test]
+        public void AFileThatCannotBeReadIsReportedAndReadsAsNoSignIn()
+        {
+            Directory.CreateDirectory(_folder);
+            System.IO.File.WriteAllBytes(Path.Combine(_folder, FlockTokenFile.FileName), Seal(Encoding.UTF8.GetBytes("only-one-line")));
+            string warned = null;
+            FlockTokenFile file = new FlockTokenFile(_folder, Seal, Open, message => warned = message);
+
+            Assert.IsNull(file.Load());
+            StringAssert.Contains("1 line(s) where 2 were expected", warned);
+            StringAssert.Contains(FlockTokenFile.FileName, warned);
+
+            // The control: a whole file is read back with nothing said.
+            warned = null;
+            file.Save("access-1", "refresh-1");
+            Assert.AreEqual("access-1", file.Load().AccessToken);
+            Assert.IsNull(warned);
+        }
     }
 }
