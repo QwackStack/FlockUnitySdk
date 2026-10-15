@@ -10,11 +10,13 @@ namespace Flock.Tests.PlayMode
     // Unity Transport 1.x and Netcode 1.x log errors of their own when a peer goes away (read in their source): those lines pass, anything else fails the test.
     internal sealed class NetcodeLibraryLogs
     {
-        // Lines tests already expect: a player that reached no host, and a host whose port another program holds.
+        // Lines tests already expect: a player that reached no host, and a host whose port another program holds (on Linux the
+        // transport's socket says so first: BaselibNetworkInterface, measured on CI).
         private static readonly string[] ExpectedByTests =
         {
             "Failed to connect to server.",
             "Server failed to bind. This is usually caused by another process being bound to the same port.",
+            "Failed to bind the socket because address is already in use. It is likely that another process is already listening on the same port.",
             "[Netcode] Host is shutting down due to network transport start failure of UnityTransport!",
         };
         // The transport's two lines when its socket failed: the error, and the warning that it makes a new socket.

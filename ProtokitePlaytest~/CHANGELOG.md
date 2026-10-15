@@ -18,6 +18,8 @@ It is released with the Flock SDK, at the Flock SDK's version.
   made only to run the tests has; they failed there.
 - The package's tests of Windows' encoder rules, and of a form file that cannot be deleted, run in the Windows editor, where
   those rules hold; the upload tests answer for the platform's encoders rather than ask the computer the editor runs on.
+- A recording test stops capturing before the disk it holds comes back, so its newest frame cannot be written into the room
+  the disk makes (301 frames where 300 may wait, on a slow machine).
 
 ## [1.86.0]
 

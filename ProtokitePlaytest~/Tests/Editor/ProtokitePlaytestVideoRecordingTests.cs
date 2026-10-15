@@ -464,6 +464,10 @@ namespace Protokite.Playtest.Tests
                 // Frames go to the encoder one at a time, as a game's frames would, so the queue in front of it never fills.
                 source.WaitForTheEncoderToCatchUp(1000);
             }
+            // Stopped, so the newest frame goes to the encoder too, before the disk comes back: handed over after, it was encoded into the room
+            // the writer made (301, on CI).
+            recording.StopCapturing(ProtokitePlaytestVideoStopReason.StoppedByGame);
+            Assert.IsTrue(SpinWait.SpinUntil(() => source.BlocksReturned >= source.Asked.Count, Plenty), "Precondition: the encoder took every frame");
             holdWriting.Set();
             ProtokitePlaytestVideoRecordingSummary summary = StopAndWait(recording);
 
