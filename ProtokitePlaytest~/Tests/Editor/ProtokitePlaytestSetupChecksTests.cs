@@ -652,47 +652,39 @@ namespace Protokite.Playtest.Tests
         [Test]
         public void TheProjectsOwnSettingsAreWhatIsRead()
         {
-            FlockConfigAsset flock = ProtokitePlaytestSetupInput.LoadFlockSettings();
-            string made = null;
-            if (flock == null)
+            using (ProjectFlockSettingsForTests projects = new ProjectFlockSettingsForTests())
             {
-                // A project with no Flock settings of its own gets them for this test only.
-                made = "Assets/ProtokitePlaytestSetupTest/Resources/" + ProtokitePlaytestSetupInput.FlockSettingsResourceName + ".asset";
-                System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(made));
-                AssetDatabase.CreateAsset(ScriptableObject.CreateInstance<FlockConfigAsset>(), made);
-                flock = ProtokitePlaytestSetupInput.LoadFlockSettings();
-            }
-            string flockAsItWas = EditorJsonUtility.ToJson(flock);
-            try
-            {
-                using (ProtokitePlaytestSettingsForTests playtest = new ProtokitePlaytestSettingsForTests(playtestingEnabled: true, protokiteApiUrl: "https://read-from-project.example"))
+                FlockConfigAsset flock = projects.Settings;
+                string flockAsItWas = EditorJsonUtility.ToJson(flock);
+                try
                 {
-                    ProtokitePlaytestSetupInput input;
-                    // Changed in memory only, and put back before the playtest settings are saved, so the Flock settings on disk are never written.
-                    try
+                    using (ProtokitePlaytestSettingsForTests playtest = new ProtokitePlaytestSettingsForTests(playtestingEnabled: true, protokiteApiUrl: "https://read-from-project.example"))
                     {
-                        flock.gameVersion = "pt-read-from-project";
-                        flock.gameVersionId = "id-read-from-project";
-                        input = ProtokitePlaytestSetupInput.FromProject();
+                        ProtokitePlaytestSetupInput input;
+                        // Changed in memory only, and put back before the playtest settings are saved, so the Flock settings on disk are never written.
+                        try
+                        {
+                            flock.gameVersion = "pt-read-from-project";
+                            flock.gameVersionId = "id-read-from-project";
+                            input = ProtokitePlaytestSetupInput.FromProject();
+                        }
+                        finally
+                        {
+                            EditorJsonUtility.FromJsonOverwrite(flockAsItWas, flock);
+                        }
+                        Assert.AreEqual("https://read-from-project.example", input.ProtokiteApiUrl, "The playtest settings a build carries");
+                        Assert.IsTrue(input.PlaytestingEnabled);
+                        Assert.AreEqual("pt-read-from-project", input.GameVersion, "The Flock settings a build carries");
+                        Assert.AreEqual("id-read-from-project", input.GameVersionId);
+                        Assert.AreEqual(EditorUserBuildSettings.activeBuildTarget, input.BuildTarget, "The platform the project builds for now");
+                        Assert.AreEqual(EditorUserBuildSettings.GetPlatformSettings(BuildPipeline.GetBuildTargetName(BuildTarget.StandaloneWindows64), "Architecture"),
+                            input.WindowsArchitecture);
                     }
-                    finally
-                    {
-                        EditorJsonUtility.FromJsonOverwrite(flockAsItWas, flock);
-                    }
-                    Assert.AreEqual("https://read-from-project.example", input.ProtokiteApiUrl, "The playtest settings a build carries");
-                    Assert.IsTrue(input.PlaytestingEnabled);
-                    Assert.AreEqual("pt-read-from-project", input.GameVersion, "The Flock settings a build carries");
-                    Assert.AreEqual("id-read-from-project", input.GameVersionId);
-                    Assert.AreEqual(EditorUserBuildSettings.activeBuildTarget, input.BuildTarget, "The platform the project builds for now");
-                    Assert.AreEqual(EditorUserBuildSettings.GetPlatformSettings(BuildPipeline.GetBuildTargetName(BuildTarget.StandaloneWindows64), "Architecture"),
-                        input.WindowsArchitecture);
                 }
-            }
-            finally
-            {
-                EditorJsonUtility.FromJsonOverwrite(flockAsItWas, flock);
-                if (made != null)
-                    AssetDatabase.DeleteAsset("Assets/ProtokitePlaytestSetupTest");
+                finally
+                {
+                    EditorJsonUtility.FromJsonOverwrite(flockAsItWas, flock);
+                }
             }
         }
 

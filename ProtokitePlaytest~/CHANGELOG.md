@@ -12,6 +12,10 @@ It is released with the Flock SDK, at the Flock SDK's version.
 ### Fixed
 - The self-test's exception step is SKIPPED, naming Capture Exceptions in Flock > Settings, when the Flock SDK is not
   capturing exceptions; it passed while nothing was reported.
+- The package's tests give a recording's encoder time to start, as a game's frames do: on a busy machine their back-to-back
+  frames could all go by before its thread ran, so nothing was captured.
+- The package's build-check and Playtest ID tests make Flock settings for themselves in a project that has none, as a project
+  made only to run the tests has; they failed there.
 
 ## [1.86.0]
 

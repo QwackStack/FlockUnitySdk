@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using System.Threading;
 
 namespace Protokite.Playtest.Tests
@@ -85,6 +86,29 @@ namespace Protokite.Playtest.Tests
         }
 
         public void Dispose() => Disposed = true;
+    }
+
+    /// <summary>What a game's frames give a recording and a test's back-to-back frames do not: time for its encoder to start.</summary>
+    // The encoder starts on a thread below the game's priority, which a busy machine runs late: 30 frames once ended before it ran.
+    internal static class RecordingsUnderWay
+    {
+        /// <summary>Waits, a few seconds at most, until each recording under way has started its encoder or failed to; until then it captures nothing.</summary>
+        public static void LetTheirEncodersStart()
+        {
+            LetItsEncoderStart(ProtokitePlaytest.VideoRecordingForTesting);
+            LetItsEncoderStart(ProtokitePlaytest.TestVideoForTesting);
+        }
+
+        // Each recording is waited for once: an encoder that never starts fails its test rather than stall every frame.
+        private static readonly ConditionalWeakTable<ProtokitePlaytestVideoRecording, object> WaitedFor = new ConditionalWeakTable<ProtokitePlaytestVideoRecording, object>();
+
+        private static void LetItsEncoderStart(ProtokitePlaytestVideoRecording recording)
+        {
+            if (recording == null || recording.EncoderHasStarted || WaitedFor.TryGetValue(recording, out object _))
+                return;
+            WaitedFor.Add(recording, new object());
+            recording.WaitUntilTheEncoderHasStartedForTesting(TimeSpan.FromSeconds(5));
+        }
     }
 
     /// <summary>What tests of the real encoder share: the thread it works on, and a picture worth encoding.</summary>

@@ -1,8 +1,10 @@
 using System;
 using System.IO;
 using System.Linq;
+using Flock.Config;
 using Protokite.Playtest.Editor;
 using UnityEditor;
+using UnityEngine;
 
 namespace Protokite.Playtest.Tests
 {
@@ -78,6 +80,46 @@ namespace Protokite.Playtest.Tests
                 EditorUtility.SetDirty(Settings);
             else
                 EditorUtility.ClearDirty(Settings);
+        }
+    }
+
+    /// <summary>The project's own Flock settings, as a build and the setup window read them; made for the test, and deleted after, when the project has none.</summary>
+    // A project made only to run the tests, as CI's is, has no Flock settings of its own.
+    internal sealed class ProjectFlockSettingsForTests : IDisposable
+    {
+        private const string MadeFolder = "Assets/ProtokitePlaytestFlockSettingsForTests";
+        private readonly bool _made;
+
+        public FlockConfigAsset Settings { get; }
+
+        public ProjectFlockSettingsForTests()
+        {
+            Settings = ProtokitePlaytestSetupInput.LoadFlockSettings();
+            if (Settings != null)
+            {
+                // Settings a run that was stopped mid-test made are still this helper's to delete.
+                _made = AssetDatabase.GetAssetPath(Settings).StartsWith(MadeFolder + "/", StringComparison.Ordinal);
+                return;
+            }
+            string path = MadeFolder + "/Resources/" + ProtokitePlaytestSetupInput.FlockSettingsResourceName + ".asset";
+            Directory.CreateDirectory(Path.GetDirectoryName(path));
+            // An API URL and key, as a Playtest ID is resolved only with both.
+            FlockConfigAsset made = ScriptableObject.CreateInstance<FlockConfigAsset>();
+            made.apiUrl = "https://flock.example.com";
+            made.apiKey = "test-key";
+            AssetDatabase.CreateAsset(made, path);
+            _made = true;
+            Settings = ProtokitePlaytestSetupInput.LoadFlockSettings();
+            if (Settings != null)
+                return;
+            AssetDatabase.DeleteAsset(MadeFolder);
+            throw new InvalidOperationException("The Flock settings made for the test do not load from Resources.");
+        }
+
+        public void Dispose()
+        {
+            if (_made)
+                AssetDatabase.DeleteAsset(MadeFolder);
         }
     }
 }

@@ -20,6 +20,7 @@ playmode_assemblies="Flock.Tests.PlayMode Protokite.Playtest.Tests.PlayMode"
 netcode_class="Flock.Tests.PlayMode.FlockNetcodeTests"
 
 bad=0
+readable=""
 
 for mode in editmode playmode; do
   report="$results/${mode}-results.xml"
@@ -41,6 +42,7 @@ for mode in editmode playmode; do
     continue
   fi
   echo "[$leg] $total $mode tests ran."
+  readable="$readable $report"
 
   assemblies="$editmode_assemblies"
   [ "$mode" = "playmode" ] && assemblies="$playmode_assemblies"
@@ -55,6 +57,34 @@ for mode in editmode playmode; do
     fi
   done
 done
+
+# The test step says only that Unity exited 2, and its log needs a sign-in: every failed test is named here, and the first
+# ten on the run's page as annotations (GitHub shows ten errors a step).
+# $readable is split on purpose: the report paths hold no spaces.
+if [ -n "$readable" ] && ! python3 - "$leg" $readable <<'PY'
+import os
+import sys
+import xml.etree.ElementTree as ET
+
+leg, reports = sys.argv[1], sys.argv[2:]
+failed = 0
+for report in reports:
+    mode = os.path.basename(report).split("-")[0]
+    for case in ET.parse(report).getroot().iter("test-case"):
+        if case.get("result") != "Failed":
+            continue
+        failed += 1
+        message = (case.findtext("failure/message") or "").strip()
+        print(f"[{leg}] {mode} test failed: {case.get('fullname')}\n    " + message.replace("\n", "\n    "))
+        if failed <= 10:
+            text = f"{case.get('fullname')}: {message[:2000]}".replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+            print(f"::error file={report},title={mode} test failed ({leg})::{text}")
+print(f"[{leg}] {failed} tests failed.")
+sys.exit(1 if failed else 0)
+PY
+then
+  bad=$((bad + 1))
+fi
 
 playmode="$results/playmode-results.xml"
 if [ -f "$playmode" ]; then

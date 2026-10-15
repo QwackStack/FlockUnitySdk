@@ -475,21 +475,24 @@ namespace Protokite.Playtest.Tests
         public void ViewsResolveOnlyTheGamesSettingsAndNothingWhileATestOwnsTheResolver()
         {
             FlockFakeTransport transport = UseFlock();
-            FlockConfigAsset projectsFlock = ProtokitePlaytestSetupInput.LoadFlockSettings();
-            (ProtokitePlaytestSettings another, FlockConfigAsset flock) = Project(TestId);
-            ProtokitePlaytestIdResolver.ViewsWaitForTesting = false;
-            ProtokitePlaytestIdResolver.ResolveForAView(another, flock);
-            Assert.IsEmpty(transport.Requests, "Settings no build loads are never resolved");
+            using (ProjectFlockSettingsForTests projects = new ProjectFlockSettingsForTests())
+            {
+                FlockConfigAsset projectsFlock = projects.Settings;
+                (ProtokitePlaytestSettings another, FlockConfigAsset flock) = Project(TestId);
+                ProtokitePlaytestIdResolver.ViewsWaitForTesting = false;
+                ProtokitePlaytestIdResolver.ResolveForAView(another, flock);
+                Assert.IsEmpty(transport.Requests, "Settings no build loads are never resolved");
 
-            _settings.Settings.PlaytestId = TestId;
-            ProtokitePlaytestIdResolver.ViewsWaitForTesting = true;
-            ProtokitePlaytestIdResolver.ResolveForAView(_settings.Settings, projectsFlock);
-            Assert.IsEmpty(transport.Requests, "Nothing while a test owns the resolver");
+                _settings.Settings.PlaytestId = TestId;
+                ProtokitePlaytestIdResolver.ViewsWaitForTesting = true;
+                ProtokitePlaytestIdResolver.ResolveForAView(_settings.Settings, projectsFlock);
+                Assert.IsEmpty(transport.Requests, "Nothing while a test owns the resolver");
 
-            ProtokitePlaytestIdResolver.ViewsWaitForTesting = false;
-            ProtokitePlaytestIdResolver.ResolveForAView(_settings.Settings, projectsFlock);
-            Assert.AreEqual(1, transport.Requests.Count, "Control: the game's own settings are resolved");
-            ProtokitePlaytestIdResolver.ViewsWaitForTesting = true;
+                ProtokitePlaytestIdResolver.ViewsWaitForTesting = false;
+                ProtokitePlaytestIdResolver.ResolveForAView(_settings.Settings, projectsFlock);
+                Assert.AreEqual(1, transport.Requests.Count, "Control: the game's own settings are resolved");
+                ProtokitePlaytestIdResolver.ViewsWaitForTesting = true;
+            }
         }
 
         [Test]
@@ -648,35 +651,41 @@ namespace Protokite.Playtest.Tests
         [Test]
         public void ABuildWithPlaytestingOnAndAnUnresolvedPlaytestIdIsRefused()
         {
-            ChoosePlaytest(TestId, "", "");
-            BuildFailedException refused = Assert.Throws<BuildFailedException>(() => new ProtokitePlaytestBuildCheck().OnPreprocessBuild(null));
-            StringAssert.Contains($"Playtest ID '{TestId}' has not been resolved", refused.Message);
+            using (new ProjectFlockSettingsForTests())
+            {
+                ChoosePlaytest(TestId, "", "");
+                BuildFailedException refused = Assert.Throws<BuildFailedException>(() => new ProtokitePlaytestBuildCheck().OnPreprocessBuild(null));
+                StringAssert.Contains($"Playtest ID '{TestId}' has not been resolved", refused.Message);
 
-            ChoosePlaytest(TestId, TestId, PlaytestVersionId, "another environment");
-            refused = Assert.Throws<BuildFailedException>(() => new ProtokitePlaytestBuildCheck().OnPreprocessBuild(null));
-            StringAssert.Contains("was resolved with other Flock settings", refused.Message, "Resolved with another URL or key: refused");
+                ChoosePlaytest(TestId, TestId, PlaytestVersionId, "another environment");
+                refused = Assert.Throws<BuildFailedException>(() => new ProtokitePlaytestBuildCheck().OnPreprocessBuild(null));
+                StringAssert.Contains("was resolved with other Flock settings", refused.Message, "Resolved with another URL or key: refused");
 
-            ChoosePlaytest(TestId, TestId, PlaytestVersionId, ProjectsFlockSettings());
-            Assert.DoesNotThrow(() => new ProtokitePlaytestBuildCheck().OnPreprocessBuild(null), "Resolved with the project's own Flock settings: built");
+                ChoosePlaytest(TestId, TestId, PlaytestVersionId, ProjectsFlockSettings());
+                Assert.DoesNotThrow(() => new ProtokitePlaytestBuildCheck().OnPreprocessBuild(null), "Resolved with the project's own Flock settings: built");
+            }
         }
 
         [Test]
         public void OnlyPlaytestingOnWithAPlaytestIdCanRefuseABuild()
         {
             ProtokitePlaytestSettings settings = _settings.Settings;
-            FlockConfigAsset flock = ProtokitePlaytestSetupInput.LoadFlockSettings();
-            ChoosePlaytest(TestId, "", "");
-            Assert.IsNotNull(ProtokitePlaytestBuildCheck.WhyTheBuildIsRefused(settings, flock), "Control: these settings are refused");
-            settings.PlaytestingEnabled = false;
-            Assert.IsNull(ProtokitePlaytestBuildCheck.WhyTheBuildIsRefused(settings, flock), "Playtesting off builds");
-            ChoosePlaytest(TestId, TestId, PlaytestVersionId, "another environment");
-            Assert.IsNull(ProtokitePlaytestBuildCheck.WhyTheBuildIsRefused(settings, flock), "Playtesting off builds whatever the resolution");
-            settings.PlaytestingEnabled = true;
-            Assert.IsNotNull(ProtokitePlaytestBuildCheck.WhyTheBuildIsRefused(settings, flock), "Control: resolved with other Flock settings is refused");
-            Assert.IsNull(ProtokitePlaytestBuildCheck.WhyTheBuildIsRefused(settings, null), "With no Flock settings there is nothing to compare");
-            ChoosePlaytest(" ", "", "");
-            Assert.IsNull(ProtokitePlaytestBuildCheck.WhyTheBuildIsRefused(settings, flock), "No Playtest ID builds, as before");
-            Assert.IsNull(ProtokitePlaytestBuildCheck.WhyTheBuildIsRefused(null, flock), "No settings build");
+            using (ProjectFlockSettingsForTests projects = new ProjectFlockSettingsForTests())
+            {
+                FlockConfigAsset flock = projects.Settings;
+                ChoosePlaytest(TestId, "", "");
+                Assert.IsNotNull(ProtokitePlaytestBuildCheck.WhyTheBuildIsRefused(settings, flock), "Control: these settings are refused");
+                settings.PlaytestingEnabled = false;
+                Assert.IsNull(ProtokitePlaytestBuildCheck.WhyTheBuildIsRefused(settings, flock), "Playtesting off builds");
+                ChoosePlaytest(TestId, TestId, PlaytestVersionId, "another environment");
+                Assert.IsNull(ProtokitePlaytestBuildCheck.WhyTheBuildIsRefused(settings, flock), "Playtesting off builds whatever the resolution");
+                settings.PlaytestingEnabled = true;
+                Assert.IsNotNull(ProtokitePlaytestBuildCheck.WhyTheBuildIsRefused(settings, flock), "Control: resolved with other Flock settings is refused");
+                Assert.IsNull(ProtokitePlaytestBuildCheck.WhyTheBuildIsRefused(settings, null), "With no Flock settings there is nothing to compare");
+                ChoosePlaytest(" ", "", "");
+                Assert.IsNull(ProtokitePlaytestBuildCheck.WhyTheBuildIsRefused(settings, flock), "No Playtest ID builds, as before");
+                Assert.IsNull(ProtokitePlaytestBuildCheck.WhyTheBuildIsRefused(null, flock), "No settings build");
+            }
         }
 
         // ---- The package's own source

@@ -110,7 +110,10 @@ namespace Protokite.Playtest.Tests
         private static void Frames(int count)
         {
             for (int i = 0; i < count; i++)
+            {
                 ProtokitePlaytest.UpdateVideo(1.0 / 60.0);
+                RecordingsUnderWay.LetTheirEncodersStart();
+            }
         }
 
         private static void StartAFlockSession(FlockTestClient flock)
