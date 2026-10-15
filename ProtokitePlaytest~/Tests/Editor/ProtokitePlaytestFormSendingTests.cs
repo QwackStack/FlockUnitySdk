@@ -433,7 +433,9 @@ namespace Protokite.Playtest.Tests
             }
         }
 
+        // A read-only file stops a delete on Windows only; macOS and Linux let it go ahead.
         [Test]
+        [UnityPlatform(RuntimePlatform.WindowsEditor)]
         public void AFormWhoseFileCannotBeDeletedSaysSo()
         {
             string path = Plant("20260101-000000-000-a");

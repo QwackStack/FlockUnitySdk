@@ -19,6 +19,12 @@ namespace Flock.Tests.Support
         private const string PrefRefreshToken = "Flock.RefreshToken";
         private const string PrefAuthMethod = "flock_auth_method";
 
+        // What the editor itself has saved under these keys, put back when this client goes: running the suite in an
+        // open editor would otherwise sign the developer's Play Mode player out and forget their consent answer.
+        private static readonly string[] DevelopersPrefs =
+            { PrefAccessToken, PrefRefreshToken, PrefAuthMethod, "flock_analytics_consent", "flock_analytics_consent_set" };
+        private SavedPrefs _developersPrefs;
+
         public FlockClient Client { get; }
         public FlockFakeTransport Transport { get; }
         public string SnapshotDirectory { get; }
@@ -37,6 +43,7 @@ namespace Flock.Tests.Support
         // `tweak` lets a test override the config (e.g. pin a fixed snapshot dir for a relaunch test).
         public static FlockTestClient Create(FlockFakeTransport transport, Action<FlockInitConfig> tweak = null)
         {
+            SavedPrefs developersPrefs = SavedPrefs.Take(DevelopersPrefs);
             ClearAuthPrefs();
             string dir = Path.Combine(Path.GetTempPath(), "flock_test_" + Guid.NewGuid().ToString("N"));
 
@@ -65,7 +72,7 @@ namespace Flock.Tests.Support
             FlockClient client = FlockClient.Create(config, logger);
             // The constructor rebuilds the real transport from HttpTimeout — re-apply the fake after Create.
             FlockHttpClient.Configure(transport);
-            return new FlockTestClient(client, transport, config.OfflineCacheDirectory, logger);
+            return new FlockTestClient(client, transport, config.OfflineCacheDirectory, logger) { _developersPrefs = developersPrefs };
         }
 
         // Force the reachability seam. false = the SDK treats the network as down.
@@ -93,6 +100,7 @@ namespace Flock.Tests.Support
             if (FlockClient.IsInitialized)
                 FlockClient.Shutdown();
             ClearAuthPrefs();
+            _developersPrefs?.PutBack(DevelopersPrefs);
             FlockHttpClient.Configure(TimeSpan.FromSeconds(30)); // restore real transport
             try
             {
@@ -102,6 +110,41 @@ namespace Flock.Tests.Support
             catch (Exception)
             {
                 // temp-dir cleanup is best-effort
+            }
+        }
+
+        /// <summary>PlayerPrefs values as they were, of whichever type each was saved with.</summary>
+        internal sealed class SavedPrefs
+        {
+            private const string NotThere = "\u0001";
+            private readonly System.Collections.Generic.List<(string Key, string Text, int Number, float Fraction)> _values =
+                new System.Collections.Generic.List<(string, string, int, float)>();
+
+            public static SavedPrefs Take(string[] keys)
+            {
+                SavedPrefs saved = new SavedPrefs();
+                foreach (string key in keys)
+                {
+                    if (PlayerPrefs.HasKey(key))
+                        saved._values.Add((key, PlayerPrefs.GetString(key, NotThere), PlayerPrefs.GetInt(key, int.MinValue), PlayerPrefs.GetFloat(key, float.NaN)));
+                }
+                return saved;
+            }
+
+            public void PutBack(string[] keys)
+            {
+                foreach (string key in keys)
+                    PlayerPrefs.DeleteKey(key);
+                foreach ((string key, string text, int number, float fraction) in _values)
+                {
+                    if (text != NotThere)
+                        PlayerPrefs.SetString(key, text);
+                    else if (number != int.MinValue)
+                        PlayerPrefs.SetInt(key, number);
+                    else if (!float.IsNaN(fraction))
+                        PlayerPrefs.SetFloat(key, fraction);
+                }
+                PlayerPrefs.Save();
             }
         }
 

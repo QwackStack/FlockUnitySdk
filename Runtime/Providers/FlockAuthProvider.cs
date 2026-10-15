@@ -12,14 +12,6 @@ namespace Flock.Providers
 {
     public class FlockAuthProvider : FlockProviderBase
     {
-        private const string PrefKeyAuthMethod = "flock_auth_method";
-
-        // How the current session was established; null when signed out. Gates email-only flows like ResetPasswordAsync.
-        private FlockAuthMethod? _currentAuthMethod;
-
-        // Best-effort: true once a linked-accounts read or an email link proves the account has an email credential. Session-scoped, never persisted — false after a restore until the caller reads accounts.
-        private bool _hasEmailCredential;
-
         public FlockAuthProvider(FlockClient client) : base(client)
         {
         }
@@ -37,10 +29,6 @@ namespace Flock.Providers
                     throw new FlockAuthException($"Invalid {context.ToLower()} response from server");
 
                 Client.SetTokens(response.AccessToken, response.RefreshToken);
-                _currentAuthMethod = method;
-                // A new session knows nothing about linked credentials yet — never carry the previous player's answer over.
-                _hasEmailCredential = false;
-                PersistAuthMethod(method);
                 Client.Logger.LogInfo($"{context} successful for player: {Client.CurrentPlayerId}");
 
                 FlockEvents.InvokeAuthenticated(new FlockAuthInfo(Client.CurrentPlayerId, method));
@@ -135,14 +123,18 @@ namespace Flock.Providers
 
             if (Client.IsTokenExpired)
             {
+                int restoredSignIn = Client.SignInNumber;
                 bool refreshed = await Client.TryRefreshTokenAsync(cancellationToken);
-                if (!refreshed) return false;
+                // A refresh the server refused cleared the sign-in, and another sign-in meanwhile replaced it.
+                if (Client.SignInNumber != restoredSignIn || !Client.IsAuthenticated)
+                    return false;
+                // One that never reached the server keeps it: a launch with no network does not sign the player out, and the
+                // next call refreshes the token again.
+                if (!refreshed)
+                    Client.Logger.LogWarning("Session restore: the token could not be refreshed (no answer from the server); the sign-in is kept and the next call refreshes it");
             }
 
             Client.Logger.LogInfo($"Restored session for PlayerId: {Client.CurrentPlayerId}");
-            // Carry the original login method forward so email-gated flows keep working after a restore.
-            _currentAuthMethod = LoadPersistedAuthMethod() ?? FlockAuthMethod.SessionRestore;
-            _hasEmailCredential = false;
             FlockEvents.InvokeAuthenticated(new FlockAuthInfo(Client.CurrentPlayerId, FlockAuthMethod.SessionRestore));
             await TryInitializeAnalyticsAsync(cancellationToken);
             return true;
@@ -300,10 +292,9 @@ namespace Flock.Providers
             return response.Success;
         }
 
-        /// <summary>Sets a new password using the code emailed by <see cref="ForgotPasswordAsync"/>. Requires being signed in with email (restored email sessions count); throws on a bad or expired code.</summary>
+        /// <summary>Sets a new password using the code emailed by <see cref="ForgotPasswordAsync"/>. Works signed out: the email and code name the account, and the route takes no token. Throws on a bad or expired code.</summary>
         public async Task ResetPasswordAsync(string email, string code, string newPassword, CancellationToken cancellationToken = default)
         {
-            RequireEmailLogin();
             RequireNotEmpty(email, nameof(email));
             RequireNotEmpty(code, nameof(code));
             RequireNotEmpty(newPassword, nameof(newPassword));
@@ -312,7 +303,7 @@ namespace Flock.Providers
                     $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.PlayerPasswordReset}",
                     new PlayerPasswordResetRequest { Email = email, Code = code, NewPassword = newPassword },
                     Client.GetBaseHeaders(), cancellationToken),
-                "Password reset", cancellationToken, idempotent: false, actsForSignIn: SignInToActFor);
+                "Password reset", cancellationToken, idempotent: false);
         }
 
         /// <summary>Emails a verification code to the player's address. No sign-in guard — the bearer token rides along automatically when present.</summary>
@@ -475,19 +466,11 @@ namespace Flock.Providers
             return accounts;
         }
 
-        // These routes return the model at the root, not in a GenericResponse envelope. Every one hands back the full list, so the email flag re-derives itself on any of them.
-        private List<PlayerLinkedAccount> ReadAccounts(PlayerAccountsResponse response)
+        // These routes return the model at the root, not in a GenericResponse envelope.
+        private static List<PlayerLinkedAccount> ReadAccounts(PlayerAccountsResponse response)
         {
             if (response?.Accounts == null)
                 throw new FlockNetworkException("Invalid response from server (missing accounts)");
-
-            bool hasEmail = false;
-            foreach (PlayerLinkedAccount account in response.Accounts)
-            {
-                if (account != null && account.ProviderType == FlockCredentialProvider.Email)
-                    hasEmail = true;
-            }
-            _hasEmailCredential = hasEmail;
             return response.Accounts;
         }
 
@@ -498,28 +481,6 @@ namespace Flock.Providers
                 throw new FlockAuthException("No player is signed in");
         }
 
-        // Password reset is scoped to an email account — an email login (restored ones count) or a linked email credential this session.
-        private void RequireEmailLogin()
-        {
-            RequireAuthenticated();
-            if (_currentAuthMethod != FlockAuthMethod.Email && !_hasEmailCredential)
-                throw new FlockAuthException("Password reset requires an email credential on this account");
-        }
-
-        // Non-secret, so PlayerPrefs (not the token store) — lets a restored session keep its original method.
-        private static void PersistAuthMethod(FlockAuthMethod method)
-        {
-            PlayerPrefs.SetString(PrefKeyAuthMethod, method.ToString());
-            PlayerPrefs.Save();
-        }
-
-        private static FlockAuthMethod? LoadPersistedAuthMethod()
-        {
-            string stored = PlayerPrefs.GetString(PrefKeyAuthMethod, null);
-            if (Enum.TryParse(stored, out FlockAuthMethod method)) return method;
-            return null;
-        }
-
         /// <summary>
         /// Logs the current player out by clearing local authentication state.
         /// Safe to call when no player is signed in. Server-side token revocation is separate — see <see cref="RevokeTokenAsync"/>.
@@ -527,9 +488,6 @@ namespace Flock.Providers
         public void Logout()
         {
             bool wasAuthenticated = Client.IsAuthenticated;
-            _currentAuthMethod = null;
-            _hasEmailCredential = false;
-            PlayerPrefs.DeleteKey(PrefKeyAuthMethod);
             Client.ClearTokens();
             if (wasAuthenticated)
                 FlockEvents.InvokeLoggedOut();

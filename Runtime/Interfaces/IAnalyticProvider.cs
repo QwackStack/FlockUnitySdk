@@ -109,9 +109,17 @@ namespace Flock.Interfaces
         /// Awaitable drain of everything queued (session ends, events, logs) — for the
         /// rare "make sure it landed before X" moment. Automatic flushing (interval /
         /// pause / session end / login) makes calling this optional. Transient failures
-        /// keep records queued for a later flush; never throws.
+        /// keep records queued for a later flush; never throws. The result says what this
+        /// call sent and what the server refused for good (those entries are dropped):
+        /// read <see cref="Flock.Analytics.FlockFlushResult.NothingLost"/> when that matters.
         /// </summary>
-        Task FlushAsync(CancellationToken cancellationToken = default);
+        Task<Flock.Analytics.FlockFlushResult> FlushAsync(CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// What the SDK's exception capture hears right now: nothing before the SDK runs, with analytics off, or with
+        /// Capture Exceptions off in Flock > Settings. A tool that provokes an exception to see it reported reads this first.
+        /// </summary>
+        Flock.Analytics.FlockExceptionCaptureCoverage GetExceptionCaptureCoverage();
 
         /// <summary>
         /// Convenience overload that builds an <see cref="AnalyticsTransactionRequest"/>

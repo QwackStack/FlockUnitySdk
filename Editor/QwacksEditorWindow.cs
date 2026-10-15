@@ -1035,7 +1035,7 @@ namespace Flock.Editor
                 return;
             }
 
-            string baseUrl = apiUrl.TrimEnd('/');
+            string baseUrl = FlockInitConfig.TrimApiUrl(apiUrl);
             // Mirror the edit-time version resolve (FlockVersionResolver): a green test means the
             // Game Version can be resolved & baked, which is what synchronous init needs.
             // When Game Version is missing, we can't run that call — fall back to a bare key check.
@@ -1068,7 +1068,7 @@ namespace Flock.Editor
                     else
                     {
                         verified = false;
-                        message = "API key accepted. Set Game Version to fully verify init will succeed.";
+                        message = "The server answered, but this check does not use the API key. Set Game Version to check the key and that init will succeed.";
                         type = MessageType.Warning;
                     }
                 }

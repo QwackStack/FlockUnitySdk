@@ -5,6 +5,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Flock.Analytics;
+using Flock.Auth;
 using Flock.Config;
 using Flock.Exceptions;
 using Flock.Http;
@@ -413,6 +414,42 @@ namespace Flock.Tests.Editor
             Assert.AreEqual("player-r", client.CurrentPlayerId);
         }
 
+        // No network at launch is no sign-out: a refresh that never reached the server keeps the sign-in, reported as
+        // restored, and the next call refreshes the token again.
+        [Test]
+        public void TryRestoreSession_ExpiredToken_RefreshUnreachable_KeepsTheSignIn()
+        {
+            PlayerPrefs.SetString(PrefAccessToken, MakeJwt("player-r", -3600, "expired"));
+            PlayerPrefs.SetString(PrefRefreshToken, "refresh-r");
+            ScriptedAdapter adapter = new ScriptedAdapter(request =>
+                request.Url.Contains(FlockEndpoints.PlayerTokenRefresh)
+                    ? new FlockHttpResponse { Result = FlockHttpResult.ConnectionError, StatusCode = 0, Body = null }
+                    : Ok("{}"));
+            FlockClient client = CreateClient(adapter);
+            int authenticated = 0;
+            bool? restoredEvent = null;
+            Action<FlockAuthInfo> onAuthenticated = _ => authenticated++;
+            Action<bool> onRestored = value => restoredEvent = value;
+            FlockEvents.OnAuthenticated += onAuthenticated;
+            FlockEvents.OnSessionRestored += onRestored;
+            try
+            {
+                bool restored = Run(() => client.Authentication.TryRestoreSessionAsync());
+
+                Assert.IsTrue(restored);
+                Assert.IsTrue(client.IsAuthenticated);
+                Assert.AreEqual("player-r", client.CurrentPlayerId);
+                Assert.AreEqual(1, authenticated);
+                Assert.AreEqual(true, restoredEvent);
+                Assert.IsTrue(PlayerPrefs.HasKey(PrefRefreshToken), "The saved sign-in is kept for the next try.");
+            }
+            finally
+            {
+                FlockEvents.OnAuthenticated -= onAuthenticated;
+                FlockEvents.OnSessionRestored -= onRestored;
+            }
+        }
+
         [Test]
         public void Relaunch_LoginThenRecreateClient_RestoreSucceeds()
         {
@@ -437,54 +474,46 @@ namespace Flock.Tests.Editor
             Assert.AreEqual("player-a", second.CurrentPlayerId);
         }
 
-        // ---- Password reset gating (email-login-only) ----
+        // ---- Password reset: works signed out ----
 
+        // The email and code name the account and the route takes no token, so a player who forgot their password resets it
+        // from the sign-in screen.
         [Test]
-        public void ResetPassword_SignedOut_ThrowsWithoutHittingNetwork()
+        public void ResetPassword_SignedOut_Succeeds()
         {
-            ScriptedAdapter adapter = new ScriptedAdapter(request => Ok("{}"));
+            ScriptedAdapter adapter = new ScriptedAdapter(request => Ok("{\"success\":true}"));
             FlockClient client = CreateClient(adapter);
 
-            Assert.Throws<FlockAuthException>(() => Run(() => client.Authentication.ResetPasswordAsync("p@x.com", "123", "new-pw")));
-            Assert.IsFalse(adapter.Requests.Exists(r => r.Url.Contains(FlockEndpoints.PlayerPasswordReset)));
+            Assert.DoesNotThrow(() => Run(() => client.Authentication.ResetPasswordAsync("p@x.com", "123456", "new-pw")));
+            FlockHttpRequest reset = adapter.Requests.Find(r => r.Url.Contains(FlockEndpoints.PlayerPasswordReset));
+            Assert.IsNotNull(reset);
+            StringAssert.Contains("\"email\":\"p@x.com\"", reset.JsonBody);
+            StringAssert.Contains("\"code\":\"123456\"", reset.JsonBody);
+            StringAssert.Contains("\"new_password\":\"new-pw\"", reset.JsonBody);
+            Assert.IsFalse(reset.Headers.ContainsKey("Authorization"));
         }
 
         [Test]
-        public void ResetPassword_DeviceLogin_Throws_EmailGated()
-        {
-            FlockClient client = CreateClient(LoginAdapter(MakeJwt("player-a", 3600)));
-            Run(() => client.Authentication.LoginWithDeviceAsync("device-1"));
-
-            Assert.Throws<FlockAuthException>(() => Run(() => client.Authentication.ResetPasswordAsync("p@x.com", "123", "new-pw")));
-        }
-
-        [Test]
-        public void ResetPassword_EmailLogin_Succeeds()
+        public void ResetPassword_DeviceLogin_Succeeds()
         {
             ScriptedAdapter adapter = new ScriptedAdapter(request =>
                 request.Url.Contains(FlockEndpoints.PlayerLogin)
                     ? Ok(LoginBody("player-a", MakeJwt("player-a", 3600), "r1"))
                     : Ok("{\"success\":true}"));
             FlockClient client = CreateClient(adapter);
-            Run(() => client.Authentication.LoginWithEmailAsync("p@x.com", "pw"));
+            Run(() => client.Authentication.LoginWithDeviceAsync("device-1"));
 
             Assert.DoesNotThrow(() => Run(() => client.Authentication.ResetPasswordAsync("p@x.com", "123456", "new-pw")));
-            FlockHttpRequest reset = adapter.Requests.Find(r => r.Url.Contains(FlockEndpoints.PlayerPasswordReset));
-            StringAssert.Contains("\"new_password\":\"new-pw\"", reset.JsonBody);
         }
 
         [Test]
-        public void ResetPassword_RestoredEmailSession_StillCounts()
+        public void ResetPassword_EmptyCode_ThrowsWithoutHittingNetwork()
         {
-            // A restored session carries the persisted login method forward — email-gated flows keep working.
-            PlayerPrefs.SetString(PrefAccessToken, MakeJwt("player-a", 3600));
-            PlayerPrefs.SetString(PrefRefreshToken, "refresh-a");
-            PlayerPrefs.SetString(PrefAuthMethod, FlockAuthMethod.Email.ToString());
-            ScriptedAdapter adapter = new ScriptedAdapter(request => Ok("{\"success\":true}"));
+            ScriptedAdapter adapter = new ScriptedAdapter(request => Ok("{}"));
             FlockClient client = CreateClient(adapter);
-            Assert.IsTrue(Run(() => client.Authentication.TryRestoreSessionAsync()));
 
-            Assert.DoesNotThrow(() => Run(() => client.Authentication.ResetPasswordAsync("p@x.com", "123456", "new-pw")));
+            Assert.Throws<FlockValidationException>(() => Run(() => client.Authentication.ResetPasswordAsync("p@x.com", "", "new-pw")));
+            Assert.IsFalse(adapter.Requests.Exists(r => r.Url.Contains(FlockEndpoints.PlayerPasswordReset)));
         }
 
         // ---- Revoke ----
@@ -605,6 +634,67 @@ namespace Flock.Tests.Editor
             FlockHttpRequest discord = adapter.Requests.FindLast(r => r.Url.Contains(FlockEndpoints.PlayerLogin));
             StringAssert.Contains("\"login_type\":\"discord\"", discord.JsonBody);
             StringAssert.Contains("\"discord_id\":\"dc-1\"", discord.JsonBody);
+        }
+
+        // ---- Shutdown and configs built by hand ----
+
+        // Shutdown ends this client, not the player's sign-in: no sign-out is raised, the saved sign-in stays, and the next
+        // Create restores the player.
+        [Test]
+        public void Shutdown_KeepsTheSavedSignIn()
+        {
+            FlockClient client = CreateClient(LoginAdapter(MakeJwt("player-a", 3600)));
+            Run(() => client.Authentication.LoginWithDeviceAsync("device-1"));
+            int loggedOut = 0;
+            Action onLoggedOut = () => loggedOut++;
+            FlockEvents.OnLoggedOut += onLoggedOut;
+
+            FlockClient.Shutdown();
+
+            Assert.AreEqual(0, loggedOut, "A shutdown is not a sign-out.");
+            Assert.IsTrue(PlayerPrefs.HasKey(PrefAccessToken), "The saved sign-in stays for the next Create.");
+            FlockClient second = CreateClient(new ScriptedAdapter(request => Ok("{}")));
+            Assert.IsTrue(Run(() => second.Authentication.TryRestoreSessionAsync()));
+            Assert.AreEqual("player-a", second.CurrentPlayerId);
+        }
+
+        private sealed class MemoryTokenStore : ITokenStore
+        {
+            public StoredTokens Saved;
+            public override void Save(string accessToken, string refreshToken) => Saved = new StoredTokens { AccessToken = accessToken, RefreshToken = refreshToken };
+            public override StoredTokens Load() => Saved;
+            public override void Clear() => Saved = null;
+        }
+
+        // A game can build its own config: it sets the Game Version ID and a token store of its own, a null analytics config
+        // reads as the defaults, and a pasted URL with a space or a trailing slash reaches the same routes.
+        [Test]
+        public void AConfigBuiltByHand_StartsTheSdk_WithItsOwnTokenStore()
+        {
+            Assert.IsTrue(typeof(FlockInitConfig).GetProperty(nameof(FlockInitConfig.GameVersionId)).SetMethod.IsPublic);
+            Assert.IsTrue(typeof(FlockInitConfig).GetProperty(nameof(FlockInitConfig.TokenStore)).SetMethod.IsPublic);
+
+            MemoryTokenStore store = new MemoryTokenStore();
+            FlockInitConfig config = new FlockInitConfig(" https://test.invalid// ", "test-key", "test-game", "1.0.0")
+            {
+                GameVersionId = "test-gvid",
+                EnableOfflineCache = false,
+                TokenStore = store,
+                AnalyticsConfig = null,
+                RetryPolicy = new RetryPolicy { MaxRetries = 0, InitialDelay = TimeSpan.Zero },
+            };
+            Assert.AreEqual("https://test.invalid", config.ApiUrl);
+            Assert.IsNotNull(config.AnalyticsConfig, "A null analytics config reads as the defaults.");
+            config.AnalyticsConfig.Enabled = false;
+
+            FlockClient client = FlockClient.Create(config, new NullFlockLogger());
+            ScriptedAdapter adapter = LoginAdapter(MakeJwt("player-a", 3600));
+            FlockHttpClient.Configure(adapter);
+            Run(() => client.Authentication.LoginWithDeviceAsync("device-1"));
+
+            Assert.IsNotNull(store.Saved, "The game's own store keeps the sign-in.");
+            Assert.IsFalse(PlayerPrefs.HasKey(PrefAccessToken), "Nothing goes to the default store.");
+            StringAssert.StartsWith("https://test.invalid/v1/", adapter.Requests[adapter.Requests.Count - 1].Url);
         }
     }
 }

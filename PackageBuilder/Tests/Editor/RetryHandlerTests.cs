@@ -218,5 +218,30 @@ namespace Flock.Tests
             Assert.AreEqual(1, logger.Warnings.Count);
             StringAssert.StartsWith("Operation failed after 1 attempt(s)", logger.Warnings[0]);
         }
+
+        // MaxDelay is the longest wait, jitter included: the backoff grows to MaxDelay and jitter is applied after.
+        [Test]
+        public void TheJitteredWait_NeverPassesMaxDelay()
+        {
+            RetryHandler handler = new RetryHandler(new RetryPolicy { MaxDelay = TimeSpan.FromSeconds(30), UseJitter = true }, null);
+            TimeSpan longest = TimeSpan.Zero;
+            for (int roll = 0; roll < 200; roll++)
+            {
+                TimeSpan wait = handler.ResolveDelay(new FlockNetworkException("server error", 500), TimeSpan.FromSeconds(30));
+                if (wait > longest)
+                    longest = wait;
+            }
+            Assert.LessOrEqual(longest, TimeSpan.FromSeconds(30));
+            Assert.Greater(longest, TimeSpan.Zero);
+        }
+
+        // A negative Retry-After means "now"; kept negative, the wait before the retry threw and the retry never ran.
+        [Test]
+        public void ANegativeRetryAfter_MeansNow()
+        {
+            Assert.AreEqual(TimeSpan.Zero, FlockHttpClient.ParseRetryAfter("-5"));
+            Assert.AreEqual(TimeSpan.FromSeconds(7), FlockHttpClient.ParseRetryAfter("7"));
+            Assert.IsNull(FlockHttpClient.ParseRetryAfter(""));
+        }
     }
 }

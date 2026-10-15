@@ -136,7 +136,7 @@ namespace Flock.Editor.Codegen
             for (int i = 0; i < c.Schema.Count; i++)
             {
                 sb.Append("            ");
-                sb.Append(SerializeTypedSchema(c.Schema[i], "            "));
+                sb.Append(PlayerTemplateEmitter.SerializeTypedSchema(c.Schema[i], "            "));
                 if (i < c.Schema.Count - 1) sb.AppendLine(",");
                 else sb.AppendLine();
             }
@@ -220,40 +220,6 @@ namespace Flock.Editor.Codegen
             return sb.ToString();
         }
 
-        private static string SerializeTypedSchema(TypedSchema field, string baseIndent)
-        {
-            StringBuilder sb = new StringBuilder();
-            sb.Append("new TypedSchema { ");
-            sb.Append($"Type = \"{CodeGenNamingHelpers.EscapeStringLiteral(field.Type ?? "")}\", ");
-            sb.Append($"FieldName = \"{CodeGenNamingHelpers.EscapeStringLiteral(field.FieldName ?? "")}\", ");
-            sb.Append($"TypeName = \"{CodeGenNamingHelpers.EscapeStringLiteral(field.TypeName ?? "")}\"");
-
-            if (field.Schema is List<TypedSchema> list && list.Count > 0)
-            {
-                sb.Append(", Schema = new List<TypedSchema>");
-                sb.AppendLine();
-                sb.Append(baseIndent);
-                sb.AppendLine("{");
-                string innerIndent = baseIndent + "    ";
-                for (int i = 0; i < list.Count; i++)
-                {
-                    sb.Append(innerIndent);
-                    sb.Append(SerializeTypedSchema(list[i], innerIndent));
-                    if (i < list.Count - 1) sb.AppendLine(",");
-                    else sb.AppendLine();
-                }
-                sb.Append(baseIndent);
-                sb.Append("}");
-            }
-            else if (field.Schema is TypedSchema single)
-            {
-                sb.Append(", Schema = ");
-                sb.Append(SerializeTypedSchema(single, baseIndent));
-            }
-
-            sb.Append(" }");
-            return sb.ToString();
-        }
 
         private static string ResolveSchemaTagLiteral(string tag)
         {

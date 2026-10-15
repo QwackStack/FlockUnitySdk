@@ -300,13 +300,14 @@ namespace Protokite.Playtest.Tests
             public int FramesLostOnTheGraphicsCard => 0;
             public int FramesDroppedForWantOfABlock => 0;
 
-            public void CaptureFrame(long timestampMs)
+            public bool CaptureFrame(long timestampMs)
             {
                 Captures++;
                 byte[] pixels = new byte[ProtokitePlaytestNv12.FrameLength(Width, Height)];
                 for (int i = 0; i < pixels.Length; i++)
                     pixels[i] = (byte)(timestampMs / 7 + i);
                 _arrived.Add(new ProtokitePlaytestCapturedFrame(pixels, timestampMs));
+                return true;
             }
 
             public void TakeCapturedFrames(System.Collections.Generic.List<ProtokitePlaytestCapturedFrame> frames)

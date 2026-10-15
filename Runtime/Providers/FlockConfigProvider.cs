@@ -291,6 +291,9 @@ namespace Flock.Providers
             return config;
         }
 
+        // A player's features are kept in memory for the run (_playerFeaturesByPlayer): the first read of a player fetches,
+        // later reads of the same player answer from memory, and ClearCache() or a new client fetches again. Never written to
+        // the offline snapshot, so a new launch always asks the server.
         internal async Task<GameConfigSchema> GetPlayerFeaturesAsync(string playerId, CancellationToken cancellationToken = default)
         {
             RequireNotEmpty(playerId, "Player ID");

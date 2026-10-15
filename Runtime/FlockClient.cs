@@ -158,6 +158,11 @@ namespace Flock
                 // Only the commands queue was ever kept there; a build without commands has nothing to rescue.
                 client._snapshotStore?.MigrateLegacyState(FlockCommandProvider.SnapshotCategory);
 #endif
+#if !FLOCK_NO_NOTIFICATION
+                // The seen-watermark and the reminders a player can cancel were kept beside the inbox cache until 1.86.0.
+                client._snapshotStore?.MigrateLegacyStateFiles(FlockNotificationProvider.SnapshotCategory,
+                    FlockNotificationProvider.PendingSchedulesKey, FlockNotificationProvider.WatermarkKey);
+#endif
                 client._snapshotStore?.PruneOtherVersions(client._initConfig.GameVersionId);
                 client._snapshotStore?.DeleteLeftOverFiles();
                 client.InitializeServices();
@@ -177,7 +182,9 @@ namespace Flock
 
         /// <summary>
         /// Clears the global <see cref="Instance"/>, allowing <see cref="Create"/> to be
-        /// called again. Logs out the current player first so the token state is dropped.
+        /// called again. Ends the analytics session as a quit and lets go of this client's tokens; the saved
+        /// sign-in stays, so the next <see cref="Create"/> restores the player (call
+        /// <c>Authentication.Logout()</c> first to sign the player out).
         /// Invokes <see cref="FlockEvents.OnShutdown"/> last, then clears all <see cref="FlockEvents"/> subscriptions.
         /// </summary>
         public static void Shutdown()
@@ -193,7 +200,7 @@ namespace Flock
 #if !FLOCK_NO_MULTIPLAYER
             _instance._multiplayer?.StopForShutdown();
 #endif
-            _instance.ClearTokens();
+            _instance.EndSignIn(FlockSessionEndReason.Quit, deleteSavedSignIn: false);
             // After the session end is spooled: a later Create takes this launch's folder over.
             _instance._analyticsLaunches?.Dispose();
             _instance = null;
@@ -245,7 +252,7 @@ namespace Flock
                     testingFolder ?? FlockAnalyticsLaunches.DefaultFolder(),
                     testingFolder == null ? FlockEarlierBuildFiles.OnThisMachine() : null);
                 if (!_analyticsLaunches.IsHoldingItsFolder)
-                    _logger.LogWarning("Could not lock a folder for this launch's analytics files, so launches that ended before this one are not reported this time.");
+                    _logger.LogWarning("Could not lock a folder for this launch's analytics files, so this launch keeps none: what it cannot send now is lost, and launches that ended before it are not reported this time.");
                 _session = new FlockSession(_initConfig.AnalyticsConfig, _logger, _analyticsLaunches.SessionStatePath);
                 _analytics = new FlockAnalyticsProvider(this);
             }
@@ -434,13 +441,17 @@ namespace Flock
             return true;
         }
 
-        internal void ClearTokens()
+        internal void ClearTokens() => EndSignIn(FlockSessionEndReason.Logout, deleteSavedSignIn: true);
+
+        // Ends the sign-in in this client: its analytics session ends with the reason given, and every call bound to it stops.
+        // A shutdown keeps the saved sign-in for the next Create; a sign-out or an expired sign-in deletes it.
+        private void EndSignIn(FlockSessionEndReason reason, bool deleteSavedSignIn)
         {
-            _logger.LogInfo("Clearing authentication tokens");
+            _logger.LogInfo(deleteSavedSignIn ? "Clearing authentication tokens" : "Letting go of this client's tokens; the saved sign-in stays");
 
             if (_session != null && _session.IsActive)
             {
-                _session.Reset(FlockSessionEndReason.Logout);
+                _session.Reset(reason);
             }
 
 #if !FLOCK_NO_ANALYTICS
@@ -452,7 +463,8 @@ namespace Flock
             _tokenClaims = null;
             _signInNumber++;
 
-            ClearPersistedTokens();
+            if (deleteSavedSignIn)
+                ClearPersistedTokens();
         }
 
         public string GetApiUrl()

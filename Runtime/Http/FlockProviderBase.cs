@@ -124,13 +124,6 @@ namespace Flock.Http
             Client.SnapshotStore?.DeleteScope(snapshotScope);
         }
 
-        /// <summary>Clears a category but keeps records whose key starts with one of these prefixes — for per-player state that other players also own.</summary>
-        protected void DeleteSnapshotCategoryExcept(string category, params string[] keepKeyPrefixes)
-        {
-            string snapshotScope = GetSnapshotScope(category);
-            Client.SnapshotStore?.DeleteScopeExcept(snapshotScope, keepKeyPrefixes);
-        }
-
         protected bool TryReadSnapshot<T>(string category, string key, out T value) where T : class
         {
             FlockSnapshotStore store = Client.SnapshotStore;

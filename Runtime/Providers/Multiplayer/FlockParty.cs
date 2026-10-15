@@ -121,7 +121,7 @@ namespace Flock.Providers
         /// <summary>Disbands the party, so every player in it is free to make or join another. Leader only.</summary>
         public Task DisbandAsync(CancellationToken cancellationToken = default) => _owner.DisbandAsync(this, cancellationToken);
 
-        /// <summary>Searches for a match as the party, matched as one unit and never split. The leader's game starts the search in the queue named <paramref name="queueName"/>; another member's game waits for the leader's search (it may pass null) and gets the same match. A player joining or leaving the party during the search stops it (<see cref="FlockMatchmakingOutcome.PartyChanged"/>). Cancelling the token cancels the party's search on the server, for every member.</summary>
+        /// <summary>Searches for a match as the party, matched as one unit and never split. The leader's game starts the search in the queue named <paramref name="queueName"/>; another member's game waits for the leader's search (it may pass null) and gets the same match; the wait ends with a <see cref="Flock.Exceptions.FlockValidationException"/> if the party ends first, or if the player comes to lead it. A player joining or leaving the party during the search stops it (<see cref="FlockMatchmakingOutcome.PartyChanged"/>). Cancelling the token cancels the party's search on the server, for every member.</summary>
         public Task<FlockMatchmakingResult> FindMatchAsync(string queueName, FlockMatchmakingOptions options = null, CancellationToken cancellationToken = default)
             => _owner.FindMatchAsync(this, queueName, options, cancellationToken);
 

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using Flock;
@@ -34,8 +35,6 @@ namespace Protokite.Playtest
         /// <summary>Why it was not uploaded, or null.</summary>
         public string WhyNot;
         public long BytesSent;
-        public int LinksAskedFor;
-        public int FilesSent;
         /// <summary>Whether the uploaded recording's files were all deleted; a later launch deletes what is left, but never uploads it again.</summary>
         public bool Deleted;
         /// <summary>Stopped because the device left Wi-Fi under a Wi-Fi only answer: kept, and sent again once it is back on Wi-Fi.</summary>
@@ -159,7 +158,7 @@ namespace Protokite.Playtest
                             continue;
                         ProtokitePlaytestSavedSession session = ProtokitePlaytestRecordingRun.ReadSession(run.FolderPath, out _);
                         string videoPath = ProtokitePlaytestRecordingRun.FinishedVideoPath(run.FolderPath);
-                        // A run with no session is the finishing pass's to delete; one with no finished video has nothing to send yet.
+                        // A run with no session it can read is the finishing pass's to settle; one with no finished video has nothing to send yet.
                         if (session == null || videoPath == null)
                             continue;
 
@@ -256,7 +255,6 @@ namespace Protokite.Playtest
                 ProtokitePlaytestRecordingLink link;
                 try
                 {
-                    outcome.LinksAskedFor++;
                     link = await client.RequestRecordingUploadLinkAsync(apiUrl, headers, sessionId, contentType, cancellationToken);
                 }
                 catch (Exception ex) when (!(ex is OperationCanceledException))
@@ -265,7 +263,6 @@ namespace Protokite.Playtest
                     return outcome;
                 }
 
-                outcome.FilesSent++;
                 FlockFileUploadOutcome sent = await FlockHttpClient.UploadFileAsync(link.UploadUrl, videoPath, contentType, cancellationToken);
                 outcome.BytesSent = sent.BytesSent;
                 if (sent.IsUploaded)
@@ -277,15 +274,25 @@ namespace Protokite.Playtest
                 }
 
                 outcome.WhyNot = DescribeUploadFailure(sent);
-                if (attempt >= MostUploadTries || !AFreshLinkCouldHelp(sent))
+                if (attempt >= MostUploadTries || !AFreshLinkCouldHelp(sent, videoPath))
                     return outcome;
                 Debug.Log(LogPrefix + outcome.WhyNot + " Asking for a fresh link and trying once more.");
             }
         }
 
-        // A link refused for its signature (the Content-Type sent is not the one it was signed for) would be refused again.
-        private static bool AFreshLinkCouldHelp(FlockFileUploadOutcome sent)
-            => !(sent.StatusCode == 403 && sent.Body != null && sent.Body.IndexOf("<Code>SignatureDoesNotMatch</Code>", StringComparison.Ordinal) >= 0);
+        // A fresh link mends a link that expired (a 403 not about its signature), a storage that had a moment (408, 429, 5xx), or no answer
+        // while the file is still there to send. A refusal of the request itself, a content type the link was not signed for, or a file
+        // gone, a second link meets the same way.
+        internal static bool AFreshLinkCouldHelp(FlockFileUploadOutcome sent, string videoPath)
+        {
+            if (sent.Result == FlockHttpResult.Success)
+            {
+                if (sent.StatusCode == 403)
+                    return sent.Body == null || sent.Body.IndexOf("<Code>SignatureDoesNotMatch</Code>", StringComparison.Ordinal) < 0;
+                return sent.StatusCode == 408 || sent.StatusCode == 429 || sent.StatusCode >= 500;
+            }
+            return File.Exists(videoPath);
+        }
 
         // From the HTTP status alone: the route's refusals carry no code, and a 403 here means the session is another game's or
         // playtest's, never a wrong key.

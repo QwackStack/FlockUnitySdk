@@ -69,6 +69,11 @@ namespace Flock.Tests.PlayMode
 
         private readonly object _lock = new object();
         private readonly Dictionary<string, int> _queueSizes = new Dictionary<string, int> { { DuelId, 2 }, { TrioId, 3 } };
+        private readonly List<KeyValuePair<string, string>> _queueNames = new List<KeyValuePair<string, string>>
+        {
+            new KeyValuePair<string, string>(DuelId, Duel),
+            new KeyValuePair<string, string>(TrioId, Trio),
+        };
         private readonly List<Ticket> _tickets = new List<Ticket>();
         private readonly Dictionary<string, Queue<Held>> _holds = new Dictionary<string, Queue<Held>>();
         private readonly Dictionary<string, Queue<FlockHttpResponse>> _cannedAnswers = new Dictionary<string, Queue<FlockHttpResponse>>();
@@ -177,6 +182,23 @@ namespace Flock.Tests.PlayMode
                     formed[i].SessionId = Sessions.SeatedByMatch(sessionsToMake[i].Key, sessionsToMake[i].Value).Id;
             }
             return formed;
+        }
+
+        // A queue deleted in the dashboard and made again under the same name, with a new id; a null id deletes it.
+        internal void RemakesQueue(string name, string newId)
+        {
+            lock (_lock)
+            {
+                foreach (KeyValuePair<string, string> queue in _queueNames.Where(each => each.Value == name).ToList())
+                {
+                    _queueNames.Remove(queue);
+                    _queueSizes.Remove(queue.Key);
+                }
+                if (newId == null)
+                    return;
+                _queueNames.Add(new KeyValuePair<string, string>(newId, name));
+                _queueSizes[newId] = name == Duel ? 2 : 3;
+            }
         }
 
         // The engine's sweep after 5 minutes, for every ticket still queued.
@@ -302,9 +324,7 @@ namespace Flock.Tests.PlayMode
             if (route == Other)
                 return Refused(404, "request.not_found");
             if (route == Queues)
-                return Answer(new JArray(
-                    new JObject { ["id"] = DuelId, ["name"] = Duel },
-                    new JObject { ["id"] = TrioId, ["name"] = Trio }));
+                return Answer(new JArray(_queueNames.Select(queue => new JObject { ["id"] = queue.Key, ["name"] = queue.Value })));
             if (player == null)
                 return Refused(401, "player.missing_token");
 

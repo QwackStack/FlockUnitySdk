@@ -233,8 +233,14 @@ namespace Protokite.Playtest
         private VisualElement BuildAnswer(ProtokitePlaytestFormField field)
         {
             if (ProtokitePlaytestFormAnswers.IsKind(field, ProtokitePlaytestFormFieldTypes.Rating))
-                return BuildChoices(field, new[] { "1", "2", "3", "4", "5" }, index => Answers.GetRating(field.Id) == index + 1,
-                    index => Answers.SetRating(field.Id, Answers.GetRating(field.Id) == index + 1 ? 0 : index + 1));
+            {
+                int lowest = ProtokitePlaytestRatings.Lowest;
+                string[] ratings = new string[ProtokitePlaytestRatings.Highest - lowest + 1];
+                for (int i = 0; i < ratings.Length; i++)
+                    ratings[i] = (lowest + i).ToString(System.Globalization.CultureInfo.InvariantCulture);
+                return BuildChoices(field, ratings, index => Answers.GetRating(field.Id) == lowest + index,
+                    index => Answers.SetRating(field.Id, Answers.GetRating(field.Id) == lowest + index ? 0 : lowest + index));
+            }
             if (ProtokitePlaytestFormAnswers.IsKind(field, ProtokitePlaytestFormFieldTypes.Select))
             {
                 IReadOnlyList<string> options = field.Options;

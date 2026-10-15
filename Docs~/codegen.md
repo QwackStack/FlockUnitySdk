@@ -38,7 +38,7 @@ SchemaTag tag = GameplayConfig.SourceTag;
 // Shops — Flock.Generated.Shops. Typed shop accessor + enum-keyed Purchase / AddGameFunds.
 Shop starter = await FlockClient.Instance.Shop.GetStarterPackShopAsync();
 // Purchase / AddGameFunds take generated enums of the available ids; the UUID is resolved inside:
-PlayerInventory bought = await FlockClient.Instance.Shop.PurchaseAsync(FlockShopItemId.GemPack);
+PurchaseResult bought = await FlockClient.Instance.Shop.PurchaseAsync(FlockShopItemId.GemPack);
 PlayerData funded = await FlockClient.Instance.Commands.AddGameFundsAsync(FlockFundId._100, 500);
 
 // Achievements — Flock.Generated.Achievements. Enum-keyed unlock; the raw name is resolved inside.

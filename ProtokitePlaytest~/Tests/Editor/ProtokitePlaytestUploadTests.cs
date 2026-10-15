@@ -63,6 +63,12 @@ namespace Protokite.Playtest.Tests
             FlockHttpClient.UseFileUploader(_uploader);
             _network = NetworkReachability.ReachableViaLocalAreaNetwork;
             ProtokitePlaytest.NetworkForTesting = () => _network;
+            // The finishing pass asks the platform for its encoders; answered here, not by the computer the editor runs on (none on Linux).
+            ProtokitePlaytestVideoEncoders.LookForEncodersForTesting = () => new KeyValuePair<List<ProtokitePlaytestEncoderFound>, string>(
+                new List<ProtokitePlaytestEncoderFound>
+                {
+                    new ProtokitePlaytestEncoderFound { Name = "the test's encoder", InHardware = true, OnAPhone = ProtokitePlaytestVideoEncoders.OnAndroid, TakesConstantBitrate = true }
+                }, null);
         }
 
         [TearDown]
@@ -80,6 +86,7 @@ namespace Protokite.Playtest.Tests
             ProtokitePlaytest.DeviceIdFilePathForTesting = null;
             ProtokitePlaytest.NetworkForTesting = null;
             ProtokitePlaytestVideoEncoders.ActAsAndroidForTesting = false;
+            ProtokitePlaytestVideoEncoders.LookForEncodersForTesting = null;
             // A phone test's finishing pass asks the phone for its encoders; the answer is the launch's, never the next test's.
             ProtokitePlaytestVideoEncoders.ResetForNewLaunch();
             FlockHttpClient.UseFileUploader(null);
@@ -110,7 +117,10 @@ namespace Protokite.Playtest.Tests
         private static void Frames(int count)
         {
             for (int i = 0; i < count; i++)
+            {
                 ProtokitePlaytest.UpdateVideo(1.0 / 60.0);
+                RecordingsUnderWay.LetTheirEncodersStart();
+            }
         }
 
         private static void StartAFlockSession(FlockTestClient flock)
@@ -1435,6 +1445,37 @@ namespace Protokite.Playtest.Tests
                 => _inner.FinishInterruptedRecording(unfinishedPath, finishedPath, out framesKept, out error);
 
             public void Dispose() => _inner.Dispose();
+        }
+
+        // A fresh link mends an expired one, a storage that had a moment and no answer while the file is there; nothing else.
+        [Test]
+        public void AFreshLinkIsAskedForOnlyWhereOneCanHelp()
+        {
+            string video = Path.Combine(Path.GetTempPath(), "protokite-fresh-link-" + Guid.NewGuid().ToString("N") + ".mp4");
+            File.WriteAllBytes(video, new byte[] { 1 });
+            try
+            {
+                FlockFileUploadOutcome Answered(int status, string body = null)
+                    => new FlockFileUploadOutcome { Result = FlockHttpResult.Success, StatusCode = status, Body = body };
+                FlockFileUploadOutcome noAnswer = new FlockFileUploadOutcome { Result = FlockHttpResult.ConnectionError };
+
+                Assert.IsTrue(ProtokitePlaytest.AFreshLinkCouldHelp(Answered(403, "<Error><Code>AccessDenied</Code><Message>Request has expired</Message></Error>"), video), "An expired link");
+                Assert.IsTrue(ProtokitePlaytest.AFreshLinkCouldHelp(Answered(403), video), "A 403 that says nothing");
+                Assert.IsFalse(ProtokitePlaytest.AFreshLinkCouldHelp(Answered(403, "<Error><Code>SignatureDoesNotMatch</Code></Error>"), video),
+                    "A content type the link was not signed for meets a fresh link the same way");
+                foreach (int status in new[] { 408, 429, 500, 503 })
+                    Assert.IsTrue(ProtokitePlaytest.AFreshLinkCouldHelp(Answered(status), video), $"HTTP {status}");
+                foreach (int status in new[] { 400, 404, 413 })
+                    Assert.IsFalse(ProtokitePlaytest.AFreshLinkCouldHelp(Answered(status), video), $"HTTP {status}");
+                Assert.IsTrue(ProtokitePlaytest.AFreshLinkCouldHelp(noAnswer, video), "No answer, with the file there");
+                File.Delete(video);
+                Assert.IsFalse(ProtokitePlaytest.AFreshLinkCouldHelp(noAnswer, video), "No answer because the file is gone");
+            }
+            finally
+            {
+                if (File.Exists(video))
+                    File.Delete(video);
+            }
         }
     }
 }

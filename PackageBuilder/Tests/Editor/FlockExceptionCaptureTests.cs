@@ -580,6 +580,22 @@ namespace Flock.Tests.Editor
             }
         }
 
+        // The next launch's report names the session by the id the server knows it by.
+        [Test]
+        public void TheCrashMarkerLearnsTheServersSessionIdWhenTheSessionRegisters()
+        {
+            using (FlockTestClient sdk = CreateTracking())
+            {
+                sdk.Transport.On(FlockEndpoints.AnalyticsSessions, FlockFakeTransport.Ok("{\"session_id\":\"srv-registered\"}"));
+                sdk.LoginAs("player-1");
+                sdk.Run(() => sdk.Client.Analytics.InitializeAsync(CancellationToken.None));
+                sdk.Run(() => sdk.Client.Analytics.StartSessionAsync());
+
+                Assert.AreEqual("srv-registered", Marker(sdk).ServerSessionId);
+                Assert.AreEqual(Application.version, Marker(sdk).AppVersion);
+            }
+        }
+
         [Test]
         public void GrantingConsentStartsTheCrashMarker()
         {
@@ -659,6 +675,65 @@ namespace Flock.Tests.Editor
                     .Single(entry => (string)entry["message"] == FlockTerminationTracker.EventName);
                 Assert.AreEqual("abnormal", (string)Extra(report)["classification"]);
                 Assert.IsNull(Extra(report)["previous_session_id"], "No session was running, so none is named");
+            }
+        }
+
+        // The coverage read says what the capture hears: nothing with capture off, nothing logged while Unity's logger is off.
+        [Test]
+        public void TheCoverageReadSaysWhatTheCaptureHears()
+        {
+            using (FlockTestClient sdk = Create())
+            {
+                FlockExceptionCaptureCoverage coverage = sdk.Client.Analytics.GetExceptionCaptureCoverage();
+                Assert.IsTrue(coverage.Enabled, "Capture Exceptions is on by default");
+                Assert.IsTrue(coverage.LoggedExceptions);
+                Assert.IsTrue(coverage.UnhandledExceptions);
+                Assert.IsTrue(coverage.UnobservedTaskExceptions);
+                Assert.IsTrue(coverage.IsComplete);
+
+                Debug.unityLogger.logEnabled = false;
+                FlockExceptionCaptureCoverage quiet = sdk.Client.Analytics.GetExceptionCaptureCoverage();
+                Debug.unityLogger.logEnabled = true;
+                Assert.IsTrue(quiet.Enabled);
+                Assert.IsFalse(quiet.LoggedExceptions, "Unity's log callback is silent while its logger is off");
+                Assert.IsTrue(quiet.UnhandledExceptions, "The domain hook still hears");
+                Assert.IsFalse(quiet.IsComplete);
+
+                Provider(sdk).StopListeningForExceptions();
+                Assert.IsFalse(sdk.Client.Analytics.GetExceptionCaptureCoverage().Enabled, "Stopped, nothing is heard");
+            }
+            using (FlockTestClient sdk = Create(config => config.AnalyticsConfig.CaptureExceptions = false))
+            {
+                FlockExceptionCaptureCoverage off = sdk.Client.Analytics.GetExceptionCaptureCoverage();
+                Assert.IsFalse(off.Enabled, "Capture Exceptions off: nothing is captured");
+                Assert.IsFalse(off.LoggedExceptions);
+                Assert.IsFalse(off.IsComplete);
+            }
+            using (FlockTestClient sdk = Create(config => config.AnalyticsConfig.Enabled = false))
+            {
+                Assert.IsFalse(sdk.Client.Analytics.GetExceptionCaptureCoverage().Enabled, "Analytics off: nothing is captured");
+            }
+        }
+
+        // A queue that cannot keep an entry has it sent at once, up to a hundred a launch: log events are metered, and a disk that
+        // refuses every write must not turn every entry into a request.
+        [Test]
+        public void AQueueThatCannotKeepEntriesSendsAtMostAHundredAtOnce()
+        {
+            using (FlockTestClient sdk = Create())
+            {
+                sdk.Transport.On(FlockEndpoints.LogEvent, FlockFakeTransport.Ok("{}"));
+                string queue = LogQueue(sdk);
+                // A file where the queue's folder should be: every write fails, and the folder cannot be made again.
+                Directory.Delete(queue, true);
+                File.WriteAllText(queue, "in the way");
+                LogAssert.ignoreFailingMessages = true;
+
+                for (int i = 0; i < FlockAnalyticsProvider.MostSentPastAFailedQueue + 5; i++)
+                    sdk.Client.Analytics.LogDiagnosticEvent("entry " + i);
+
+                Assert.AreEqual(FlockAnalyticsProvider.MostSentPastAFailedQueue, sdk.Transport.CountTo(FlockEndpoints.LogEvent),
+                    "A hundred went at once, each its own request; the rest were dropped");
             }
         }
     }

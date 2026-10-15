@@ -9,10 +9,15 @@ namespace Flock.Config
 {
     public class FlockInitConfig
     {
-        public string ApiUrl { get; set; }
+        private string _apiUrl;
+        private FlockAnalyticsConfig _analyticsConfig = new FlockAnalyticsConfig();
+
+        /// <summary>Flock endpoint, without the version segment. Surrounding spaces and trailing slashes are removed, so a URL pasted as "https://host/ " reaches the same routes as in the editor's tools.</summary>
+        public string ApiUrl { get => _apiUrl; set => _apiUrl = TrimApiUrl(value); }
         public string GameId { get; set; }
         public string GameVersion { get; set; }
-        public string GameVersionId { get; internal set; }
+        /// <summary>The ID of <see cref="GameVersion"/>. FlockConfig bakes it at edit time; a config built by hand sets it, since runtime init never contacts the server to resolve it.</summary>
+        public string GameVersionId { get; set; }
         public bool EnableDebugLogs { get; set; }
         /// <summary>
         /// When true, asset downloads are cached on disk keyed by asset ID and the
@@ -23,7 +28,7 @@ namespace Flock.Config
 
         /// <summary>
         /// Absolute path for the asset cache directory. When null/empty, defaults to
-        /// <c>Application.persistentDataPath/flock_assets/</c>.
+        /// <c>Application.persistentDataPath/Flock/flock_assets/</c>.
         /// </summary>
         public string AssetCacheDirectory { get; set; }
 
@@ -67,19 +72,18 @@ namespace Flock.Config
         /// <summary>How often the player's party is read again while the game holds it (default 10 s); each read is one API call. Zero or less turns it off, and the party then changes only when the game asks for it again.</summary>
         public TimeSpan PartyRefreshInterval { get; set; } = TimeSpan.FromSeconds(10);
 
-        /// <summary>
-        /// Flock analytics Settings
-        /// </summary>
-        public FlockAnalyticsConfig AnalyticsConfig { get; set; }
+        /// <summary>Flock analytics settings. Never null: null sets the defaults.</summary>
+        public FlockAnalyticsConfig AnalyticsConfig { get => _analyticsConfig; set => _analyticsConfig = value ?? new FlockAnalyticsConfig(); }
 
         /// <summary>
         /// Persistence layer for auth tokens between app launches. Defaults to the
         /// platform-appropriate <see cref="ITokenStore"/> selected by
-        /// <see cref="TokenStoreFactory.Create"/>. After init, call
+        /// <see cref="TokenStoreFactory.Create"/>. Set it before <c>FlockClient.Create</c> to keep tokens
+        /// your own way; null keeps nothing between launches. After init, call
         /// <c>FlockClient.Instance.Authentication.TryRestoreSessionAsync()</c>
         /// to resume a stored session.
         /// </summary>
-        public ITokenStore TokenStore { get;}
+        public ITokenStore TokenStore { get; set; }
 
         private readonly string _apiKey;
 
@@ -102,8 +106,8 @@ namespace Flock.Config
             FlockAnalyticsConfig analyticsConfig = null,
             RetryPolicy retryPolicy = null)
         {
-            // Trim stray whitespace — a leading space breaks WebGL's absolute-URL check and silently makes calls relative.
-            ApiUrl = apiUrl?.Trim();
+            // Trimmed by the property: a leading space breaks WebGL's absolute-URL check and silently makes calls relative.
+            ApiUrl = apiUrl;
             _apiKey = apiKey;
             GameId = gameId;
             GameVersion = gameVersion;
@@ -112,6 +116,9 @@ namespace Flock.Config
             RetryPolicy = retryPolicy ?? new RetryPolicy();
             TokenStore = TokenStoreFactory.Create();
         }
+
+        /// <summary>The API URL as every request is built from it: surrounding spaces and trailing slashes removed.</summary>
+        internal static string TrimApiUrl(string apiUrl) => apiUrl?.Trim().TrimEnd('/').TrimEnd();
 
         public Dictionary<string, string> GetBaseHeaders()
         {

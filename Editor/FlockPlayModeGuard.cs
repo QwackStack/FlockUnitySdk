@@ -47,7 +47,7 @@ namespace Flock.Editor
         {
             FlockConfigAsset config = FlockConfigLocator.FindConfigAsset();
             bool configExists = config != null;
-            bool configValid = configExists && config.IsValid(out string _);
+            bool configValid = configExists && config.IsReadyToPlay(out string _);
             // No asset → guard stays active by default (there's no asset to hold the toggle).
             bool guardEnabled = !configExists || config.playModeGuardEnabled;
             bool autoInitializeEnabled = configExists && config.autoInitializeOnLoad;

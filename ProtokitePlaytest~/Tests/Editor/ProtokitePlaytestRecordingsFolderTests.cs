@@ -37,6 +37,7 @@ namespace Protokite.Playtest.Tests
                 held.Dispose();
             _held.Clear();
             ProtokitePlaytestRecordingsFolder.BeforeNextMakingRoomForTesting = null;
+            ProtokitePlaytestRecordingRun.BeforeNextFolderRemovalForTesting = null;
             string folder = Path.GetDirectoryName(_root);
             if (Directory.Exists(folder))
                 Directory.Delete(folder, true);
@@ -171,6 +172,47 @@ namespace Protokite.Playtest.Tests
             Assert.IsFalse(Directory.Exists(noUsableSession), "A session file naming no session is no session");
             Assert.AreEqual(3, found.RecordingsDeletedWithNoSession);
             Assert.AreEqual(0, found.CutOffVideosFinished, "Deleted as it was, not finished first");
+        }
+
+        // A session file that parses but names no session is no session (above); one that cannot be parsed may name one, and
+        // deleting a recording is the one step never undone, so it is kept until making room deletes it.
+        [Test]
+        public void ARecordingWhoseSessionCannotBeReadIsKept()
+        {
+            string unreadable = Plant(_root, Playtest, "20260101-000000-00000001", finishedVideo: FinishedVideo(_scratch, 3));
+            File.WriteAllText(Path.Combine(unreadable, "session.json"), "{\"protokite_session_id\": ");
+
+            ProtokitePlaytestEarlierRecordings found = ProtokitePlaytestRecordingsFolder.FinishEndedRuns(_root);
+            Assert.IsTrue(File.Exists(VideoPath(unreadable, Playtest)), "Kept");
+            Assert.AreEqual(0, found.RecordingsDeletedWithNoSession);
+            Assert.IsTrue(found.LeftForTheNextLaunch.Exists(said => said.Contains("session.json") && said.Contains("kept")),
+                "And the log says why: " + string.Join(" | ", found.LeftForTheNextLaunch));
+        }
+
+        // The folder can still fail to go once its lock has (here a file lands in it meanwhile): the lock comes back, or no later
+        // launch would ever find what is left.
+        [Test]
+        public void ARunFolderThatCannotBeRemovedKeepsItsLock()
+        {
+            string run = Plant(_root, Playtest, "20260101-000000-00000001", finishedVideo: FinishedVideo(_scratch, 3));
+            ProtokitePlaytestRecordingRun claimed = Held(ProtokitePlaytestRecordingRun.ClaimEnded(run, Playtest));
+            Assert.IsNotNull(claimed);
+            ProtokitePlaytestRecordingRun.BeforeNextFolderRemovalForTesting = () => File.WriteAllText(Path.Combine(run, "arrived-meanwhile.txt"), "x");
+
+            Assert.IsFalse(claimed.DeleteEverything(), "The folder is still there");
+            Assert.IsTrue(File.Exists(Path.Combine(run, "in-use.lock")), "Its lock is back");
+            ProtokitePlaytestRecordingRun again = Held(ProtokitePlaytestRecordingRun.ClaimEnded(run, Playtest));
+            Assert.IsNotNull(again, "So a later launch takes it over and tries again");
+            Assert.IsTrue(again.DeleteEverything());
+            Assert.IsFalse(Directory.Exists(run));
+        }
+
+        [Test]
+        public void FoldersHoldingNoVideoAreReported()
+        {
+            string said = ProtokitePlaytest.DescribeEarlierRecordings(new ProtokitePlaytestEarlierRecordings { EmptyRunsRemoved = 2 });
+            Assert.IsNotNull(said, "A pass that only removed empty folders still says so");
+            StringAssert.Contains("folders holding no video removed: 2", said);
         }
 
         [Test]

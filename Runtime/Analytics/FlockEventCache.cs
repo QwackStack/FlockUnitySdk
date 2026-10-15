@@ -25,12 +25,16 @@ namespace Flock.Analytics
     {
         // Success: batch is gone from the server's perspective (Sent) — delete the files and move on.
         // Drop: batch is gone from the server's perspective (permanently rejected) — delete the files and move on.
-        // Defer: leave the files on disk and stop the flush loop; try again on the next trigger.
+        // RefusedForItsContent: refused for good for what it holds (400, 413, 422), which one entry can cause, so the batch is
+        //   sent again one entry at a time and only the entries refused alone are dropped.
+        // DeferUnanswered / DeferAnswered: leave the files on disk and stop the flush loop; try again on the next trigger.
         private enum FlushOutcome
         {
             Success,
             Drop, 
-            Defer
+            RefusedForItsContent,
+            DeferUnanswered,
+            DeferAnswered
         }
         private const string Extension = FlockEventCacheNames.Extension;
 
@@ -38,6 +42,16 @@ namespace Flock.Analytics
         private readonly int _maxEvents;
         private readonly int _batchSize;
         private readonly IFlockLogger _logger;
+        // Entries sent together share this key (a gameplay event's player): the server refuses a whole batch for one entry
+        // it cannot take, so one player's refusal must never cost another player's events. Null sends any entries together.
+        private readonly Func<T, string> _sendTogetherKey;
+        private int _lastDrainEnding;
+        // The first refusal of the drain under way, for the flush's report; one drain runs at a time.
+        private string _firstRefusalThisDrain;
+        // Each queued file's send-together key, read once: a batch of one player's entries skips another player's without
+        // parsing them again. Kept under _inFlightLock; a rewrite or a delete forgets the file's entry.
+        private readonly Dictionary<string, string> _sendTogetherKeyByPath = new Dictionary<string, string>(StringComparer.Ordinal);
+        internal int FilesReadForTesting;
 
         // The flush now sending, or null: two flushes never send the same batch.
         private readonly object _flushLock = new object();
@@ -52,8 +66,10 @@ namespace Flock.Analytics
         private readonly object _inFlightLock = new object();
         private HashSet<string> _inFlightPaths;
 
-        public FlockEventCache(string directory, string subfolder, int maxEvents, int batchSize, IFlockLogger logger)
+        public FlockEventCache(string directory, string subfolder, int maxEvents, int batchSize, IFlockLogger logger,
+            Func<T, string> sendTogetherKey = null)
         {
+            _sendTogetherKey = sendTogetherKey;
             string root = string.IsNullOrEmpty(directory) ? Application.persistentDataPath : directory;
             _dir = Path.Combine(root, subfolder);
             _maxEvents = Math.Max(1, maxEvents);
@@ -66,6 +82,8 @@ namespace Flock.Analytics
 
         // Read directly from the field so the hot-path check (FlushCacheInBackground entry) doesn't syscall.
         public int PendingCount => Volatile.Read(ref _pendingCount);
+
+        public FlockDrainEnding LastDrainEnding => (FlockDrainEnding)Volatile.Read(ref _lastDrainEnding);
 
         public string Enqueue(T evt)
         {
@@ -137,6 +155,8 @@ namespace Flock.Analytics
 
                         // Replaced only while it is still there, so a rewrite never brings back an entry erased meanwhile.
                         FlockTemporaryFiles.Replace(path, JsonConvert.SerializeObject(evt));
+                        // Its key may have changed with it (a player credited), so it is read again next time.
+                        _sendTogetherKeyByPath.Remove(path);
                         rewritten++;
                     }
                     catch (Exception ex)
@@ -150,13 +170,13 @@ namespace Flock.Analytics
                 _logger?.LogInfo($"Rewrote {rewritten} cached entry(ies)");
         }
 
-        public async Task FlushAsync(
+        public async Task<FlockFlushResult> FlushAsync(
             Func<IReadOnlyList<T>, CancellationToken, Task> sender,
             CancellationToken cancellationToken,
             bool waitForARunningFlush = false)
         {
             if (sender == null)
-                return;
+                return FlockFlushResult.Nothing;
 
             while (true)
             {
@@ -177,7 +197,7 @@ namespace Flock.Analytics
                 {
                     try
                     {
-                        await SendEverythingQueuedAsync(sender, cancellationToken).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
+                        return await SendEverythingQueuedAsync(sender, cancellationToken).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
                     }
                     finally
                     {
@@ -185,12 +205,11 @@ namespace Flock.Analytics
                             _runningFlush = null;
                         ours.SetResult(true);
                     }
-                    return;
                 }
 
                 // A trigger leaves the queue to the running flush; an awaited flush waits for it, then sends what is left.
                 if (!waitForARunningFlush)
-                    return;
+                    return FlockFlushResult.Nothing;
                 await WaitForAsync(running, cancellationToken).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
             }
         }
@@ -211,27 +230,64 @@ namespace Flock.Analytics
             cancellationToken.ThrowIfCancellationRequested();
         }
 
-        private async Task SendEverythingQueuedAsync(Func<IReadOnlyList<T>, CancellationToken, Task> sender, CancellationToken cancellationToken)
+        private async Task<FlockFlushResult> SendEverythingQueuedAsync(Func<IReadOnlyList<T>, CancellationToken, Task> sender, CancellationToken cancellationToken)
         {
+            int sent = 0;
+            int refused = 0;
+            _firstRefusalThisDrain = null;
             try
             {
                 int epoch = Volatile.Read(ref _epoch);
+                Volatile.Write(ref _lastDrainEnding, (int)FlockDrainEnding.Finished);
 
                 while (!cancellationToken.IsCancellationRequested)
                 {
                     List<CachedEvent> batch = ReadBatch();
                     if (batch.Count == 0)
-                        return;
+                        break;
 
                     // Erased since this flush started -> do not put it on the wire. A Clear during the send itself
                     // cannot be recalled; this closes the read-to-wire window.
                     if (Volatile.Read(ref _epoch) != epoch)
-                        return;
+                        break;
 
                     FlushOutcome outcome = await TrySendBatch(sender, batch, cancellationToken).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
-                    if (outcome == FlushOutcome.Defer)
-                        return;
+                    if (StopsTheDrain(outcome))
+                        break;
 
+                    if (outcome == FlushOutcome.RefusedForItsContent && batch.Count > 1)
+                    {
+                        // One entry can make the server refuse the whole body. Sent apart, only that entry goes.
+                        bool stopped = false;
+                        foreach (CachedEvent entry in batch)
+                        {
+                            if (cancellationToken.IsCancellationRequested || Volatile.Read(ref _epoch) != epoch)
+                            {
+                                stopped = true;
+                                break;
+                            }
+                            List<CachedEvent> alone = new List<CachedEvent> { entry };
+                            FlushOutcome aloneOutcome = await TrySendBatch(sender, alone, cancellationToken).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
+                            if (StopsTheDrain(aloneOutcome))
+                            {
+                                stopped = true;
+                                break;
+                            }
+                            if (aloneOutcome == FlushOutcome.Success)
+                                sent++;
+                            else
+                                refused++;
+                            DropBatch(alone);
+                        }
+                        if (stopped)
+                            break;
+                        continue;
+                    }
+
+                    if (outcome == FlushOutcome.Success)
+                        sent += batch.Count;
+                    else
+                        refused += batch.Count;
                     DropBatch(batch);
                 }
             }
@@ -240,6 +296,19 @@ namespace Flock.Analytics
                 lock (_inFlightLock)
                     _inFlightPaths = null;
             }
+            return new FlockFlushResult(sent, refused, _firstRefusalThisDrain);
+        }
+
+        // A deferral stops the drain and records how it ended, for the periodic flush's wait.
+        private bool StopsTheDrain(FlushOutcome outcome)
+        {
+            if (outcome == FlushOutcome.DeferAnswered)
+                Volatile.Write(ref _lastDrainEnding, (int)FlockDrainEnding.StoppedAnswered);
+            else if (outcome == FlushOutcome.DeferUnanswered)
+                Volatile.Write(ref _lastDrainEnding, (int)FlockDrainEnding.StoppedUnanswered);
+            else
+                return false;
+            return true;
         }
 
         private async Task<FlushOutcome> TrySendBatch(
@@ -257,22 +326,31 @@ namespace Flock.Analytics
             }
             catch (OperationCanceledException)
             {
-                return FlushOutcome.Defer;
+                return FlushOutcome.DeferUnanswered;
             }
             catch (FlockValidationException ex)
             {
-                _logger?.LogWarning($"Pending events batch dropped (validation): {ex.Message}");
-                return FlushOutcome.Drop;
+                _logger?.LogWarning($"Pending events {(batch.Count > 1 ? "batch refused for what it holds, sent again one at a time" : "entry dropped")} (validation): {ex.Message}");
+                if (batch.Count == 1)
+                    _firstRefusalThisDrain = _firstRefusalThisDrain ?? ex.Message;
+                return batch.Count > 1 ? FlushOutcome.RefusedForItsContent : FlushOutcome.Drop;
             }
             // A success that cannot be read was not the server's answer (a captive portal's page), so the batch is kept.
             catch (FlockSerializationException ex)
             {
                 _logger?.LogDebug($"Pending events flush deferred (unreadable response): {ex.Message}");
-                return FlushOutcome.Defer;
+                return FlushOutcome.DeferUnanswered;
             }
             catch (FlockNetworkException ex) when (FlockNetworkException.IsPermanentStatus(ex.StatusCode))
             {
-                _logger?.LogWarning($"Pending events batch dropped (HTTP {ex.StatusCode}): {ex.Message}");
+                bool refusedForItsContent = ex.StatusCode == 400 || ex.StatusCode == 413 || ex.StatusCode == 422;
+                if (refusedForItsContent && batch.Count > 1)
+                {
+                    _logger?.LogWarning($"Pending events batch refused for what it holds (HTTP {ex.StatusCode}), sent again one at a time: {ex.Message}");
+                    return FlushOutcome.RefusedForItsContent;
+                }
+                _logger?.LogWarning($"Pending events {(batch.Count > 1 ? "batch" : "entry")} dropped (HTTP {ex.StatusCode}): {ex.Message}");
+                _firstRefusalThisDrain = _firstRefusalThisDrain ?? ex.Message;
                 return FlushOutcome.Drop;
             }
             // FlockAuthException is not a FlockNetworkException, so it falls past the permanent-status catch above.
@@ -280,13 +358,17 @@ namespace Flock.Analytics
             catch (FlockAuthException ex) when (ex.StatusCode == 403 && !string.IsNullOrEmpty(ex.Code))
             {
                 _logger?.LogWarning($"Pending events batch dropped (forbidden: {ex.Code}): {ex.Message}");
+                _firstRefusalThisDrain = _firstRefusalThisDrain ?? ex.Message;
                 return FlushOutcome.Drop;
             }
             catch (Exception ex)
             {
-                // Transient (offline, 5xx, 401, timeout) — leave the files for the next attempt.
+                // Transient (offline, 5xx, 401, timeout) — leave the files for the next attempt. Only a status the server
+                // answered with counts as answered: a 401 or a bare 403 (FlockAuthException) is about the sign-in, not the
+                // server's health, and must not stretch the periodic flush's wait.
                 _logger?.LogDebug($"Pending events flush deferred: {ex.Message}");
-                return FlushOutcome.Defer;
+                bool answered = ex is FlockNetworkException network && (network.StatusCode ?? 0) > 0;
+                return answered ? FlushOutcome.DeferAnswered : FlushOutcome.DeferUnanswered;
             }
         }
 
@@ -308,17 +390,33 @@ namespace Flock.Analytics
             lock (_inFlightLock)
             {
                 List<CachedEvent> batch = new List<CachedEvent>(_batchSize);
+                string batchKey = null;
 
                 foreach (string path in EnumerateFiles().OrderBy(p => p, StringComparer.Ordinal))
                 {
                     if (batch.Count >= _batchSize)
                         break;
 
+                    // An entry of another key, read on an earlier pass of this drain: skipped without reading it again.
+                    if (batch.Count > 0 && _sendTogetherKeyByPath.TryGetValue(path, out string knownKey)
+                        && !string.Equals(knownKey, batchKey, StringComparison.Ordinal))
+                        continue;
+
                     try
                     {
+                        FilesReadForTesting++;
                         T evt = JsonConvert.DeserializeObject<T>(File.ReadAllText(path));
                         if (evt != null)
+                        {
+                            // Only entries sharing the first one's key go together; the rest wait for a batch of their own.
+                            string key = _sendTogetherKey?.Invoke(evt);
+                            _sendTogetherKeyByPath[path] = key;
+                            if (batch.Count == 0)
+                                batchKey = key;
+                            else if (!string.Equals(key, batchKey, StringComparison.Ordinal))
+                                continue;
                             batch.Add(new CachedEvent { Path = path, Event = evt });
+                        }
                         else if (TryDelete(path))
                             Interlocked.Decrement(ref _pendingCount);
                     }
@@ -393,6 +491,9 @@ namespace Flock.Analytics
 
         private bool TryDelete(string path)
         {
+            // Its key goes with it (the lock is re-entrant, so a delete from under it is fine too).
+            lock (_inFlightLock)
+                _sendTogetherKeyByPath.Remove(path);
             try
             {
                 if (File.Exists(path))

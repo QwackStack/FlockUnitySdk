@@ -8,7 +8,7 @@ var shop = await FlockClient.Instance.Shop.GetByIdAsync("shop-id");
 var item = await FlockClient.Instance.Shop.GetItemAsync("shop-item-id");
 var items = await FlockClient.Instance.Shop.GetItemsByShopAsync("shop-id");
 // Same retry contract as AddGameFunds (money mutation) — ambiguous failures throw; catch them.
-// On throw, a Failed analytics event is recorded automatically. Catch FlockException and check
+// Started, Purchased and Failed transactions are recorded as it goes, never waited on. Catch FlockException and check
 // e.Code for specific reasons (e.g. FlockErrorCode.ShopInsufficientFunds, ShopWalletNotFound).
 // playerId is optional — omit it to use the signed-in player (CurrentPlayerId).
 PurchaseResult purchase = await FlockClient.Instance.Shop.PurchaseAsync("shop-item-id");
@@ -46,9 +46,19 @@ is a string compared against `ShopItemRewardTypes.Currency` rather than an enum:
 typed entries so new kinds can appear without a schema migration, and an unknown value must not break
 deserialization.
 
+`PurchaseAsync` spends only game currencies from the player's wallet, so a purchase it makes is paid at once and its
+`Status` reads `paid` (`IsPaid` is true). An item priced in a currency the game's currency config lists as real money is
+refused with `FlockErrorCode.ShopRealCurrencyNeedsCheckout` (the server reads that list for the Game Version picked in
+Flock > Settings): price it in a game currency, or leave it out of what the game sells this way. `Status` is still one of `PurchaseResultStatuses` (`pending`, `paid`, `failed`, `expired`, `refunded`), a
+string for the same reason as `reward.Type`, and reads `paid` when the server leaves it out. A purchase or consume that
+reports a wallet also writes it into the cached player data, so the next `GetMyDataByTemplateAsync` reads the new balance
+rather than the one from before.
+
 `ConsumeAsync` moves currency, so it carries the same money safety as a purchase — an ambiguous failure
 throws rather than being re-sent, and only provably-unprocessed failures (408/429) retry. Catch
-`FlockException` around it.
+`FlockException` around it. Neither call is queued while the network is down: each is sent at most once (a
+purchase of an item not read yet fails on reading it first), throws `FlockNetworkException`, and is not sent again
+when the network comes back.
 
 > Inventory is deliberately **never offline-cached** — it changes on every purchase, so the SDK always
 > reads it fresh and there is no stale copy to fall back on when the network is down. Reading it offline

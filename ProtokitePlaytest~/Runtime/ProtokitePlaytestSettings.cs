@@ -59,7 +59,7 @@ namespace Protokite.Playtest
         [Tooltip("On by default: Android players record the screen when the playtest's config turns video on and the player agrees. Off: Android players record no video and never ask the phone for its encoders; everything else in the playtest still runs. Read as the game starts: turned on later in a launch, it takes effect from the next one.")]
         [SerializeField] private bool recordVideoOnAndroid = true;
 
-        [Tooltip("The longer side of the video, in pixels, whichever way the phone is held: on a 20:9 phone, 1280 records a game held sideways at 1280x592 and one held upright at 592x1280. A smaller screen is not enlarged, and each side is rounded down to a multiple of 16. A phone whose encoder does not take the size records at the next size down it does, and says so.")]
+        [Tooltip("The longer side of the video, in pixels, whichever way the phone is held: on a 20:9 phone, 1280 records a game held sideways at 1280x576 and one held upright at 576x1280. A smaller screen is not enlarged, and each side is rounded down to a multiple of 16. A phone whose encoder does not take the size records at the next size down it does, and says so.")]
         [SerializeField, Range(320, 1920)] private int androidVideoLongSide = 1280;
 
         [Tooltip("Frames recorded each second of play. 30 doubles the phone's encoding work and the frames the capture copies from the screen.")]

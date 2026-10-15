@@ -42,6 +42,7 @@ namespace Flock.Tests.Editor
         public void TearDown()
         {
             FlockTemporaryFiles.SetBeforeNextMoveForTesting(null);
+            FlockLaunchFolder.BeforeNextFolderRemovalForTesting = null;
             foreach (IDisposable held in _held)
                 held.Dispose();
             _held.Clear();
@@ -135,6 +136,24 @@ namespace Flock.Tests.Editor
             Assert.IsTrue(File.Exists(Path.Combine(ended, FlockLaunchFolder.LockFileName)));
             FlockLaunchFolder again = FlockLaunchFolder.ClaimEnded(ended);
             Assert.IsNotNull(again, "The folder was let go, so a later launch can take it over and try again.");
+            Assert.IsTrue(again.DeleteEverything());
+            Assert.IsFalse(Directory.Exists(ended));
+        }
+
+        // The folder can still fail to go once its lock has (here a file lands in it meanwhile): the lock comes back, or no later
+        // launch would ever find what is left.
+        [Test]
+        public void DeleteEverything_AFolderThatCannotBeRemoved_KeepsItsLock()
+        {
+            string ended = PlantEndedLaunch(markerJson: MarkerJson("s1"));
+            FlockLaunchFolder claimed = FlockLaunchFolder.ClaimEnded(ended);
+            Assert.IsNotNull(claimed);
+            FlockLaunchFolder.BeforeNextFolderRemovalForTesting = () => File.WriteAllText(Path.Combine(ended, "arrived-meanwhile.txt"), "x");
+
+            Assert.IsFalse(claimed.DeleteEverything(), "The folder is still there");
+            Assert.IsTrue(File.Exists(Path.Combine(ended, FlockLaunchFolder.LockFileName)), "Its lock is back");
+            FlockLaunchFolder again = FlockLaunchFolder.ClaimEnded(ended);
+            Assert.IsNotNull(again, "So a later launch takes it over and tries again");
             Assert.IsTrue(again.DeleteEverything());
             Assert.IsFalse(Directory.Exists(ended));
         }
@@ -714,6 +733,29 @@ namespace Flock.Tests.Editor
             {
                 Assert.IsFalse(sdk.Client.AnalyticsLaunches.IsHoldingItsFolder);
                 Assert.IsTrue(sdk.Logger.Warnings.Any(entry => entry.Contains("Could not lock a folder for this launch's analytics files")));
+            }
+        }
+
+        // ---- The editor's own sign-in ----
+
+        [Test]
+        public void ATestClientPutsBackTheEditorsSavedSignIn()
+        {
+            PlayerPrefs.SetString("Flock.AccessToken", "the-developers-token");
+            PlayerPrefs.SetInt(ConsentGrantedKey, 1);
+            try
+            {
+                using (FlockTestClient h = FlockTestClient.Create(new FlockFakeTransport()))
+                {
+                    Assert.IsFalse(PlayerPrefs.HasKey("Flock.AccessToken"), "Precondition: a test's client starts signed out");
+                    PlayerPrefs.SetString("Flock.AccessToken", "a-test-token");
+                }
+                Assert.AreEqual("the-developers-token", PlayerPrefs.GetString("Flock.AccessToken"), "The editor's sign-in is back");
+                Assert.AreEqual(1, PlayerPrefs.GetInt(ConsentGrantedKey, -1), "And its consent answer, as the number it was");
+            }
+            finally
+            {
+                PlayerPrefs.DeleteKey("Flock.AccessToken");
             }
         }
     }

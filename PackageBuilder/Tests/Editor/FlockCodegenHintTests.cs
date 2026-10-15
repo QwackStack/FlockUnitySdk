@@ -103,7 +103,7 @@ namespace Flock.Tests
             StringAssert.Contains("PlayerProvider.GetPlayerProgressAsync", hint);
             StringAssert.Contains("never run", hint);
             StringAssert.Contains("Flock dashboard", hint);
-            StringAssert.Contains("Codegen > Sync Schemas", hint);
+            StringAssert.Contains("Code Generation > Sync Schemas", hint);
         }
 
         [Test]
@@ -137,7 +137,7 @@ namespace Flock.Tests
             string logged = FlockCodegenCompileHint.ReportIfMissingGeneratedCode(new[] { MissingAccessor });
 
             Assert.IsNotNull(logged);
-            StringAssert.Contains("Codegen > Sync Schemas", logged);
+            StringAssert.Contains("Code Generation > Sync Schemas", logged);
         }
 
         [Test]
@@ -181,6 +181,44 @@ namespace Flock.Tests
             Assert.IsNotNull(FlockCodegenCompileHint.ReportIfMissingGeneratedCode(new[] { MissingAccessor }));
             // Same pass, second assembly reporting the same break — must not log a duplicate.
             Assert.IsNull(FlockCodegenCompileHint.ReportIfMissingGeneratedCode(new[] { MissingAccessor }));
+        }
+
+        [TestCase("Assets/../..")]
+        [TestCase("Assets/Flock/../../ProjectSettings")]
+        [TestCase("Assets/./Generated")]
+        public void TheGeneratedPathMayNotClimbOutOfAssets(string configured)
+        {
+            Assert.IsFalse(Flock.Editor.Codegen.FlockCodegenMenu.TryResolveGeneratedPath(configured, out _, out string error));
+            StringAssert.Contains("'..'", error);
+        }
+
+        [Test]
+        public void TheGeneratedPathInsideAssetsIsTaken()
+        {
+            Assert.IsTrue(Flock.Editor.Codegen.FlockCodegenMenu.TryResolveGeneratedPath("Assets/Flock/Generated", out string resolved, out _));
+            Assert.AreEqual("Assets/Flock/Generated", resolved);
+        }
+
+        [Test]
+        public void PlayNeedsTheGameVersionIdBaked()
+        {
+            Flock.Config.FlockConfigAsset config = UnityEngine.ScriptableObject.CreateInstance<Flock.Config.FlockConfigAsset>();
+            try
+            {
+                config.apiUrl = "https://api.example.test";
+                config.apiKey = "key";
+                config.gameId = "Game";
+                config.gameVersion = "1.0.0";
+                Assert.IsTrue(config.IsValid(out _), "Precondition: every setting is filled in");
+                Assert.IsFalse(config.IsReadyToPlay(out string why), "Not ready: init refuses an unresolved version");
+                StringAssert.Contains("not resolved", why);
+                config.gameVersionId = "ver-1";
+                Assert.IsTrue(config.IsReadyToPlay(out _));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(config);
+            }
         }
     }
 }

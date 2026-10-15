@@ -786,5 +786,31 @@ namespace Protokite.Playtest.Tests
                 _keptOpen = null;
             }
         }
+
+        // Step 8 passed with Capture Exceptions off, while nothing was reported: it reads the capture first and skips, naming the setting.
+        [UnityTest]
+        public IEnumerator WithExceptionCaptureOffTheExceptionStepIsSkippedNamingTheSetting()
+        {
+            FakeProtokite protokite = new FakeProtokite(Config(video: false, heavyAnalytics: false, form: false));
+            FlockFakeTransport transport = new FlockFakeTransport()
+                .On(FlockSessionRoute, FlockFakeTransport.Ok("{\"session_id\":\"" + ServerSessionId + "\"}"))
+                .Default(protokite.Answer);
+            protokite.Transport = transport;
+            using (FlockTestClient flock = FlockTestClient.Create(transport, config =>
+            {
+                config.RetryPolicy = new RetryPolicy { MaxRetries = 0, InitialDelay = TimeSpan.Zero };
+                config.AnalyticsConfig.CaptureExceptions = false;
+            }))
+            {
+                yield return AReadyPlaytestWithASession(flock);
+                Task<ProtokitePlaytestSelfTestReport> run = ProtokitePlaytestSelfTest.RunAsync(ClosedVersion);
+                yield return TheRunEnds(run);
+
+                ProtokitePlaytestSelfTestStep step = StepNamed(run.Result, "An exception is raised twice");
+                Assert.AreEqual(ProtokitePlaytestSelfTestOutcome.Skipped, step.Outcome, step.Detail);
+                StringAssert.Contains("Capture Exceptions", step.Detail, "It names the setting that turns it on");
+                Assert.AreEqual(0, run.Result.Failed, "And nothing else fails for it");
+            }
+        }
     }
 }

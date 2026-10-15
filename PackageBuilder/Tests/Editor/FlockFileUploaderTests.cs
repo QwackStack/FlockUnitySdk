@@ -95,24 +95,32 @@ namespace Flock.Tests
             Assert.AreEqual(0, _storage.Count, "No request was made");
         }
 
+        // Measured: Unity throws for an address it cannot parse.
         [UnityTest]
-        public IEnumerator AnUploadUnityWillNotBeginIsAnOutcomeAndNotAnException()
+        public IEnumerator AnAddressUnityCannotParseIsAnOutcomeAndNotAnException()
         {
-            // Measured: Unity throws for an address it cannot parse, and for a file another program holds open to itself.
+            yield return AnUploadUnityWillNotBegin("http://[not an address", MakeFile(1000));
+        }
+
+        // Measured on Windows: Unity throws for a file another program holds open to itself. On Linux 2021.3 uploads it anyway (CI, 2026-10-15).
+        [UnityTest]
+        [UnityPlatform(UnityEngine.RuntimePlatform.WindowsEditor)]
+        public IEnumerator AFileAnotherProgramHoldsOpenIsAnOutcomeAndNotAnException()
+        {
             string held = MakeFile(1000);
             using (new FileStream(held, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
-            {
-                foreach ((string url, string path) in new[] { ("http://[not an address", MakeFile(1000)), (_storage.Url + "bucket/key", held) })
-                {
-                    Task<FlockFileUploadOutcome> upload = FlockHttpClient.UploadFileAsync(url, path, "video/webm");
-                    yield return FlockTestWait.Until(() => upload.IsCompleted, "The upload ended within 10 s", 10);
+                yield return AnUploadUnityWillNotBegin(_storage.Url + "bucket/key", held);
+        }
 
-                    Assert.IsFalse(upload.IsFaulted, url + ": no exception, but " + upload.Exception?.GetBaseException().Message);
-                    Assert.AreEqual(FlockHttpResult.ConnectionError, upload.Result.Result, url);
-                    Assert.IsFalse(upload.Result.IsUploaded, url);
-                    StringAssert.Contains("could not begin", upload.Result.Body, url);
-                }
-            }
+        private IEnumerator AnUploadUnityWillNotBegin(string url, string path)
+        {
+            Task<FlockFileUploadOutcome> upload = FlockHttpClient.UploadFileAsync(url, path, "video/webm");
+            yield return FlockTestWait.Until(() => upload.IsCompleted, "The upload ended within 10 s", 10);
+
+            Assert.IsFalse(upload.IsFaulted, url + ": no exception, but " + upload.Exception?.GetBaseException().Message);
+            Assert.AreEqual(FlockHttpResult.ConnectionError, upload.Result.Result, url);
+            Assert.IsFalse(upload.Result.IsUploaded, url);
+            StringAssert.Contains("could not begin", upload.Result.Body, url);
             Thread.Sleep(200);
             Assert.AreEqual(0, _storage.Count, "No request was made");
         }

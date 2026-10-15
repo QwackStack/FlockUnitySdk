@@ -151,6 +151,9 @@ shop_item.shop_not_found
 # multiplayer.join_code_unavailable - 500 when creating a session finds no free join code after 8 tries.
 # multiplayer.already_in_session - 409 when two requests seat one player at the same moment (a database
 #                          race). Both read in the backend's multiplayer code on 2026-10-06, not seen live.
+# shop.real_currency_needs_checkout - 422 from the purchase route for an item priced in a currency the game's
+#                          currency config lists as real money; the route's documented responses leave it out.
+#                          Read in the backend's shop settlement code on 2026-10-15.
 # The backend also defines multiplayer.session_ended and multiplayer.invalid_connection_info, which nothing
 # raises (2026-10-06), and matchmaking.queue_has_open_tickets, which only a dashboard route sends. None has
 # a member; add one the day it can reach a game.
@@ -158,6 +161,7 @@ leaderboard.not_found
 analytics.currency_not_found
 multiplayer.join_code_unavailable
 multiplayer.already_in_session
+shop.real_currency_needs_checkout
 
 [waived]
 # Documented, but for features this SDK does not call — there is no surface for the error to reach.

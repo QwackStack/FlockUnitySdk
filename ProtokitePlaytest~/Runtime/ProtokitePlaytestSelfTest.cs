@@ -242,6 +242,9 @@ namespace Protokite.Playtest
                 return run.Skip("the Flock SDK's analytics is off, so exceptions are not reported. Turn on Analytics Enabled in Flock > Settings.");
             if (!run.Flock.Analytics.HasConsent)
                 return run.Skip("the game has not given the Flock SDK's analytics consent, so exceptions are not reported.");
+            // Read before raising anything: with the capture off the step would pass while nothing was reported.
+            if (!run.Flock.Analytics.GetExceptionCaptureCoverage().Enabled)
+                return run.Skip("the Flock SDK is not capturing exceptions (Capture Exceptions is off in Flock > Settings), so exceptions are not reported.");
             Debug.Log(LogPrefix + $"Self-test {run.Report.RunId}: the next two exceptions are raised on purpose.");
             for (int raised = 0; raised < 2; raised++)
                 Debug.LogException(new ProtokitePlaytestSelfTestException(run.Report.RunId));
@@ -410,23 +413,13 @@ namespace Protokite.Playtest
                 return $"Protokite answered HTTP {status}, where {expectedStatus} was expected." + (string.IsNullOrEmpty(said) ? "" : " It said: " + said);
             if (questionId == null)
                 return null;
-            string named = QuestionNamedIn(said);
-            if (named == null)
+            string named = ProtokitePlaytestFormSubmission.FindQuestionInRefusal(said);
+            if (named.Length == 0)
                 return $"Protokite refused it with HTTP {status} but named no question, where '{questionId}' was expected. It said: {said}";
             // Letter for letter, as Protokite names the question it checked.
             return string.Equals(named, questionId, StringComparison.Ordinal)
                 ? null
                 : $"Protokite refused it for question '{named}', where '{questionId}' was expected.";
-        }
-
-        /// <summary>The question a form refusal names: the text inside its first pair of single quotes, or null when it has none.</summary>
-        internal static string QuestionNamedIn(string refusal)
-        {
-            if (string.IsNullOrEmpty(refusal))
-                return null;
-            int start = refusal.IndexOf('\'');
-            int end = start < 0 ? -1 : refusal.IndexOf('\'', start + 1);
-            return end < 0 ? null : refusal.Substring(start + 1, end - start - 1);
         }
 
         /// <summary>A choice that is not one of these options: the first one in upper case, else in lower case, else with words added.</summary>
@@ -616,7 +609,7 @@ namespace Protokite.Playtest
                     return;
                 Report.Add(step);
                 string line = LogPrefix + $"Self-test: {Label(step.Outcome),-7} {name} - {step.Detail}";
-                // A warning, never an error: the Flock SDK reports error lines as exceptions.
+                // A warning, never an error: a failed step is what the self-test found, not a fault in the game.
                 if (step.Outcome == ProtokitePlaytestSelfTestOutcome.Failed)
                     Debug.LogWarning(line);
                 else

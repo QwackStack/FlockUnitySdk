@@ -66,9 +66,9 @@ namespace Flock.Tests
             FlockNetworkException ex = Assert.Throws<FlockNetworkException>(
                 () => Send(Coded(404, "player_template.not_found_by_name", "Template not found")));
 
-            StringAssert.Contains("Codegen > Sync", ex.Hint);
+            StringAssert.Contains("Code Generation > Sync Schemas", ex.Hint);
             StringAssert.Contains("Fix: ", ex.Message);
-            StringAssert.Contains("Codegen > Sync", ex.Message);
+            StringAssert.Contains("Code Generation > Sync Schemas", ex.Message);
         }
 
         [Test]

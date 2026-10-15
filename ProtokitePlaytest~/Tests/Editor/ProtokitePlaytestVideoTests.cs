@@ -85,6 +85,7 @@ namespace Protokite.Playtest.Tests
             for (int i = 0; i < count; i++)
             {
                 ProtokitePlaytest.UpdateVideo(SixtyFps);
+                RecordingsUnderWay.LetTheirEncodersStart();
                 pacedBy?.WaitForTheEncoderToCatchUp();
             }
         }

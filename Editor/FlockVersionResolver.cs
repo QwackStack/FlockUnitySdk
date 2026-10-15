@@ -17,7 +17,7 @@ namespace Flock.Editor
 
         /// <summary>The backend by-name Game Version lookup URL. Single source so the editor's resolve and connection-test agree.</summary>
         internal static string ByNameUrl(string apiUrl, string gameVersion)
-            => $"{(apiUrl ?? string.Empty).TrimEnd('/')}/{FlockClient.ApiVersion}/game_version/by-name/{Uri.EscapeDataString(gameVersion ?? string.Empty)}";
+            => $"{FlockInitConfig.TrimApiUrl(apiUrl) ?? string.Empty}/{FlockClient.ApiVersion}/game_version/by-name/{Uri.EscapeDataString(gameVersion ?? string.Empty)}";
 
         internal readonly struct ResolveResult
         {

@@ -26,6 +26,9 @@ namespace Flock.Tests.PlayMode
         // A frame of the engine's own varies by a sample or two (measured 11 to 15 with nothing sent); garbage per packet adds 100 or more.
         private const int EngineSamplesAFrameVaryBy = 3;
 
+        // Garbage per packet raises every sending frame; the engine alone raised one of ten to 8 on a busy machine (2021.3, 2026-10-15).
+        private static int SecondNoisiestFrame(List<int> frames) => frames.OrderByDescending(count => count).ElementAt(1);
+
         private FakeRelayServer _relay;
         private RecordingFlockLogger _logger;
         private readonly List<FlockRelayConnection> _connections = new List<FlockRelayConnection>();
@@ -441,7 +444,7 @@ namespace Flock.Tests.PlayMode
 
             string counts = $"quiet frames {string.Join(",", quiet)}; sending frames {string.Join(",", working)}; allocating frames {string.Join(",", allocating)}";
             Assert.Greater(allocating.Min(), quiet.Max() + EngineSamplesAFrameVaryBy, $"Control: the count sees {made.Count} allocations ({counts})");
-            Assert.LessOrEqual(working.Max(), quiet.Max() + EngineSamplesAFrameVaryBy, $"Sending and taking 100 packets a frame adds no allocation to the frame ({counts})");
+            Assert.LessOrEqual(SecondNoisiestFrame(working), quiet.Max() + EngineSamplesAFrameVaryBy, $"Sending and taking 100 packets a frame adds no allocation to the frame ({counts})");
             Assert.Greater(received, 100, "Control: packets were taken while measured");
         }
 
@@ -683,7 +686,7 @@ namespace Flock.Tests.PlayMode
             allocations.enabled = false;
 
             Assert.IsFalse(anySent, "Nothing goes once the relay stopped");
-            Assert.LessOrEqual(sending.Max(), quiet.Max() + EngineSamplesAFrameVaryBy, $"A game still sending after the stop costs no garbage (quiet {string.Join(",", quiet)}; sending {string.Join(",", sending)})");
+            Assert.LessOrEqual(SecondNoisiestFrame(sending), quiet.Max() + EngineSamplesAFrameVaryBy, $"A game still sending after the stop costs no garbage (quiet {string.Join(",", quiet)}; sending {string.Join(",", sending)})");
         }
 
         [UnityTest]

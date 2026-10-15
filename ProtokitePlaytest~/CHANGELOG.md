@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 It is released with the Flock SDK, at the Flock SDK's version.
 
 
+## [1.87.0]
+
+### Fixed
+- The self-test's exception step is SKIPPED, naming Capture Exceptions in Flock > Settings, when the Flock SDK is not
+  capturing exceptions; it passed while nothing was reported.
+- The package's tests give a recording's encoder time to start, as a game's frames do: on a busy machine their back-to-back
+  frames could all go by before its thread ran, so nothing was captured.
+- The package's build-check and Playtest ID tests make Flock settings for themselves in a project that has none, as a project
+  made only to run the tests has; they failed there.
+- The package's tests of Windows' encoder rules, and of a form file that cannot be deleted, run in the Windows editor, where
+  those rules hold; the upload tests answer for the platform's encoders rather than ask the computer the editor runs on.
+- A recording test stops capturing before the disk it holds comes back, so its newest frame cannot be written into the room
+  the disk makes (301 frames where 300 may wait, on a slow machine).
+
+## [1.86.0]
+
+### Fixed
+- A run folder that cannot be removed keeps its lock, so a later launch finds it again.
+- A recording whose session file cannot be parsed is kept for the disk budget to settle, where one naming no session is
+  still deleted.
+- Removing earlier runs that held no video is reported.
+- A fresh upload link is asked for only where one can help: an expired link, a storage that had a moment, or no answer while
+  the file is still there.
+- No frame is encoded once the size limit is reached, and a frame the screen could not give is not counted as asked for.
+- The rating buttons follow the server's range.
+
+## [1.85.0]
+
+No changes to the Protokite Playtest package: this version is released together with the Flock SDK's fixes to how a session or
+party ending is read.
+
+## [1.84.0]
+
+No changes to the Protokite Playtest package: this version is released together with the Flock SDK's support for Cloudflare's
+managed relay.
+
 ## [1.83.0]
 
 No changes to the Protokite Playtest package: this version is released together with the Flock SDK's direct paths for relayed

@@ -122,6 +122,31 @@ namespace Flock.Tests.Editor
             }
         }
 
+        // ---- A by-id read with the network down is served from the disk index, read from the client's own reachability ----
+        [Test]
+        public void GetById_Offline_ServedFromTheDiskIndexWithoutTheCatalog()
+        {
+            string sharedDir = FetchOnlineThenShutdown("a1", "a2");
+            try
+            {
+                FlockFakeTransport t2 = new FlockFakeTransport();
+                using (FlockTestClient h2 = FlockTestClient.Create(t2, config => config.OfflineCacheDirectory = sharedDir))
+                {
+                    h2.SetReachable(false);
+
+                    AssetSchema a = h2.Run(() => h2.Client.Asset.GetByIdAsync("a1"));
+
+                    Assert.AreEqual("a1", a.Id, "Served from the disk index.");
+                    Assert.AreEqual(0, t2.Requests.Count, "Nothing was sent: the client said the network is down.");
+                }
+            }
+            finally
+            {
+                if (Directory.Exists(sharedDir))
+                    Directory.Delete(sharedDir, true);
+            }
+        }
+
         // ---- ASST: cold cache + offline -> throws (nothing to serve) ----
         [Test]
         public void GetAll_ColdOffline_Throws()

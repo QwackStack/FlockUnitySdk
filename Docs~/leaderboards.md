@@ -7,8 +7,20 @@ call and none is needed: write the field the board reads and the player moves up
 
 ```csharp
 // This is how a score is "submitted" — the board projects over the field.
-await FlockClient.Instance.Commands.UpdatePlayerDataFieldAsync("player-data-id", "score", 9999);
+PlayerData written = await FlockClient.Instance.Commands.UpdatePlayerDataFieldAsync("player-data-id", "score", 9999);
+
+// The write succeeded; a board can still turn the new score away.
+foreach (LeaderboardRefusal refusal in written.LeaderboardRefusals)
+{
+    if (refusal.Reason == LeaderboardRefusalReasons.GainLimit && refusal.Retryable)
+        Debug.Log($"{refusal.LeaderboardName} takes it again in {refusal.RetryAfterSeconds} s");
+}
 ```
+
+`LeaderboardRefusals` lists the boards that turned the score away: `score_bounds` (outside what the board accepts;
+trying again changes nothing) or `gain_limit` (the player's recent gains fill the board's allowance). Only
+`UpdatePlayerDataAsync` and `UpdatePlayerDataFieldAsync` report them, so an empty list after a read, `AddGameFundsAsync`
+or `UnlockAchievementAsync` means "not reported here", not "no board refused". The cached row never keeps them.
 
 Boards are addressed by **name** — the name you gave the board in the dashboard. IDs never appear in the
 read API.

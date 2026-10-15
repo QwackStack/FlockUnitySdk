@@ -260,13 +260,14 @@ namespace Flock.Http
             return path.ToString();
         }
 
-        // Parses Retry-After as delta-seconds or an HTTP date so the retry handler can honor it.
-        private static TimeSpan? ParseRetryAfter(string headerValue)
+        // Parses Retry-After as delta-seconds or an HTTP date so the retry handler can honor it. A negative value means "now":
+        // a negative wait would make the delay throw.
+        internal static TimeSpan? ParseRetryAfter(string headerValue)
         {
             if (string.IsNullOrEmpty(headerValue))
                 return null;
             if (int.TryParse(headerValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out int seconds))
-                return TimeSpan.FromSeconds(seconds);
+                return TimeSpan.FromSeconds(Math.Max(0, seconds));
             if (DateTimeOffset.TryParse(headerValue, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out DateTimeOffset date))
             {
                 TimeSpan until = date - DateTimeOffset.UtcNow;

@@ -36,11 +36,12 @@ namespace Flock.Providers
         }
 
         // The player's search without its id: the one queued, else the latest; refused with ticket_not_found for a player who never searched.
-        internal Task<TicketRecord> ReadCurrentAsync(int signInNumber, CancellationToken cancellationToken)
+        // With tryOnce, a failure is not tried again: a reading its caller repeats anyway, or one a party call waits for.
+        internal Task<TicketRecord> ReadCurrentAsync(int signInNumber, CancellationToken cancellationToken, bool tryOnce = false)
         {
             return ExecuteAsync(async () => RequireTicket(await FlockHttpClient.GetAsync<GenericResponse<TicketRecord>>(
                 Url(FlockEndpoints.MatchmakingTicketCurrent), Client.GetBaseHeaders(), cancellationToken)),
-                "Read my matchmaking search", cancellationToken, actsForSignIn: signInNumber);
+                "Read my matchmaking search", cancellationToken, maxRetriesOverride: tryOnce ? 0 : (int?)null, actsForSignIn: signInNumber);
         }
 
         // A retry after a lost answer is refused as not cancelable, which the caller answers by reading how the search ended.

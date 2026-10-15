@@ -6,7 +6,7 @@ namespace Flock.Exceptions
     public static class FlockErrorHints
     {
         // Dashboard-authored content only reaches the game after a codegen sync, which is the step newcomers miss.
-        private const string AuthorAndSync = "Author it in the Flock dashboard, then run Flock > Settings > Codegen > Sync so the generated code under Assets/Flock/Generated matches.";
+        private const string AuthorAndSync = "Author it in the Flock dashboard, then run Flock > Settings > Code Generation > Sync Schemas so the generated code under Assets/Flock/Generated matches.";
 
         private const string AuthorInDashboard = "Author it in the Flock dashboard and publish it to this game version.";
 
@@ -42,7 +42,7 @@ namespace Flock.Exceptions
             { FlockErrorCode.GameCommandAchievementNotFound, "No achievement by that id. " + AuthorAndSync },
             { FlockErrorCode.GameCommandCurrencyNotFound, "No currency by that name. " + AuthorAndSync },
             { FlockErrorCode.ShopCurrencyTemplateNotFound, "No currency template by that name. " + AuthorAndSync },
-            { FlockErrorCode.GameCommandTemplateValidationFailed, "The value does not match the template's schema. Compare the field names and types in the Flock dashboard, then re-run Flock > Settings > Codegen > Sync so the generated types match." },
+            { FlockErrorCode.GameCommandTemplateValidationFailed, "The value does not match the template's schema. Compare the field names and types in the Flock dashboard, then re-run Flock > Settings > Code Generation > Sync Schemas so the generated types match." },
             { FlockErrorCode.GameCommandPlayerDataNotLinkedToTemplate, "That record is not linked to a template, so template-aware commands cannot act on it. Re-create it from the template in the Flock dashboard." },
             { FlockErrorCode.GameCommandNotAWallet, "That record is not a wallet. Currency commands only work on wallet-typed player data." },
             { FlockErrorCode.GameCommandNotAnAchievementRecord, "That record is not an achievement. Achievement commands only work on achievement-typed player data." },
@@ -53,9 +53,10 @@ namespace Flock.Exceptions
             { FlockErrorCode.LeaderboardNotFound, "No leaderboard by that name — boards are addressed by name, never by id. " + AuthorInDashboard },
             { FlockErrorCode.GamePatchPatchNotFound, "No patch by that id. " + AuthorInDashboard + " Call Config.ClearCache() if it was re-published while the game was running." },
             { FlockErrorCode.GamePatchGameConfigNotFound, "The patch points at a config that no longer exists. Re-check the config it patches in the Flock dashboard." },
-            { FlockErrorCode.GameConfigInvalidTag, "The backend does not accept that config tag. Valid tags are the SchemaTag values — if generated code is sending something else, re-run Flock > Settings > Codegen > Sync." },
+            { FlockErrorCode.GameConfigInvalidTag, "The backend does not accept that config tag. Valid tags are the SchemaTag values — if generated code is sending something else, re-run Flock > Settings > Code Generation > Sync Schemas." },
             { FlockErrorCode.ShopMalformedReward, "The item's stored reward cannot be granted, so the purchase was refused rather than half-applied. Fix that item's rewards in the Flock dashboard — no change to the call will work around it." },
             { FlockErrorCode.ShopPackGrantsNothing, "This currency pack has no rewards configured, so buying it would grant nothing. Add its rewards in the Flock dashboard, or take it off sale." },
+            { FlockErrorCode.ShopRealCurrencyNeedsCheckout, "This item is priced in a currency the game's currency config lists as real money, and Shop.PurchaseAsync only spends game currencies from the player's wallet. Price the item in a game currency in the Flock dashboard, or leave it out of what the game sells through Shop.PurchaseAsync." },
             { FlockErrorCode.GameMissingStudioId, "The game record has no studio attached. Fix it in the Flock dashboard — nothing in the Unity project can supply it." },
             { FlockErrorCode.LogEventGameNotFound, "The API key does not resolve to a game, so log events have nowhere to land. Check the API Key in Flock > Settings against the dashboard." },
             { FlockErrorCode.AssetAssetNotFound, "No asset by that id. Upload it in the Flock dashboard and publish it to this game version." },

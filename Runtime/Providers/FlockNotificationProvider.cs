@@ -14,12 +14,18 @@ namespace Flock.Providers
     /// <remarks>There is no background poll by design — the API meters these calls, so the game decides when to refresh. <see cref="FlockEvents.OnUnreadCountChanged"/> fires whenever a fetch brings back a server-reported count.</remarks>
     public class FlockNotificationProvider : FlockProviderBase
     {
-        private const string SnapshotCategory = "notification";
-        private const string PendingSchedulesKey = "pending_schedules";
-        private const string WatermarkKey = "seen_watermark";
+        /// <summary>The category the inbox cache, and under the state scope the player's notification state, live in.</summary>
+        internal const string SnapshotCategory = "notification";
+        internal const string PendingSchedulesKey = "pending_schedules";
+        internal const string WatermarkKey = "seen_watermark";
 
-        // Last count the server reported; null until a count-bearing call succeeds.
+        // What the player has seen and the reminders they can cancel are state, not cache: kept outside every game version's
+        // tree, so a new version does not delete them. Keys end with the player's id.
+        private static readonly string StateScope = $"{FlockSnapshotStore.StateScope}/{SnapshotCategory}";
+
+        // Last count the server reported and the sign-in it was read for; null until a count-bearing call succeeds.
         private int? _lastUnreadCount;
+        private int? _lastUnreadCountSignIn;
 
         // Name+locale → template memo: scheduling resolves a name to an id first, and that shouldn't cost a round trip each time.
         private readonly Dictionary<string, NotificationTemplate> _templatesByName = new Dictionary<string, NotificationTemplate>();
@@ -30,11 +36,11 @@ namespace Flock.Providers
         public void ClearCache()
         {
             _lastUnreadCount = null;
+            _lastUnreadCountSignIn = null;
             _templatesByName.Clear();
 
-            // Keep every player's schedules and watermarks, not just the signed-in one's: dropping another
-            // player's row orphans a reminder that still fires and can no longer be cancelled.
-            DeleteSnapshotCategoryExcept(SnapshotCategory, PendingSchedulesKey, WatermarkKey);
+            // Only cache lives here: every player's schedules and watermarks are kept under the state scope.
+            DeleteSnapshotCategory(SnapshotCategory);
         }
 
         /// <summary>A page of the signed-in player's inbox, newest first. Set <paramref name="unreadOnly"/> to skip already-read entries.</summary>
@@ -45,6 +51,8 @@ namespace Flock.Providers
             CancellationToken cancellationToken = default)
         {
             RequireAuthenticated();
+            int? askedFor = SignInToActFor;
+            string playerId = Client.CurrentPlayerId;
 
             string query = $"?page={page}&limit={limit}" + (unreadOnly ? "&unread_only=true" : string.Empty);
 
@@ -53,9 +61,9 @@ namespace Flock.Providers
                 PlayerScopedKey($"inbox_{unreadOnly}_p{page}_l{limit}"),
                 async () => await FlockHttpClient.GetAsync<PaginatedResponse<Notification>>(
                     $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.Notification}{query}", Client.GetBaseHeaders(), cancellationToken),
-                "Fetch notifications", cancellationToken, actsForSignIn: SignInToActFor);
+                "Fetch notifications", cancellationToken, actsForSignIn: askedFor);
 
-            RaiseNewNotifications(inbox != null ? inbox.Items : null);
+            RaiseNewNotifications(inbox != null ? inbox.Items : null, askedFor, playerId);
             return inbox;
         }
 
@@ -63,6 +71,7 @@ namespace Flock.Providers
         public async Task<int> GetUnreadCountAsync(CancellationToken cancellationToken = default)
         {
             RequireAuthenticated();
+            int? askedFor = SignInToActFor;
 
             UnreadCount result = await FetchWithSnapshotAsync(
                 SnapshotCategory,
@@ -74,9 +83,9 @@ namespace Flock.Providers
                     ValidateResponse(response);
                     return response.Result;
                 },
-                "Fetch unread notification count", cancellationToken, actsForSignIn: SignInToActFor);
+                "Fetch unread notification count", cancellationToken, actsForSignIn: askedFor);
 
-            SetUnreadCount(result.Count);
+            SetUnreadCount(result.Count, askedFor);
             return result.Count;
         }
 
@@ -86,6 +95,8 @@ namespace Flock.Providers
             CancellationToken cancellationToken = default)
         {
             RequireAuthenticated();
+            int? askedFor = SignInToActFor;
+            string playerId = Client.CurrentPlayerId;
 
             NotificationSummary summary = await FetchWithSnapshotAsync(
                 SnapshotCategory,
@@ -97,10 +108,10 @@ namespace Flock.Providers
                     ValidateResponse(response);
                     return response.Result;
                 },
-                "Fetch notification summary", cancellationToken, actsForSignIn: SignInToActFor);
+                "Fetch notification summary", cancellationToken, actsForSignIn: askedFor);
 
-            RaiseNewNotifications(summary != null ? summary.Items : null);
-            SetUnreadCount(summary.UnreadCount);
+            RaiseNewNotifications(summary != null ? summary.Items : null, askedFor, playerId);
+            SetUnreadCount(summary.UnreadCount, askedFor);
             return summary;
         }
 
@@ -132,6 +143,7 @@ namespace Flock.Providers
         public async Task<int> MarkAllReadAsync(CancellationToken cancellationToken = default)
         {
             RequireAuthenticated();
+            int? askedFor = SignInToActFor;
 
             MarkAllReadResult result = await ExecuteAsync(async () =>
             {
@@ -139,9 +151,9 @@ namespace Flock.Providers
                     $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.NotificationReadAll}", EmptyBody(), Client.GetBaseHeaders(), cancellationToken);
                 ValidateResponse(response);
                 return response.Result;
-            }, "Mark all notifications read", cancellationToken, actsForSignIn: SignInToActFor);
+            }, "Mark all notifications read", cancellationToken, actsForSignIn: askedFor);
 
-            SetUnreadCount(0);
+            SetUnreadCount(0, askedFor);
             return result.Updated;
         }
 
@@ -339,6 +351,9 @@ namespace Flock.Providers
         {
             RequireNotEmpty(templateName, "Template Name");
             RequireAuthenticated();
+            // Taken before the template lookup, so a player who signs in meanwhile never gets this reminder or its tracking.
+            int? scheduler = SignInToActFor;
+            string playerId = Client.CurrentPlayerId;
 
             // Resolved before the write, so a name this game doesn't have never leaves a schedule behind.
             string templateId = await RequireTemplateIdAsync(templateName, locale, cancellationToken);
@@ -360,9 +375,9 @@ namespace Flock.Providers
             },
             // Not idempotent: a re-sent schedule after an ambiguous failure creates a second reminder the game
             // can't cancel, because it only ever learns one scheduled id. Surface the failure instead.
-            "Schedule notification", cancellationToken, idempotent: false, actsForSignIn: SignInToActFor);
+            "Schedule notification", cancellationToken, idempotent: false, actsForSignIn: scheduler);
 
-            TrackPending(scheduled, templateName, templateId);
+            TrackPending(playerId, scheduled, templateName, templateId);
             return scheduled;
         }
 
@@ -380,7 +395,7 @@ namespace Flock.Providers
         public List<PendingSchedule> GetPendingSchedules()
         {
             RequireAuthenticated();
-            return LoadPendingSchedules();
+            return LoadPendingSchedules(Client.CurrentPlayerId);
         }
 
         /// <summary>The player's scheduled notifications as the server knows them — unlike <see cref="GetPendingSchedules"/> this survives a reinstall and sees schedules made on another device.</summary>
@@ -390,7 +405,12 @@ namespace Flock.Providers
             CancellationToken cancellationToken = default)
         {
             RequireAuthenticated();
+            return await GetScheduledForAsync(SignInToActFor, status, page, limit, cancellationToken);
+        }
 
+        private async Task<PaginatedResponse<ScheduledNotification>> GetScheduledForAsync(
+            int? signIn, string status, int page, int limit, CancellationToken cancellationToken)
+        {
             // Schedules change whenever one is created, cancelled or delivered — always read fresh, never cached.
             return await ExecuteAsync(async () =>
             {
@@ -399,7 +419,7 @@ namespace Flock.Providers
 
                 return await FlockHttpClient.GetAsync<PaginatedResponse<ScheduledNotification>>(
                     url, Client.GetBaseHeaders(), cancellationToken);
-            }, "List scheduled notifications", cancellationToken, actsForSignIn: SignInToActFor);
+            }, "List scheduled notifications", cancellationToken, actsForSignIn: signIn);
         }
 
         /// <summary>Cancels every pending schedule the player has and returns how many the server actually cancelled. Entries the server no longer recognises are dropped rather than failing the batch.</summary>
@@ -407,35 +427,39 @@ namespace Flock.Providers
         public async Task<int> CancelAllScheduledAsync(CancellationToken cancellationToken = default)
         {
             RequireAuthenticated();
+            // Every step goes out for the sign-in that asked, so a player who signs in meanwhile never has their reminders
+            // cancelled: once it ends the walk stops, cancelled.
+            int? asker = SignInToActFor;
+            string playerId = Client.CurrentPlayerId;
 
-            List<string> ids = await ResolveCancellableScheduleIdsAsync(cancellationToken);
+            List<string> ids = await ResolveCancellableScheduleIdsAsync(asker, playerId, cancellationToken);
             int cancelled = 0;
 
             foreach (string id in ids)
             {
                 try
                 {
-                    await CancelScheduledAsync(id, cancellationToken);
+                    await CancelScheduledForAsync(id, asker, playerId, cancellationToken);
                     cancelled++;
                 }
                 catch (FlockNetworkException ex) when (FlockNetworkException.IsPermanentStatus(ex.StatusCode))
                 {
                     // Already delivered, already cancelled, or unknown to the server — it isn't pending either way.
-                    UntrackPending(id);
+                    UntrackPending(playerId, id);
                 }
             }
 
             return cancelled;
         }
 
-        // Server list is authoritative (it spans devices and installs); local bookkeeping is the offline fallback.
-        private async Task<List<string>> ResolveCancellableScheduleIdsAsync(CancellationToken cancellationToken)
+        // Server list is authoritative (it spans devices and installs); local bookkeeping, the asking player's own, is the offline fallback.
+        private async Task<List<string>> ResolveCancellableScheduleIdsAsync(int? asker, string playerId, CancellationToken cancellationToken)
         {
             List<string> ids = new List<string>();
             try
             {
-                PaginatedResponse<ScheduledNotification> pending = await GetScheduledAsync(
-                    ScheduledNotificationStatuses.Pending, cancellationToken: cancellationToken);
+                PaginatedResponse<ScheduledNotification> pending = await GetScheduledForAsync(
+                    asker, ScheduledNotificationStatuses.Pending, 1, 100, cancellationToken);
 
                 if (pending != null && pending.Items != null)
                 {
@@ -450,7 +474,7 @@ namespace Flock.Providers
                 Client.Logger.LogWarning("Could not read scheduled notifications from the server; cancelling only what this install tracked.");
             }
 
-            foreach (PendingSchedule entry in LoadPendingSchedules())
+            foreach (PendingSchedule entry in LoadPendingSchedules(playerId))
                 if (!string.IsNullOrEmpty(entry.Id))
                     ids.Add(entry.Id);
             return ids;
@@ -470,28 +494,33 @@ namespace Flock.Providers
         {
             RequireNotEmpty(scheduledId, "Scheduled Notification ID");
             RequireAuthenticated();
+            return await CancelScheduledForAsync(scheduledId, SignInToActFor, Client.CurrentPlayerId, cancellationToken);
+        }
 
+        private async Task<ScheduledNotification> CancelScheduledForAsync(
+            string scheduledId, int? signIn, string playerId, CancellationToken cancellationToken)
+        {
             ScheduledNotification cancelled = await ExecuteAsync(async () =>
             {
                 GenericResponse<ScheduledNotification> response = await FlockHttpClient.DeleteAsync<GenericResponse<ScheduledNotification>>(
                     $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.NotificationScheduleById(scheduledId)}", Client.GetBaseHeaders(), cancellationToken);
                 ValidateResponse(response);
                 return response.Result;
-            }, "Cancel scheduled notification", cancellationToken, actsForSignIn: SignInToActFor);
+            }, "Cancel scheduled notification", cancellationToken, actsForSignIn: signIn);
 
-            UntrackPending(scheduledId);
+            UntrackPending(playerId, scheduledId);
             return cancelled;
         }
 
         // local pending-schedule bookkeeping 
-        // The id from ScheduleAsync is the only handle on a pending reminder and /v1 has no route to list or read
-        // one back, so the SDK persists what it scheduled. Player-scoped: a second player on the same device must
-        // not see, or be able to cancel, the first player's reminders.
+        // The id from ScheduleAsync is the only handle on a pending reminder. GetScheduledAsync reads the player's
+        // schedules from the server; this list, kept as the SDK schedules, is the fallback when that read fails.
+        // Player-scoped: a second player on the same device must not see, or be able to cancel, the first player's reminders.
 
-        private List<PendingSchedule> LoadPendingSchedules()
+        private List<PendingSchedule> LoadPendingSchedules(string playerId)
         {
             List<PendingSchedule> stored;
-            if (!TryReadSnapshot(SnapshotCategory, PlayerScopedKey(PendingSchedulesKey), out stored) || stored == null)
+            if (!TryReadState(StateKey(PendingSchedulesKey, playerId), out stored) || stored == null)
                 return new List<PendingSchedule>();
 
             // Delivery can only be inferred from the clock — nothing to query — so a passed entry stops being pending.
@@ -503,20 +532,20 @@ namespace Flock.Providers
             }
 
             if (live.Count != stored.Count)
-                SavePendingSchedules(live);
+                SavePendingSchedules(playerId, live);
             return live;
         }
 
-        private void SavePendingSchedules(List<PendingSchedule> pending)
+        private void SavePendingSchedules(string playerId, List<PendingSchedule> pending)
         {
-            WriteSnapshot(SnapshotCategory, PlayerScopedKey(PendingSchedulesKey), pending);
+            WriteState(StateKey(PendingSchedulesKey, playerId), pending);
         }
 
-        private void TrackPending(ScheduledNotification scheduled, string templateName, string templateId)
+        private void TrackPending(string playerId, ScheduledNotification scheduled, string templateName, string templateId)
         {
             if (scheduled == null || string.IsNullOrEmpty(scheduled.Id)) return;
 
-            List<PendingSchedule> pending = LoadPendingSchedules();
+            List<PendingSchedule> pending = LoadPendingSchedules(playerId);
             pending.Add(new PendingSchedule
             {
                 Id = scheduled.Id,
@@ -524,42 +553,63 @@ namespace Flock.Providers
                 TemplateId = templateId,
                 DeliverAt = scheduled.DeliverAt
             });
-            SavePendingSchedules(pending);
+            SavePendingSchedules(playerId, pending);
         }
 
-        private void UntrackPending(string scheduledId)
+        private void UntrackPending(string playerId, string scheduledId)
         {
-            List<PendingSchedule> pending = LoadPendingSchedules();
+            List<PendingSchedule> pending = LoadPendingSchedules(playerId);
             for (int i = pending.Count - 1; i >= 0; i--)
             {
                 if (pending[i].Id == scheduledId)
                     pending.RemoveAt(i);
             }
-            SavePendingSchedules(pending);
+            SavePendingSchedules(playerId, pending);
         }
 
         // seen-watermark bookkeeping
         // "Received" is fetch-derived: there is no realtime channel and the SDK never polls, so the watermark is
         // what separates a notification the game has already been told about from a genuinely new one.
 
-        private NotificationWatermark LoadWatermark()
+        private NotificationWatermark LoadWatermark(string playerId)
         {
             NotificationWatermark stored;
-            if (!TryReadSnapshot(SnapshotCategory, PlayerScopedKey(WatermarkKey), out stored) || stored == null)
+            if (!TryReadState(StateKey(WatermarkKey, playerId), out stored) || stored == null)
                 return new NotificationWatermark();
             return stored;
         }
 
-        private void SaveWatermark(NotificationWatermark mark)
+        private void SaveWatermark(string playerId, NotificationWatermark mark)
         {
-            WriteSnapshot(SnapshotCategory, PlayerScopedKey(WatermarkKey), mark);
+            WriteState(StateKey(WatermarkKey, playerId), mark);
+        }
+
+        private bool TryReadState<T>(string key, out T value) where T : class
+        {
+            value = null;
+            FlockSnapshotStore store = Client.SnapshotStore;
+            return store != null && store.TryRead(StateScope, key, out value);
+        }
+
+        private void WriteState<T>(string key, T value) where T : class
+        {
+            Client.SnapshotStore?.Write(StateScope, key, value);
+        }
+
+        private static string StateKey(string key, string playerId)
+        {
+            return $"{key}_{playerId}";
         }
 
         // Raises once per notification newer than the watermark, oldest first. The first fetch for a player seeds
         // silently — replaying a whole existing inbox as a burst of events is worse than not reporting its history.
-        private void RaiseNewNotifications(IList<Notification> items)
+        // A reply that lands after another sign-in raises nothing: those rows are another player's, and moving the next
+        // player's watermark past them would hide that player's own mail.
+        private void RaiseNewNotifications(IList<Notification> items, int? askedFor, string playerId)
         {
-            NotificationWatermark mark = LoadWatermark();
+            if (askedFor != SignInToActFor)
+                return;
+            NotificationWatermark mark = LoadWatermark(playerId);
             bool firstEver = !mark.Seeded;
 
             DateTime cutoff = DateTime.MinValue;
@@ -584,7 +634,7 @@ namespace Flock.Providers
                 mark.Seeded = true;
                 if (newest > DateTime.MinValue)
                     mark.NewestCreatedAt = newest.ToString("o", CultureInfo.InvariantCulture);
-                SaveWatermark(mark);
+                SaveWatermark(playerId, mark);
             }
 
             // The page arrives newest-first; walk back so handlers see them in the order they were created.
@@ -614,11 +664,14 @@ namespace Flock.Providers
             return new Dictionary<string, object>();
         }
 
-        // Only fires when the number actually moves, so a repeated refresh doesn't spam a badge.
-        private void SetUnreadCount(int count)
+        // Only fires when the number actually moves for the player it belongs to, so a repeated refresh doesn't spam a badge
+        // and the next player's first count is always reported. A count read for a sign-in that has ended is dropped.
+        private void SetUnreadCount(int count, int? askedFor)
         {
-            if (_lastUnreadCount == count) return;
+            if (askedFor != SignInToActFor) return;
+            if (_lastUnreadCountSignIn == askedFor && _lastUnreadCount == count) return;
             _lastUnreadCount = count;
+            _lastUnreadCountSignIn = askedFor;
             FlockEvents.InvokeUnreadCountChanged(count);
         }
 

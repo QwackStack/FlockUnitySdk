@@ -128,20 +128,15 @@ changed — useful for refreshing an account-settings screen from one place.
 
 Two-step email flow for email/password accounts. `ForgotPasswordAsync` returns the
 backend's success flag (it never reveals whether an email is registered) and works
-logged-out — it's the "I can't log in" entry point. `ResetPasswordAsync` needs an **email
-credential on the account** — either an email sign-in (a restored email session counts) or an
-email linked during this session via `LinkEmailAsync`/`GetLinkedAccountsAsync`. Anything else
-throws `FlockAuthException`; a bad or expired code throws `FlockValidationException`.
-
-> The linked-email check is session-scoped and not persisted. After a session restore the SDK
-> doesn't know what's linked until you read the accounts list, so a device-restored player with
-> a linked email should call `GetLinkedAccountsAsync()` before offering a reset.
+logged-out — it's the "I can't log in" entry point. `ResetPasswordAsync` works logged-out
+too: the email and the emailed code name the account, and the route takes no token. A bad or
+expired code throws `FlockValidationException`.
 
 ```csharp
 // Step 1 — player enters their email, backend sends a reset code
 bool sent = await FlockClient.Instance.Authentication.ForgotPasswordAsync("player@example.com");
 
-// Step 2 — player enters the emailed code plus their new password (requires email sign-in)
+// Step 2 — player enters the emailed code plus their new password (works signed out)
 await FlockClient.Instance.Authentication.ResetPasswordAsync("player@example.com", code, newPassword);
 ```
 
@@ -160,6 +155,16 @@ await FlockClient.Instance.Authentication.VerifyEmailAsync(code);
 
 > There is no dedicated "is verified" route, but `GetLinkedAccountsAsync()` reports
 > `EmailVerified` per credential — read the email entry from that list if you need the flag.
+
+## Where the sign-in is kept
+
+The SDK saves the sign-in through the platform's own store (the Android Keystore, the iOS and macOS Keychain, Windows'
+data protection, the browser's storage on WebGL, PlayerPrefs in the Editor and elsewhere), so `TryRestoreSessionAsync`
+brings the same player back on the next launch. `Logout()` deletes it. `FlockClient.Shutdown()` only lets go of this
+client's tokens and keeps the saved sign-in, so the next `FlockClient.Create` restores the same player.
+
+To keep tokens somewhere else, set `FlockInitConfig.TokenStore` to a class of your own deriving from `ITokenStore`
+(`Save`, `Load`, `Clear`) before `FlockClient.Create`.
 
 ## Token Revocation
 

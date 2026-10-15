@@ -7,9 +7,22 @@ namespace Flock.Analytics
 {
     // Generic write-ahead cache for any payload type — analytics events, log events, etc.
     // Each consumer constructs its own instance with a unique subfolder.
+    /// <summary>How a queue's last drain ended, which sets how long the periodic flush waits before the next.</summary>
+    internal enum FlockDrainEnding
+    {
+        /// <summary>Everything it read was delivered or refused for good, or there was nothing to send.</summary>
+        Finished,
+        /// <summary>It stopped on a failure the server never answered (offline, a timeout): nothing was spent on the server.</summary>
+        StoppedUnanswered,
+        /// <summary>It stopped on a failure the server answered (a 5xx, a 429): the server is struggling, so the next try waits longer.</summary>
+        StoppedAnswered
+    }
+
     internal interface IEventCache<T> where T : class
     {
         int PendingCount { get; }
+
+        FlockDrainEnding LastDrainEnding { get; }
 
         // Returns handle the caller can pass to Remove on successful send,
         // or null if the cache is unavailable / the write failed.
@@ -23,8 +36,9 @@ namespace Flock.Analytics
         void Rewrite(Func<T, bool> shouldRewrite, Action<T> setAuthID);
 
         // Drains the cache one batch at a time via the supplied sender. With a flush already running it returns at once,
-        // or, asked to wait, waits for that flush and then sends what is left.
-        Task FlushAsync(
+        // or, asked to wait, waits for that flush and then sends what is left. Reports what this call sent and what the
+        // server refused; a flush left to one already running reports nothing.
+        Task<FlockFlushResult> FlushAsync(
             Func<IReadOnlyList<T>, CancellationToken, Task> sender,
             CancellationToken cancellationToken,
             bool waitForARunningFlush);
