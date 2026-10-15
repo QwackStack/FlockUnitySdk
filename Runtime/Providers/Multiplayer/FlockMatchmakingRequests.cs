@@ -23,7 +23,7 @@ namespace Flock.Providers
                 GenericResponse<List<TicketRecord>> response = await FlockHttpClient.PostAsync<GenericResponse<List<TicketRecord>>>(
                     Url(FlockEndpoints.MatchmakingTicket), body, Client.GetBaseHeaders(), cancellationToken);
                 if (response?.Result == null || response.Result.Count == 0 || response.Result.Exists(ticket => string.IsNullOrEmpty(ticket?.Id)))
-                    throw new FlockNetworkException("Invalid response from server");
+                    throw new FlockNetworkException("The server's answer is missing what this call reads") { Hint = FlockErrorHints.NotFlocksAnswer };
                 return response.Result;
             }, "Find match", cancellationToken, actsForSignIn: signInNumber);
         }
@@ -58,7 +58,7 @@ namespace Flock.Providers
         private static TicketRecord RequireTicket(GenericResponse<TicketRecord> response)
         {
             if (response?.Result == null || string.IsNullOrEmpty(response.Result.Id) || string.IsNullOrEmpty(response.Result.Status))
-                throw new FlockNetworkException("Invalid response from server");
+                throw new FlockNetworkException("The server's answer is missing what this call reads") { Hint = FlockErrorHints.NotFlocksAnswer };
             return response.Result;
         }
     }

@@ -137,7 +137,7 @@ namespace Flock.Providers
         {
             IPAddress server = await FlockNameLookup.FindIpv4Async(login.Host, timing.NameLookUpWait, timing.NameLookUpForTesting, cancellationToken);
             if (server == null)
-                throw new FlockRelayException(FlockRelayFailure.Unreachable, $"The relay server's name {login.Host} could not be looked up within {timing.NameLookUpWait.TotalSeconds:0.#} s.");
+                throw new FlockRelayException(FlockRelayFailure.Unreachable, $"The relay server's name {login.Host} could not be looked up within {timing.NameLookUpWait.TotalSeconds:0.#} s");
             IPEndPoint endpoint = new IPEndPoint(server, login.Port);
             // Reserved from a socket the server answered; when none was, from a new one as before, and the reservation's own wait judges the server.
             Socket answered = await Task.Run(() => FlockRelaySocket.FindOneTheServerAnswers(endpoint, timing.SocketsTriedAtOnce, timing.RoundsOfSocketsTried, timing.SocketRoundWait, cancellationToken));
@@ -149,7 +149,7 @@ namespace Flock.Providers
             catch (SocketException failure)
             {
                 answered?.Close();
-                throw new FlockRelayException(FlockRelayFailure.Unreachable, $"No way to send to the relay at {login}: {failure.SocketErrorCode}.", failure);
+                throw new FlockRelayException(FlockRelayFailure.Unreachable, $"No way to send to the relay at {login}: {failure.SocketErrorCode}", failure);
             }
             using (cancellationToken.Register(connection.Close))
                 await connection._opened.Task;

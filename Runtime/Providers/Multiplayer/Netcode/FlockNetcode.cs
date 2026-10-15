@@ -169,19 +169,19 @@ namespace Flock.Providers
         public static Task<FlockNetcodeStartResult> StartNetcodeAsync(this FlockMultiplayerSession session, NetworkManager networkManager, FlockNetcodeOptions options = null, CancellationToken cancellationToken = default)
         {
             if (session == null)
-                throw new FlockValidationException("StartNetcodeAsync needs the session: host or join one, or find a match, first.");
+                throw new FlockValidationException("StartNetcodeAsync was given no session") { Hint = "Host or join a session, or find a match, first, and pass the session it handed back." };
             if (session.HasEnded)
-                throw new FlockValidationException($"This session has ended ({session.EndReason}). Host or join another.");
+                throw new FlockValidationException($"This session has ended ({session.EndReason})") { Hint = FlockErrorHints.FindAnotherSession };
             if (networkManager == null)
-                throw new FlockValidationException("StartNetcodeAsync needs the scene's NetworkManager.");
+                throw new FlockValidationException("StartNetcodeAsync was given no NetworkManager") { Hint = "Pass the scene's NetworkManager." };
             if (Application.platform == RuntimePlatform.WebGLPlayer)
-                throw new FlockValidationException("A web player cannot connect directly or through Flock's relay. Use a connection of the game's own with PublishConnectionAsync.");
+                throw new FlockValidationException("A web player cannot connect directly or through Flock's relay") { Hint = "Use a connection of the game's own, published with PublishConnectionAsync." };
             UnityTransport transport = TransportOf(networkManager);
             if (transport == null)
-                throw new FlockValidationException("StartNetcodeAsync connects through Unity Transport: set the NetworkManager's transport to UnityTransport.");
+                throw new FlockValidationException("The NetworkManager's transport is not Unity Transport, which StartNetcodeAsync connects through") { Hint = "Set the NetworkManager's transport to UnityTransport." };
             options = options ?? new FlockNetcodeOptions();
             if (!Enum.IsDefined(typeof(FlockRelayUse), options.Relay))
-                throw new FlockValidationException($"FlockNetcodeOptions.Relay must be WhenNeeded, Always or Never, not {(int)options.Relay}.");
+                throw new FlockValidationException($"FlockNetcodeOptions.Relay is {(int)options.Relay}, which is not a FlockRelayUse") { Hint = "Set it to WhenNeeded, Always or Never." };
             // A shutdown or a start of Flock's still under way is waited for first; anything else already running is refused now.
             bool waitsFirst = StartUnderWay(networkManager) != null || networkManager.ShutdownInProgress;
             if (!waitsFirst)
@@ -200,9 +200,12 @@ namespace Flock.Providers
         private static void RefuseWhatRunsAlready(FlockMultiplayerSession session, NetworkManager networkManager)
         {
             if (networkManager.IsListening || networkManager.ShutdownInProgress)
-                throw new FlockValidationException("Netcode for GameObjects is already running on this NetworkManager. Shut it down before starting it for a session.");
+                throw new FlockValidationException("Netcode for GameObjects is already running on this NetworkManager") { Hint = "Shut it down before starting it for a session." };
             if (session.IsHost && networkManager.ConnectionApprovalCallback != null)
-                throw new FlockValidationException("This NetworkManager already has a ConnectionApprovalCallback. StartNetcodeAsync installs Flock's check of every joining player: move the game's own check to FlockNetcodeOptions.ApproveJoiningPlayer.");
+                throw new FlockValidationException("This NetworkManager already has a ConnectionApprovalCallback, and StartNetcodeAsync installs Flock's check of every joining player")
+                {
+                    Hint = "Move the game's own check to FlockNetcodeOptions.ApproveJoiningPlayer."
+                };
         }
 
         private static NetcodeStart StartUnderWay(NetworkManager networkManager)
@@ -287,7 +290,7 @@ namespace Flock.Providers
         public static string PlayerForConnection(this FlockMultiplayerSession session, ulong clientId)
         {
             if (session == null)
-                throw new FlockValidationException("PlayerForConnection needs the session the host started Netcode for GameObjects for.");
+                throw new FlockValidationException("PlayerForConnection was given no session") { Hint = "Pass the session StartNetcodeAsync was called with." };
             return FlockJoinChecks.PlayerFor(session, clientId);
         }
 

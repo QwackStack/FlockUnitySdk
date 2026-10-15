@@ -26,7 +26,7 @@ namespace Flock.Providers
                 PlayerLoginResponse response = await Client.RetryHandler.ExecuteAsync(operation, cancellationToken);
 
                 if (response == null || string.IsNullOrEmpty(response.AccessToken))
-                    throw new FlockAuthException($"Invalid {context.ToLower()} response from server");
+                    throw new FlockAuthException($"The server's answer to {context.ToLower()} has no access token") { Hint = FlockErrorHints.NotFlocksAnswer };
 
                 Client.SetTokens(response.AccessToken, response.RefreshToken);
                 Client.Logger.LogInfo($"{context} successful for player: {Client.CurrentPlayerId}");
@@ -48,7 +48,7 @@ namespace Flock.Providers
             catch (Exception ex)
             {
                 Client.Logger.LogError($"{context} failed", ex);
-                throw new FlockAuthException($"{context} failed", ex);
+                throw new FlockAuthException(ex.Message, ex) { Operation = context, Hint = FlockErrorHints.ReportSdkFault };
             }
         }
 
@@ -288,7 +288,7 @@ namespace Flock.Providers
                     Client.GetBaseHeaders(), cancellationToken),
                 "Password forgot", cancellationToken, idempotent: false);
             if (response == null)
-                throw new FlockNetworkException("Invalid response from server");
+                throw new FlockNetworkException("The server's answer is missing what this call reads") { Hint = FlockErrorHints.NotFlocksAnswer };
             return response.Success;
         }
 
@@ -343,7 +343,10 @@ namespace Flock.Providers
                 "Token revoke", cancellationToken, idempotent: false, actsForSignIn: SignInToActFor);
 
             if (response == null || !response.Revoked)
-                throw new FlockAuthException("Token revoke was not confirmed by the server");
+                throw new FlockAuthException("The server did not confirm the sign-in was revoked")
+                {
+                    Hint = "Revoke it again; until the server confirms, the sign-in stays usable on the server until it expires."
+                };
         }
 
         /// <summary>Registration preflight: checks whether a display name is still free. A race can still lose at register time — treat as advisory.</summary>
@@ -357,7 +360,7 @@ namespace Flock.Providers
                 "Name availability", cancellationToken);
 
             if (response == null)
-                throw new FlockNetworkException("Invalid response from server");
+                throw new FlockNetworkException("The server's answer is missing what this call reads") { Hint = FlockErrorHints.NotFlocksAnswer };
             return response.Available;
         }
 
@@ -470,7 +473,7 @@ namespace Flock.Providers
         private static List<PlayerLinkedAccount> ReadAccounts(PlayerAccountsResponse response)
         {
             if (response?.Accounts == null)
-                throw new FlockNetworkException("Invalid response from server (missing accounts)");
+                throw new FlockNetworkException("The server's answer lists no accounts") { Hint = FlockErrorHints.NotFlocksAnswer };
             return response.Accounts;
         }
 
@@ -478,7 +481,7 @@ namespace Flock.Providers
         private void RequireAuthenticated()
         {
             if (!Client.IsAuthenticated)
-                throw new FlockAuthException("No player is signed in");
+                throw new FlockAuthException("No player is signed in") { Hint = FlockErrorHints.SignInFirst };
         }
 
         /// <summary>

@@ -50,7 +50,7 @@ namespace Flock.Providers
                     Url(FlockEndpoints.PartyMine), Client.GetBaseHeaders(), cancellationToken);
                 // A null result is the server saying "in no party"; no envelope at all is still a misread.
                 if (response == null)
-                    throw new FlockNetworkException("Invalid response from server");
+                    throw new FlockNetworkException("The server's answer is missing what this call reads") { Hint = FlockErrorHints.NotFlocksAnswer };
                 return response.Result == null ? null : RequireParty(response);
             }, "Read my party", cancellationToken, actsForSignIn: signInNumber);
         }
@@ -103,7 +103,7 @@ namespace Flock.Providers
         private static T RequireParty<T>(GenericResponse<T> response) where T : PartyRecord
         {
             if (response?.Result == null || string.IsNullOrEmpty(response.Result.Id))
-                throw new FlockNetworkException("Invalid response from server");
+                throw new FlockNetworkException("The server's answer is missing what this call reads") { Hint = FlockErrorHints.NotFlocksAnswer };
             return response.Result;
         }
     }

@@ -137,7 +137,7 @@ namespace Flock.Http
             }
             catch (JsonException ex)
             {
-                throw new FlockSerializationException("Malformed response body", ex) { Body = response.Body };
+                throw new FlockSerializationException(UnreadableAnswer, ex) { Body = response.Body, Hint = FlockErrorHints.NotFlocksAnswer };
             }
         }
 
@@ -147,7 +147,7 @@ namespace Flock.Http
             FlockHttpResponse response = await SendAndCheckStatusAsync(request, cancellationToken);
 
             if (string.IsNullOrEmpty(response.Body))
-                throw new FlockSerializationException("Empty response from server");
+                throw new FlockSerializationException("The server's answer was empty, so there was nothing to read") { Hint = FlockErrorHints.NotFlocksAnswer };
 
             try
             {
@@ -155,19 +155,23 @@ namespace Flock.Http
             }
             catch (JsonException ex)
             {
-                throw new FlockSerializationException("Malformed response body", ex) { Body = response.Body };
+                throw new FlockSerializationException(UnreadableAnswer, ex) { Body = response.Body, Hint = FlockErrorHints.NotFlocksAnswer };
             }
         }
 
-        // The one place a response's status becomes an exception, for reads and sends alike.
+        private const string UnreadableAnswer = "The server's answer could not be read as JSON";
+
+        // The one place a response's status becomes an exception, for reads and sends alike. What is wrong is the server's own
+        // reason when it gave one (FlockException composes it), the status's plain meaning otherwise; the fix comes from the
+        // code, or from the kind of failure (FlockErrorHints.ForFailure).
         private static async Task<FlockHttpResponse> SendAndCheckStatusAsync(FlockHttpRequest request, CancellationToken cancellationToken)
         {
             FlockHttpResponse response = await Adapter.SendAsync(request, cancellationToken);
 
             if (response.Result == FlockHttpResult.Timeout)
-                throw new FlockNetworkException("Request timeout");
+                throw new FlockNetworkException("The server did not answer in time") { Hint = FlockErrorHints.NoAnswerInTime };
             if (response.Result == FlockHttpResult.ConnectionError)
-                throw new FlockNetworkException("Network request failed") { Body = response.Body };
+                throw new FlockNetworkException("The request could not reach the server") { Body = response.Body, Hint = FlockErrorHints.CouldNotReachTheServer };
 
             int code = response.StatusCode;
             if (code < 200 || code >= 300)
@@ -176,25 +180,44 @@ namespace Flock.Http
                 CodedErrorDetail detail = ParseErrorDetail(errorContent);
                 string errorCode = detail?.Code;
                 string serverMessage = detail?.Message;
-                string hint = FlockErrorHints.For(FlockErrorCodes.Parse(errorCode));
+                string cause = DescribeStatus(code);
 
                 if (code == 401 || code == 403)
-                    throw new FlockAuthException("Authentication failed") { Body = errorContent, StatusCode = code, Code = errorCode, ServerMessage = serverMessage, Hint = hint };
+                    throw new FlockAuthException(cause) { Body = errorContent, StatusCode = code, Code = errorCode, ServerMessage = serverMessage };
 
                 if (code == 400 || code == 422)
-                    throw new FlockValidationException("Validation failed") { Body = errorContent, StatusCode = code, Code = errorCode, ServerMessage = serverMessage, Hint = hint };
+                    throw new FlockValidationException(cause) { Body = errorContent, StatusCode = code, Code = errorCode, ServerMessage = serverMessage };
 
-                throw new FlockNetworkException("HTTP request failed", code)
+                throw new FlockNetworkException(cause, code)
                 {
                     Body = errorContent,
                     Code = errorCode,
                     ServerMessage = serverMessage,
-                    Hint = hint,
                     RetryAfter = ParseRetryAfter(response.RetryAfterHeader)
                 };
             }
 
             return response;
+        }
+
+        // What a failed status means, for an answer that gave no reason of its own. Flock's game API always gives one, so these
+        // are mostly read on answers from something else: a proxy, a captive portal, another server.
+        private static string DescribeStatus(int statusCode)
+        {
+            switch (statusCode)
+            {
+                case 400: return "The server could not use the request";
+                case 401: return "The server did not accept the request's credentials";
+                case 403: return "The server refused to do this";
+                case 404: return "The server found nothing at this address";
+                case 405: return "The server does not take this kind of request at this address";
+                case 408: return "The server stopped waiting for the request";
+                case 409: return "The request clashes with what the server holds now";
+                case 413: return "The request is larger than the server accepts";
+                case 422: return "The server refused a value in the request";
+                case 429: return "The server is getting too many requests from this game";
+                default: return statusCode >= 500 ? "The server failed while handling the request" : "The server refused the request";
+            }
         }
 
         // Two shapes share `detail`: the game routes' coded {code,message} object, and FastAPI's own 422 array of field errors.

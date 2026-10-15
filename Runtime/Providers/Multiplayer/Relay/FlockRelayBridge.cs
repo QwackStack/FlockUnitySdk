@@ -77,7 +77,7 @@ namespace Flock.Providers
                 return bridge;
             }
             bridge._host?.Close();
-            throw new FlockValidationException("Netcode for GameObjects already runs through this session's relay on another NetworkManager. Shut that one down before starting another.");
+            throw new FlockValidationException("Netcode for GameObjects already runs through this session's relay on another NetworkManager") { Hint = "Shut that one down before starting another." };
         }
 
         /// <summary>The loopback port a player's netcode connects to.</summary>

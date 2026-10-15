@@ -118,7 +118,7 @@ namespace Flock.Providers
         /// <summary>Marks a notification read straight from a list entry, so callers don't have to reach for <c>.Id</c>.</summary>
         public Task<Notification> MarkReadAsync(Notification notification, CancellationToken cancellationToken = default)
         {
-            if (notification == null) throw new FlockValidationException("Notification cannot be null");
+            if (notification == null) throw new FlockValidationException("No notification was given") { Hint = "Pass a notification from the player's inbox (Notifications.GetInboxAsync)." };
             return MarkReadAsync(notification.Id, cancellationToken);
         }
 
@@ -166,16 +166,19 @@ namespace Flock.Providers
 #if FLOCK_MOBILE_NOTIFICATIONS && UNITY_IOS && !UNITY_EDITOR
             string token = await AcquireApnsTokenAsync();
             if (string.IsNullOrEmpty(token))
-                throw new FlockValidationException(
-                    "iOS returned no APNs token. The player declined notification permission, or the build has no push entitlement.");
+                throw new FlockValidationException("iOS returned no push token: the player declined notification permission, or the build has no push entitlement")
+                {
+                    Hint = "Ask the player for notification permission, and give the build the Push Notifications capability in Xcode."
+                };
 
             return await RegisterDeviceTokenAsync(FlockDevicePlatform.Ios, token, cancellationToken);
 #else
             await Task.CompletedTask;
-            throw new FlockValidationException(
-                "RegisterThisDeviceAsync can only fetch a token on an iOS build with com.unity.mobile.notifications installed. " +
-                "On Android get the token from Firebase Cloud Messaging, then call RegisterDeviceTokenAsync(platform, token) — " +
-                "the FCM client cannot ship as a package dependency, so the SDK can't do it for you.");
+            throw new FlockValidationException("RegisterThisDeviceAsync can only fetch a token on an iOS build with com.unity.mobile.notifications installed")
+            {
+                Hint = "On Android, get the token from Firebase Cloud Messaging and call RegisterDeviceTokenAsync(platform, token): the FCM "
+                    + "client cannot ship as a package dependency, so the SDK cannot fetch it."
+            };
 #endif
         }
 
@@ -262,9 +265,10 @@ namespace Flock.Providers
                 case RuntimePlatform.IPhonePlayer: return FlockDevicePlatform.Ios;
                 case RuntimePlatform.WebGLPlayer: return FlockDevicePlatform.Web;
                 default:
-                    throw new FlockValidationException(
-                        $"Push is not available on {Application.platform} — the backend accepts android, ios and web only. " +
-                        "Use the overload taking an explicit FlockDevicePlatform if you are supplying a token from elsewhere.");
+                    throw new FlockValidationException($"Push notifications are not available on {Application.platform}: the server takes android, ios and web only")
+                {
+                    Hint = "Register a device token only on an Android, iOS or web build, or call the overload taking a FlockDevicePlatform for a token from elsewhere."
+                };
             }
         }
 
@@ -386,7 +390,7 @@ namespace Flock.Providers
         {
             string templateId = await ResolveTemplateIdAsync(templateName, locale, cancellationToken);
             if (string.IsNullOrEmpty(templateId))
-                throw new FlockValidationException($"No notification template named '{templateName}'");
+                throw new FlockValidationException($"No notification template named '{templateName}'") { Hint = "Create it in the Flock dashboard and make it active; names match exactly, letter case included." };
             return templateId;
         }
 
@@ -483,7 +487,7 @@ namespace Flock.Providers
         /// <summary>Cancels the notification returned by <see cref="ScheduleAsync"/>, so callers can hold the object rather than its id.</summary>
         public Task<ScheduledNotification> CancelScheduledAsync(ScheduledNotification scheduled, CancellationToken cancellationToken = default)
         {
-            if (scheduled == null) throw new FlockValidationException("Scheduled notification cannot be null");
+            if (scheduled == null) throw new FlockValidationException("No scheduled notification was given") { Hint = "Pass one that ScheduleAsync or GetScheduledAsync handed back." };
             return CancelScheduledAsync(scheduled.Id, cancellationToken);
         }
 
@@ -679,7 +683,7 @@ namespace Flock.Providers
         private void RequireAuthenticated()
         {
             if (!Client.IsAuthenticated)
-                throw new FlockAuthException("No player is signed in");
+                throw new FlockAuthException("No player is signed in") { Hint = FlockErrorHints.SignInFirst };
         }
 
         // Player-scoped so one player's inbox can't be served to the next player on a shared device.

@@ -118,8 +118,12 @@ namespace Flock.Tests.Editor
             Task<string> download = _h.Client.Asset.DownloadAsync<string>(ListedRecord());
             yield return FlockTestWait.Until(() => download.IsCompleted, "Ended within 20 s", 20);
 
-            Assert.AreEqual(404, (download.Exception?.GetBaseException() as FlockNetworkException)?.StatusCode, "The storage's own answer: " + download.Exception);
+            FlockNetworkException missing = download.Exception?.GetBaseException() as FlockNetworkException;
+            Assert.AreEqual(404, missing?.StatusCode, "The storage's own answer: " + download.Exception);
             Assert.AreEqual(0, RecordReads, "Only a refused link means the record went stale");
+            // Storage's answer, not the Flock server's: what is wrong names storage, and the fix is storage's, never a wrong API URL.
+            StringAssert.Contains("storage that serves the asset", missing.Message);
+            Assert.AreEqual(FlockErrorHints.ForStorageDownload(404), missing.Hint);
         }
 
         [UnityTest]

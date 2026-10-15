@@ -45,7 +45,7 @@ namespace Flock
                 case FlockCredentialProvider.Facebook: return "facebook";
                 case FlockCredentialProvider.Steam: return "steam";
                 case FlockCredentialProvider.Discord: return "discord";
-                default: throw new FlockValidationException($"'{provider}' is not a credential provider the SDK can send.");
+                default: throw new FlockValidationException($"'{provider}' is not a credential provider the SDK can send") { Hint = "Pass one of the other FlockCredentialProvider values, such as Google or Steam." };
             }
         }
 

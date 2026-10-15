@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Flock.Config;
+using Flock.Exceptions;
 using Flock.Http;
 using Flock.Tests.Support;
 using NUnit.Framework;
@@ -244,7 +245,8 @@ namespace Protokite.Playtest.Tests
             _flock = new FlockFakeTransport().Default(request => FlockFakeTransport.Ok("{\"error\":{\"code\":null},\"response\":{\"message\":null,\"code\":null},\"result\":null}"));
             FlockHttpClient.Configure(_flock);
             ProtokitePlaytestGameVersionAnswer answer = Ask(Project(PlaytestVersionName, PlaytestVersionId));
-            Assert.AreEqual("Flock's answer could not be read. Flock answered without a Game Version", answer.Problem, "Something answered, so it is not said to be out of reach");
+            StringAssert.StartsWith("Flock's answer could not be read. Flock answered without a Game Version\nFix: ", answer.Problem, "Something answered, so it is not said to be out of reach");
+            StringAssert.EndsWith(FlockErrorHints.NotFlocksAnswer, answer.Problem, "and the fix names what answers like that");
             Assert.IsFalse(answer.NameFound);
         }
 

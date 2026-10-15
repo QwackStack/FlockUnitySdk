@@ -452,7 +452,9 @@ namespace Flock.Tests.PlayMode
             Assert.IsTrue(running.StartHost(), "Precondition: already running");
             StringAssert.Contains("already running", Assert.Throws<FlockValidationException>(() => held[0].StartNetcodeAsync(running)).Message);
             FlockMultiplayerSession nothing = null;
-            StringAssert.Contains("needs the session", Assert.Throws<FlockValidationException>(() => nothing.StartNetcodeAsync(running)).Message);
+            FlockValidationException noSession = Assert.Throws<FlockValidationException>(() => nothing.StartNetcodeAsync(running));
+            StringAssert.Contains("given no session", noSession.Message);
+            StringAssert.Contains("Host or join a session", noSession.Hint, "The refusal says how to get a session");
 
             Task leaving = held[0].LeaveAsync();
             yield return Done(leaving, "left");

@@ -381,6 +381,19 @@ namespace Protokite.Playtest.Tests
         }
 
         [Test]
+        public void ARefusalWithNoReasonOfProtokitesNamesNoQuestion()
+        {
+            Plant("20260101-000000-000-a");
+            using (FlockTestClient flock = StartFlock(Transport(FlockFakeTransport.Status(404, "<html>Not Found</html>"))))
+            {
+                // Only Protokite's own reason names a question: the fix in the exception's message has apostrophes of its own.
+                LogAssert.Expect(LogType.Warning, new Regex(@"was refused by Protokite \(HTTP 404\): "));
+                ProtokitePlaytest.Refresh();
+                Assert.AreEqual(0, Waiting().Length);
+            }
+        }
+
+        [Test]
         public void AKeptFormThatCouldNeverBeSentIsDeletedWithoutARequest()
         {
             Plant("20260101-000000-000-a", url: "not a url");

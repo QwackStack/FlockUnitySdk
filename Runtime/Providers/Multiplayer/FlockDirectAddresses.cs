@@ -68,7 +68,7 @@ namespace Flock.Providers
             if (publicAddress == null && !_toldPublicAddressUnknown)
             {
                 _toldPublicAddressUnknown = true;
-                _client.Logger.LogWarning("This device's public address could not be found (no STUN server answered), so a direct connection offers its LAN address alone, which only players on the same network can reach.");
+                _client.Logger.LogWarning("This device's public address could not be found (no STUN server answered, or none could be read from Flock), so a direct connection offers its LAN address alone, which only players on the same network can reach.");
             }
             return new DeviceAddresses(LanAddressToward(firstServer ?? InternetAddress), publicAddress);
         }

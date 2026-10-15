@@ -245,10 +245,18 @@ namespace Flock.Providers
             RequireNotEmpty(currencyTemplateId, "Currency Template ID");
             PlayerData wallet = await Client.Player.GetMyDataByTemplateAsync(currencyTemplateId, cancellationToken);
             if (wallet == null || string.IsNullOrEmpty(wallet.Id))
-                throw new FlockValidationException("No currency wallet found for the current player.");
+                throw new FlockValidationException("The signed-in player has no wallet record for that currency template")
+                {
+                    Hint = "Check the currency template id is the id of the Game Version's currency template in the Flock dashboard. The server makes "
+                        + "a player's wallet when the player registers, so a player who registered before that template existed, or under another "
+                        + "Game Version, has none."
+                };
             
             if (!IsServerReachable())
-                throw new FlockNetworkException("Add game funds requires a network connection; money grants are not queued offline.");
+                throw new FlockNetworkException("Adding game funds needs a network connection, and a money grant is never queued offline")
+                {
+                    Hint = "Call it again once the device is online."
+                };
 
             // Money grant is non-idempotent: an ambiguous failure may mean it already committed, so surface it rather than re-send (double-credit).
             PlayerData result = await ExecuteAsync(async () =>
@@ -276,7 +284,12 @@ namespace Flock.Providers
             RequireNotEmpty(achievementName, "Achievement Name");
             PlayerData row = await Client.Player.GetMyDataByTagAsync("achievement", cancellationToken);
             if (row == null || string.IsNullOrEmpty(row.Id))
-                throw new FlockValidationException("No achievements data found for the current player.");
+                throw new FlockValidationException("The signed-in player has no achievements record")
+                {
+                    Hint = "The server makes it when a player registers, from the Game Version's achievement template (a player-data template "
+                        + "tagged achievement), so a player who registered before that template existed, or under another Game Version, has none. "
+                        + "Create the template in the Flock dashboard, then register the player under this build's Game Version."
+                };
 
             UnlockAchievementInput request = new UnlockAchievementInput
             {

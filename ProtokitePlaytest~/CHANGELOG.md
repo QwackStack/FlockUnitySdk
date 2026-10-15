@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 It is released with the Flock SDK, at the Flock SDK's version.
 
 
+## [1.88.0]
+
+### Changed
+- **A failed call to Protokite says what Protokite meant and how to fix it** (`ProtokiteClient.FixFor`): a key Protokite does not
+  know names the API Key in Flock > Settings, a build no playtest is linked to says to link the playtest to the build's Game
+  Version, a missing form says to publish it, and an answer that is not Protokite's (a captive portal, a proxy) names the
+  Protokite API URL in Protokite > Playtest > Settings. Protokite's refusals carry no Flock error code, so the Flock SDK's fix for
+  an answer without one, which points at the Flock API URL, no longer reaches them.
+- A Game Version lookup that comes back without one says the answer did not come from Flock's game API and to check the API
+  URL; the setup window's problem text ends with that `Fix:` line.
+
+### Fixed
+- **A feedback form Protokite refused with no reason of its own** could be logged as refusing a question cut out of the fix in
+  the exception's message; the question is read out of Protokite's own reason only.
+
 ## [1.87.0]
 
 ### Fixed

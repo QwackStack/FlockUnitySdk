@@ -232,7 +232,7 @@ namespace Flock.Providers
         {
             TicketRecord own = tickets.Find(ticket => string.Equals(ticket.PlayerId, playerId, StringComparison.Ordinal));
             if (own == null)
-                throw new FlockNetworkException("Invalid response from server");
+                throw new FlockNetworkException("The server's answer is missing what this call reads") { Hint = FlockErrorHints.NotFlocksAnswer };
             return own;
         }
 
@@ -294,7 +294,7 @@ namespace Flock.Providers
         private async Task<FlockMatchmakingResult> WaitAsync(Search search, CancellationToken cancellationToken)
         {
             if (search.HasCaller)
-                throw new FlockValidationException("A call already waits for this search. Wait for its result, or for the party's SearchEnded.");
+                throw new FlockValidationException("A call already waits for this search") { Hint = "Wait for that call's result, or for the party's SearchEnded, rather than calling FindMatchAsync again." };
             search.HasCaller = true;
             try
             {
@@ -373,12 +373,12 @@ namespace Flock.Providers
             StopChecking(search);
             search.Finished.TrySetException(search.Party.HasEnded
                 ? PartyEnded(search.Party)
-                : new FlockValidationException("This player leads the party now, so nobody else will start its search: start it with the party's FindMatchAsync and a queue name."));
+                : new FlockValidationException("This player leads the party now, so nobody else will start its search") { Hint = "Start it with the party's FindMatchAsync and a queue name." });
             _ = search.Finished.Task.Exception;
         }
 
         private static FlockValidationException PartyEnded(FlockParty party) =>
-            new FlockValidationException($"This party has ended ({party.EndReason}). Create or join another, or get the player's current one with GetMyPartyAsync.");
+            new FlockValidationException($"This party has ended ({party.EndReason})") { Hint = FlockErrorHints.FindAnotherParty };
 
         // A check the server refused for good ends the search with that failure; the party's next reading follows its search again.
         private void CheckStopped(Search search, Exception failure)
@@ -596,7 +596,7 @@ namespace Flock.Providers
         private int RequireSignedIn()
         {
             if (!_client.IsAuthenticated)
-                throw new FlockAuthException("No player is signed in");
+                throw new FlockAuthException("No player is signed in") { Hint = FlockErrorHints.SignInFirst };
             return CurrentSignInNumber;
         }
 
@@ -605,7 +605,10 @@ namespace Flock.Providers
         private void RequireNoSearch()
         {
             if (IsStarting || _search != null)
-                throw new FlockValidationException("A search for a match is already running here: this player's own, or the party's that this game follows. Wait for its result (the party's through its FindMatchAsync or SearchEnded), or cancel it through the token given to FindMatchAsync.");
+                throw new FlockValidationException("A search for a match is already running here: this player's own, or the party's that this game follows")
+                {
+                    Hint = "Wait for its result (the party's through its FindMatchAsync or SearchEnded), or cancel it through the token given to FindMatchAsync."
+                };
         }
 
         // The sign-in a call was asked under ended, or Flock shut down, while its answer was on its way.

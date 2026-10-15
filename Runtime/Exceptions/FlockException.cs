@@ -17,8 +17,14 @@ namespace Flock.Exceptions
         /// <summary>Server's human-readable reason from the coded-error body (`detail.message`); null when the body had none.</summary>
         public string ServerMessage { get; set; }
 
-        /// <summary>SDK-authored next step for this failure (e.g. "call RegisterWithDeviceAsync first"); null when the SDK has no advice beyond the server's reason.</summary>
-        public string Hint { get; set; }
+        private string _hint;
+
+        /// <summary>How to fix this failure, written by the SDK: the advice given where it was thrown, else its code's, else the advice for its kind of failure (<see cref="FlockErrorHints.ForFailure"/>). Never empty.</summary>
+        public string Hint
+        {
+            get => string.IsNullOrEmpty(_hint) ? FlockErrorHints.ForFailure(this) : _hint;
+            set => _hint = value;
+        }
 
         /// <summary>Short label of the SDK call that failed (e.g. "Device login"), stamped by the provider that issued it.</summary>
         public string Operation { get; set; }
@@ -38,7 +44,7 @@ namespace Flock.Exceptions
             return string.IsNullOrEmpty(Body) ? base.ToString() : $"{base.ToString()}\nResponse body: {Body}";
         }
 
-        // The server's reason beats our generic "Validation failed" whenever the body carried one.
+        // What is wrong is the server's own reason when the body carried one, the cause the SDK names otherwise; the fix follows.
         private string ComposeMessage()
         {
             StringBuilder text = new StringBuilder();

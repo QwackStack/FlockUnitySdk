@@ -67,7 +67,7 @@ namespace Flock.Tests.Editor
             {
                 FlockSerializationException error = Assert.Throws<FlockSerializationException>(
                     () => h.Run(() => FlockHttpClient.PostAsync<Dictionary<string, object>>(Url, new { probe = true })));
-                StringAssert.Contains("Empty response", error.Message);
+                StringAssert.Contains("answer was empty", error.Message);
             }
         }
 

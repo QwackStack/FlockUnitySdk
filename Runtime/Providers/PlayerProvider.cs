@@ -200,7 +200,7 @@ namespace Flock.Providers
         {
             RequireNotEmpty(playerTemplateId, "Player Template ID");
             string playerId = Client.CurrentPlayerId;
-            RequireNotEmpty(playerId, "Current Player ID (sign in first)");
+            RequireNotEmpty(playerId, "Signed-in player's id", FlockErrorHints.SignInFirst);
 
             Dictionary<string, PlayerData> byTemplate = await GetOrFetchByTemplateAsync(playerId, cancellationToken);
             if (byTemplate.TryGetValue(playerTemplateId, out PlayerData pd))
@@ -218,7 +218,7 @@ namespace Flock.Providers
             foreach (PlayerTemplateSchema t in templates)
                 if (t != null && !string.IsNullOrEmpty(t.Id) && string.Equals(t.Tag, tag, StringComparison.OrdinalIgnoreCase))
                     return t;
-            throw new FlockValidationException($"No player template tagged '{tag}' for this game.");
+            throw new FlockValidationException($"No player template is tagged '{tag}' in this game version") { Hint = "Tag a player-data template with it in the Flock dashboard, under the Game Version this build runs." };
         }
 
         /// <summary>Resolves the current player's data row for the single player template carrying the given tag (e.g. "currency", "achievement").</summary>
@@ -297,7 +297,7 @@ namespace Flock.Providers
         /// the server saying "not banned", not a malformed response. It therefore does not go through
         /// <see cref="FlockProviderBase.ValidateResponse{T}"/>, which rejects a null result and is right to for
         /// every route whose result is required. Routing it through there made the majority path — any player
-        /// who has never been banned — throw <c>FlockNetworkException("Invalid response from server")</c>, which
+        /// who has never been banned — throw <c>FlockNetworkException("The server's answer has no result in it")</c>, which
         /// also pointed the developer at the network and the backend when the request had in fact succeeded.
         /// </remarks>
         public async Task<PlayerBan> GetBanAsync(string playerId, CancellationToken cancellationToken = default)
@@ -313,7 +313,7 @@ namespace Flock.Providers
                 // No envelope at all is still a misread and still throws. Only the null RESULT is tolerated,
                 // and it is tolerated as data rather than smoothed over.
                 if (response == null)
-                    throw new FlockNetworkException("Invalid response from server");
+                    throw new FlockNetworkException("The server's answer is missing what this call reads") { Hint = FlockErrorHints.NotFlocksAnswer };
 
                 return response.Result ?? new PlayerBan();
             }, "Get player ban", cancellationToken);

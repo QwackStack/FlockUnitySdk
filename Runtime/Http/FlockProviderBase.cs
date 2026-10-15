@@ -77,7 +77,7 @@ namespace Flock.Http
                 catch (Exception ex)
                 {
                     Client.Logger.LogError($"{context} failed", ex);
-                    throw new FlockNetworkException($"{context} failed", ex);
+                    throw new FlockNetworkException(ex.Message, ex) { Operation = context, Hint = FlockErrorHints.ReportSdkFault };
                 }
             }
             catch (OperationCanceledException)
@@ -92,7 +92,7 @@ namespace Flock.Http
             catch (Exception ex)
             {
                 Client.Logger.LogError($"{context} failed", ex);
-                throw new FlockNetworkException($"{context} failed", ex);
+                throw new FlockNetworkException(ex.Message, ex) { Operation = context, Hint = FlockErrorHints.ReportSdkFault };
             }
         }
 
@@ -201,17 +201,17 @@ namespace Flock.Http
         {
             return Client.IsReachable();
         }
-        protected void RequireNotEmpty(string value, string name)
+        // Refuses an empty argument; fix says what to do about it, and without one the failure asks for the argument by name.
+        protected void RequireNotEmpty(string value, string name, string fix = null)
         {
-            // for cases that require params not to be null
             if (string.IsNullOrEmpty(value))
-                throw new FlockValidationException($"{name} cannot be null or empty");
+                throw new FlockValidationException($"{name} is empty") { Hint = fix ?? $"Pass a {name}; this call cannot run without one." };
         }
 
         protected void ValidateResponse<T>(GenericResponse<T> response) where T : class
         {
             if (response?.Result == null)
-                throw new FlockNetworkException("Invalid response from server");
+                throw new FlockNetworkException("The server's answer has no result in it") { Hint = FlockErrorHints.NotFlocksAnswer };
         }
     }
 }

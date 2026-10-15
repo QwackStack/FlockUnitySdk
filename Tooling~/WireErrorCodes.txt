@@ -32,7 +32,8 @@
 #   grep -rhoE '"[a-z_]+\.[a-z_]+"' <backend>/flock/packages/*/enums.py <backend>/common/helpers/error_codes.py \
 #     | tr -d '"' | sort -u
 #
-# Last refreshed against the live backend: 2026-10-06 (93 codes in the spec, 105 /v1 paths), for the
+# Last refreshed 2026-10-15 for the API key, sign-in and request.* codes, measured against the local backend.
+# Before that, against the live backend: 2026-10-06 (93 codes in the spec, 105 /v1 paths), for the
 # matchmaking, party and multiplayer codes and the codes the spec gained since 2026-08-31. On 2026-10-08
 # the backend's matchmaking and session fixes added multiplayer.version_mismatch and
 # matchmaking.version_mismatch and removed multiplayer.extras_paused (the relay now answers STUN only).
@@ -123,6 +124,7 @@ player_inventory.inventory_entry_not_found
 player_inventory.player_not_found
 player_template.not_found
 player_template.not_found_by_name
+request.rate_limited
 shop.currency_not_held
 shop.currency_template_not_found
 shop.insufficient_funds
@@ -157,11 +159,35 @@ shop_item.shop_not_found
 # The backend also defines multiplayer.session_ended and multiplayer.invalid_connection_info, which nothing
 # raises (2026-10-06), and matchmaking.queue_has_open_tickets, which only a dashboard route sends. None has
 # a member; add one the day it can reach a game.
+# game.missing_api_key, game.invalid_api_key - 401 from the API key check every /v1 route makes first (a blank
+#                          key, an unknown one). A missing header never gets that far: the framework refuses it as
+#                          request.validation_failed naming header.X-Flock-API-Key. Measured live 2026-10-15.
+# player.missing_token, player.invalid_token - 401 from the sign-in check of a route that acts as the player (no
+#                          bearer, a bearer that is not this game's). Measured live 2026-10-15; player.expired_token
+#                          comes from the same check, read in the backend's code.
+# request.* - the backend's own codes for a failure no route raised itself (common/helpers/error_codes.py): every
+#                          /v1 error carries a code, falling back to one per status. request.not_found (a route
+#                          that does not exist, as when API URL ends in /v1, or a record a route did not find), request.method_not_allowed and
+#                          request.validation_failed (a member missing from the body) measured live 2026-10-15;
+#                          the rest read in the backend's handler.
 leaderboard.not_found
 analytics.currency_not_found
 multiplayer.join_code_unavailable
 multiplayer.already_in_session
 shop.real_currency_needs_checkout
+game.missing_api_key
+game.invalid_api_key
+player.missing_token
+player.invalid_token
+player.expired_token
+request.validation_failed
+request.unauthorized
+request.forbidden
+request.not_found
+request.method_not_allowed
+request.conflict
+request.payload_too_large
+request.failed
 
 [waived]
 # Documented, but for features this SDK does not call — there is no surface for the error to reach.

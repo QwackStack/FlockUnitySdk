@@ -2,13 +2,52 @@ using System.Collections.Generic;
 
 namespace Flock.Exceptions
 {
-    /// <summary>Turns a coded server error into the next step the developer should take. Keyed on <see cref="FlockErrorCode"/> only — never on message text.</summary>
+    /// <summary>
+    /// Turns a failure into the next step the developer should take. The one owner of every fix the SDK hands out:
+    /// <see cref="FlockException.Hint"/> falls back to <see cref="ForFailure"/>, so no failure leaves the SDK without one. Keyed on
+    /// <see cref="FlockErrorCode"/> first — never on message text — and on the kind of failure when the code has no advice of its own.
+    /// </summary>
     public static class FlockErrorHints
     {
         // Dashboard-authored content only reaches the game after a codegen sync, which is the step newcomers miss.
         private const string AuthorAndSync = "Author it in the Flock dashboard, then run Flock > Settings > Code Generation > Sync Schemas so the generated code under Assets/Flock/Generated matches.";
 
         private const string AuthorInDashboard = "Author it in the Flock dashboard and publish it to this game version.";
+
+        // Every request is the API URL plus /v1/<route>, so a path in the setting doubles or misses part of every route.
+        private const string ApiUrlAlone = "The API URL in Flock > Settings must be the Flock server's address alone, such as https://api.example.com, with no /v1 or other path after it.";
+
+        // A purchase and the shop reads take the shop item's own id, which a newcomer cannot tell from the item's name.
+        private const string ShopItemIdFromShop = "Shop.PurchaseAsync and Shop.GetItemAsync take the shop item's Id (ShopItem.Id, read from its shop with Shop.GetAllAsync, Shop.GetByNameAsync or Shop.GetItemsByShopAsync), not the item's name or the shop's id. If the id is right, check the API Key in Flock > Settings is the key of the game that owns the shop.";
+
+        // A wallet is built once, at registration; neither a purchase nor Commands.AddGameFundsAsync adds a currency to it.
+        private const string WalletHoldsTemplateCurrencies = "A wallet holds the currencies of its Game Version's currency template, each starting at zero when the player registers.";
+
+        // The fixes several failures the SDK finds itself share, kept here so each has one wording.
+
+        /// <summary>A call that acts as the player, made with nobody signed in.</summary>
+        public const string SignInFirst = "Sign the player in first, and make this call once the sign-in has succeeded.";
+
+        /// <summary>A call made before the Flock client exists.</summary>
+        public const string InitializeFlockFirst = "Create the client before this call: turn on Auto Initialize On Load in Flock > Settings, or call FlockClient.Create(config) once at startup. The Console says what stopped an automatic start (an unresolved Game Version, an empty API URL).";
+
+        /// <summary>A 2xx answer that lacks what only Flock's game API would send.</summary>
+        public const string NotFlocksAnswer = "The answer did not come from Flock's game API: a captive portal (a Wi-Fi sign-in page), a proxy, or an API URL that points at another server answers like this. Sign in to the network if it asks, and check the address. " + ApiUrlAlone;
+
+        /// <summary>No answer came within the timeout.</summary>
+        public const string NoAnswerInTime = "Check the device's network connection, then try again; the SDK retries a read by itself. A purchase or other change that timed out may still have been made, so read the result before sending it again.";
+
+        /// <summary>The request never reached the server.</summary>
+        public const string CouldNotReachTheServer = "Check the device is online and can reach the Flock server: a wrong address, a firewall or a VPN stops every call. " + ApiUrlAlone;
+
+        /// <summary>Something the SDK did not expect went wrong inside it.</summary>
+        public const string ReportSdkFault = "This is a fault in the Flock SDK, not in the call; the inner exception says where. Report it with this log line.";
+
+        /// <summary>A session call given a session that has ended.</summary>
+        public const string FindAnotherSession = "Host or join another session (HostSessionAsync, JoinSessionAsync), or get the player's current one with GetMySessionAsync.";
+
+        /// <summary>A party call given a party that has ended.</summary>
+        public const string FindAnotherParty = "Create or join another party (CreatePartyAsync, JoinPartyAsync), or get the player's current one with GetMyPartyAsync.";
 
         private static readonly Dictionary<FlockErrorCode, string> Hints = new Dictionary<FlockErrorCode, string>
         {
@@ -21,6 +60,9 @@ namespace Flock.Exceptions
             { FlockErrorCode.PlayerSteamAccountAlreadyRegistered, "That Steam account is already registered. Call Authentication.LoginWithSteamAsync(...) instead." },
             { FlockErrorCode.PlayerNameAlreadyRegistered, "Display names are unique per game. Check Authentication.IsNameAvailableAsync(name) first, or register with name: null and set it later." },
             { FlockErrorCode.PlayerInvalidRefreshToken, "The saved session is no longer valid. Call Authentication.Logout() and sign in again." },
+            { FlockErrorCode.PlayerExpiredToken, "The player's sign-in expired and could not be renewed. Sign the player in again; the SDK renews a sign-in by itself while its saved session is still valid." },
+            { FlockErrorCode.PlayerInvalidToken, "The server does not accept the player's sign-in: it was made by another game or another Flock server, or the game's signing key changed since. Call Authentication.Logout() and sign the player in again." },
+            { FlockErrorCode.PlayerMissingToken, "This call acts as the signed-in player and went out with no sign-in. Sign the player in first, and make the call once the sign-in has succeeded." },
             { FlockErrorCode.PlayerInvalidVerificationCode, "The email verification code is wrong or expired. Call Authentication.SendEmailVerificationAsync() to issue a new one." },
             { FlockErrorCode.PlayerInvalidResetCode, "The password reset code is wrong or expired. Call Authentication.ForgotPasswordAsync(email) to issue a new one." },
             { FlockErrorCode.PlayerNoEmailAccount, "This player has no email credential. Link one with Authentication.LinkEmailAsync(email, password) before using email-only flows." },
@@ -40,8 +82,8 @@ namespace Flock.Exceptions
             { FlockErrorCode.PlayerTemplateNotFound, "No player-data template by that id. " + AuthorAndSync },
             { FlockErrorCode.PlayerTemplateNotFoundByName, "No player-data template by that name. " + AuthorAndSync },
             { FlockErrorCode.GameCommandAchievementNotFound, "No achievement by that id. " + AuthorAndSync },
-            { FlockErrorCode.GameCommandCurrencyNotFound, "No currency by that name. " + AuthorAndSync },
-            { FlockErrorCode.ShopCurrencyTemplateNotFound, "No currency template by that name. " + AuthorAndSync },
+            { FlockErrorCode.GameCommandCurrencyNotFound, "The player's wallet has no currency by that code. " + WalletHoldsTemplateCurrencies + " Use one of those codes, letter case included, or add the currency to the currency template in the Flock dashboard." },
+            { FlockErrorCode.ShopCurrencyTemplateNotFound, "This Game Version has no currency template (a player-data template tagged currency), so no player has a wallet to pay from. Create one in the Flock dashboard under the version this build runs (the Game Version in Flock > Settings)." },
             { FlockErrorCode.GameCommandTemplateValidationFailed, "The value does not match the template's schema. Compare the field names and types in the Flock dashboard, then re-run Flock > Settings > Code Generation > Sync Schemas so the generated types match." },
             { FlockErrorCode.GameCommandPlayerDataNotLinkedToTemplate, "That record is not linked to a template, so template-aware commands cannot act on it. Re-create it from the template in the Flock dashboard." },
             { FlockErrorCode.GameCommandNotAWallet, "That record is not a wallet. Currency commands only work on wallet-typed player data." },
@@ -60,26 +102,39 @@ namespace Flock.Exceptions
             { FlockErrorCode.GameMissingStudioId, "The game record has no studio attached. Fix it in the Flock dashboard — nothing in the Unity project can supply it." },
             { FlockErrorCode.LogEventGameNotFound, "The API key does not resolve to a game, so log events have nowhere to land. Check the API Key in Flock > Settings against the dashboard." },
             { FlockErrorCode.AssetAssetNotFound, "No asset by that id. Upload it in the Flock dashboard and publish it to this game version." },
-            { FlockErrorCode.ShopShopNotFound, "No shop by that name. " + AuthorInDashboard },
-            { FlockErrorCode.ShopItemNotFound, "No shop item by that id. " + AuthorInDashboard },
-            { FlockErrorCode.ShopItemShopNotFound, "No shop by that id. " + AuthorInDashboard },
-            { FlockErrorCode.ShopItemShopItemNotFound, "No shop item by that id. " + AuthorInDashboard },
+            { FlockErrorCode.ShopShopNotFound, "No shop by that name in this build's Game Version, or by that id in this game. A shop belongs to one Game Version: create it in the Flock dashboard under the version this build runs (the Game Version in Flock > Settings), and give its name exactly as the dashboard shows it, letter case included." },
+            { FlockErrorCode.ShopItemNotFound, "No shop item has that id in this game. " + ShopItemIdFromShop },
+            { FlockErrorCode.ShopItemShopNotFound, "No shop has that id in this game. Shop.GetItemsByShopAsync takes the shop's Id (Shop.Id, read with Shop.GetAllAsync or Shop.GetByNameAsync), not its name." },
+            { FlockErrorCode.ShopItemShopItemNotFound, "No shop item has that id in this game. " + ShopItemIdFromShop },
             { FlockErrorCode.GameGameNotFound, "The API key does not resolve to a game. Check the API Key in Flock > Settings against the dashboard." },
+            { FlockErrorCode.GameInvalidApiKey, "The server does not know this API key. Copy the game's key from the Flock dashboard into the API Key in Flock > Settings; a key from another Flock server (local, staging or live) is refused too, so check the API URL points at the server the key came from." },
+            { FlockErrorCode.GameMissingApiKey, "The request reached the server with a blank API key. Set the API Key in Flock > Settings (or on the FlockInitConfig given to FlockClient.Create) to the game's key from the Flock dashboard." },
+
+            // Request — the server's own codes for a failure no route raised itself. A wrong API URL lands here.
+            { FlockErrorCode.RequestConflict, "The change clashed with another made at the same moment, or with what the record holds now. Read it again, then make the change again if it still applies." },
+            { FlockErrorCode.RequestFailed, "The server could not complete the request; the reason above is its own. Try again later, and check the server is running if it lasts." },
+            { FlockErrorCode.RequestForbidden, "The server does not allow this request; the reason above is its own. Check the call is one a game may make with its API key, for the player signed in now." },
+            { FlockErrorCode.RequestMethodNotAllowed, "The server has a route at this address, but not for this kind of request, so the address is not the one this SDK expects. " + ApiUrlAlone + " If it is, the server runs an older Flock than this SDK." },
+            { FlockErrorCode.RequestNotFound, "The server found nothing for this request; the reason above says what. A bare \"Not Found\" means no route answers at this address: " + ApiUrlAlone + " If it is, the server runs an older Flock that does not have this feature yet. Any other reason names a record this game or player does not have: check the id passed to the call." },
+            { FlockErrorCode.RequestPayloadTooLarge, "The request is larger than the server accepts. Send less in one call: split a large write into several." },
+            { FlockErrorCode.RequestRateLimited, "The server turned the request away for volume; the reason above says which kind. Too many calls in a short time: the SDK retries reads after the wait the server asks for, so send writes less often, several values together in one call. A limit on how many of a thing a player may hold, such as pending scheduled notifications: cancel some, as waiting will not help." },
+            { FlockErrorCode.RequestUnauthorized, "The server refused the request's credentials. Check the API Key in Flock > Settings against the Flock dashboard, and sign the player in again." },
+            { FlockErrorCode.RequestValidationFailed, "The server refused a value in the request; the reason above names it (body.<name> is a member of what the SDK sent, header.<name> a header). It is usually a value passed to this call: check it against the call's documentation. header.X-Flock-API-Key means the API Key in Flock > Settings is empty. A member you never pass means this SDK and the server are on different Flock versions." },
             { FlockErrorCode.GameVersionGameVersionNotFound, "That game version does not exist. Pick an existing one in Flock > Settings — the id is baked at build time." },
             { FlockErrorCode.GameVersionGameVersionByNameNotFound, "That game version name does not exist. Pick an existing one in Flock > Settings — the id is baked at build time." },
             { FlockErrorCode.GameConfigPlayerNoGameVersion, "The player has no game version attached. Pick one in Flock > Settings so it is sent on every request." },
 
             // Runtime state the caller can act on rather than misconfiguration.
             { FlockErrorCode.ShopInsufficientFunds, "The player cannot afford this item. Read the wallet balance before offering the purchase." },
-            { FlockErrorCode.ShopCurrencyNotHeld, "The player holds no wallet for that currency yet. Grant funds once with Commands.AddGameFundsAsync to create it." },
-            { FlockErrorCode.ShopWalletNotFound, "The player has no wallet for that currency yet. Grant funds once with Commands.AddGameFundsAsync to create it." },
+            { FlockErrorCode.ShopCurrencyNotHeld, "The player's wallet has no balance in the item's currency. " + WalletHoldsTemplateCurrencies + " Price the item in one of those, or add the currency to the currency template in the Flock dashboard." },
+            { FlockErrorCode.ShopWalletNotFound, "This player has no wallet in this Game Version. The server makes a player's wallet when the player registers, from the version's currency template, so a player who registered before that template existed, or under another Game Version, has none. Create the currency template first, then register the player under this build's Game Version." },
             { FlockErrorCode.GameCommandPlayerDataNotFound, "The player has no record for that template yet. Reads do not create it — write it first with Commands.UpdatePlayerDataAsync." },
             { FlockErrorCode.PlayerDataNotFound, "The player has no record for that template yet. Reads do not create it — write it first with Commands.UpdatePlayerDataAsync." },
             { FlockErrorCode.AnalyticsCurrencyNotFound, "Transaction analytics need a currency entity for this game. Create one in the Flock dashboard." },
             { FlockErrorCode.AnalyticsInvalidCurrencyId, "AnalyticsTransactionRequest.CurrencyId is not a 26-character ULID. Leave it null and set CurrencyCode instead — the backend resolves the code to an id." },
             { FlockErrorCode.AnalyticsSessionNotFound, "That analytics session is no longer open on the server. The SDK opens one on sign-in and closes it on logout; a new one starts on the next sign-in." },
             { FlockErrorCode.GameCommandRateLimited, "Too many writes to that player-data row. Send the fields together in one Commands.UpdatePlayerDataAsync call instead of one Commands.UpdatePlayerDataFieldAsync per field." },
-            { FlockErrorCode.ShopRewardCurrencyNotHeld, "The reward pays out a currency this player holds no wallet for. Grant that currency once with Commands.AddGameFundsAsync so the wallet exists before the reward lands." },
+            { FlockErrorCode.ShopRewardCurrencyNotHeld, "The reward pays out a currency the player's wallet does not have. " + WalletHoldsTemplateCurrencies + " Reward one of those, or add the currency to the currency template in the Flock dashboard." },
             { FlockErrorCode.PlayerInventoryAlreadyUsed, "That inventory entry has already been consumed — each one is spendable once. Re-read Shop.GetPlayerInventoryAsync before offering it again." },
             { FlockErrorCode.PlayerInventoryInventoryEntryNotFound, "No inventory entry by that id in this game. Shop.ConsumeAsync takes the entry's own id — a PurchaseResult.Inventory.Id — not the shop item id." },
 
@@ -89,7 +144,7 @@ namespace Flock.Exceptions
             { FlockErrorCode.PlayerBanPlayerNotFound, "No player matches that id. Player.GetBanAsync requires a player id — pass FlockClient.Instance.CurrentPlayerId for the signed-in player." },
             { FlockErrorCode.PlayerDataPlayerNotFound, "No player matches that id. Omit the playerId argument on Player.GetAllDataAsync to read the signed-in player's records." },
             { FlockErrorCode.PlayerInventoryPlayerNotFound, "No player matches that id. Omit the playerId argument on Shop.GetPlayerInventoryAsync to read the signed-in player's inventory." },
-            { FlockErrorCode.ShopPlayerNotFound, "No player matches that id. A purchase always acts on the signed-in player, so sign in before calling Shop.PurchaseAsync." },
+            { FlockErrorCode.ShopPlayerNotFound, "No player has that id in this game. Leave playerId out so Shop.PurchaseAsync acts on the signed-in player, and sign in before offering a purchase; a player id from another game or another Flock server is not found." },
 
             // Matchmaking, parties and sessions. A 404 here usually means "not yours, or no longer live", not "never existed".
             { FlockErrorCode.MatchmakingQueueNotFound, "No matchmaking queue by that id in this game. Create the queue in the Flock dashboard first." },
@@ -129,6 +184,57 @@ namespace Flock.Exceptions
             if (code == FlockErrorCode.Unknown)
                 return null;
             return Hints.TryGetValue(code, out string hint) ? hint : null;
+        }
+
+        /// <summary>Next step for a failed download of an asset's file, which comes from storage rather than the Flock server; <paramref name="statusCode"/> is null when storage was never reached.</summary>
+        public static string ForStorageDownload(int? statusCode)
+        {
+            if (!statusCode.HasValue)
+                return "Check the device is online and that a firewall or VPN lets it reach the asset's download address; asset files come from storage, not from the Flock server.";
+            if (statusCode.Value == 401 || statusCode.Value == 403)
+                return "The download link expired or storage refused it. Read the asset again (Assets.GetByIdAsync or GetAllAsync) for a fresh link, then download it again.";
+            if (statusCode.Value == 404)
+                return "The asset's file is missing from storage. Upload it again in the Flock dashboard and publish it to this game version.";
+            if (statusCode.Value >= 500)
+                return "Storage failed while serving the file; the call did not cause it. Try again later.";
+            return "Storage refused the download. Read the asset again for a fresh link, then download it again.";
+        }
+
+        /// <summary>
+        /// Next step for any failure: its code's advice when it has one, otherwise the advice for its kind — an answer that
+        /// did not come from Flock's game API (no code), a code this SDK version does not know, a server failure, a failure
+        /// the SDK found itself. Never empty. Reads the failure's code, status and type only, never its <see cref="FlockException.Hint"/>.
+        /// </summary>
+        public static string ForFailure(FlockException failure)
+        {
+            string forCode = For(failure.ErrorCode);
+            if (!string.IsNullOrEmpty(forCode))
+                return forCode;
+
+            int? status = failure.StatusCode;
+            // The HTTP client gives an unreadable answer its own fix, so one without came from the SDK's own work.
+            if (failure is FlockSerializationException)
+                return ReportSdkFault;
+
+            // Made by the SDK itself, which states its own fix wherever it has one; these are what is left.
+            if (!status.HasValue)
+            {
+                if (failure is FlockAuthException)
+                    return SignInFirst;
+                if (failure is FlockValidationException)
+                    return "Change what the reason above names, then make the call again.";
+                return "Make the call again. If it keeps failing, check the device's network connection.";
+            }
+
+            if (status.Value >= 500)
+                return "The server, or a proxy in front of it, failed while handling the call; the call did not cause it. Try again later (the SDK retries a read by itself), and check the server is running if it lasts.";
+            // Flock answered with a code newer than this SDK: its reason is all there is.
+            if (!string.IsNullOrEmpty(failure.Code))
+                return $"The reason above is the server's own. This version of the Flock SDK has no advice for the code {failure.Code}; a newer version may.";
+            if (status.Value == 408 || status.Value == 429)
+                return "Something between the game and Flock is asking it to slow down. Wait a moment and try again; the SDK retries a read by itself.";
+            // Every failure Flock's game API sends carries a code, so an answer without one came from something else.
+            return "The answer carries no Flock error code, so it did not come from Flock's game API: a proxy, a firewall or a captive portal answered, or the request went to another server. " + ApiUrlAlone;
         }
 
         /// <summary>Next step for an auth failure. The credential disambiguates codes that mean different things per method — notably invalid_login_credentials, which means "register this device first" but "wrong password" for email.</summary>

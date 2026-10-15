@@ -31,8 +31,7 @@ namespace Flock
             get
             {
                 if (_instance == null)
-                    throw new FlockException(
-                        "FlockClient has not been initialized. Call 'FlockClient.Create(config)' once at startup before accessing FlockClient.Instance.");
+                    throw new FlockException("FlockClient has not been initialized") { Hint = FlockErrorHints.InitializeFlockFirst };
                 return _instance;
             }
         }
@@ -119,7 +118,7 @@ namespace Flock
 
         private FlockClient(FlockInitConfig initConfig, IFlockLogger logger)
         {
-            _initConfig = initConfig ?? throw new ArgumentNullException(nameof(initConfig));
+            _initConfig = initConfig ?? throw new ArgumentNullException(nameof(initConfig), "Pass the config to start Flock with, such as the one Flock > Settings saves (FlockConfigAsset).");
             // Errors and warnings always surface — EnableDebugLogs only adds info/debug on top.
             _logger = logger ?? new UnityFlockLogger(initConfig.EnableDebugLogs);
             FlockEvents.Logger = _logger;
@@ -137,18 +136,21 @@ namespace Flock
         {
             // Misuse guard — no OnInitializationFailed: the SDK is already initialized and working.
             if (_instance != null)
-                throw new FlockException(
-                    "FlockClient is already initialized. Call FlockClient.Shutdown() first if you need to reinitialize with a different config.");
+                throw new FlockException("FlockClient is already initialized")
+                {
+                    Hint = "Use FlockClient.Instance, or call FlockClient.Shutdown() first to start Flock again with a different config."
+                };
 
             try
             {
                 FlockClient client = new FlockClient(initConfig, logger);
 
                 if (string.IsNullOrEmpty(client._initConfig.GameVersionId))
-                    throw new FlockValidationException(
-                        "Game Version not resolved. Open Flock > Settings while online to resolve your " +
-                        "Game Version, then rebuild. The Game Version ID is baked into FlockConfig at " +
-                        "edit time — runtime init never contacts the server.");
+                    throw new FlockValidationException("The Game Version is not resolved, so Flock cannot start")
+                {
+                    Hint = "Open Flock > Settings while online so it resolves the Game Version, then build again: its id is saved into the build "
+                        + "at edit time, and starting Flock never asks the server for it."
+                };
 
                 // Order matters and is the whole fix: rescue state out of the version-scoped tree BEFORE
                 // pruning it. A queue left where older builds put it would already be deleted by the time its
@@ -349,11 +351,14 @@ namespace Flock
         public async Task<bool> RefreshTokenAsync(CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrEmpty(_refreshToken))
-                throw new FlockAuthException("No refresh token available. Please log in first.");
+                throw new FlockAuthException("There is no saved sign-in to renew") { Hint = FlockErrorHints.SignInFirst };
 
             bool success = await TryRefreshTokenAsync(cancellationToken);
             if (!success)
-                _logger.LogException(new FlockAuthException("Token refresh failed. Please log in again."));
+                _logger.LogException(new FlockAuthException("The player's sign-in could not be renewed")
+                {
+                    Hint = "Sign the player in again. If the device was offline, wait for the connection and renew again first."
+                });
             
             return success;
         }
@@ -508,11 +513,10 @@ namespace Flock
                 catch (Exception ex)
                 {
                     _logger.LogError("Failed to parse JWT access token", ex);
-                    throw new FlockAuthException(
-                        "Server returned an unparseable JWT access token. Cannot establish player " +
-                        "session — the auth response was malformed. Verify ApiUrl points at a " +
-                        "supported Flock backend.",
-                        ex);
+                    throw new FlockAuthException("The server's sign-in answer holds an access token that cannot be read, so no player session was made", ex)
+                    {
+                        Hint = FlockErrorHints.NotFlocksAnswer
+                    };
                 }
             }
 

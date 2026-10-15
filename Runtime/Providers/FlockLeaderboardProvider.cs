@@ -162,19 +162,27 @@ namespace Flock.Providers
                 "Fetch standings around player", cancellationToken, actsForSignIn: SignInToActFor);
         }
 
-        // A name this game doesn't have is a caller mistake, not an empty result — the routes answer 404 for it.
+        // A name this game doesn't have is a caller mistake, not an empty result — the routes answer leaderboard.not_found for it.
+        // Any other 404 (a wrong API URL answers request.not_found) keeps its own reason and fix rather than blaming the name.
         private static FlockException AsCallerMistake(FlockNetworkException ex, string leaderboardName)
         {
-            return ex.StatusCode == 404
-                ? new FlockValidationException($"No leaderboard named '{leaderboardName}'")
-                : (FlockException)ex;
+            if (ex.ErrorCode != FlockErrorCode.LeaderboardNotFound)
+                return ex;
+            return new FlockValidationException($"No leaderboard named '{leaderboardName}'", ex)
+            {
+                Body = ex.Body,
+                StatusCode = ex.StatusCode,
+                Code = ex.Code,
+                ServerMessage = ex.ServerMessage,
+                Hint = FlockErrorHints.For(FlockErrorCode.LeaderboardNotFound)
+            };
         }
 
         // Bearer-only endpoints — fail fast instead of a guaranteed server 401.
         private void RequireAuthenticated()
         {
             if (!Client.IsAuthenticated)
-                throw new FlockAuthException("No player is signed in");
+                throw new FlockAuthException("No player is signed in") { Hint = FlockErrorHints.SignInFirst };
         }
 
         // Player-scoped so one player's cached placement can't be served to the next player on a shared device.

@@ -107,7 +107,7 @@ namespace Flock.Providers
                 GenericResponse<JoinTokenRecord> response = await FlockHttpClient.PostAsync<GenericResponse<JoinTokenRecord>>(
                     Url(FlockEndpoints.SessionJoinToken(sessionId)), new object(), Client.GetBaseHeaders(), cancellationToken);
                 if (string.IsNullOrEmpty(response?.Result?.Token))
-                    throw new FlockNetworkException("Invalid response from server");
+                    throw new FlockNetworkException("The server's answer is missing what this call reads") { Hint = FlockErrorHints.NotFlocksAnswer };
                 return response.Result;
             }, "Request join token", cancellationToken, actsForSignIn: signInNumber);
         }
@@ -120,7 +120,7 @@ namespace Flock.Providers
                 GenericResponse<VerifiedJoinTokenRecord> response = await FlockHttpClient.PostAsync<GenericResponse<VerifiedJoinTokenRecord>>(
                     Url(FlockEndpoints.SessionVerifyJoinToken(sessionId)), body, Client.GetBaseHeaders(), cancellationToken);
                 if (string.IsNullOrEmpty(response?.Result?.PlayerId))
-                    throw new FlockNetworkException("Invalid response from server");
+                    throw new FlockNetworkException("The server's answer is missing what this call reads") { Hint = FlockErrorHints.NotFlocksAnswer };
                 return response.Result;
             }, "Verify join token", cancellationToken, actsForSignIn: signInNumber);
         }
@@ -132,7 +132,7 @@ namespace Flock.Providers
                 GenericResponse<RelayCredentialsRecord> response = await FlockHttpClient.PostAsync<GenericResponse<RelayCredentialsRecord>>(
                     Url(FlockEndpoints.RelayCredentials), new RelayCredentialsBody(), Client.GetBaseHeaders(), cancellationToken);
                 if (response?.Result?.IceServers == null)
-                    throw new FlockNetworkException("Invalid response from server");
+                    throw new FlockNetworkException("The server's answer is missing what this call reads") { Hint = FlockErrorHints.NotFlocksAnswer };
                 return response.Result;
             }, "Read the servers to connect through", cancellationToken, actsForSignIn: signInNumber);
         }
@@ -145,7 +145,7 @@ namespace Flock.Providers
                 GenericResponse<RelayCredentialsRecord> response = await FlockHttpClient.PostAsync<GenericResponse<RelayCredentialsRecord>>(
                     Url(FlockEndpoints.RelayCredentials), body, Client.GetBaseHeaders(), cancellationToken);
                 if (response?.Result?.IceServers == null)
-                    throw new FlockNetworkException("Invalid response from server");
+                    throw new FlockNetworkException("The server's answer is missing what this call reads") { Hint = FlockErrorHints.NotFlocksAnswer };
                 return response.Result;
             }, "Request relay logins", cancellationToken, actsForSignIn: signInNumber);
         }
@@ -156,7 +156,7 @@ namespace Flock.Providers
         private static SessionRecord RequireSession(GenericResponse<SessionRecord> response)
         {
             if (response?.Result == null || string.IsNullOrEmpty(response.Result.Id))
-                throw new FlockNetworkException("Invalid response from server");
+                throw new FlockNetworkException("The server's answer is missing what this call reads") { Hint = FlockErrorHints.NotFlocksAnswer };
             return response.Result;
         }
     }

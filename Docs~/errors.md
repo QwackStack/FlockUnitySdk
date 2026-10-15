@@ -22,7 +22,7 @@ All SDK exceptions derive from `FlockException` (namespace `Flock.Exceptions`).
 - **`Code`** — the raw wire string (e.g. `"shop.insufficient_funds"`). Keep for logging/forward-compat.
 - **`StatusCode`** — the HTTP status when the error came from a server response; `null` for transport failures (an ambiguous outcome — the request may or may not have reached the server).
 - **`ServerMessage`** — the server's own reason (`"Invalid login credentials"`); `null` when the body carried none.
-- **`Hint`** — the SDK's suggested next step; `null` when there is nothing to add beyond the server's reason.
+- **`Hint`** — how to fix it: the advice for the code, or for the kind of failure when the code has none (no answer in time, no connection, an answer that did not come from Flock's game API, a server failure). Never empty.
 - **`Operation`** — the SDK call that failed (`"Device login"`), stamped by the provider that issued it.
 - **`Message`** — all of the above composed into one line (see below).
 - **`Body`** — the raw server response body.
@@ -38,7 +38,14 @@ Fix: This device is not registered yet. Call Authentication.RegisterWithDeviceAs
 
 The fix is specific to context where one code means different things: the same `player.invalid_login_credentials` on an *email* sign-in says the password was wrong instead.
 
-A client-side throw (`"deviceId cannot be null or empty"`) has no status, code or server reason, so its message is exactly the text it was constructed with — nothing is appended.
+A failure with no server reason reads as the SDK's plain cause, and still ends with its fix. A failure the SDK finds itself, before sending anything, says what is wrong and what to do about it:
+
+```
+Shop Item ID is empty
+Fix: Pass a Shop Item ID; this call cannot run without one.
+```
+
+Every failure Flock's game API sends carries a code, so an answer without one came from something else — a proxy, a captive portal, another server — and the fix says so. A `request.not_found` code whose reason is a bare `Not Found` means no route answers at that address (any other reason names a record the route did not find): the API URL in Flock > Settings must be the server's address alone, such as `https://api.example.com`, with no `/v1` or other path after it.
 
 `FlockErrorHints.For(errorCode)` returns the same next-step text for any code, if you want it in your own debug UI. **It is written for developers, not players** — it names SDK methods and dashboard steps, so write separate player-facing copy.
 

@@ -478,7 +478,7 @@ namespace Flock.Providers
                 "Start session", cancellationToken);
 
             if (response == null || string.IsNullOrEmpty(response.SessionId))
-                throw new FlockNetworkException("Session registration returned no session id");
+                throw new FlockNetworkException("The server's answer to the session registration has no session id") { Hint = FlockErrorHints.NotFlocksAnswer };
 
             return response.SessionId;
         }
@@ -820,7 +820,7 @@ namespace Flock.Providers
             }
             catch (Exception ex)
             {
-                throw new FlockValidationException($"'{label}' has non-serializable parameters: {ex.Message}", ex);
+                throw new FlockValidationException($"'{label}' has parameters that cannot be written as JSON: {ex.Message}", ex) { Hint = "Pass plain values: numbers, strings, booleans, and lists and dictionaries of them." };
             }
         }
         private Task SendEventsAsync(
@@ -990,7 +990,7 @@ namespace Flock.Providers
             RequireAuth();
 
             if (request.Amount < 0)
-                throw new FlockValidationException($"Transaction amount must be non-negative, got: {request.Amount}");
+                throw new FlockValidationException($"The transaction amount is below zero: {request.Amount}") { Hint = "Pass an amount of zero or more." };
 
             if (string.IsNullOrEmpty(request.PlayerId))
                 request.PlayerId = Client.CurrentPlayerId ??FlockConstant.DummyUserID;

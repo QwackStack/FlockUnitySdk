@@ -320,14 +320,32 @@ namespace Flock.Tests.Editor
         public void GetStandings_UnknownName_ThrowsValidation()
         {
             FlockFakeTransport transport = new FlockFakeTransport();
-            transport.On(FlockEndpoints.LeaderboardStandings("nope"), FlockFakeTransport.Status(404, "{\"detail\":\"not found\"}"));
+            // The answer the local backend sent on 2026-10-15 for a board the game does not have.
+            transport.On(FlockEndpoints.LeaderboardStandings("nope"),
+                FlockFakeTransport.Status(404, "{\"detail\":{\"code\":\"leaderboard.not_found\",\"message\":\"Leaderboard 'Nope' not found\"}}"));
             using (FlockTestClient h = FlockTestClient.Create(transport))
             {
                 h.SetReachable(true);
 
-                Assert.Throws<FlockValidationException>(() => h.Run(() => h.Client.Leaderboard.GetStandingsAsync("nope")),
+                FlockValidationException unknown = Assert.Throws<FlockValidationException>(() => h.Run(() => h.Client.Leaderboard.GetStandingsAsync("nope")),
                     "A 404 from the read route means no such board — a caller mistake, not a transport failure.");
+                Assert.AreEqual(FlockErrorCode.LeaderboardNotFound, unknown.ErrorCode, "with the server's code kept");
+                Assert.AreEqual(FlockErrorHints.For(FlockErrorCode.LeaderboardNotFound), unknown.Hint);
                 Assert.AreEqual(1, transport.Requests.Count, "The read is the only request — there is no separate name lookup.");
+            }
+
+            // Counter-case: a 404 that is not the board's (an API URL ending in /v1 reaches no route) keeps its own reason and
+            // fix rather than sending the developer to check a board name that is right.
+            FlockFakeTransport wrongAddress = new FlockFakeTransport();
+            wrongAddress.On(FlockEndpoints.LeaderboardStandings("nope"),
+                FlockFakeTransport.Status(404, "{\"detail\":{\"code\":\"request.not_found\",\"message\":\"Not Found\"}}"));
+            using (FlockTestClient h = FlockTestClient.Create(wrongAddress))
+            {
+                h.SetReachable(true);
+                FlockException failure = Assert.Catch<FlockException>(() => h.Run(() => h.Client.Leaderboard.GetStandingsAsync("nope")));
+                Assert.IsNotInstanceOf<FlockValidationException>(failure, "not made the caller's mistake");
+                Assert.AreEqual(FlockErrorCode.RequestNotFound, failure.ErrorCode);
+                StringAssert.Contains("API URL", failure.Hint);
             }
         }
 

@@ -18,8 +18,10 @@ namespace Flock.Exceptions
         // asset.*
         AssetAssetNotFound,                         // asset.asset_not_found
 
-        // game.*
+        // game.* (InvalidApiKey and MissingApiKey come from the API key check every /v1 route makes first)
         GameGameNotFound,                           // game.game_not_found
+        GameInvalidApiKey,                          // game.invalid_api_key
+        GameMissingApiKey,                          // game.missing_api_key
         GameMissingStudioId,                        // game.missing_studio_id
 
         // game_command.*
@@ -94,13 +96,14 @@ namespace Flock.Exceptions
         PartyNotPartyLeader,                        // party.not_party_leader
         PartyTargetNotAMember,                      // party.target_not_a_member
 
-        // player.*
+        // player.* (MissingToken, ExpiredToken and InvalidToken come from the sign-in check of a route that acts as the player)
         PlayerAccountAlreadyLinked,                 // player.account_already_linked
         PlayerAccountNotLinked,                     // player.account_not_linked
         PlayerAppleAccountAlreadyRegistered,        // player.apple_account_already_registered
         PlayerCannotUnlinkLastCredential,           // player.cannot_unlink_last_credential
         PlayerDeviceAlreadyRegistered,              // player.device_already_registered
         PlayerEmailAlreadyRegistered,               // player.email_already_registered
+        PlayerExpiredToken,                         // player.expired_token
         PlayerGameJwkNotConfigured,                 // player.game_jwk_not_configured
         PlayerGameVersionIdRequired,                // player.game_version_id_required
         PlayerGoogleAccountAlreadyRegistered,       // player.google_account_already_registered
@@ -110,7 +113,9 @@ namespace Flock.Exceptions
         PlayerInvalidRefreshToken,                  // player.invalid_refresh_token
         PlayerInvalidRegistrationRequest,           // player.invalid_registration_request
         PlayerInvalidResetCode,                     // player.invalid_reset_code
+        PlayerInvalidToken,                         // player.invalid_token
         PlayerInvalidVerificationCode,              // player.invalid_verification_code
+        PlayerMissingToken,                         // player.missing_token
         PlayerNameAlreadyRegistered,                // player.name_already_registered
         PlayerNoEmailAccount,                       // player.no_email_account
         PlayerOauthFailed,                          // player.oauth_failed
@@ -132,6 +137,19 @@ namespace Flock.Exceptions
         // player_template.*
         PlayerTemplateNotFound,                     // player_template.not_found
         PlayerTemplateNotFoundByName,               // player_template.not_found_by_name
+
+        // request.* — the server's own codes for a failure no route raised itself: a route that does not exist, a request
+        // the framework refused before any route code ran, and the stock code for each status. Every /v1 failure carries
+        // a code, so an exception with none did not come from Flock's game API.
+        RequestConflict,                            // request.conflict
+        RequestFailed,                              // request.failed
+        RequestForbidden,                           // request.forbidden
+        RequestMethodNotAllowed,                    // request.method_not_allowed
+        RequestNotFound,                            // request.not_found
+        RequestPayloadTooLarge,                     // request.payload_too_large
+        RequestRateLimited,                         // request.rate_limited
+        RequestUnauthorized,                        // request.unauthorized
+        RequestValidationFailed,                    // request.validation_failed
 
         // shop.*
         ShopCurrencyNotHeld,                        // shop.currency_not_held

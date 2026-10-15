@@ -9,9 +9,11 @@ var item = await FlockClient.Instance.Shop.GetItemAsync("shop-item-id");
 var items = await FlockClient.Instance.Shop.GetItemsByShopAsync("shop-id");
 // Same retry contract as AddGameFunds (money mutation) — ambiguous failures throw; catch them.
 // Started, Purchased and Failed transactions are recorded as it goes, never waited on. Catch FlockException and check
-// e.Code for specific reasons (e.g. FlockErrorCode.ShopInsufficientFunds, ShopWalletNotFound).
+// e.ErrorCode for specific reasons (e.g. FlockErrorCode.ShopInsufficientFunds, ShopWalletNotFound); e.Message says what
+// went wrong and, on a "Fix:" line, how to fix it.
+// It takes the shop item's Id (ShopItem.Id, from the shop's ShopItems): not the item's name, and not the shop's id.
 // playerId is optional — omit it to use the signed-in player (CurrentPlayerId).
-PurchaseResult purchase = await FlockClient.Instance.Shop.PurchaseAsync("shop-item-id");
+PurchaseResult purchase = await FlockClient.Instance.Shop.PurchaseAsync(item.Id);
 var playerItems = await FlockClient.Instance.Shop.GetPlayerInventoryAsync();
 ```
 

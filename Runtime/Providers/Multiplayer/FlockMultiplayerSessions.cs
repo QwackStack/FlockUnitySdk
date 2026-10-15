@@ -154,13 +154,16 @@ namespace Flock.Providers
         internal async Task PublishDirectConnectionAsync(FlockMultiplayerSession session, int port, CancellationToken cancellationToken)
         {
             if (port < 1 || port > 65535)
-                throw new FlockValidationException($"The port must be from 1 to 65535, not {port}. Give the port the game's netcode listens on.");
+                throw new FlockValidationException($"The port must be from 1 to 65535, not {port}") { Hint = "Give the port the game's netcode listens on." };
             RequireRunning(session);
             if (Application.platform == RuntimePlatform.WebGLPlayer)
-                throw new FlockValidationException("A web player cannot be reached directly. Host from a desktop or phone build, or publish a connection of the game's own with PublishConnectionAsync.");
+                throw new FlockValidationException("A web player cannot be reached directly")
+                {
+                    Hint = "Host from a desktop or phone build, or publish a connection of the game's own with PublishConnectionAsync."
+                };
             FlockDirectAddresses.DeviceAddresses found = await _directAddresses.FindAsync(session.SignInNumber, cancellationToken);
             if (found.Lan == null && found.Public == null)
-                throw new FlockNetworkException("This device has no network address to publish. Check it is connected to a network.");
+                throw new FlockNetworkException("This device has no network address to publish") { Hint = "Connect the device to a network, then publish the connection again." };
             Dictionary<string, object> values = new Dictionary<string, object>();
             AddDirectAddresses(values, found, port);
             await PublishConnectionAsync(session, FlockMultiplayerConnectionMode.Direct, values, cancellationToken);
@@ -282,7 +285,7 @@ namespace Flock.Providers
         internal async Task<FlockMultiplayerSessionConnection> WaitForConnectionAsync(FlockMultiplayerSession session, TimeSpan timeout, CancellationToken cancellationToken)
         {
             if (timeout <= TimeSpan.Zero)
-                throw new FlockValidationException("Give WaitForConnectionAsync a time to wait that is longer than zero.");
+                throw new FlockValidationException("WaitForConnectionAsync needs a time to wait that is longer than zero") { Hint = "Pass how long to wait for the host's connection, such as 30 seconds." };
             RequireRunning(session);
             cancellationToken.ThrowIfCancellationRequested();
             if (session.Connection != null)
@@ -340,7 +343,7 @@ namespace Flock.Providers
         internal async Task<FlockRelayConnection> OpenRelayAsync(FlockMultiplayerSession session, string server, CancellationToken cancellationToken)
         {
             if (Application.platform == RuntimePlatform.WebGLPlayer)
-                throw new FlockRelayException(FlockRelayFailure.NotOnThisPlatform, "A web player cannot send UDP, so it cannot use Flock's relay.");
+                throw new FlockRelayException(FlockRelayFailure.NotOnThisPlatform, "A web player cannot send UDP, so it cannot use Flock's relay");
             RequireRunning(session);
             Task<FlockRelayConnection> opening = session.RelayOpening;
             if (opening != null && !HasFailed(opening) && !IsOn(session, opening, server))
@@ -396,16 +399,16 @@ namespace Flock.Providers
             RequireStillCurrent(session.SignInNumber);
             stop.ThrowIfCancellationRequested();
             if (answer.RelayPaused)
-                throw new FlockRelayException(FlockRelayFailure.Paused, "Flock paused this studio's relay until its bill is paid; a direct connection still works.");
+                throw new FlockRelayException(FlockRelayFailure.Paused, "Flock paused this studio's relay until its bill is paid");
             List<FlockRelayLogin> logins = FlockRelayLogin.InAnswer(answer);
             if (logins.Count == 0)
-                throw new FlockRelayException(FlockRelayFailure.NotOffered, "Flock listed no relay for this game: it is switched off for the game in the Flock dashboard, or no relay is set up.");
+                throw new FlockRelayException(FlockRelayFailure.NotOffered, "Flock listed no relay for this game: it is switched off for the game in the Flock dashboard, or no relay is set up");
             if (server != null)
             {
                 // Players reach the host only from the relay server it is on, since only that server's addresses share the IP it opened to.
                 logins = logins.FindAll(login => string.Equals(login.ToString(), server, StringComparison.OrdinalIgnoreCase));
                 if (logins.Count == 0)
-                    throw new FlockRelayException(FlockRelayFailure.ServerNotListed, $"Flock does not list the relay server the host uses ({server}) for this player.");
+                    throw new FlockRelayException(FlockRelayFailure.ServerNotListed, $"Flock does not list the relay server the host uses ({server}) for this player");
             }
             // Looked up while the relay opens: a direct link learns its own address from them, since a relay server may answer few of a device's ports (Cloudflare's, measured).
             Task<List<IPEndPoint>> stunServers = FlockDirectAddresses.LookUpStunServersAsync(answer, RelayTiming.NameLookUpWait, RelayTiming.NameLookUpForTesting, stop);
@@ -493,7 +496,7 @@ namespace Flock.Providers
                     return null;
                 }
                 if (attempt == MostReadsWhileTheSessionChanges)
-                    throw new FlockException("The session kept changing while it was being read. Try again.");
+                    throw new FlockException("The session kept changing while it was being read") { Hint = "Read it again in a moment: it changes while players join and leave and while hosting moves." };
             }
         }
 
@@ -764,7 +767,7 @@ namespace Flock.Providers
         private int RequireSignedIn(out string playerId)
         {
             if (!_client.IsAuthenticated)
-                throw new FlockAuthException("No player is signed in");
+                throw new FlockAuthException("No player is signed in") { Hint = FlockErrorHints.SignInFirst };
             playerId = _client.CurrentPlayerId;
             return CurrentSignInNumber;
         }
@@ -779,7 +782,7 @@ namespace Flock.Providers
         private static void RequireRunning(FlockMultiplayerSession session)
         {
             if (session.HasEnded)
-                throw new FlockValidationException($"This session has ended ({session.EndReason}). Host or join another.");
+                throw new FlockValidationException($"This session has ended ({session.EndReason})") { Hint = FlockErrorHints.FindAnotherSession };
         }
 
         private sealed class SessionReading

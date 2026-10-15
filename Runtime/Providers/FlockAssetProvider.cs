@@ -135,7 +135,10 @@ namespace Flock.Providers
                 if (asset.Name == name)
                     return asset;
             }
-            throw new FlockException($"Asset with name '{name}' not found.");
+            throw new FlockException($"No asset named '{name}' in this game version")
+                {
+                    Hint = "Upload it in the Flock dashboard and publish it to this game version; names match exactly, letter case included."
+                };
         }
 
         public async Task<T> DownloadAsync<T>(string assetId, CancellationToken cancellationToken = default) where T : class
@@ -173,9 +176,9 @@ namespace Flock.Providers
         private async Task<T> DownloadOnceAsync<T>(AssetSchema asset, IProgress<float> progress, CancellationToken cancellationToken) where T : class
         {
             if (asset == null)
-                throw new FlockValidationException("Asset cannot be null");
+                throw new FlockValidationException("No asset was given") { Hint = "Pass an asset read from Flock with Assets.GetAllAsync, GetByIdAsync or GetByNameAsync." };
             if (string.IsNullOrEmpty(asset.S3DownloadUrl))
-                throw new FlockValidationException($"Asset '{asset.Name ?? asset.Id}' has no download URL");
+                throw new FlockValidationException($"Asset '{asset.Name ?? asset.Id}' has no download address") { Hint = "Upload the asset's file in the Flock dashboard and publish it again." };
 
             bool cacheEnabled = Client.InitConfig.EnableAssetCache;
             if (cacheEnabled && _cache.MaxSizeBytes > 0
@@ -392,7 +395,7 @@ namespace Flock.Providers
         public async Task PreloadAsync(Func<AssetSchema, bool> predicate, IProgress<float> progress = null, CancellationToken cancellationToken = default)
         {
             if (predicate == null)
-                throw new FlockValidationException("Predicate cannot be null");
+                throw new FlockValidationException("No predicate was given") { Hint = "Pass a function that picks the assets to preload." };
 
             List<AssetSchema> all = await GetAllAsync(cancellationToken);
             List<AssetSchema> targets = new List<AssetSchema>();
@@ -450,9 +453,9 @@ namespace Flock.Providers
         private async Task DownloadToCacheOnceAsync(AssetSchema asset, IProgress<float> progress, CancellationToken cancellationToken)
         {
             if (asset == null)
-                throw new FlockValidationException("Asset cannot be null");
+                throw new FlockValidationException("No asset was given") { Hint = "Pass an asset read from Flock with Assets.GetAllAsync, GetByIdAsync or GetByNameAsync." };
             if (string.IsNullOrEmpty(asset.S3DownloadUrl))
-                throw new FlockValidationException($"Asset '{asset.Name ?? asset.Id}' has no download URL");
+                throw new FlockValidationException($"Asset '{asset.Name ?? asset.Id}' has no download address") { Hint = "Upload the asset's file in the Flock dashboard and publish it again." };
 
             bool cacheEnabled = Client.InitConfig.EnableAssetCache;
             if (cacheEnabled && _cache.MaxSizeBytes > 0
@@ -534,7 +537,7 @@ namespace Flock.Providers
             if (t == typeof(byte[]))
                 return req.downloadHandler.data as T;
 
-            throw new FlockValidationException($"Unsupported asset type: {t.Name}");
+            throw new FlockValidationException($"An asset cannot be read as {t.Name}") { Hint = "Ask for a Texture2D, Sprite, AudioClip, string or byte[]." };
         }
 
         private static async Task SendAsync(UnityWebRequest req, string context, TimeSpan timeout, CancellationToken cancellationToken, IProgress<float> progress = null)
@@ -558,10 +561,18 @@ namespace Flock.Providers
 
             if (req.result != UnityWebRequest.Result.Success)
             {
-                FlockNetworkException error = new FlockNetworkException($"{context} failed") { Body = req.error };
-                if (req.responseCode > 0)
-                    error.StatusCode = (int)req.responseCode;
-                throw error;
+                // Asset files come from storage, not the Flock server, so its answers get storage's own fixes.
+                int? status = req.responseCode > 0 ? (int)req.responseCode : (int?)null;
+                string cause = status.HasValue
+                    ? $"The storage that serves the asset refused the download ({req.error})"
+                    : $"Could not reach the storage that serves the asset ({req.error})";
+                throw new FlockNetworkException(cause)
+                {
+                    Body = req.error,
+                    StatusCode = status,
+                    Operation = context,
+                    Hint = FlockErrorHints.ForStorageDownload(status)
+                };
             }
         }
     }

@@ -122,3 +122,25 @@ jobs:
             exit 1
           fi
           echo "$total wire error codes checked against $(wc -l < /tmp/members.txt) enum members — no drift."
+
+      - name: Every failure the SDK finds itself says how to fix it
+        run: |
+          set -euo pipefail
+
+          # Every failure a developer sees says what is wrong and how to fix it. FlockException.Hint falls back to the
+          # error's code, or to its kind when the code has none: that fits an answer from the server, which the HTTP
+          # client turns into an exception by its status. Any other failure, the SDK's own or an answer from elsewhere
+          # (asset storage), has a cause only the place that makes it knows, so it sets Hint: every `new Flock*Exception(`,
+          # thrown, logged or handed over. FlockRelayException is left out: its constructor sets the fix for its reason. So
+          # is the playtest's ProtokiteClient.cs: every failure out of it, its own and the HTTP client's, takes Protokite's
+          # fix from ProtokiteClient.FixFor in one place, as Protokite's refusals carry no Flock error code.
+          hits=$(git ls-files -z -- 'Runtime/*.cs' 'Editor/*.cs' 'ProtokitePlaytest~/*.cs' \
+            | grep -zv -e '/Tests/' -e '^Runtime/Http/HttpClient\.cs$' -e '^ProtokitePlaytest~/Runtime/ProtokiteClient\.cs$' \
+            | xargs -0 perl -0777 -ne 'while (/\bnew (Flock\w*Exception)\(/g) { my $type = $1; next if $type eq "FlockRelayException"; my $start = pos($_); my ($statement) = substr($_, $start) =~ /^(.*?;)\s*\r?\n/s; next if defined $statement && $statement =~ /\bHint\s*=/; my $line = 1 + (substr($_, 0, $start) =~ tr/\n//); print "$ARGV:$line: new $type\n"; }' \
+            || true)
+          if [ -n "$hits" ]; then
+            echo "$hits"
+            echo "::error::A failure is made without a Hint outside the HTTP client, so it carries only a generic fix. Set Hint to say how to fix it."
+            exit 1
+          fi
+          echo "Every failure the SDK finds itself states its fix."

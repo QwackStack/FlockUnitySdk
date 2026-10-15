@@ -6,6 +6,53 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.88.0]
+
+Every failure says what is wrong and how to fix it.
+
+### Changed
+
+- **A failure's text names its cause and its fix.** An answer that gave no reason of its own reads as the plain meaning of
+  its status (`The server found nothing at this address`) instead of `HTTP request failed`, `Authentication failed` or
+  `Validation failed`; a bare 403 is a refusal, no longer called an authentication failure; a timeout, no connection, an
+  empty answer and an unreadable one each say what happened.
+- **`FlockException.Hint` is never empty**: the advice given where the failure was thrown, else its code's, else the advice
+  for its kind of failure (`FlockErrorHints.ForFailure`): an answer without a Flock code (a proxy, a captive portal, an API URL
+  pointing elsewhere), a code newer than this SDK (named in the fix), a server failure, a timeout (a change may already have
+  been made, so read before re-sending), no connection. `Message` always ends with its `Fix:` line.
+- **Every failure the SDK finds itself names what to do**: an empty argument says what to pass, a call with nobody signed in
+  says to sign in, a session or party that has ended names how to get another, an answer missing what the call reads says it
+  did not come from Flock's game API. CI fails on a `Flock*Exception` thrown without a `Hint` outside the HTTP client.
+- **An unexpected exception inside a call** keeps its own message; it read `"<call> failed"` alone.
+- **A failed download of an asset's file** read `"<call> failed"` alone; it names the storage that serves it and
+  storage's own fix (`FlockErrorHints.ForStorageDownload`: a missing file is uploaded again, an expired link read again).
+- **A relay failure carries the fix for its reason** (`FlockRelayFailure`), set where the exception is made.
+- **A board read's 404 is the caller's mistake only when it is the board's** (`leaderboard.not_found`), and keeps the
+  server's code; a wrong API URL's `request.not_found` keeps its own reason and fix rather than blaming the name.
+
+### Added
+
+- `FlockErrorCode` members for the codes the server sends on any route: `RequestNotFound` (no route at that address, or a record a route did not find; a wrong API URL lands here, as when
+  the API URL ends in `/v1`), `RequestMethodNotAllowed`, `RequestValidationFailed` (a member missing from the body, named in
+  the message), `RequestUnauthorized`, `RequestForbidden`, `RequestConflict`, `RequestPayloadTooLarge`, `RequestRateLimited`
+  and `RequestFailed`; the API key check's `GameMissingApiKey` and `GameInvalidApiKey`; and the sign-in check's
+  `PlayerMissingToken`, `PlayerInvalidToken` and `PlayerExpiredToken`. Each has a hint.
+- `FlockErrorHints.ForFailure` and the fixes several failures share: `SignInFirst`, `InitializeFlockFirst`, `NotFlocksAnswer`,
+  `NoAnswerInTime`, `CouldNotReachTheServer`, `ReportSdkFault`, `FindAnotherSession`, `FindAnotherParty`.
+
+### Fixed
+
+- **A purchase given the item's name or the shop's id** read only that a request had failed. The shop item hints now say
+  `Shop.PurchaseAsync` takes `ShopItem.Id`, read from the shop, not the item's name or the shop's id, and the shop guide shows
+  reading it.
+- **The wallet hints** told a player with no wallet, or no balance in a currency, to call `Commands.AddGameFundsAsync` to
+  create it, which refuses the same way: a wallet is made when the player registers, from the Game Version's currency
+  template. `ShopWalletNotFound`, `ShopCurrencyNotHeld`, `ShopRewardCurrencyNotHeld`, `ShopCurrencyTemplateNotFound` and
+  `GameCommandCurrencyNotFound` now say so.
+- `ShopShopNotFound` names the Game Version a shop belongs to, and `ShopPlayerNotFound` the player a purchase acts on.
+- **The warning for an unknown public address** said no STUN server answered also when Flock's list of STUN servers could
+  not be read and none was asked; it now names both causes.
+
 ## [1.87.0]
 
 Follow-ups to the 1.86.0 review. Two API changes, both in `Analytics`.

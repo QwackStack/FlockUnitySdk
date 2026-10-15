@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Flock.Exceptions;
 using Flock.Models;
 using Flock.Http;
 
@@ -185,7 +186,7 @@ namespace Flock.Providers
             // Default to the signed-in player; callers no longer need to pass CurrentPlayerId.
             if (string.IsNullOrEmpty(playerId))
                 playerId = Client.CurrentPlayerId;
-            RequireNotEmpty(playerId, "Player ID (sign in first)");
+            RequireNotEmpty(playerId, "Player ID", FlockErrorHints.SignInFirst);
             // Taken with the player id, so the purchase and its records never go out as a player who signed in after.
             int? purchaser = SignInToActFor;
 
@@ -276,7 +277,7 @@ namespace Flock.Providers
         {
             if (string.IsNullOrEmpty(playerId))
                 playerId = Client.CurrentPlayerId;
-            RequireNotEmpty(playerId, "Player ID (sign in first)");
+            RequireNotEmpty(playerId, "Player ID", FlockErrorHints.SignInFirst);
 
             // Inventory changes on every purchase — intentionally never cached (no in-memory dict / snapshot); always fresh. Same rule as bans.
             return await ExecuteAsync(async () =>

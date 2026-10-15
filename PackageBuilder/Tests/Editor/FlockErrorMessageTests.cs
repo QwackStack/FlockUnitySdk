@@ -72,13 +72,14 @@ namespace Flock.Tests
         }
 
         [Test]
-        public void UncodedError_Message_KeepsGenericTextAndStatus()
+        public void UncodedError_Message_SaysWhatTheStatusMeansAndHowToFixIt()
         {
             FlockValidationException ex = Assert.Throws<FlockValidationException>(() => Send(Body(400, "plain text, not json")));
 
             Assert.IsNull(ex.ServerMessage);
-            Assert.IsNull(ex.Hint);
-            Assert.AreEqual("Validation failed [HTTP 400]", ex.Message);
+            // Every failure Flock's game API sends carries a code, so one without came from something else.
+            StringAssert.Contains("no Flock error code", ex.Hint);
+            Assert.AreEqual("The server could not use the request [HTTP 400]\nFix: " + ex.Hint, ex.Message);
         }
 
         [Test]
@@ -92,19 +93,19 @@ namespace Flock.Tests
         }
 
         [Test]
-        public void ClientSideThrow_Message_IsUnchanged()
+        public void ClientSideThrow_Message_IsItsReasonAndItsFix()
         {
-            // No status, no code, no operation — nothing to decorate, so the plain text must survive verbatim.
-            FlockException ex = new FlockException("deviceId cannot be null or empty");
-            Assert.AreEqual("deviceId cannot be null or empty", ex.Message);
+            // No status, no code, no operation: the plain text survives verbatim, followed by the fix given where it was thrown.
+            FlockException ex = new FlockValidationException("deviceId is empty") { Hint = "Pass a deviceId." };
+            Assert.AreEqual("deviceId is empty\nFix: Pass a deviceId.", ex.Message);
         }
 
         [Test]
         public void ToString_StillAppendsRawBody()
         {
-            FlockException ex = new FlockException("Validation failed") { Body = "{\"detail\":\"raw\"}", StatusCode = 400 };
+            FlockException ex = new FlockException("The server could not use the request") { Body = "{\"detail\":\"raw\"}", StatusCode = 400 };
             StringAssert.Contains("Response body: {\"detail\":\"raw\"}", ex.ToString());
-            StringAssert.Contains("Validation failed [HTTP 400]", ex.ToString());
+            StringAssert.Contains("The server could not use the request [HTTP 400]", ex.ToString());
         }
 
         [Test]

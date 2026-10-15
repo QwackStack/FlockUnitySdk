@@ -115,7 +115,7 @@ namespace Flock.Providers
         internal async Task UpdateAsync(FlockParty party, int? maxSize, IReadOnlyDictionary<string, object> settings, CancellationToken cancellationToken)
         {
             if (maxSize == null && settings == null)
-                throw new FlockValidationException("Nothing to update: give the party a size, settings or both");
+                throw new FlockValidationException("Nothing to update: no size or settings was given") { Hint = "Give the party a size, settings or both." };
             await ChangeAsync(party, () => _requests.UpdateAsync(party.SignInNumber, party.Id, maxSize, settings, cancellationToken), cancellationToken);
         }
 
@@ -218,7 +218,7 @@ namespace Flock.Providers
                 if (read.Number > _readsSettledThrough)
                     return read;
                 if (attempt == MostReadsWhileThePartyChanges)
-                    throw new FlockException("The party kept changing while it was being read. Try again.");
+                    throw new FlockException("The party kept changing while it was being read") { Hint = "Read it again in a moment: it changes while players join and leave and while leadership moves." };
             }
         }
 
@@ -345,7 +345,7 @@ namespace Flock.Providers
         private int RequireSignedIn(out string playerId)
         {
             if (!_client.IsAuthenticated)
-                throw new FlockAuthException("No player is signed in");
+                throw new FlockAuthException("No player is signed in") { Hint = FlockErrorHints.SignInFirst };
             playerId = _client.CurrentPlayerId;
             return CurrentSignInNumber;
         }
@@ -360,7 +360,7 @@ namespace Flock.Providers
         private static void RequireRunning(FlockParty party)
         {
             if (party.HasEnded)
-                throw new FlockValidationException($"This party has ended ({party.EndReason}). Create or join another, or get the player's current one with GetMyPartyAsync.");
+                throw new FlockValidationException($"This party has ended ({party.EndReason})") { Hint = FlockErrorHints.FindAnotherParty };
         }
 
         private static IReadOnlyList<string> MemberIds(PartyDetailRecord party)

@@ -119,7 +119,7 @@ namespace Protokite.Playtest.Editor
                 return null;
             }
             if (response?.Result == null || string.IsNullOrEmpty(response.Result.Id))
-                throw new FlockSerializationException("Flock answered without a Game Version");
+                throw new FlockSerializationException("Flock answered without a Game Version") { Hint = FlockErrorHints.NotFlocksAnswer };
             return response.Result;
         }
 

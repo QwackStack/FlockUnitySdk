@@ -228,6 +228,49 @@ namespace Protokite.Playtest.Tests
             }
         }
 
+        // Protokite's refusals carry no Flock error code, and the Flock SDK reads an answer without one as coming from somewhere else:
+        // a failed Protokite call says what Protokite's refusal means and names the playtest's settings instead. Driven through a real
+        // call, so a call that hands its failure over without Protokite's fix fails here.
+        [TestCase(401, "{\"detail\":\"Invalid API Key\"}", "Protokite did not accept this build's Flock API key", TestName = "AKeyProtokiteDoesNotKnowSaysWhichKeyToSet")]
+        [TestCase(404, "{\"detail\":\"No playtest is linked to this Flock SDK version\"}", "link the playtest in the Protokite dashboard to the Game Version this build runs", TestName = "ABuildNoPlaytestIsLinkedToSaysHowToLinkIt")]
+        [TestCase(200, "<html>Sign in to the Wi-Fi</html>", "The answer did not come from Protokite's API", TestName = "APortalsPageSaysItIsNotProtokitesAnswer")]
+        [TestCase(403, "<html>Forbidden</html>", "The answer did not come from Protokite's API", TestName = "AProxysRefusalSaysItIsNotProtokitesAnswer")]
+        public void AFailedCallSaysWhatProtokiteMeantAndHowToFixIt(int status, string body, string fixSays)
+        {
+            using (FlockTestClient.Create(new FlockFakeTransport().On(ConfigRoute, FlockFakeTransport.Status(status, body))))
+            {
+                Task<ProtokitePlaytestConfig> fetching = new ProtokiteClient(new RetryPolicy { MaxRetries = 0 })
+                    .FetchPlaytestConfigAsync("http://localhost:8020", new System.Collections.Generic.Dictionary<string, string>(), CancellationToken.None);
+                Assert.IsTrue(fetching.IsFaulted, "Precondition: the fake answers at once, and the answer is a failure");
+                FlockException failure = fetching.Exception?.InnerException as FlockException;
+                Assert.IsNotNull(failure, "A Flock failure");
+                StringAssert.Contains(fixSays, failure.Hint);
+                StringAssert.DoesNotContain("Flock's game API", failure.Hint, "Never sends the developer to the Flock SDK's API URL");
+                StringAssert.DoesNotContain("The API URL in Flock > Settings", failure.Hint);
+            }
+        }
+
+        [TestCase(400, "This playtest is no longer collecting SDK sessions", "start a new playtest in the Protokite dashboard")]
+        [TestCase(401, "Invalid API Key", "Set the API Key in Flock > Settings")]
+        [TestCase(403, "Not your playtest session", "Protokite holds this playtest session for another game")]
+        [TestCase(404, "No published feedback form", "publish the playtest's form in the Protokite dashboard")]
+        [TestCase(404, "Playtest session not found", "the next launch starts another")]
+        [TestCase(422, "Missing required answer 'steps'", "A form answer it names does not fit the form as published now")]
+        [TestCase(503, "Could not reach Flock to verify SDK key", "Protokite, or Flock behind it, failed")]
+        public void EveryRefusalProtokiteSendsHasItsOwnFix(int status, string reason, string fixSays)
+        {
+            string fix = ProtokiteClient.FixFor(new FlockNetworkException(reason, status) { ServerMessage = reason });
+            StringAssert.Contains(fixSays, fix);
+            StringAssert.DoesNotContain("Flock's game API", fix);
+        }
+
+        [Test]
+        public void NoAnswerAtAllNamesProtokitesAddress()
+        {
+            StringAssert.Contains("Protokite API URL in Protokite > Playtest > Settings",
+                ProtokiteClient.FixFor(new FlockNetworkException("The request could not reach the server")));
+        }
+
         [Test]
         public void AnAnswerWithNoConfigInItIsUnavailable()
         {

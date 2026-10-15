@@ -43,7 +43,7 @@ namespace Flock.Editor.Codegen
         private static async Task<string> ResolveGameVersionIdAsync(string baseUrl, string gameVersion, Dictionary<string, string> headers)
         {
             if (string.IsNullOrEmpty(gameVersion))
-                throw new InvalidOperationException("Game Version is empty in FlockConfigAsset.");
+                throw new InvalidOperationException("The Game Version in Flock > Settings is empty. Set it to the version's name in the Flock dashboard, then sync again.");
 
             string url = $"{baseUrl}/{FlockClient.ApiVersion}/game_version/by-name/{Uri.EscapeDataString(gameVersion)}";
             GenericResponse<GameVersionSchema> response;
@@ -53,15 +53,22 @@ namespace Flock.Editor.Codegen
             }
             catch (Exception ex)
             {
-                throw new FlockException($"GET {url} failed: {ex.GetType().Name}: {ex.Message}", ex);
+                throw new FlockException($"GET {url} failed: {ex.GetType().Name}: {ex.Message}", ex) { Hint = FlockErrorHints.CouldNotReachTheServer };
             }
 
             if (response?.Error != null && !string.IsNullOrEmpty(response.Error.Code))
-                throw new FlockException($"{url} returned error code '{response.Error.Code}'.");
+                throw new FlockException($"{url} returned error code '{response.Error.Code}'")
+                {
+                    Code = response.Error.Code,
+                    Hint = FlockErrorHints.For(FlockErrorCodes.Parse(response.Error.Code)) ?? "Check the API URL, API Key and Game Version in Flock > Settings, then sync again."
+                };
 
             string id = response?.Result?.Id;
             if (string.IsNullOrEmpty(id))
-                throw new FlockException($"Could not resolve GameVersionId for game version '{gameVersion}' from {url}.");
+                throw new FlockException($"The server returned no id for game version '{gameVersion}' from {url}")
+                {
+                    Hint = "Check the version exists in the Flock dashboard under that name, and that the API URL in Flock > Settings points at the server the game lives on."
+                };
             return id;
         }
 
@@ -76,11 +83,15 @@ namespace Flock.Editor.Codegen
             }
             catch (Exception ex)
             {
-                throw new FlockException($"GET {url} failed: {ex.GetType().Name}: {ex.Message}", ex);
+                throw new FlockException($"GET {url} failed: {ex.GetType().Name}: {ex.Message}", ex) { Hint = FlockErrorHints.CouldNotReachTheServer };
             }
 
             if (response?.Error != null && !string.IsNullOrEmpty(response.Error.Code))
-                throw new FlockException($"{url} returned error code '{response.Error.Code}'.");
+                throw new FlockException($"{url} returned error code '{response.Error.Code}'")
+                {
+                    Code = response.Error.Code,
+                    Hint = FlockErrorHints.For(FlockErrorCodes.Parse(response.Error.Code)) ?? "Check the API URL, API Key and Game Version in Flock > Settings, then sync again."
+                };
 
             return response?.Result ?? new List<T>();
         }
@@ -102,7 +113,7 @@ namespace Flock.Editor.Codegen
                 }
                 catch (Exception ex)
                 {
-                    throw new FlockException($"GET {url} failed: {ex.GetType().Name}: {ex.Message}", ex);
+                    throw new FlockException($"GET {url} failed: {ex.GetType().Name}: {ex.Message}", ex) { Hint = FlockErrorHints.CouldNotReachTheServer };
                 }
 
                 if (response?.Items == null || response.Items.Length == 0)

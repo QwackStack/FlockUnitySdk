@@ -381,7 +381,8 @@ namespace Protokite.Playtest
                 {
                     // Refused in a way that will not change: sending it at every launch would only be refused again.
                     string reason = (ex as FlockException)?.ServerMessage ?? ex.Message;
-                    string question = ProtokitePlaytestFormSubmission.FindQuestionInRefusal(reason);
+                    // Only Protokite's own reason names a question: the fix in the exception's message has apostrophes of its own.
+                    string question = ProtokitePlaytestFormSubmission.FindQuestionInRefusal((ex as FlockException)?.ServerMessage);
                     ForgetKeptForm(claim, path, $"was refused by Protokite (HTTP {status}{(question.Length > 0 ? $", the question '{question}'" : "")}): {reason}");
                     return true;
                 }
