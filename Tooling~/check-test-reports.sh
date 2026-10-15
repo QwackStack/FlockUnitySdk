@@ -58,28 +58,34 @@ for mode in editmode playmode; do
   done
 done
 
-# The test step says only that Unity exited 2, and its log needs a sign-in: every failed test is named here, and the first
-# ten on the run's page as annotations (GitHub shows ten errors a step).
+# The test step says only that Unity exited 2, and its log needs a sign-in: every failed test is named here and on the run's
+# page. GitHub shows ten errors a step, so past ten the tenth annotation names the rest.
 # $readable is split on purpose: the report paths hold no spaces.
 if [ -n "$readable" ] && ! python3 - "$leg" $readable <<'PY'
 import os
 import sys
 import xml.etree.ElementTree as ET
 
+def annotate(report, title, text):
+    text = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+    print(f"::error file={report},title={title} ({leg})::{text}")
+
 leg, reports = sys.argv[1], sys.argv[2:]
-failed = 0
+failed = []
 for report in reports:
     mode = os.path.basename(report).split("-")[0]
     for case in ET.parse(report).getroot().iter("test-case"):
-        if case.get("result") != "Failed":
-            continue
-        failed += 1
-        message = (case.findtext("failure/message") or "").strip()
-        print(f"[{leg}] {mode} test failed: {case.get('fullname')}\n    " + message.replace("\n", "\n    "))
-        if failed <= 10:
-            text = f"{case.get('fullname')}: {message[:2000]}".replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-            print(f"::error file={report},title={mode} test failed ({leg})::{text}")
-print(f"[{leg}] {failed} tests failed.")
+        if case.get("result") == "Failed":
+            failed.append((report, mode, case.get("fullname"), (case.findtext("failure/message") or "").strip()))
+for report, mode, name, message in failed:
+    print(f"[{leg}] {mode} test failed: {name}\n    " + message.replace("\n", "\n    "))
+shown = failed if len(failed) <= 10 else failed[:9]
+for report, mode, name, message in shown:
+    annotate(report, f"{mode} test failed", f"{name}: {message[:2000]}")
+if len(failed) > len(shown):
+    rest = failed[len(shown):]
+    annotate(rest[0][0], f"{len(rest)} more tests failed", "\n".join(f"{mode}: {name}" for _, mode, name, _ in rest))
+print(f"[{leg}] {len(failed)} tests failed.")
 sys.exit(1 if failed else 0)
 PY
 then

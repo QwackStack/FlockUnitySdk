@@ -230,8 +230,11 @@ namespace Flock.Tests.PlayMode
             List<FlockMultiplayerSession> held = new List<FlockMultiplayerSession>();
             yield return Hosted(multiplayer, held);
             int port = FreePort();
-            using (UdpClient taken = new UdpClient(new IPEndPoint(IPAddress.Any, port)))
+            using (UdpClient taken = new UdpClient(AddressFamily.InterNetwork))
             {
+                // Reuse off before the bind: on Linux two sockets that both allow reuse share a UDP port, and 2021.3's transport started there (CI).
+                taken.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, false);
+                taken.Client.Bind(new IPEndPoint(IPAddress.Any, port));
                 NetworkManager manager = Manager(port);
                 LogAssert.ignoreFailingMessages = true;
                 Task<FlockNetcodeStartResult> started = held[0].StartNetcodeAsync(manager);

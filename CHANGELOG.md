@@ -23,7 +23,9 @@ Follow-ups to the 1.86.0 review. Two API changes, both in `Analytics`.
 - **CI** runs the suites in two legs, each as a studio would have them: Unity 6000.3.16f1 with Netcode for GameObjects
   2.13.3 and Unity Transport 2.7.3, and Unity 2021.3.45f2 with 1.14.1 and 1.5.0, with the Protokite Playtest package
   installed in both, so the netcode PlayMode tests and the playtest's tests compile and run; each leg checks that every test
-  assembly ran, and that the netcode tests did, and names every failed test with why, in its log and on the run's page.
+  assembly ran, and that the netcode tests did, and names every failed test with why, in its log and on the run's page. Tests
+  that measure a Windows file hold run in the Windows editor, the taken-port test holds its port so Linux refuses a second
+  socket too, and the relay's no-garbage tests judge every sending frame but the noisiest.
 
 ### Fixed
 

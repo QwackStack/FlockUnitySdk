@@ -16,6 +16,8 @@ It is released with the Flock SDK, at the Flock SDK's version.
   frames could all go by before its thread ran, so nothing was captured.
 - The package's build-check and Playtest ID tests make Flock settings for themselves in a project that has none, as a project
   made only to run the tests has; they failed there.
+- The package's tests of Windows' encoder rules, and of a form file that cannot be deleted, run in the Windows editor, where
+  those rules hold; the upload tests answer for the platform's encoders rather than ask the computer the editor runs on.
 
 ## [1.86.0]
 

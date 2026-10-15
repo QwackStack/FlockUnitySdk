@@ -63,6 +63,12 @@ namespace Protokite.Playtest.Tests
             FlockHttpClient.UseFileUploader(_uploader);
             _network = NetworkReachability.ReachableViaLocalAreaNetwork;
             ProtokitePlaytest.NetworkForTesting = () => _network;
+            // The finishing pass asks the platform for its encoders; answered here, not by the computer the editor runs on (none on Linux).
+            ProtokitePlaytestVideoEncoders.LookForEncodersForTesting = () => new KeyValuePair<List<ProtokitePlaytestEncoderFound>, string>(
+                new List<ProtokitePlaytestEncoderFound>
+                {
+                    new ProtokitePlaytestEncoderFound { Name = "the test's encoder", InHardware = true, OnAPhone = ProtokitePlaytestVideoEncoders.OnAndroid, TakesConstantBitrate = true }
+                }, null);
         }
 
         [TearDown]
@@ -80,6 +86,7 @@ namespace Protokite.Playtest.Tests
             ProtokitePlaytest.DeviceIdFilePathForTesting = null;
             ProtokitePlaytest.NetworkForTesting = null;
             ProtokitePlaytestVideoEncoders.ActAsAndroidForTesting = false;
+            ProtokitePlaytestVideoEncoders.LookForEncodersForTesting = null;
             // A phone test's finishing pass asks the phone for its encoders; the answer is the launch's, never the next test's.
             ProtokitePlaytestVideoEncoders.ResetForNewLaunch();
             FlockHttpClient.UseFileUploader(null);

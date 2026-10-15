@@ -47,8 +47,10 @@ namespace Protokite.Playtest.Tests
         }
 
         // Whether this PC records, and why not
+        // Windows' rules, read only by a build made with video: a Linux or macOS editor has none, so these run in the Windows editor.
 
         [Test]
+        [UnityPlatform(RuntimePlatform.WindowsEditor)]
         public void APcWithAGraphicsCardEncoderRecords()
         {
             PcOffers(OnTheGraphicsCard("NVIDIA H.264 Encoder MFT"), Software);
@@ -60,6 +62,7 @@ namespace Protokite.Playtest.Tests
         }
 
         [Test]
+        [UnityPlatform(RuntimePlatform.WindowsEditor)]
         public void NoGraphicsCardEncoderMeansNoVideoReportedOnceNamingTheSettingThatAllowsTheSoftwareOne()
         {
             PcOffers(Software);
@@ -74,6 +77,7 @@ namespace Protokite.Playtest.Tests
         }
 
         [Test]
+        [UnityPlatform(RuntimePlatform.WindowsEditor)]
         public void APcWithNoEncoderAtAllRecordsNothingEvenWithTheSoftwareOneAllowed()
         {
             PcOffers();
@@ -83,6 +87,7 @@ namespace Protokite.Playtest.Tests
         }
 
         [Test]
+        [UnityPlatform(RuntimePlatform.WindowsEditor)]
         public void WindowsWithoutMediaFoundationIsNamedForWhatItIs()
         {
             ProtokitePlaytestVideoEncoders.LookForEncodersForTesting = () =>
@@ -94,6 +99,7 @@ namespace Protokite.Playtest.Tests
 
         [TestCase(Architecture.X86)]
         [TestCase(Architecture.Arm64)]
+        [UnityPlatform(RuntimePlatform.WindowsEditor)]
         public void A32BitOrArmWindowsBuildIsToldWhereVideoRecordsWithoutAWarning(Architecture architecture)
         {
             Func<int> asked = PcOffers(OnTheGraphicsCard("NVIDIA H.264 Encoder MFT"));
@@ -106,6 +112,7 @@ namespace Protokite.Playtest.Tests
         }
 
         [Test]
+        [UnityPlatform(RuntimePlatform.WindowsEditor)]
         public void AnX64ProcessAndOneThatCannotNameItsArchitectureBothAskWindows()
         {
             PcOffers(OnTheGraphicsCard("NVIDIA H.264 Encoder MFT"));
@@ -116,6 +123,7 @@ namespace Protokite.Playtest.Tests
         }
 
         [Test]
+        [UnityPlatform(RuntimePlatform.WindowsEditor)]
         public void WindowsIsAskedOnceALaunchAndAskedAgainByTheNext()
         {
             Func<int> asked = PcOffers(OnTheGraphicsCard("NVIDIA H.264 Encoder MFT"));
@@ -151,6 +159,7 @@ namespace Protokite.Playtest.Tests
         }
 
         [Test]
+        [UnityPlatform(RuntimePlatform.WindowsEditor)]
         public void ACheckAnEarlierLaunchStartedNeverAnswersThisOne()
         {
             ManualResetEventSlim answer = new ManualResetEventSlim();
@@ -182,6 +191,7 @@ namespace Protokite.Playtest.Tests
         }
 
         [Test]
+        [UnityPlatform(RuntimePlatform.WindowsEditor)]
         public void AnAnswerThatTakesTooLongIsWaitedForNoLongerThanItsTimeAndSaysSo()
         {
             ManualResetEventSlim answer = new ManualResetEventSlim();
@@ -216,6 +226,7 @@ namespace Protokite.Playtest.Tests
         }
 
         [Test]
+        [UnityPlatform(RuntimePlatform.WindowsEditor)]
         public void AWaitThatWakesEarly_IsWaitedAgain_SoTheCheckAgreesItsTimeIsUp()
         {
             ManualResetEventSlim answer = new ManualResetEventSlim();
