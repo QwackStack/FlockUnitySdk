@@ -11,6 +11,13 @@ namespace Flock.Auth
     /// on browser builds, move to server-managed sessions (HttpOnly cookies)
     /// — that's a backend choice, not something the client SDK can solve.
     /// </summary>
-    public class WebGlTokenStore : OtherTokenStore { }
+    public class WebGlTokenStore : OtherTokenStore
+    {
+        /// <summary>The saved sign-in every game shares, as kept before 1.88.1.</summary>
+        public WebGlTokenStore() { }
+
+        /// <summary>One game's saved sign-in; null for the one every game shares.</summary>
+        internal WebGlTokenStore(string gameKey) : base(gameKey) { }
+    }
 }
 #endif

@@ -152,6 +152,8 @@ namespace Flock.Tests.Support
         {
             PlayerPrefs.DeleteKey(PrefAccessToken);
             PlayerPrefs.DeleteKey(PrefRefreshToken);
+            PlayerPrefs.DeleteKey(FlockTestGame.AccessTokenPref);
+            PlayerPrefs.DeleteKey(FlockTestGame.RefreshTokenPref);
             PlayerPrefs.DeleteKey(PrefAuthMethod);
         }
     }

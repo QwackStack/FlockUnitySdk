@@ -84,14 +84,18 @@ namespace Flock.Analytics
     }
 
     /// <summary>The analytics files of each launch of the game, in a folder of that launch's own, locked while it runs.</summary>
-    // <analytics folder>/launches/<UTC time>-<8 hex>/ holds the launch's crash marker, its live-session record and its three
-    // queues. Two copies of one game, or the Editor beside a player, share persistentDataPath, so no launch may read another's
-    // files as left over while that launch still runs. When a launch starts it takes over every launch whose lock it can open:
-    // their queued entries move into this launch's queues at once, and their records wait for the analytics provider, which
-    // reports each once and then deletes that launch's folder. Consent and sign-in stay per install, in PlayerPrefs.
+    // <analytics folder>/games/<game key>/launches/<UTC time>-<8 hex>/ holds the launch's crash marker, its live-session record
+    // and its three queues. Each game's launches are kept apart (the game key names the backend and the API key), so a project
+    // whose game changes never sends the old game's unsent analytics to the new game's backend. Two copies of one game, or the
+    // Editor beside a player, share persistentDataPath, so no launch may read another's files as left over while that launch still
+    // runs. When a launch starts it takes over every launch of its game whose lock it can open: their queued entries move into
+    // this launch's queues at once, and their records wait for the analytics provider, which reports each once and then deletes
+    // that launch's folder. Builds before 1.88.1 kept every game's launches in <analytics folder>/launches/; the first game to
+    // start takes those over too. Consent stays per install, in PlayerPrefs.
     internal sealed class FlockAnalyticsLaunches : IDisposable
     {
         internal const string LaunchesFolderName = "launches";
+        internal const string GamesFolderName = "games";
         internal const string SessionStateFileName = "session_state.json";
         internal const string TerminationMarkerFileName = "termination_marker.json";
         internal const string AnalyticsEventsQueueName = "analytics_events";
@@ -127,11 +131,18 @@ namespace Flock.Analytics
         /// <summary>persistentDataPath/Flock/analytics, as a full path.</summary>
         internal static string DefaultFolder() => Path.GetFullPath(Path.Combine(FlockUtil.FlockFilePath, "analytics"));
 
-        /// <summary>Makes this launch's folder, holds its lock, and takes over every launch that has ended and the files an earlier build left. Without the lock it still gets a folder of its own but takes over nothing.</summary>
-        internal static FlockAnalyticsLaunches Start(string analyticsFolder, FlockEarlierBuildFiles earlierBuildFiles)
+        /// <summary>Where one game's launches are kept, as a full path.</summary>
+        internal static string LaunchesFolderOf(string analyticsFolder, string gameKey) =>
+            Path.GetFullPath(Path.Combine(analyticsFolder, GamesFolderName, gameKey, LaunchesFolderName));
+
+        /// <summary>Where builds before 1.88.1 kept the launches of every game, as a full path.</summary>
+        internal static string EveryGamesLaunchesFolder(string analyticsFolder) => Path.GetFullPath(Path.Combine(analyticsFolder, LaunchesFolderName));
+
+        /// <summary>Makes this launch's folder among its game's, holds its lock, and takes over every launch of the game that has ended, the launches an earlier build kept for every game, and the files a still earlier build left. Without the lock it still gets a folder of its own but takes over nothing.</summary>
+        internal static FlockAnalyticsLaunches Start(string analyticsFolder, string gameKey, FlockEarlierBuildFiles earlierBuildFiles)
         {
             FlockAnalyticsLaunches launches = new FlockAnalyticsLaunches(analyticsFolder);
-            string launchesFolder = Path.Combine(launches._analyticsFolder, LaunchesFolderName);
+            string launchesFolder = LaunchesFolderOf(launches._analyticsFolder, gameKey);
 
             launches._thisLaunch = FlockLaunchFolder.Create(launchesFolder);
             if (launches._thisLaunch == null)
@@ -150,6 +161,15 @@ namespace Flock.Analytics
             catch (Exception)
             {
             }
+            // Those an earlier build kept for every game, then the game's own, so the oldest come first: nearly every project only
+            // ever had one game, and a launch still running under an earlier build holds its lock, so its files stay its own.
+            launches.TakeOverEndedLaunches(EveryGamesLaunchesFolder(launches._analyticsFolder));
+            launches.TakeOverEndedLaunches(launchesFolder);
+            return launches;
+        }
+
+        private void TakeOverEndedLaunches(string launchesFolder)
+        {
             List<string> folders;
             try
             {
@@ -157,17 +177,16 @@ namespace Flock.Analytics
             }
             catch (Exception)
             {
-                return launches;
+                return;
             }
-            // This launch's own folder is among these; its own lock refuses the claim.
+            // This launch's own folder is among its game's; its own lock refuses the claim.
             foreach (string folder in folders)
             {
                 FlockLaunchFolder ended = FlockLaunchFolder.ClaimEnded(folder);
                 if (ended == null)
                     continue;
-                launches._endedLaunches.Add(new FlockEndedLaunch(ended, launches.TakeOverQueues(folder)));
+                _endedLaunches.Add(new FlockEndedLaunch(ended, TakeOverQueues(folder)));
             }
-            return launches;
         }
 
         /// <summary>Hands over every launch taken over, oldest first; the caller deletes or lets go of each.</summary>

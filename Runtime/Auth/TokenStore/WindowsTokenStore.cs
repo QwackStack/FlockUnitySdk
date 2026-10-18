@@ -10,9 +10,18 @@ namespace Flock.Auth
 {
     public class WindowsTokenStore : ITokenStore
     {
-        private readonly FlockTokenFile _file = new FlockTokenFile(FlockUtil.FlockFilePath,
-            plain => Dpapi(plain, encrypt: true), sealedBytes => Dpapi(sealedBytes, encrypt: false),
-            message => Debug.LogWarning("[Flock SDK] " + message));
+        private readonly FlockTokenFile _file;
+
+        /// <summary>The saved sign-in every game shares, as kept before 1.88.1.</summary>
+        public WindowsTokenStore() : this(null) { }
+
+        /// <summary>One game's saved sign-in, in a file named for the game; null for the one every game shares.</summary>
+        internal WindowsTokenStore(string gameKey)
+        {
+            _file = new FlockTokenFile(FlockUtil.FlockFilePath, gameKey,
+                plain => Dpapi(plain, encrypt: true), sealedBytes => Dpapi(sealedBytes, encrypt: false),
+                message => Debug.LogWarning("[Flock SDK] " + message));
+        }
 
         public override void Save(string accessToken, string refreshToken) => _file.Save(accessToken, refreshToken);
 

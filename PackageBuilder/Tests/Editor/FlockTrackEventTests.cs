@@ -337,7 +337,7 @@ namespace Flock.Tests.Editor
         [Test]
         public void ACrashAnEndedLaunchLeftIsReportedUnderDiagnosticsNotAsAGameplayEvent()
         {
-            FlockLaunchFolder ended = FlockLaunchFolder.Create(Path.Combine(_folder, FlockAnalyticsLaunches.LaunchesFolderName));
+            FlockLaunchFolder ended = FlockLaunchFolder.Create(FlockTestGame.LaunchesFolderIn(_folder));
             File.WriteAllText(Path.Combine(ended.Path, FlockAnalyticsLaunches.TerminationMarkerFileName),
                 "{\"session_id\":\"s-ended\",\"last_state\":\"foreground\",\"last_alive_utc\":\"2026-09-27T10:05:00Z\",\"exception_count\":2}");
             ended.Dispose();
@@ -393,7 +393,7 @@ namespace Flock.Tests.Editor
         [Test]
         public void ACrashReportNamesTheEndedLaunchsVersionsAndTheServersSessionId()
         {
-            FlockLaunchFolder ended = FlockLaunchFolder.Create(Path.Combine(_folder, FlockAnalyticsLaunches.LaunchesFolderName));
+            FlockLaunchFolder ended = FlockLaunchFolder.Create(FlockTestGame.LaunchesFolderIn(_folder));
             File.WriteAllText(Path.Combine(ended.Path, FlockAnalyticsLaunches.TerminationMarkerFileName),
                 "{\"session_id\":\"s-local\",\"server_session_id\":\"srv-ended\",\"last_state\":\"foreground\",\"last_alive_utc\":\"2026-09-27T10:05:00Z\"," +
                 "\"exception_count\":0,\"app_version\":\"0.9.1\",\"sdk_version\":\"1.70.0\"}");
@@ -455,10 +455,11 @@ namespace Flock.Tests.Editor
         [Test]
         public void ALaunchThatHoldsNoFolderKeepsNothingOnDisk()
         {
-            Directory.CreateDirectory(_folder);
-            // A file where the launches folder goes: no launch folder or lock can be made under it.
-            File.WriteAllText(Path.Combine(_folder, FlockAnalyticsLaunches.LaunchesFolderName), "not a folder");
-            FlockAnalyticsLaunches launch = FlockAnalyticsLaunches.Start(_folder, null);
+            // A file where the game's launches folder goes: no launch folder or lock can be made under it.
+            string launches = FlockTestGame.LaunchesFolderIn(_folder);
+            Directory.CreateDirectory(Path.GetDirectoryName(launches));
+            File.WriteAllText(launches, "not a folder");
+            FlockAnalyticsLaunches launch = FlockAnalyticsLaunches.Start(_folder, FlockTestGame.Key, null);
             try
             {
                 Assert.IsFalse(launch.IsHoldingItsFolder, "Precondition: the launch holds no folder");

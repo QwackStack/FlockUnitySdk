@@ -9,6 +9,7 @@ using Flock.Config;
 using Flock.Exceptions;
 using Flock.Http;
 using Flock.Models;
+using Flock.Tests.Support;
 using NUnit.Framework;
 using UnityEngine;
 
@@ -20,8 +21,9 @@ namespace Flock.Tests.Editor
     // guards and the linked-account events. Hermetic — no backend.
     public class FlockAccountLinkingTests
     {
-        private const string PrefAccessToken = "Flock.AccessToken";
-        private const string PrefRefreshToken = "Flock.RefreshToken";
+        // The test game's own sign-in (the editor keeps each game's apart).
+        private static readonly string PrefAccessToken = FlockTestGame.AccessTokenPref;
+        private static readonly string PrefRefreshToken = FlockTestGame.RefreshTokenPref;
         private const string PrefAuthMethod = "flock_auth_method";
 
         private sealed class ScriptedAdapter : IFlockHttpAdapter
@@ -59,8 +61,7 @@ namespace Flock.Tests.Editor
 
         private static void ClearAuthPrefs()
         {
-            PlayerPrefs.DeleteKey(PrefAccessToken);
-            PlayerPrefs.DeleteKey(PrefRefreshToken);
+            FlockTestGame.ForgetSavedSignIns();
             PlayerPrefs.DeleteKey(PrefAuthMethod);
         }
 

@@ -4,7 +4,7 @@ namespace Flock.Auth
 {
     /// <summary>
     /// Persistence layer for auth tokens between app launches. The SDK selects an
-    /// implementation automatically via <see cref="TokenStoreFactory.Create"/> based
+    /// implementation automatically, one sign-in for each game, based
     /// on the runtime platform — Keychain on iOS/macOS, Keystore on Android, DPAPI on
     /// Windows, PlayerPrefs on Editor/WebGL/other. To keep tokens your own way, set
     /// <c>FlockInitConfig.TokenStore</c> to a store of your own before <c>FlockClient.Create</c>.

@@ -163,6 +163,11 @@ data protection, the browser's storage on WebGL, PlayerPrefs in the Editor and e
 brings the same player back on the next launch. `Logout()` deletes it. `FlockClient.Shutdown()` only lets go of this
 client's tokens and keeps the saved sign-in, so the next `FlockClient.Create` restores the same player.
 
+Each game keeps its own saved sign-in, named by its backend and API key, so a project that switches to another game (or
+another backend) never restores a player of the old one. The sign-in an earlier version kept for every game is taken over by
+the first game that reads one, so updating signs nobody out; on macOS it is left where it was (the login Keychain is shared by
+every app of the user), and the player signs in once more.
+
 To keep tokens somewhere else, set `FlockInitConfig.TokenStore` to a class of your own deriving from `ITokenStore`
 (`Save`, `Load`, `Clear`) before `FlockClient.Create`.
 

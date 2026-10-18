@@ -55,11 +55,11 @@ namespace Flock.Tests.Editor
                 Directory.Delete(_root, true);
         }
 
-        private string LaunchesFolder => Path.Combine(_root, FlockAnalyticsLaunches.LaunchesFolderName);
+        private string LaunchesFolder => FlockTestGame.LaunchesFolderIn(_root);
 
-        private FlockAnalyticsLaunches StartLaunch(FlockEarlierBuildFiles earlier = null)
+        private FlockAnalyticsLaunches StartLaunch(FlockEarlierBuildFiles earlier = null, string gameKey = null)
         {
-            FlockAnalyticsLaunches launches = FlockAnalyticsLaunches.Start(_root, earlier);
+            FlockAnalyticsLaunches launches = FlockAnalyticsLaunches.Start(_root, gameKey ?? FlockTestGame.Key, earlier);
             _held.Add(launches);
             return launches;
         }
@@ -239,7 +239,7 @@ namespace Flock.Tests.Editor
             string blocked = Path.Combine(_root, "blocked");
             File.WriteAllText(blocked, "not a folder");
 
-            FlockAnalyticsLaunches launch = FlockAnalyticsLaunches.Start(blocked, null);
+            FlockAnalyticsLaunches launch = FlockAnalyticsLaunches.Start(blocked, FlockTestGame.Key, null);
             _held.Add(launch);
 
             Assert.IsFalse(launch.IsHoldingItsFolder);
@@ -474,7 +474,7 @@ namespace Flock.Tests.Editor
 
         private static string PlantEndedLaunchUnderTheTestFolder(string sessionId)
         {
-            FlockLaunchFolder folder = FlockLaunchFolder.Create(Path.Combine(FlockTestSavedFiles.AnalyticsFolder, FlockAnalyticsLaunches.LaunchesFolderName));
+            FlockLaunchFolder folder = FlockLaunchFolder.Create(FlockTestGame.LaunchesFolderIn(FlockTestSavedFiles.AnalyticsFolder));
             File.WriteAllText(Path.Combine(folder.Path, FlockAnalyticsLaunches.TerminationMarkerFileName), MarkerJson(sessionId));
             File.WriteAllText(Path.Combine(folder.Path, FlockAnalyticsLaunches.SessionStateFileName), SessionJson(sessionId));
             folder.Dispose();
@@ -663,7 +663,7 @@ namespace Flock.Tests.Editor
                 Assert.AreEqual(1, QueuedContents(sdk, FlockAnalyticsLaunches.SessionEndsQueueName).Count(e => e.Contains("s-crashed")));
             }
 
-            FlockAnalyticsLaunches later = FlockAnalyticsLaunches.Start(FlockAnalyticsLaunches.FolderForTesting, null);
+            FlockAnalyticsLaunches later = FlockAnalyticsLaunches.Start(FlockAnalyticsLaunches.FolderForTesting, FlockTestGame.Key, null);
             _held.Add(later);
             CollectionAssert.Contains(QueuedNames(Path.Combine(later.Folder, FlockAnalyticsLaunches.LogEventsQueueName)), "0001_stuck",
                 "A later launch takes the entry over once it can move.");
@@ -734,6 +734,70 @@ namespace Flock.Tests.Editor
                 Assert.IsFalse(sdk.Client.AnalyticsLaunches.IsHoldingItsFolder);
                 Assert.IsTrue(sdk.Logger.Warnings.Any(entry => entry.Contains("Could not lock a folder for this launch's analytics files")));
             }
+        }
+
+        // ---- Each game's launches ----
+
+        private const string AnotherGame = "0123456789abcdef";
+
+        [Test]
+        public void AnotherGamesEndedLaunch_IsNotTakenOver_ButItsOwnGameTakesItOver()
+        {
+            // A project whose game changed: the old game's unsent entry must never reach the new game's backend.
+            string otherGames = FlockAnalyticsLaunches.LaunchesFolderOf(_root, AnotherGame);
+            FlockLaunchFolder planted = FlockLaunchFolder.Create(otherGames);
+            Assert.IsNotNull(planted, "Precondition: another game's launch folder was made");
+            FlockSavedFiles.CreateFolder(Path.Combine(planted.Path, FlockAnalyticsLaunches.AnalyticsEventsQueueName));
+            File.WriteAllText(Path.Combine(planted.Path, FlockAnalyticsLaunches.AnalyticsEventsQueueName, "0001_theirs" + FlockEventCacheNames.Extension), "{}");
+            planted.Dispose();
+
+            FlockAnalyticsLaunches ours = StartLaunch();
+            Assert.AreEqual(0, ours.TakeEndedLaunches().Count, "This game takes over none of another game's launches");
+            Assert.IsEmpty(QueuedNames(Path.Combine(ours.Folder, FlockAnalyticsLaunches.AnalyticsEventsQueueName)));
+
+            FlockAnalyticsLaunches theirs = StartLaunch(gameKey: AnotherGame);
+            List<FlockEndedLaunch> taken = theirs.TakeEndedLaunches();
+            _held.AddRange(taken);
+            Assert.AreEqual(1, taken.Count, "Its own game takes it over");
+            CollectionAssert.Contains(QueuedNames(Path.Combine(theirs.Folder, FlockAnalyticsLaunches.AnalyticsEventsQueueName)), "0001_theirs");
+        }
+
+        [Test]
+        public void TheLaunchesAnEarlierBuildKeptForEveryGame_AreTakenOverByTheFirstGameToStart_Once()
+        {
+            // Builds before 1.88.1 kept every game's launches in one folder: nearly every project only ever had one game.
+            FlockLaunchFolder planted = FlockLaunchFolder.Create(FlockAnalyticsLaunches.EveryGamesLaunchesFolder(_root));
+            Assert.IsNotNull(planted, "Precondition: an earlier build's launch folder was made");
+            FlockSavedFiles.CreateFolder(Path.Combine(planted.Path, FlockAnalyticsLaunches.AnalyticsEventsQueueName));
+            File.WriteAllText(Path.Combine(planted.Path, FlockAnalyticsLaunches.AnalyticsEventsQueueName, "0001_earlier" + FlockEventCacheNames.Extension), "{}");
+            planted.Dispose();
+
+            FlockAnalyticsLaunches first = StartLaunch();
+            List<FlockEndedLaunch> ended = first.TakeEndedLaunches();
+            Assert.AreEqual(1, ended.Count, "The first game to start takes it over");
+            CollectionAssert.Contains(QueuedNames(Path.Combine(first.Folder, FlockAnalyticsLaunches.AnalyticsEventsQueueName)), "0001_earlier");
+            foreach (FlockEndedLaunch each in ended)
+                Assert.IsTrue(each.DeleteEverything(), "Precondition: the earlier build's launch is deleted once reported");
+            Assert.IsEmpty(FlockLaunchFolder.FindFolders(FlockAnalyticsLaunches.EveryGamesLaunchesFolder(_root)), "Nothing is left where the earlier build kept them");
+
+            FlockAnalyticsLaunches second = StartLaunch(gameKey: AnotherGame);
+            Assert.AreEqual(0, second.TakeEndedLaunches().Count, "Taken over once: a second game finds nothing left");
+            Assert.IsEmpty(QueuedNames(Path.Combine(second.Folder, FlockAnalyticsLaunches.AnalyticsEventsQueueName)));
+        }
+
+        [Test]
+        public void TheLaunchesAnEarlierBuildKept_AreHandedOverBeforeTheGamesOwn_OldestFirst()
+        {
+            FlockLaunchFolder earlier = FlockLaunchFolder.Create(FlockAnalyticsLaunches.EveryGamesLaunchesFolder(_root));
+            Assert.IsNotNull(earlier, "Precondition: an earlier build's launch folder was made");
+            string earlierPath = earlier.Path;
+            earlier.Dispose();
+            PlantEndedLaunch(MarkerJson("s-own"));
+
+            List<FlockEndedLaunch> ended = StartLaunch().TakeEndedLaunches();
+            _held.AddRange(ended);
+            Assert.AreEqual(2, ended.Count, "Precondition: both are taken over");
+            StringAssert.StartsWith(earlierPath, ended[0].TerminationMarkerPath, "The earlier build's launch, older than any of the game's own, comes first");
         }
 
         // ---- The editor's own sign-in ----

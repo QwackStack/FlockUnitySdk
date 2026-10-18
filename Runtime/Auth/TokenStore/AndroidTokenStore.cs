@@ -24,8 +24,17 @@ namespace Flock.Auth
         private const int CipherEncryptMode = 1;
         private const int CipherDecryptMode = 2;
 
-        private readonly FlockTokenFile _file = new FlockTokenFile(FlockUtil.FlockFilePath, Encrypt, Decrypt,
-            message => Debug.LogWarning("[Flock SDK] " + message));
+        private readonly FlockTokenFile _file;
+
+        /// <summary>The saved sign-in every game shares, as kept before 1.88.1.</summary>
+        public AndroidTokenStore() : this(null) { }
+
+        /// <summary>One game's saved sign-in, in a file named for the game (one Keystore key seals every game's); null for the one every game shares.</summary>
+        internal AndroidTokenStore(string gameKey)
+        {
+            _file = new FlockTokenFile(FlockUtil.FlockFilePath, gameKey, Encrypt, Decrypt,
+                message => Debug.LogWarning("[Flock SDK] " + message));
+        }
 
         public override void Save(string accessToken, string refreshToken) => _file.Save(accessToken, refreshToken);
 

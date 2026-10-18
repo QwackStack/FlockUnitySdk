@@ -123,7 +123,8 @@ namespace Flock
             _logger = logger ?? new UnityFlockLogger(initConfig.EnableDebugLogs);
             FlockEvents.Logger = _logger;
             _logger.LogInfo("Initializing Flock SDK");
-            _logger.LogInfo($"Token persistence provider: {initConfig.TokenStore?.GetType().Name ?? "<disabled>"}");
+            ITokenStore tokenStore = initConfig.TokenStore;
+            _logger.LogInfo($"Token persistence provider: {(tokenStore is FlockGameTokenStore game ? game.PlatformStoreName + " (one sign-in for each game)" : tokenStore?.GetType().Name ?? "<disabled>")}");
             _retryHandler = new RetryHandler(initConfig.RetryPolicy, _logger);
             FlockHttpClient.Configure(initConfig.HttpTimeout);
             _snapshotStore = initConfig.EnableOfflineCache
@@ -247,11 +248,11 @@ namespace Flock
 #if !FLOCK_NO_ANALYTICS
             if (_initConfig.AnalyticsConfig.Enabled)
             {
-                // Each launch keeps its crash marker, live-session record and queues in a folder of its own, locked while it
-                // runs, and takes over the files of launches that have ended.
+                // Each launch keeps its crash marker, live-session record and queues in a folder of its own among its game's, locked
+                // while it runs, and takes over the files of the game's launches that have ended.
                 string testingFolder = FlockAnalyticsLaunches.FolderForTesting;
                 _analyticsLaunches = FlockAnalyticsLaunches.Start(
-                    testingFolder ?? FlockAnalyticsLaunches.DefaultFolder(),
+                    testingFolder ?? FlockAnalyticsLaunches.DefaultFolder(), _initConfig.GameKey,
                     testingFolder == null ? FlockEarlierBuildFiles.OnThisMachine() : null);
                 if (!_analyticsLaunches.IsHoldingItsFolder)
                     _logger.LogWarning("Could not lock a folder for this launch's analytics files, so this launch keeps none: what it cannot send now is lost, and launches that ended before it are not reported this time.");

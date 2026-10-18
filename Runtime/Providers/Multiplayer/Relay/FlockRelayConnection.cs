@@ -404,6 +404,9 @@ namespace Flock.Providers
             // The reason first, so a reader that sees the state stopped finds it; swapped in one step, so an answer can no longer open it.
             _failureReason = reason;
             bool wasOpen = Interlocked.Exchange(ref _state, finalState) == StateOpen;
+            // Sending stops before the reservation is asked about: a signed reservation the relay thread is sending right now either
+            // was marked asked (and is given back below) or finds the sending stopped and never goes.
+            _requests.StopSending();
             // The release goes out from this thread at once, so it is sent even while the game quits; the relay thread closes the
             // socket once it is answered, or after a moment, sending it again if the relay's nonce went stale.
             if (_requests.ReservationAsked)

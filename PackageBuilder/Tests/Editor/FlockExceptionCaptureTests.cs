@@ -658,7 +658,7 @@ namespace Flock.Tests.Editor
         [Test]
         public void ACrashBeforeSignInIsReportedByTheNextLaunch()
         {
-            FlockLaunchFolder ended = FlockLaunchFolder.Create(Path.Combine(FlockAnalyticsLaunches.FolderForTesting, FlockAnalyticsLaunches.LaunchesFolderName));
+            FlockLaunchFolder ended = FlockLaunchFolder.Create(FlockTestGame.LaunchesFolderIn(FlockAnalyticsLaunches.FolderForTesting));
             File.WriteAllText(Path.Combine(ended.Path, FlockAnalyticsLaunches.TerminationMarkerFileName),
                 "{\"session_id\":null,\"last_state\":\"foreground\",\"last_alive_utc\":\"2026-09-28T10:05:00Z\",\"exception_count\":0}");
             ended.Dispose();

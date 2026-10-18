@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.88.1]
+
+Each game keeps its own saved sign-in and analytics, and three relay fixes.
+
+### Fixed
+
+- **A project whose game changes no longer sends the old game's analytics to the new one.** Each game's crash marker,
+  live-session record and queued events are kept apart, under its backend and API key
+  (`persistentDataPath/Flock/analytics/games/<key>/`). Every game a project ran used to share one folder, and a changed game
+  sent the old one's unsent sessions and events to its own backend, which refused and dropped them. The launches an earlier
+  build kept are taken over by the first game to start after the update. Consent stays per install.
+- **A saved sign-in is restored only by the game it was made with.** Each game keeps its own, under its backend and API key;
+  the one an earlier build kept for every game is taken over by the first game to read one, so nobody is signed out by
+  updating (on macOS, where the login Keychain is the user's and may hold another studio's game's, it is left alone and the
+  player signs in once more). `TokenStoreFactory.Create()` still returns the store every game shares; a config's default store
+  keeps one sign-in for each game, so a check of `FlockInitConfig.TokenStore` for a platform store's type no longer matches.
+- **The relay gives its address back when it answers the release's stale nonce at once.** The release is known as such
+  before it goes; an answer that came before the closing thread went on was ignored, and the address was kept until it lapsed.
+- **A relay closed while its reservation is being sent keeps no address.** The reservation is marked before it goes and the
+  stop ends the sending before it asks, so the address is either given back or never reserved.
+- **No request but the release goes after the relay stops**: a renewal or keep-alive in the turn that stopped it is dropped, and
+  a request already past the check goes out before the release, so the release never reaches the relay ahead of it.
+
 ## [1.88.0]
 
 Every failure says what is wrong and how to fix it.

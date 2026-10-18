@@ -77,13 +77,39 @@ namespace Flock.Config
 
         /// <summary>
         /// Persistence layer for auth tokens between app launches. Defaults to the
-        /// platform-appropriate <see cref="ITokenStore"/> selected by
-        /// <see cref="TokenStoreFactory.Create"/>. Set it before <c>FlockClient.Create</c> to keep tokens
+        /// platform-appropriate <see cref="ITokenStore"/>, keeping this game's sign-in apart from every other game's (the game is
+        /// the API URL and the API key). Set it before <c>FlockClient.Create</c> to keep tokens
         /// your own way; null keeps nothing between launches. After init, call
         /// <c>FlockClient.Instance.Authentication.TryRestoreSessionAsync()</c>
         /// to resume a stored session.
         /// </summary>
-        public ITokenStore TokenStore { get; set; }
+        public ITokenStore TokenStore
+        {
+            get
+            {
+                if (_tokenStoreChosen)
+                    return _tokenStore;
+                // Made for the game the config names when the store is needed, so an API URL set after the constructor keeps the
+                // sign-in with the game the analytics are kept for.
+                string gameKey = GameKey;
+                if (_gameTokenStore == null || _gameTokenStoreKey != gameKey)
+                {
+                    _gameTokenStore = TokenStoreFactory.CreateForGame(gameKey);
+                    _gameTokenStoreKey = gameKey;
+                }
+                return _gameTokenStore;
+            }
+            set
+            {
+                _tokenStore = value;
+                _tokenStoreChosen = true;
+            }
+        }
+
+        private ITokenStore _tokenStore;
+        private bool _tokenStoreChosen;
+        private ITokenStore _gameTokenStore;
+        private string _gameTokenStoreKey;
 
         private readonly string _apiKey;
 
@@ -114,8 +140,10 @@ namespace Flock.Config
             EnableDebugLogs = enableDebugLogs;
             AnalyticsConfig = analyticsConfig;
             RetryPolicy = retryPolicy ?? new RetryPolicy();
-            TokenStore = TokenStoreFactory.Create();
         }
+
+        /// <summary>This game as the server knows it (the backend and the API key): the name its saved sign-in and analytics files are kept under.</summary>
+        internal string GameKey => FlockGameKey.Of(ApiUrl, _apiKey);
 
         /// <summary>The API URL as every request is built from it: surrounding spaces and trailing slashes removed.</summary>
         internal static string TrimApiUrl(string apiUrl) => apiUrl?.Trim().TrimEnd('/').TrimEnd();

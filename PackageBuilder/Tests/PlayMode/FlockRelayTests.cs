@@ -47,6 +47,10 @@ namespace Flock.Tests.PlayMode
         [TearDown]
         public void TearDown()
         {
+            FlockRelayRequests.BeforeASignedReservationGoesForTesting = null;
+            FlockRelayRequests.AfterASignedReservationWentForTesting = null;
+            FlockRelayRequests.WhileASignedReservationGoesForTesting = null;
+            FlockRelayRequests.AfterTheReleaseGoesForTesting = null;
             foreach (FlockRelayConnection connection in _connections)
                 connection.Close();
             _connections.Clear();
@@ -702,6 +706,125 @@ namespace Flock.Tests.PlayMode
             yield return FlockTestWait.Until(() => _relay.Reservations == 0, "the address was given back", 2f);
             Assert.AreEqual(2, _relay.Releases, "Refused as stale, then sent again with the new nonce");
         }
+
+        [UnityTest]
+        public IEnumerator Close_WithAStaleNonceAnsweredBeforeTheClosingThreadGoesOn_SendsTheReleaseAgain()
+        {
+            List<FlockRelayConnection> opened = new List<FlockRelayConnection>();
+            yield return Opened(A, opened);
+            // The closing thread is held just after the release goes, as a busy game thread can be: the relay's 438 arrives meanwhile,
+            // and the release must already be known as such.
+            _relay.AnswerStaleNonce(1);
+            FlockRelayRequests.AfterTheReleaseGoesForTesting = () => Thread.Sleep(200);
+            opened[0].Close();
+            FlockRelayRequests.AfterTheReleaseGoesForTesting = null;
+
+            yield return FlockTestWait.Until(() => _relay.Reservations == 0, "the address was given back", 2f);
+            Assert.AreEqual(2, _relay.Releases, "Refused as stale, then sent again with the new nonce");
+        }
+
+        [UnityTest]
+        public IEnumerator Close_WhileTheSignedReservationIsAboutToGo_KeepsNoAddress()
+        {
+            // The relay's thread is held just before the signed reservation goes, and the game closes the relay then: no reservation has
+            // gone, so the close sends no release, and the reservation must not go after it.
+            ManualResetEventSlim held = new ManualResetEventSlim(false);
+            ManualResetEventSlim closed = new ManualResetEventSlim(false);
+            FlockRelayRequests.BeforeASignedReservationGoesForTesting = () =>
+            {
+                held.Set();
+                closed.Wait(TimeSpan.FromSeconds(5));
+            };
+            CancellationTokenSource closing = new CancellationTokenSource();
+            Task<FlockRelayConnection> opening = Open(A, null, closing.Token);
+            yield return FlockTestWait.Until(() => held.IsSet, "the relay's thread is about to send the signed reservation", 5f);
+            closing.Cancel();
+            closed.Set();
+            yield return Done(opening, "the open ended");
+            Assert.IsTrue(Cancelled(opening), $"The open ends as cancelled ({opening.Status})");
+            yield return RealSeconds(0.6f);
+            FlockRelayRequests.BeforeASignedReservationGoesForTesting = null;
+
+            Assert.AreEqual(0, _relay.Reservations, "No address kept");
+            Assert.AreEqual(0, _relay.SeenRequests(FakeRelayServer.MethodAllocate).Count(seen => seen.Signed), "The signed reservation never went: the stop came first");
+        }
+
+        [UnityTest]
+        public IEnumerator Close_JustAfterTheSignedReservationWent_GivesItBack()
+        {
+            // The relay's thread is held just after the signed reservation went, before its answer: the game closes the relay then, and
+            // the close must know a reservation went, to give it back.
+            ManualResetEventSlim held = new ManualResetEventSlim(false);
+            ManualResetEventSlim closed = new ManualResetEventSlim(false);
+            FlockRelayRequests.AfterASignedReservationWentForTesting = () =>
+            {
+                held.Set();
+                closed.Wait(TimeSpan.FromSeconds(5));
+            };
+            CancellationTokenSource closing = new CancellationTokenSource();
+            Task<FlockRelayConnection> opening = Open(A, null, closing.Token);
+            yield return FlockTestWait.Until(() => held.IsSet, "the signed reservation just went", 5f);
+            closing.Cancel();
+            closed.Set();
+            yield return Done(opening, "the open ended");
+            yield return RealSeconds(0.6f);
+            FlockRelayRequests.AfterASignedReservationWentForTesting = null;
+
+            Assert.AreEqual(1, _relay.SeenRequests(FakeRelayServer.MethodAllocate).Count(seen => seen.Signed), "Precondition: the relay made the reservation");
+            Assert.AreEqual(1, _relay.Releases, "Given back");
+            Assert.AreEqual(0, _relay.Reservations, "No address kept");
+        }
+
+        [UnityTest]
+        public IEnumerator Close_WhileTheSignedReservationIsGoingOut_GivesItBackAfterIt()
+        {
+            // The relay's thread is held between the sending check and the send of the signed reservation, and the game closes the
+            // relay then: the close waits for the reservation to go, so the release reaches the relay after it and gives it back.
+            ManualResetEventSlim held = new ManualResetEventSlim(false);
+            FlockRelayRequests.WhileASignedReservationGoesForTesting = () =>
+            {
+                held.Set();
+                Thread.Sleep(200);
+            };
+            CancellationTokenSource closing = new CancellationTokenSource();
+            Task<FlockRelayConnection> opening = Open(A, null, closing.Token);
+            yield return FlockTestWait.Until(() => held.IsSet, "the signed reservation is going out", 5f);
+            closing.Cancel();
+            FlockRelayRequests.WhileASignedReservationGoesForTesting = null;
+            yield return Done(opening, "the open ended");
+            yield return RealSeconds(0.6f);
+
+            List<FakeRelayServer.Seen> seen = _relay.AllSeen();
+            int reservation = seen.FindIndex(each => each.Method == FakeRelayServer.MethodAllocate && each.Signed);
+            int release = seen.FindIndex(IsRelease);
+            Assert.GreaterOrEqual(reservation, 0, "Precondition: the signed reservation went");
+            Assert.Greater(release, reservation, "The release reached the relay after the reservation");
+            Assert.AreEqual(0, _relay.Reservations, "No address kept");
+        }
+
+        [UnityTest]
+        public IEnumerator Lost_NothingButTheReleaseGoesAfterIt()
+        {
+            // A keep-alive due at every turn, and the reservation renewed every half second: the turn that hears the refusal would send
+            // one after the release if the stop did not end the sending.
+            FlockRelayConnection.Timing timing = Quick();
+            timing.KeepAliveAfter = TimeSpan.Zero;
+            timing.LongestBetweenReservationRenewals = TimeSpan.FromSeconds(0.5);
+            List<FlockRelayConnection> opened = new List<FlockRelayConnection>();
+            yield return Opened(A, opened, timing);
+            _relay.ForgetEveryReservation();
+            yield return FlockTestWait.Until(() => opened[0].HasStopped, "the relay was lost", 3f);
+            yield return RealSeconds(0.3f);
+
+            Assert.AreEqual(FlockRelayFailure.Lost, opened[0].FailureReason);
+            List<FakeRelayServer.Seen> seen = _relay.AllSeen();
+            int firstRelease = seen.FindIndex(IsRelease);
+            Assert.GreaterOrEqual(firstRelease, 0, "Precondition: the release went");
+            Assert.AreEqual(0, seen.Skip(firstRelease + 1).Count(each => !IsRelease(each)), "Nothing but the release went after it");
+            Assert.Greater(_relay.SeenRequests(FakeRelayServer.MethodBinding).Count, 10, "Control: keep-alives went while the relay worked");
+        }
+
+        private static bool IsRelease(FakeRelayServer.Seen seen) => seen.Method == FakeRelayServer.MethodRefresh && seen.Class == 0x000 && seen.LifetimeAsked == 0;
 
         [UnityTest]
         public IEnumerator OpenToHost_ARefusalNamingNoCode_IsARefusal()

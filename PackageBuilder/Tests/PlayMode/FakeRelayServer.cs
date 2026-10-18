@@ -121,6 +121,13 @@ namespace Flock.Tests.PlayMode
         internal static ushort MethodBinding => Binding;
         internal static ushort MethodSend => Send;
 
+        // Everything a client sent, in the order it arrived: requests, indications and channel frames.
+        internal List<Seen> AllSeen()
+        {
+            lock (_lock)
+                return _seen.ToList();
+        }
+
         internal List<Seen> SeenRequests(ushort method)
         {
             lock (_lock)

@@ -17,24 +17,37 @@ namespace Flock.Auth
         private const string AccessAccount = "access";
         private const string RefreshAccount = "refresh";
 
+        private readonly string _accessAccount;
+        private readonly string _refreshAccount;
+
+        /// <summary>The saved sign-in every game shares, as kept before 1.88.1.</summary>
+        public IosTokenStore() : this(null) { }
+
+        /// <summary>One game's saved sign-in, under Keychain accounts named for the game; null for the one every game shares.</summary>
+        internal IosTokenStore(string gameKey)
+        {
+            _accessAccount = Flock.Config.FlockGameKey.Named(AccessAccount, gameKey);
+            _refreshAccount = Flock.Config.FlockGameKey.Named(RefreshAccount, gameKey);
+        }
+
         public override void Save(string accessToken, string refreshToken)
         {
-            FlockKeychainSet(Service, AccessAccount, accessToken);
-            FlockKeychainSet(Service, RefreshAccount, refreshToken);
+            FlockKeychainSet(Service, _accessAccount, accessToken);
+            FlockKeychainSet(Service, _refreshAccount, refreshToken);
         }
 
         public override StoredTokens Load()
         {
-            string a = Read(AccessAccount);
-            string r = Read(RefreshAccount);
+            string a = Read(_accessAccount);
+            string r = Read(_refreshAccount);
             if (a == null || r == null) return null;
             return new StoredTokens { AccessToken = a, RefreshToken = r };
         }
 
         public override void Clear()
         {
-            FlockKeychainDelete(Service, AccessAccount);
-            FlockKeychainDelete(Service, RefreshAccount);
+            FlockKeychainDelete(Service, _accessAccount);
+            FlockKeychainDelete(Service, _refreshAccount);
         }
 
         private static string Read(string account)

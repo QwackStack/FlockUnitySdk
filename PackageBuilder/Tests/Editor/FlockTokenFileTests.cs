@@ -17,7 +17,7 @@ namespace Flock.Tests.Editor
         private static byte[] Seal(byte[] plain) => plain.Select(b => (byte)(b ^ 0x5A)).ToArray();
         private static byte[] Open(byte[] sealedBytes) => Seal(sealedBytes);
 
-        private FlockTokenFile File() => new FlockTokenFile(_folder, Seal, Open);
+        private FlockTokenFile File() => new FlockTokenFile(_folder, null, Seal, Open);
 
         [SetUp]
         public void SetUp() => _folder = Path.Combine(Path.GetTempPath(), "FlockTokenFileTests", Guid.NewGuid().ToString("N"));
@@ -106,7 +106,7 @@ namespace Flock.Tests.Editor
             Directory.CreateDirectory(_folder);
             System.IO.File.WriteAllBytes(Path.Combine(_folder, FlockTokenFile.FileName), Seal(Encoding.UTF8.GetBytes("only-one-line")));
             string warned = null;
-            FlockTokenFile file = new FlockTokenFile(_folder, Seal, Open, message => warned = message);
+            FlockTokenFile file = new FlockTokenFile(_folder, null, Seal, Open, message => warned = message);
 
             Assert.IsNull(file.Load());
             StringAssert.Contains("1 line(s) where 2 were expected", warned);

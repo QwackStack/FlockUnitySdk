@@ -26,14 +26,32 @@ namespace Flock.Providers
         private string _nonce;
         private byte[] _key;
         private int _noncesTaken;
-        private volatile bool _reservationAsked;
+        // Marked before a signed reservation goes; the stop reads it after stopping the sending under _sendGate.
+        private int _reservationAsked;
+        // Held around "is the sending stopped, then send", and by the stop around stopping it: a request that passed the check goes
+        // out before the stop goes on, so the release never reaches the relay ahead of a reservation already on its way, and a
+        // reservation the stop came before never goes.
+        private readonly object _sendGate = new object();
+        private bool _sendingStopped;
 
         // The relay thread's own.
         private readonly List<FlockRelayRequest> _waiting = new List<FlockRelayRequest>();
 
-        // The release on its way; the relay thread sends it again once on a stale nonce.
+        // The release on its way, known before it goes; the relay thread sends it again once on a stale nonce.
         private volatile byte[] _releaseTransaction;
         private bool _releaseSentAgain;
+
+        /// <summary>Run on the relay thread just before a signed reservation goes, so a test can stop the connection then.</summary>
+        internal static Action BeforeASignedReservationGoesForTesting;
+
+        /// <summary>Run on the relay thread just after a signed reservation went, before its answer.</summary>
+        internal static Action AfterASignedReservationWentForTesting;
+
+        /// <summary>Run on the relay thread once the sending check let a signed reservation through, just before its bytes go.</summary>
+        internal static Action WhileASignedReservationGoesForTesting;
+
+        /// <summary>Run just after a release went: on the closing thread, as a busy game thread is held, or on the relay thread when it sends the release again.</summary>
+        internal static Action AfterTheReleaseGoesForTesting;
 
         internal FlockRelayRequests(FlockRelayLogin login, FlockRelaySocket socket, FlockRelayConnection.Timing timing)
         {
@@ -45,8 +63,8 @@ namespace Flock.Providers
         /// <summary>Realms and nonces the relay handed over to sign with: its login challenge, then each stale nonce answered.</summary>
         internal int NoncesTaken => Volatile.Read(ref _noncesTaken);
 
-        /// <summary>True once a signed reservation went out, so there may be an address to give back.</summary>
-        internal bool ReservationAsked => _reservationAsked;
+        /// <summary>True once a signed reservation was asked, so there may be an address to give back.</summary>
+        internal bool ReservationAsked => Volatile.Read(ref _reservationAsked) != 0;
 
         /// <summary>True while the release went out and its answer has not come.</summary>
         internal bool ReleaseWaitingForAnswer => _releaseTransaction != null;
@@ -69,13 +87,20 @@ namespace Flock.Providers
             request.SignedWith = key;
             request.Transaction = FlockRelayWire.NewTransaction();
             request.Bytes = FlockRelayWire.Write((ushort)(request.Method | FlockRelayWire.RequestClass), request.Transaction, attributes, key);
-            if (key != null && request.Method == FlockRelayWire.AllocateMethod)
-                _reservationAsked = true;
+            bool signedReservation = key != null && request.Method == FlockRelayWire.AllocateMethod;
+            if (signedReservation)
+            {
+                BeforeASignedReservationGoesForTesting?.Invoke();
+                // Marked before it goes: a stop decided meanwhile either gives it back or keeps it from going.
+                Interlocked.Exchange(ref _reservationAsked, 1);
+            }
             long now = FlockRelayClock.Now();
             request.FirstSentAt = now;
             request.Sends = 1;
             request.NextSendAt = now + FlockRelayClock.Ticks(FirstResend);
-            SendBytes(request.Bytes);
+            SendBytes(request.Bytes, signedReservation);
+            if (signedReservation)
+                AfterASignedReservationWentForTesting?.Invoke();
             if (!_waiting.Contains(request))
                 _waiting.Add(request);
         }
@@ -134,8 +159,15 @@ namespace Flock.Providers
             Answer(request, message, answerClass);
         }
 
-        /// <summary>Gives the address back, sent from the calling thread so it goes out even while the game quits; asked only once a signed reservation went out.</summary>
-        internal void Release() => _releaseTransaction = SendRelease();
+        /// <summary>Gives the address back, sent from the calling thread so it goes out even while the game quits; asked only once a signed reservation was asked.</summary>
+        internal void Release() => SendRelease();
+
+        /// <summary>Nothing more goes but the release: a renewal, a resend or a keep-alive the relay thread's turn reaches after the stop is dropped. Called by the stop before it asks whether a reservation went.</summary>
+        internal void StopSending()
+        {
+            lock (_sendGate)
+                _sendingStopped = true;
+        }
 
         private void Answer(FlockRelayRequest request, FlockRelayWire.Message message, ushort answerClass)
         {
@@ -192,7 +224,7 @@ namespace Flock.Providers
             if (answerClass == FlockRelayWire.ErrorClass && !_releaseSentAgain && RefusalCodeOf(message, out _) == 438 && TakeNonce(message))
             {
                 _releaseSentAgain = true;
-                _releaseTransaction = SendRelease();
+                SendRelease();
                 return;
             }
             _releaseTransaction = null;
@@ -218,10 +250,21 @@ namespace Flock.Providers
             return true;
         }
 
-        private void SendBytes(byte[] bytes) => _socket.TrySend(bytes, 0, bytes.Length);
+        // The one owner of "no request goes after the stop"; the release goes to the socket itself.
+        private void SendBytes(byte[] bytes, bool signedReservation = false)
+        {
+            lock (_sendGate)
+            {
+                if (_sendingStopped)
+                    return;
+                if (signedReservation)
+                    WhileASignedReservationGoesForTesting?.Invoke();
+                _socket.TrySend(bytes, 0, bytes.Length);
+            }
+        }
 
-        // A renewal asking for 0 s gives the address back at once; one with no address to give back is refused, which harms nothing. Its transaction, or null when it could not go.
-        private byte[] SendRelease()
+        // A renewal asking for 0 s gives the address back at once; one with no address to give back is refused, which harms nothing.
+        private void SendRelease()
         {
             List<KeyValuePair<ushort, byte[]>> attributes = new List<KeyValuePair<ushort, byte[]>>
             {
@@ -245,9 +288,16 @@ namespace Flock.Providers
             catch (Exception)
             {
                 // Best effort: an address not given back lapses on the relay within its lifetime.
-                return null;
+                return;
             }
-            return _socket.TrySend(release, 0, release.Length) ? transaction : null;
+            // Known before it goes, so an answer that comes back at once (a stale nonce among them) is already the release's.
+            _releaseTransaction = transaction;
+            if (!_socket.TrySend(release, 0, release.Length))
+            {
+                _releaseTransaction = null;
+                return;
+            }
+            AfterTheReleaseGoesForTesting?.Invoke();
         }
     }
 

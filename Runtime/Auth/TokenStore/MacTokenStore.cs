@@ -19,24 +19,37 @@ namespace Flock.Auth
         private const string SecurityLib = "/System/Library/Frameworks/Security.framework/Security";
         private const string CoreFoundationLib = "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation";
 
+        private readonly string _accessAccount;
+        private readonly string _refreshAccount;
+
+        /// <summary>The saved sign-in every game shares, as kept before 1.88.1.</summary>
+        public MacTokenStore() : this(null) { }
+
+        /// <summary>One game's saved sign-in, under Keychain accounts named for the game; null for the one every game shares.</summary>
+        internal MacTokenStore(string gameKey)
+        {
+            _accessAccount = Flock.Config.FlockGameKey.Named(AccessAccount, gameKey);
+            _refreshAccount = Flock.Config.FlockGameKey.Named(RefreshAccount, gameKey);
+        }
+
         public override void Save(string accessToken, string refreshToken)
         {
-            Write(AccessAccount, accessToken);
-            Write(RefreshAccount, refreshToken);
+            Write(_accessAccount, accessToken);
+            Write(_refreshAccount, refreshToken);
         }
 
         public override StoredTokens Load()
         {
-            string a = Read(AccessAccount);
-            string r = Read(RefreshAccount);
+            string a = Read(_accessAccount);
+            string r = Read(_refreshAccount);
             if (a == null || r == null) return null;
             return new StoredTokens { AccessToken = a, RefreshToken = r };
         }
 
         public override void Clear()
         {
-            Delete(AccessAccount);
-            Delete(RefreshAccount);
+            Delete(_accessAccount);
+            Delete(_refreshAccount);
         }
 
         private static void Write(string account, string value)

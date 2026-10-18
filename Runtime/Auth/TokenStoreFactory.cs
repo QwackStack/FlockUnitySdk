@@ -16,23 +16,38 @@ namespace Flock.Auth
     /// </summary>
     public static class TokenStoreFactory
     {
-        public static ITokenStore Create()
+        /// <summary>The platform's store for the saved sign-in every game shares, as kept before 1.88.1. <c>FlockInitConfig</c> keeps one sign-in for each game instead.</summary>
+        public static ITokenStore Create() => Create(null);
+
+        /// <summary>The platform's store keeping this game's saved sign-in apart from every other game's; the one an earlier build kept for every game is taken over by the first game to read one.</summary>
+        internal static ITokenStore CreateForGame(string gameKey)
+        {
+#if UNITY_STANDALONE_OSX && !UNITY_EDITOR
+            // The login Keychain is the user's, not this app's: the items every Flock game shared before 1.88.1 may be another
+            // studio's game's, so they are neither taken over nor cleared. A Mac player signs in once more after the update.
+            return Create(gameKey);
+#else
+            return new FlockGameTokenStore(Create(gameKey), Create(null));
+#endif
+        }
+
+        private static ITokenStore Create(string gameKey)
         {
 #if UNITY_EDITOR
             // Editor fallback
-            return new OtherTokenStore();
+            return new OtherTokenStore(gameKey);
 #elif UNITY_ANDROID
-            return new AndroidTokenStore();
+            return new AndroidTokenStore(gameKey);
 #elif UNITY_IOS || UNITY_TVOS
-            return new IosTokenStore();
+            return new IosTokenStore(gameKey);
 #elif UNITY_STANDALONE_OSX
-            return new MacTokenStore();
+            return new MacTokenStore(gameKey);
 #elif UNITY_STANDALONE_WIN
-            return new WindowsTokenStore();
+            return new WindowsTokenStore(gameKey);
 #elif UNITY_WEBGL
-            return new WebGlTokenStore();
+            return new WebGlTokenStore(gameKey);
 #else
-            return new OtherTokenStore();
+            return new OtherTokenStore(gameKey);
 #endif
         }
     }
