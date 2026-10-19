@@ -280,7 +280,7 @@ namespace Protokite.Playtest.Tests
         [UnityPlatform(RuntimePlatform.WindowsEditor)]
         public void EveryFrameComesOutInOrderOnTheGraphicsCardAndWindowsDecodesThePictureSent()
         {
-            RealEncoding.AssumeAGraphicsCardEncoder();
+            RealEncoding.SkipWithoutAGraphicsCardEncoder();
             const int frames = 30;
             List<ProtokitePlaytestEncodedFrame> output = new List<ProtokitePlaytestEncodedFrame>();
             string description = null;
@@ -329,7 +329,7 @@ namespace Protokite.Playtest.Tests
         [UnityPlatform(RuntimePlatform.WindowsEditor)]
         public void KeyframesComeAtTheIntervalAskedFor()
         {
-            RealEncoding.AssumeAGraphicsCardEncoder();
+            RealEncoding.SkipWithoutAGraphicsCardEncoder();
             List<ProtokitePlaytestEncodedFrame> output = new List<ProtokitePlaytestEncodedFrame>();
             RealEncoding.OnItsOwnThread(() =>
             {
@@ -351,7 +351,7 @@ namespace Protokite.Playtest.Tests
         [UnityPlatform(RuntimePlatform.WindowsEditor)]
         public void AFrameOfTheWrongLengthIsRefusedBeforeTheEncoderReadsIt()
         {
-            RealEncoding.AssumeAGraphicsCardEncoder();
+            RealEncoding.SkipWithoutAGraphicsCardEncoder();
             RealEncoding.OnItsOwnThread(() =>
             {
                 using (ProtokitePlaytestWindowsVideoEncoder encoder = new ProtokitePlaytestWindowsVideoEncoder())

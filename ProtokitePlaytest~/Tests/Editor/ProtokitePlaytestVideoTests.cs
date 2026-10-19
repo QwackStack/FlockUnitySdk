@@ -337,7 +337,8 @@ namespace Protokite.Playtest.Tests
         [Test]
         public void APhonesEncoderThatRefusesTheScreensSizeRecordsTheNextSizeDownAndSaysWhich()
         {
-            Assume.That(Screen.width > 64 && Screen.height > 64, "The recording is sized from the screen, which this editor must have");
+            if (Screen.width <= 64 || Screen.height <= 64)
+                Assert.Ignore($"The recording is sized from the screen, which this editor must have; it has {Screen.width}x{Screen.height}.");
             ProtokitePlaytestVideoSettings.FitVideoSize(Screen.width, Screen.height, 1280, 1280, out int fullWidth, out int fullHeight);
             ProtokitePlaytestEncoderFound found = new ProtokitePlaytestEncoderFound
             {

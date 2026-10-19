@@ -113,7 +113,8 @@ namespace Protokite.Playtest.Tests
         {
             // What is checked is the capture and the encoding, not this PC: one whose graphics card has no H.264 encoder records nothing by default.
             List<ProtokitePlaytestEncoderFound> offered = ProtokitePlaytestVideoEncoders.EncodersOnThisPc(out string whyNone);
-            Assume.That(offered != null && offered.Exists(encoder => encoder.InHardware), "This PC's graphics card has no H.264 encoder: " + (whyNone ?? string.Join(", ", offered)));
+            if (offered == null || !offered.Exists(encoder => encoder.InHardware))
+                Assert.Ignore("This PC's graphics card has no H.264 encoder: " + (whyNone ?? string.Join(", ", offered)));
             BuildTheScene();
             ProtokitePlaytestDriver.StartWithTheGame();
             Texture2D screen;

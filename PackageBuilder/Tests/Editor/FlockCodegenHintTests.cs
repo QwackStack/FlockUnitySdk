@@ -159,7 +159,7 @@ namespace Flock.Tests
             FieldInfo field = typeof(CompilationPipeline).GetField(
                 "assemblyCompilationFinished", BindingFlags.NonPublic | BindingFlags.Static);
             if (field == null)
-                Assert.Inconclusive("Unity changed the backing field for assemblyCompilationFinished; subscription unverified.");
+                Assert.Ignore("Unity changed the backing field for assemblyCompilationFinished; subscription unverified.");
 
             Delegate handlers = field.GetValue(null) as Delegate;
             Assert.IsNotNull(handlers, "Nothing is subscribed to assemblyCompilationFinished.");

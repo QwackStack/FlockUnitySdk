@@ -58,8 +58,10 @@ for mode in editmode playmode; do
   done
 done
 
-# The test step says only that Unity exited 2, and its log needs a sign-in: every failed test is named here and on the run's
-# page. GitHub shows ten errors a step, so past ten the tenth annotation names the rest.
+# The test step says only that Unity exited 2, and its log needs a sign-in: everything that makes Unity exit 2 is named here
+# and on the run's page. That is a failed test, an inconclusive one (an Assume that did not hold: Unity counts it as failed,
+# so a test that cannot run somewhere must Assert.Ignore instead), and a fixture or assembly that failed outside any one test
+# (its one-time set-up or tear-down). GitHub shows ten errors a step, so past ten the tenth annotation names the rest.
 # $readable is split on purpose: the report paths hold no spaces.
 if [ -n "$readable" ] && ! python3 - "$leg" $readable <<'PY'
 import os
@@ -70,22 +72,32 @@ def annotate(report, title, text):
     text = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
     print(f"::error file={report},title={title} ({leg})::{text}")
 
+def message_of(node):
+    return (node.findtext("failure/message") or node.findtext("reason/message") or "").strip()
+
 leg, reports = sys.argv[1], sys.argv[2:]
 failed = []
 for report in reports:
     mode = os.path.basename(report).split("-")[0]
-    for case in ET.parse(report).getroot().iter("test-case"):
-        if case.get("result") == "Failed":
-            failed.append((report, mode, case.get("fullname"), (case.findtext("failure/message") or "").strip()))
-for report, mode, name, message in failed:
-    print(f"[{leg}] {mode} test failed: {name}\n    " + message.replace("\n", "\n    "))
+    root = ET.parse(report).getroot()
+    for case in root.iter("test-case"):
+        if case.get("result") in ("Failed", "Inconclusive"):
+            failed.append((report, mode, case.get("result").lower(), case.get("fullname"), message_of(case)))
+    # A suite that failed with none of its tests failing failed on its own: its one-time set-up or tear-down. The suites above
+    # it fail as well, marked site="Child", and are left out so one failure is named once.
+    for suite in root.iter("test-suite"):
+        if suite.get("result") == "Failed" and suite.get("site") != "Child" \
+                and not any(case.get("result") in ("Failed", "Inconclusive") for case in suite.iter("test-case")):
+            failed.append((report, mode, "failed outside its tests", suite.get("fullname"), message_of(suite)))
+for report, mode, how, name, message in failed:
+    print(f"[{leg}] {mode} test {how}: {name}\n    " + message.replace("\n", "\n    "))
 shown = failed if len(failed) <= 10 else failed[:9]
-for report, mode, name, message in shown:
-    annotate(report, f"{mode} test failed", f"{name}: {message[:2000]}")
+for report, mode, how, name, message in shown:
+    annotate(report, f"{mode} test {how}", f"{name}: {message[:2000]}")
 if len(failed) > len(shown):
     rest = failed[len(shown):]
-    annotate(rest[0][0], f"{len(rest)} more tests failed", "\n".join(f"{mode}: {name}" for _, mode, name, _ in rest))
-print(f"[{leg}] {len(failed)} tests failed.")
+    annotate(rest[0][0], f"{len(rest)} more tests failed or were inconclusive", "\n".join(f"{mode} ({how}): {name}" for _, mode, how, name, _ in rest))
+print(f"[{leg}] {len(failed)} tests failed or were inconclusive.")
 sys.exit(1 if failed else 0)
 PY
 then

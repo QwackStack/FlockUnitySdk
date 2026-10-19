@@ -126,11 +126,11 @@ namespace Protokite.Playtest.Tests
             return found != null && found.Exists(encoder => encoder.InHardware);
         }
 
-        /// <summary>Leaves a test inconclusive on a PC whose graphics card has no H.264 encoder: what it checks is the encoder, not this PC.</summary>
-        public static void AssumeAGraphicsCardEncoder()
+        /// <summary>Skips a test on a PC whose graphics card has no H.264 encoder: what it checks is the encoder, not this PC. Skipped, never inconclusive: Unity's test runner exits 2 on an inconclusive test.</summary>
+        public static void SkipWithoutAGraphicsCardEncoder()
         {
-            bool offered = GraphicsCardEncoderOffered(out string whatIsOffered);
-            NUnit.Framework.Assume.That(offered, "This test drives a graphics card's H.264 encoder, and this PC has none: " + whatIsOffered);
+            if (!GraphicsCardEncoderOffered(out string whatIsOffered))
+                NUnit.Framework.Assert.Ignore("This test drives a graphics card's H.264 encoder, and this PC has none: " + whatIsOffered);
         }
 
         /// <summary>Runs the work on a thread of its own, as a recording's encoding thread does, and throws here what it threw there.</summary>

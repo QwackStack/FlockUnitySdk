@@ -272,7 +272,7 @@ namespace Flock.Tests
             // No HTTP status means a transport/network problem, not a server answer — don't fail the suite on it.
             if (ex.StatusCode == null)
             {
-                Assert.Inconclusive($"Live backend unreachable: {ex.Message}");
+                Assert.Ignore($"Live backend unreachable: {ex.Message}");
                 yield break;
             }
 

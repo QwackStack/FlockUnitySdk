@@ -642,7 +642,7 @@ namespace Protokite.Playtest.Tests
         [Test]
         public void ARealEncoderRecordsAFileWindowsDecodesFrameForFrame()
         {
-            RealEncoding.AssumeAGraphicsCardEncoder();
+            RealEncoding.SkipWithoutAGraphicsCardEncoder();
             FakeFrameSource source = new FakeFrameSource(RealEncoding.Width, RealEncoding.Height);
             ProtokitePlaytestVideoRecording recording = Start(source, new ProtokitePlaytestWindowsVideoEncoder(), Settings());
             // Paced, so each frame goes through before the next, as in a game.

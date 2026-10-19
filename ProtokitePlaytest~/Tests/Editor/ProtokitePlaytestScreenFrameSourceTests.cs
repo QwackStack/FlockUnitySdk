@@ -27,7 +27,9 @@ namespace Protokite.Playtest.Tests
 
         private ProtokitePlaytestScreenFrameSource Source(int width, int height, int blocks = 4)
         {
-            Assume.That(SystemInfo.graphicsUVStartsAtTop, "These pictures are laid out for a graphics API whose textures start at the top");
+            // Skipped, never left inconclusive: Unity's test runner exits 2 on an inconclusive test, which fails CI's OpenGL runner.
+            if (!SystemInfo.graphicsUVStartsAtTop)
+                Assert.Ignore($"These pictures are laid out for a graphics API whose textures start at the top (Direct3D, Metal, Vulkan); this editor draws with {SystemInfo.graphicsDeviceType}.");
             Assert.IsNull(ProtokitePlaytestScreenFrameSource.WhyThisDeviceCannotRecord(ProtokitePlaytestPixelFormat.Nv12), "Precondition: this editor's graphics card can capture");
             ProtokitePlaytestScreenFrameSource source = ProtokitePlaytestScreenFrameSource.Create(width, height, blocks, out string whyNot);
             Assert.IsNotNull(source, whyNot);
