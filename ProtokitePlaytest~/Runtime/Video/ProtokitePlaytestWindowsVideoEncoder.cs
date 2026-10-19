@@ -15,6 +15,12 @@ namespace Protokite.Playtest
         /// <summary>How long a frame may wait for the encoder before the recording gives up on it.</summary>
         internal const int LongestWaitMs = 10000;
 
+        /// <summary>How long letting go of an encoder waits at most, all told, for it to hand back the frames it holds and fall quiet; a drain takes milliseconds.</summary>
+        internal const int LongestSettleMs = 1000;
+
+        /// <summary>How long an encoder that hands frames back through events must send nothing before it is let go.</summary>
+        internal const int QuietBeforeLettingGoMs = 200;
+
         private const long HundredNanosecondsPerMillisecond = 10000;
         // A stream change or a frame held for later never needs more than a few rounds; more means the encoder is stuck.
         private const int MostOutputRounds = 64;
@@ -30,6 +36,7 @@ namespace Protokite.Playtest
         private bool _providesSamples;
         private uint _outputBufferBytes;
         private int _inputsWanted;
+        private bool _streaming;
         private bool _drained;
         private byte[] _sequenceSettings;
         private byte[] _pictureSettings;
@@ -140,14 +147,6 @@ namespace Protokite.Playtest
             if (_disposed)
                 return;
             _disposed = true;
-            try
-            {
-                if (_transform != null)
-                    _transform.ProcessMessage(MessageEndStreaming, IntPtr.Zero);
-            }
-            catch (Exception)
-            {
-            }
             LetGoOfTheEncoder();
             if (_mediaFoundationStarted)
                 MFShutdown();
@@ -334,6 +333,7 @@ namespace Protokite.Playtest
                 error = $"it would not start a stream ({Hex(result)}).";
                 return false;
             }
+            _streaming = true;
             error = null;
             return true;
         }
@@ -795,11 +795,106 @@ namespace Protokite.Playtest
 
         private void DropTheTransform()
         {
+            if (_transform != null)
+                Settle();
             // A test's stand-in is not a COM object, and has nothing to let go.
             if (_transform != null && Marshal.IsComObject(_transform))
                 Marshal.FinalReleaseComObject(_transform);
             _transform = null;
             _events = null;
+            _streaming = false;
+            _drained = false;
+            _inputsWanted = 0;
+        }
+
+        // A graphics card's encoder works on Windows' own threads, and one let go while it still works there is touched after it is gone:
+        // it hands back what it holds, falls quiet, stops streaming and is shut down first, each step taken whatever the one before did.
+        private void Settle()
+        {
+            if (_asynchronous && _events != null)
+                TakeAndCarryOn(LetItsWorkEnd);
+            TakeAndCarryOn(() => _transform.ProcessMessage(MessageEndStreaming, IntPtr.Zero));
+            TakeAndCarryOn(() =>
+            {
+                if (_transform is IMFShutdown shutdown)
+                    shutdown.Shutdown();
+            });
+        }
+
+        // Measured with two editors encoding at once: NVIDIA's encoder still works on Windows' threads for a moment after it says the drain is
+        // complete, and let go then it crashed the editor in every run; drained and then quiet for 200 ms, 1,500 encoders let go held.
+        // A stream that started is drained first. Quiet is judged only by a look that found nothing, so a thread kept off the processor past
+        // the 200 ms still looks once more before it lets go.
+        private void LetItsWorkEnd()
+        {
+            bool draining = false;
+            if (_streaming && !_drained)
+            {
+                _transform.ProcessMessage(MessageEndOfStream, IntPtr.Zero);
+                draining = _transform.ProcessMessage(MessageCommandDrain, IntPtr.Zero) >= 0;
+            }
+            Stopwatch quiet = Stopwatch.StartNew();
+            Stopwatch waited = Stopwatch.StartNew();
+            while (waited.ElapsedMilliseconds < LongestSettleMs)
+            {
+                if (_events.GetEvent(EventNoWait, out IMFMediaEvent late) < 0)
+                {
+                    if (!draining && quiet.ElapsedMilliseconds >= QuietBeforeLettingGoMs)
+                        return;
+                    Thread.Sleep(1);
+                    continue;
+                }
+                uint type;
+                try
+                {
+                    late.GetEventType(out type);
+                }
+                finally
+                {
+                    Release(late);
+                }
+                if (type == EventHaveOutput)
+                    DropOneOutput();
+                else if (type == EventDrainComplete)
+                    draining = false;
+                quiet.Restart();
+            }
+        }
+
+        // Takes one frame the encoder announced, as its events require, and lets it go unread: the recording has ended.
+        private void DropOneOutput()
+        {
+            IntPtr ourSamplePointer = IntPtr.Zero;
+            IMFSample ourSample = null;
+            if (!_providesSamples && !MakeEmptySample(out ourSamplePointer, out ourSample, out string _))
+                return;
+            OutputDataBuffer buffer = new OutputDataBuffer { StreamId = 0, Sample = ourSamplePointer };
+            try
+            {
+                _transform.ProcessOutput(0, 1, ref buffer, out uint _);
+            }
+            finally
+            {
+                if (buffer.Events != IntPtr.Zero)
+                    Marshal.Release(buffer.Events);
+                if (_providesSamples && buffer.Sample != IntPtr.Zero)
+                    Marshal.Release(buffer.Sample);
+                Release(ourSample);
+                if (ourSamplePointer != IntPtr.Zero)
+                    Marshal.Release(ourSamplePointer);
+            }
+        }
+
+        private static void TakeAndCarryOn(Action step)
+        {
+            try
+            {
+                step();
+            }
+            catch (Exception)
+            {
+                // Letting go goes on: the steps after this one matter more than this one's failure.
+            }
         }
 
         // Shut down through the object that made the encoder, so a graphics card's encoding session ends with it.

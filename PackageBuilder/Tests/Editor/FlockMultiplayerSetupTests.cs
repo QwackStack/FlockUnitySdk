@@ -310,21 +310,27 @@ namespace Flock.Tests.Editor
         public void TheSharedJitterVaries()
         {
             FlockFakeTransport transport = new FlockFakeTransport();
+            // Started before the client, so it has run at least as long as the calls' own clock when each due time is read.
+            System.Diagnostics.Stopwatch sinceBeforeTheClient = System.Diagnostics.Stopwatch.StartNew();
             using (FlockTestClient h = FlockTestClient.Create(transport))
             {
                 h.LoginAs("player-a");
                 FlockRepeatingCalls calls = h.Client.Multiplayer.RepeatingCalls;
                 List<double> firstWaits = new List<double>();
+                List<double> latestDueTimes = new List<double>();
                 for (int i = 0; i < 8; i++)
                 {
                     FlockRepeatingCall call = calls.Start<bool>("call-" + i, TimeSpan.FromSeconds(1000), _ => null, null, null);
                     firstWaits.Add(call.DueAt.TotalSeconds);
+                    latestDueTimes.Add(1250 + sinceBeforeTheClient.Elapsed.TotalSeconds);
                     call.Stop();
                 }
 
                 // Eight waits a thousand seconds long from one source that varies differ by far more than the moments between them.
                 Assert.Greater(firstWaits.Max() - firstWaits.Min(), 10.0, "The default jitter source gives different waits");
-                Assert.IsTrue(firstWaits.All(w => w >= 750 && w <= 1250.5), "Each wait stays within a quarter of the interval");
+                for (int i = 0; i < firstWaits.Count; i++)
+                    Assert.IsTrue(firstWaits[i] >= 750 && firstWaits[i] <= latestDueTimes[i],
+                        $"Each wait stays within a quarter of the interval: due at {firstWaits[i]} s, latest {latestDueTimes[i]} s");
             }
         }
 

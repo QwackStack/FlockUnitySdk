@@ -78,6 +78,8 @@ namespace Flock.Tests.PlayMode
         private readonly Dictionary<string, Queue<Held>> _holds = new Dictionary<string, Queue<Held>>();
         private readonly Dictionary<string, Queue<FlockHttpResponse>> _cannedAnswers = new Dictionary<string, Queue<FlockHttpResponse>>();
         private readonly List<KeyValuePair<string, FlockHttpRequest>> _requests = new List<KeyValuePair<string, FlockHttpRequest>>();
+        // When each of _requests arrived, in step with it, so a test times the SDK's sends rather than the frames that noticed them.
+        private readonly List<DateTime> _arrivedAt = new List<DateTime>();
         private int _nextId;
         private int _nextOrder;
 
@@ -96,6 +98,21 @@ namespace Flock.Tests.PlayMode
         {
             lock (_lock)
                 return _requests.Where(pair => pair.Key == route).Select(pair => pair.Value).ToList();
+        }
+
+        // When each request to the route arrived, in order.
+        internal List<DateTime> ArrivalsAt(string route)
+        {
+            List<DateTime> arrivals = new List<DateTime>();
+            lock (_lock)
+            {
+                for (int i = 0; i < _requests.Count; i++)
+                {
+                    if (_requests[i].Key == route)
+                        arrivals.Add(_arrivedAt[i]);
+                }
+            }
+            return arrivals;
         }
 
         internal Held HoldNext(string route)
@@ -279,6 +296,7 @@ namespace Flock.Tests.PlayMode
             lock (_lock)
             {
                 _requests.Add(new KeyValuePair<string, FlockHttpRequest>(route, request));
+                _arrivedAt.Add(DateTime.UtcNow);
                 if (_holds.TryGetValue(route, out Queue<Held> holds) && holds.Count > 0)
                     held = holds.Dequeue();
                 if (_cannedAnswers.TryGetValue(route, out Queue<FlockHttpResponse> canned) && canned.Count > 0)

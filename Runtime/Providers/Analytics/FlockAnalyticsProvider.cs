@@ -12,6 +12,7 @@ using Flock.Logging;
 using Flock.Models;
 using Newtonsoft.Json;
 using UnityEngine;
+using static System.FormattableString;
 
 namespace Flock.Providers
 {
@@ -990,7 +991,7 @@ namespace Flock.Providers
             RequireAuth();
 
             if (request.Amount < 0)
-                throw new FlockValidationException($"The transaction amount is below zero: {request.Amount}") { Hint = "Pass an amount of zero or more." };
+                throw new FlockValidationException(Invariant($"The transaction amount is below zero: {request.Amount}")) { Hint = "Pass an amount of zero or more." };
 
             if (string.IsNullOrEmpty(request.PlayerId))
                 request.PlayerId = Client.CurrentPlayerId ??FlockConstant.DummyUserID;
@@ -1007,7 +1008,7 @@ namespace Flock.Providers
                 // or its revenue would count twice.
                 "Record transaction", cancellationToken, idempotent: false);
 
-            Client.Logger.LogDebug($"Transaction recorded: {request.Amount} {request.CurrencyCode}");
+            Client.Logger.LogDebug(Invariant($"Transaction recorded: {request.Amount} {request.CurrencyCode}"));
         }
 
         /// <summary>The longest the periodic flush waits, however long the server has been failing.</summary>

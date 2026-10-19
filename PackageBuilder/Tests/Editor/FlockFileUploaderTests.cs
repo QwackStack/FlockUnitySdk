@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Diagnostics;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -91,8 +92,16 @@ namespace Flock.Tests
             Assert.IsFalse(upload.Result.IsUploaded);
             Assert.AreEqual(FlockHttpResult.ConnectionError, upload.Result.Result);
             StringAssert.Contains("missing.webm", upload.Result.Body);
-            Thread.Sleep(200);
-            Assert.AreEqual(0, _storage.Count, "No request was made");
+            yield return WaitASecondForAnyRequest();
+            Assert.AreEqual(0, _storage.RequestsArrived, "No request was made" + _storage.ServeFailuresSaid());
+        }
+
+        // The editor loop keeps ticking, as a UnityWebRequest needs, for a second or until a request reaches the storage.
+        private IEnumerator WaitASecondForAnyRequest()
+        {
+            Stopwatch waited = Stopwatch.StartNew();
+            while (_storage.RequestsArrived == 0 && waited.Elapsed < TimeSpan.FromSeconds(1))
+                yield return null;
         }
 
         // Measured: Unity throws for an address it cannot parse.
@@ -121,8 +130,8 @@ namespace Flock.Tests
             Assert.AreEqual(FlockHttpResult.ConnectionError, upload.Result.Result, url);
             Assert.IsFalse(upload.Result.IsUploaded, url);
             StringAssert.Contains("could not begin", upload.Result.Body, url);
-            Thread.Sleep(200);
-            Assert.AreEqual(0, _storage.Count, "No request was made");
+            yield return WaitASecondForAnyRequest();
+            Assert.AreEqual(0, _storage.RequestsArrived, "No request was made" + _storage.ServeFailuresSaid());
         }
 
         [UnityTest]
@@ -141,19 +150,24 @@ namespace Flock.Tests
         [UnityTest]
         public IEnumerator ASlowUploadThatKeepsSendingIsNotGivenUp()
         {
-            // Read slowly for about six seconds against a three-second stall timeout: only an upload that never moves is given up, and
-            // an uploader that timed the whole upload would give this one up. The client counts what it hands to the socket, so the
-            // end of an upload drains from the kernel's buffers with nothing moving: on Linux loopback about 9 MiB (4 MiB sent, 6 MiB
-            // received), measured as 2.6 to 2.9 s at the 256 KiB a tenth this test read before (a one-second timeout gave it up on
-            // CI's Linux runner now and then) and 0.8 to 0.9 s at 1 MiB a tenth.
+            // Only an upload that never moves is given up: the storage reads 44 MiB at 512 KiB a tenth, about eight seconds against a three-second stall timeout.
             const int Size = 60 * 1024 * 1024;
-            _storage.ReadBytesPerTenthOfASecond = 1024 * 1024;
-            FlockHttpClient.UseFileUploader(new UnityWebRequestFileUploader(TimeSpan.FromSeconds(3)));
-            Task<FlockFileUploadOutcome> upload = FlockHttpClient.UploadFileAsync(_storage.Url + "bucket/key", MakeFile(Size), "video/webm");
-            yield return FlockTestWait.Until(() => upload.IsCompleted, "The upload ended within 60 s", 60);
+            TimeSpan stallTimeout = TimeSpan.FromSeconds(3);
+            _storage.ReadBytesPerTenthOfASecond = 512 * 1024;
+            // The client counts what it hands to the socket, so the last ~9 MiB drain from Linux loopback's buffers with nothing moving (2.6 to 2.9 s read slowly on CI); read at full speed, milliseconds.
+            _storage.LastBytesReadAtFullSpeed = 16 * 1024 * 1024;
+            string path = MakeFile(Size);
+            FlockHttpClient.UseFileUploader(new UnityWebRequestFileUploader(stallTimeout));
+            Stopwatch sinceStart = Stopwatch.StartNew();
+            Task<FlockFileUploadOutcome> upload = FlockHttpClient.UploadFileAsync(_storage.Url + "bucket/key", path, "video/webm");
+            // Timed where the upload ends, not when a later frame sees it.
+            Task<TimeSpan> took = upload.ContinueWith(_ => sinceStart.Elapsed, TaskContinuationOptions.ExecuteSynchronously);
+            yield return FlockTestWait.Until(() => took.IsCompleted, "The upload ended within 60 s", 60);
 
             Assert.IsTrue(upload.Result.IsUploaded, $"{upload.Result.Result} {upload.Result.StatusCode} {upload.Result.Body}");
             Assert.AreEqual(Size, _storage.Single().Body.Length);
+            Assert.Greater(took.Result.TotalSeconds, 2 * stallTimeout.TotalSeconds,
+                "The upload outlasted two stall timeouts, so an uploader that timed the whole upload would have given it up");
         }
 
         [UnityTest]

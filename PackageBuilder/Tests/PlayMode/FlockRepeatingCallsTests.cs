@@ -232,13 +232,20 @@ namespace Flock.Tests.PlayMode
             transport.OnSequence(Route,
                 new FlockHttpResponse { Result = FlockHttpResult.Success, StatusCode = 429, Body = "{}", RetryAfterHeader = "1" },
                 FlockFakeTransport.Ok("{\"n\":1}"));
-            Calls.Start("poll", TimeSpan.FromSeconds(0.1), Send(), null, null);
+            // Each request timed as the call sends it, not when a frame notices it went.
+            Stopwatch clock = Stopwatch.StartNew();
+            List<double> sentAt = new List<double>();
+            Func<CancellationToken, Task<Dictionary<string, object>>> send = Send();
+            Calls.Start("poll", TimeSpan.FromSeconds(0.1), token =>
+            {
+                sentAt.Add(clock.Elapsed.TotalSeconds);
+                return send(token);
+            }, null, null);
             yield return FlockTestWait.Until(() => transport.CountTo(Route) == 1, "The first request went");
-            Stopwatch sinceRefused = Stopwatch.StartNew();
 
             yield return FlockTestWait.Until(() => transport.CountTo(Route) == 2, "The call went again");
 
-            Assert.GreaterOrEqual(sinceRefused.Elapsed.TotalSeconds, 0.9, "It waited for the second Retry-After asked for, not its 0.1 s interval");
+            Assert.GreaterOrEqual(sentAt[1] - sentAt[0], 0.9, "It waited for the second Retry-After asked for, not its 0.1 s interval");
         }
 
         [Test]
@@ -260,22 +267,26 @@ namespace Flock.Tests.PlayMode
         {
             SignedIn(FlockFakeTransport.Ok("{\"n\":1}"));
             int rolls = 0;
-            // Rolls 0, 1, 0, 1: waits of three quarters and one and a quarter of the interval, in turn.
+            // Rolls 0, 1, 0, 1: waits of three quarters and one and a quarter of the interval, in turn (0.75 s and 1.25 s, half a second apart).
             FlockRepeatingCalls calls = new FlockRepeatingCalls(_h.Client, () => rolls++ % 2);
             Stopwatch clock = Stopwatch.StartNew();
             List<double> sentAt = new List<double>();
             Func<CancellationToken, Task<Dictionary<string, object>>> send = Send();
-            calls.Start("poll", TimeSpan.FromSeconds(0.4), token =>
+            calls.Start("poll", TimeSpan.FromSeconds(1), token =>
             {
                 sentAt.Add(clock.Elapsed.TotalSeconds);
                 return send(token);
             }, null, null);
 
-            DateTime until = DateTime.UtcNow.AddSeconds(5);
+            DateTime until = DateTime.UtcNow.AddSeconds(15);
+            double longestFrame = 0;
+            double frameStarted = clock.Elapsed.TotalSeconds;
             while (sentAt.Count < 4 && DateTime.UtcNow < until)
             {
                 calls.SendThoseDue();
                 yield return null;
+                longestFrame = Math.Max(longestFrame, clock.Elapsed.TotalSeconds - frameStarted);
+                frameStarted = clock.Elapsed.TotalSeconds;
             }
             calls.StopAll();
 
@@ -283,9 +294,12 @@ namespace Flock.Tests.PlayMode
             double first = sentAt[1] - sentAt[0];
             double second = sentAt[2] - sentAt[1];
             double third = sentAt[3] - sentAt[2];
-            Assert.AreEqual(0.5, first, 0.08, "A roll of 1 waits one and a quarter of the interval");
-            Assert.AreEqual(0.3, second, 0.08, "A roll of 0 waits three quarters of it");
-            Assert.AreEqual(0.5, third, 0.08);
+            // A wait starts once the answer is in and its request goes at the next send after it ends: never sooner, and at most two frames later.
+            double late = 2 * longestFrame + 0.02;
+            string frames = $"longest frame {longestFrame:0.000} s";
+            Assert.That(first, Is.InRange(1.25 - 0.01, 1.25 + late), "A roll of 1 waits one and a quarter of the interval; " + frames);
+            Assert.That(second, Is.InRange(0.75 - 0.01, 0.75 + late), "A roll of 0 waits three quarters of it; " + frames);
+            Assert.That(third, Is.InRange(1.25 - 0.01, 1.25 + late), frames);
         }
 
         [UnityTest]

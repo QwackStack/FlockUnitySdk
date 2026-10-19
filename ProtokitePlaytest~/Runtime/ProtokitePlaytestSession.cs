@@ -44,6 +44,9 @@ namespace Protokite.Playtest
         /// <summary>Where the device id is kept, when a test sets one; the game's persistent data folder otherwise.</summary>
         internal static string DeviceIdFilePathForTesting;
 
+        /// <summary>How long quitting waits, when a test that is not about the bound needs longer than a slow disk takes to close a file.</summary>
+        internal static TimeSpan? QuitWaitForTesting;
+
         /// <summary>Where this launch's session is.</summary>
         internal static ProtokitePlaytestSessionState SessionState => _sessionState;
 
@@ -224,7 +227,8 @@ namespace Protokite.Playtest
                 EndInBackground(_sessionApiUrl, _sessionHeaders, _sessionRetryPolicy, _playtestSessionId);
             }
 #else
-            DateTime until = DateTime.UtcNow + QuitWait;
+            TimeSpan quitWait = QuitWaitForTesting ?? QuitWait;
+            DateTime until = DateTime.UtcNow + quitWait;
             if (_sessionState == ProtokitePlaytestSessionState.Starting && _sessionStart != null)
             {
                 try
@@ -281,7 +285,7 @@ namespace Protokite.Playtest
                         if (ended)
                             Debug.Log(LogPrefix + $"Protokite session {sessionId} ended.");
                         else
-                            Debug.LogWarning(LogPrefix + $"Protokite session {sessionId} could not be ended within {QuitWait.TotalSeconds:0} s of quitting, so Protokite shows it as still in progress.");
+                            Debug.LogWarning(LogPrefix + $"Protokite session {sessionId} could not be ended within {quitWait.TotalSeconds:0} s of quitting, so Protokite shows it as still in progress.");
                     }
                 }
             }

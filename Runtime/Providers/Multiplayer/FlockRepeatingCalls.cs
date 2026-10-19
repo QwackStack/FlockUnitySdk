@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Flock.Exceptions;
+using static System.FormattableString;
 
 namespace Flock.Providers
 {
@@ -136,7 +137,7 @@ namespace Flock.Providers
                     TimeSpan? retryAfter = (failure as FlockNetworkException)?.RetryAfter;
                     if (retryAfter.HasValue && retryAfter.Value > wait)
                         wait = retryAfter.Value;
-                    _client.Logger.LogDebug($"{call.Name} failed, trying again in {wait.TotalSeconds:0.#} s: {failure.Message}");
+                    _client.Logger.LogDebug(Invariant($"{call.Name} failed, trying again in {wait.TotalSeconds:0.#} s: {failure.Message}"));
                     return;
                 }
                 call.Stop();

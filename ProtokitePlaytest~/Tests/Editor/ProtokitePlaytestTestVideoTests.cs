@@ -66,16 +66,19 @@ namespace Protokite.Playtest.Tests
         {
             if (FlockClient.IsInitialized)
                 FlockClient.Shutdown();
+            // Waited for before the reset, which forgets the pass after 5 s; judged once everything else is put back.
+            bool passEnded = ProtokitePlaytest.WaitForEarlierRecordingsForTesting(TimeSpan.FromSeconds(30));
             ProtokitePlaytest.ResetForNewLaunch();
-            Assert.IsTrue(ProtokitePlaytest.WaitForEarlierRecordingsForTesting(TimeSpan.FromSeconds(10)), "The finishing pass ended before its folder is deleted");
             ProtokitePlaytest.BeforeFinishingEachEarlierRecordingForTesting = null;
             ProtokitePlaytest.LongestWaitForEarlierRecordingsForTesting = null;
             ProtokitePlaytest.VideoEncoderForTesting = null;
             ProtokitePlaytest.VideoFrameSourceForTesting = null;
             ProtokitePlaytest.RecordingsFolderForTesting = null;
             ProtokitePlaytest.DeviceIdFilePathForTesting = null;
+            ProtokitePlaytest.QuitWaitForTesting = null;
             FlockHttpClient.Configure(TimeSpan.FromSeconds(30));
             _settings.Dispose();
+            Assert.IsTrue(passEnded, "The finishing pass ended before its folder is deleted");
             try
             {
                 if (Directory.Exists(_folder))
@@ -460,6 +463,9 @@ namespace Protokite.Playtest.Tests
         {
             RecordTestVideo(60);
             Frames(30);
+            RecordingsUnderWay.LetTheEncoderTakeEveryFrameBeforeQuitting(_source);
+            // Not the bound this test is about: a slow disk closes and renames the file in its own time.
+            ProtokitePlaytest.QuitWaitForTesting = TimeSpan.FromSeconds(30);
             ProtokitePlaytest.HandleGameQuitting();
             Assert.AreEqual(ProtokitePlaytestTestVideoState.Finished, ProtokitePlaytest.TestVideoState, "Finished before quitting returns");
             ProtokitePlaytestVideoRecordingSummary summary = ProtokitePlaytest.FinishedTestVideo;
@@ -467,6 +473,23 @@ namespace Protokite.Playtest.Tests
             Assert.IsTrue(File.Exists(summary.FilePath));
             using (ProtokitePlaytestRecordingRun run = ProtokitePlaytestRecordingRun.ClaimEnded(RunFolderOf(summary.FilePath), ProtokitePlaytestRecordingKind.TestVideo))
                 Assert.IsNotNull(run, "And its run is let go: the Editor stays open after Play Mode ends");
+        }
+
+        // A graphics card's encoder let go as the game closes around it can crash it, so the time the file leaves goes to the encoder.
+        [Test]
+        public void QuittingLetsTheTestVideosEncoderEndItsWorkWithTheTimeTheFileLeaves()
+        {
+            RecordTestVideo(60);
+            Frames(30);
+            Assert.IsNotNull(_encoder, "Precondition: the test video's encoder was made");
+            // Longer than closing and renaming the file take, so a quit that does not wait for the encoder returns before it has let go.
+            _encoder.BeforeLettingGo = () => Thread.Sleep(1500);
+            RecordingsUnderWay.LetTheEncoderTakeEveryFrameBeforeQuitting(_source);
+            // Not the bound this test is about: a slow disk closes and renames the file in its own time.
+            ProtokitePlaytest.QuitWaitForTesting = TimeSpan.FromSeconds(30);
+            ProtokitePlaytest.HandleGameQuitting();
+            Assert.AreEqual(ProtokitePlaytestTestVideoState.Finished, ProtokitePlaytest.TestVideoState, "Precondition: finished before quitting returns");
+            Assert.IsTrue(_encoder.Disposed, "The encoder had let go before quitting returned");
         }
 
         [Test]

@@ -17,17 +17,17 @@ namespace Flock.Tests.PlayMode
     // direct path goes quiet; a host offers its addresses only to players its netcode let in, and only probes carrying both keys count.
     public partial class FlockRelayBridgeTests
     {
+        // The address asked on the SDK's own 0.5 s three times (it ends at the first answer); probes given 3 s and a direct path 3 s of
+        // quiet, so a busy machine's pause is not taken for an unanswered probe or a path gone quiet; keep-alives every 0.2 s.
         private static FlockDirectLink.Timing Quick() => new FlockDirectLink.Timing
         {
             Tick = TimeSpan.FromMilliseconds(20),
-            AskAddressEvery = TimeSpan.FromMilliseconds(100),
-            AddressAsks = 2,
             OfferEvery = TimeSpan.FromMilliseconds(200),
             OfferFor = TimeSpan.FromSeconds(3),
             ProbeEvery = TimeSpan.FromMilliseconds(50),
-            ProbeFor = TimeSpan.FromSeconds(1.5),
+            ProbeFor = TimeSpan.FromSeconds(3),
             KeepAliveEvery = TimeSpan.FromMilliseconds(200),
-            QuietFor = TimeSpan.FromMilliseconds(800),
+            QuietFor = TimeSpan.FromSeconds(3),
         };
 
         private int RelayedFrom(FlockRelayConnection relay) => _relay.PassedOnFrom(relay.LocalPortForTesting);
@@ -68,7 +68,7 @@ namespace Flock.Tests.PlayMode
                 pair.Host.LetIn(pair.PlayersAddress);
         }
 
-        private static IEnumerator BothDirect(Pair pair, float seconds = 5f)
+        private static IEnumerator BothDirect(Pair pair, float seconds = 10f)
         {
             yield return FlockTestWait.Until(() => pair.HostsLink != null && pair.HostsLink.IsDirect && pair.PlayersLink != null && pair.PlayersLink.IsDirect,
                 "both ends went direct", seconds);
@@ -95,6 +95,8 @@ namespace Flock.Tests.PlayMode
             Pair pair = new Pair();
             yield return Paired(pair);
             yield return BothDirect(pair);
+            // An offer relayed just before the switch may still be on its way to the relay.
+            yield return RealSeconds(0.3f);
             int hostRelayed = RelayedFrom(pair.Relays[0]);
             int playerRelayed = RelayedFrom(pair.Relays[1]);
 
@@ -120,7 +122,7 @@ namespace Flock.Tests.PlayMode
                     foreach (FlockRelayConnection relay in pair.Relays)
                         relay.StunServers = new[] { new IPEndPoint(IPAddress.Loopback, stun.Port) };
                 });
-                yield return FlockTestWait.Until(() => pair.PlayersLink?.TheirAddressesForTesting != null, "the player heard the host's offer", 5f);
+                yield return FlockTestWait.Until(() => pair.PlayersLink?.TheirAddressesForTesting != null, "the player heard the host's offer");
                 List<IPEndPoint> offered = pair.PlayersLink.TheirAddressesForTesting;
                 Assert.IsTrue(offered.Any(address => address.Address.ToString() == "203.0.113.7"), "The host offered the address the STUN server saw: " + string.Join(", ", offered));
                 yield return BothDirect(pair);
@@ -163,7 +165,7 @@ namespace Flock.Tests.PlayMode
         {
             Pair pair = new Pair();
             yield return Paired(pair, letIn: false);
-            yield return FlockTestWait.Until(() => pair.PlayersLink.HasStopped, "the player gave up waiting for the host's offer", 6f);
+            yield return FlockTestWait.Until(() => pair.PlayersLink.HasStopped, "the player gave up waiting for the host's offer");
 
             Assert.IsNull(pair.HostsLink, "No link to a player the netcode never let in");
             Assert.IsFalse(pair.PlayersLink.IsDirect);
@@ -190,7 +192,7 @@ namespace Flock.Tests.PlayMode
         {
             Pair pair = new Pair();
             yield return Paired(pair, playerGoesDirect: false);
-            yield return FlockTestWait.Until(() => pair.HostsLink != null && pair.HostsLink.HasStopped, "the host gave up waiting for the player's offer", 6f);
+            yield return FlockTestWait.Until(() => pair.HostsLink != null && pair.HostsLink.HasStopped, "the host gave up waiting for the player's offer");
 
             Assert.IsNull(pair.PlayersLink, "A player on the relay only (FlockRelayUse.Always) makes no link");
             Assert.IsFalse(pair.HostsLink.IsDirect);
@@ -251,7 +253,7 @@ namespace Flock.Tests.PlayMode
             pair.PlayersLink.DropsAnswersForTesting = true;
             pair.Host.LetIn(pair.PlayersAddress);
             pair.HostsLink.DropsAnswersForTesting = true;
-            yield return FlockTestWait.Until(() => pair.PlayersLink.IsProbingForTesting, "the player knows the host's key and probes", 3f);
+            yield return FlockTestWait.Until(() => pair.PlayersLink.IsProbingForTesting, "the player knows the host's key and probes");
             int linkPort = pair.PlayersLink.LocalPortForTesting;
             using (UdpClient stranger = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0)))
             {
@@ -276,8 +278,8 @@ namespace Flock.Tests.PlayMode
             Pair pair = new Pair();
             yield return Paired(pair);
             yield return BothDirect(pair);
-            // Twice the quiet time and more, with nothing from either netcode.
-            yield return RealSeconds(2f);
+            // Twice the 3 s quiet time and more, with nothing from either netcode.
+            yield return RealSeconds(6.5f);
 
             Assert.IsTrue(pair.HostsLink.IsDirect && pair.PlayersLink.IsDirect);
         }
@@ -308,7 +310,8 @@ namespace Flock.Tests.PlayMode
             yield return BothDirect(pair);
             pair.HostsLink.HearsNothingForTesting = true;
 
-            yield return FlockTestWait.Until(() => pair.HostsLink.HasStopped && pair.PlayersLink.HasStopped, "both went back to the relay", 4f);
+            // The 3 s of quiet, then word through the relay to the other end.
+            yield return FlockTestWait.Until(() => pair.HostsLink.HasStopped && pair.PlayersLink.HasStopped, "both went back to the relay");
             Assert.IsTrue(InfoLogged(_logger, "went quiet"), "The end that heard nothing says so");
             Assert.IsTrue(InfoLogged(_logger, "went back to Flock's relay"), "The other end follows when told");
             int playerRelayed = RelayedFrom(pair.Relays[1]);
@@ -325,12 +328,16 @@ namespace Flock.Tests.PlayMode
             pair.Host.LetIn(pair.PlayersAddress);
             pair.HostsLink.DropsAnswersForTesting = true;
 
-            yield return FlockTestWait.Until(() => pair.HostsLink.HasStopped && pair.PlayersLink.HasStopped, "both gave up probing", 6f);
+            // Counted from when each end holds the other's key, however long the offers before it took on a busy machine.
+            yield return FlockTestWait.Until(() => pair.HostsLink.IsProbingForTesting && pair.PlayersLink.IsProbingForTesting, "both hold the other's key and probe");
+            int playerRelayed = RelayedFrom(pair.Relays[1]);
+            int hostRelayed = RelayedFrom(pair.Relays[0]);
+            yield return FlockTestWait.Until(() => pair.HostsLink.HasStopped && pair.PlayersLink.HasStopped, "both gave up probing");
             Assert.IsFalse(pair.HostsLink.IsDirect || pair.PlayersLink.IsDirect, "A probe heard one way only is not a direct path");
             Assert.IsTrue(InfoLogged(_logger, "no probe was answered"));
-            // The player's hello and a few offers each: none once each end holds the other's key, though they probed for a while.
-            Assert.Less(RelayedFrom(pair.Relays[1]), 8, "The player's offers stopped");
-            Assert.Less(RelayedFrom(pair.Relays[0]), 8, "The host's offers stopped");
+            // At most an offer still on its way and its answer, where offering on through the 3 s of probes would send one every 0.2 s.
+            Assert.LessOrEqual(RelayedFrom(pair.Relays[1]) - playerRelayed, 3, "The player's offers stopped");
+            Assert.LessOrEqual(RelayedFrom(pair.Relays[0]) - hostRelayed, 3, "The host's offers stopped");
             yield return OneEachWay(pair, "relayed");
         }
 

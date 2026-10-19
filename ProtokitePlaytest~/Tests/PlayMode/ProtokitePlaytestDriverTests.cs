@@ -81,16 +81,12 @@ namespace Protokite.Playtest.Tests
             if (FlockClient.IsInitialized)
                 FlockClient.Shutdown();
             FlockHttpClient.Configure(TimeSpan.FromSeconds(30));
+            // Waited for before the reset, which forgets the pass after 5 s; judged once everything else is put back.
+            bool passEnded = ProtokitePlaytest.WaitForEarlierRecordingsForTesting(TimeSpan.FromSeconds(30));
             ProtokitePlaytest.ResetForNewLaunch();
-            Assert.IsTrue(ProtokitePlaytest.WaitForEarlierRecordingsForTesting(TimeSpan.FromSeconds(10)), "The finishing pass ended before its folder is deleted");
             ProtokitePlaytest.RecordingsFolderForTesting = null;
-            if (ProtokitePlaytest.DeviceIdFilePathForTesting != null)
-            {
-                string folder = System.IO.Path.GetDirectoryName(ProtokitePlaytest.DeviceIdFilePathForTesting);
-                ProtokitePlaytest.DeviceIdFilePathForTesting = null;
-                if (System.IO.Directory.Exists(folder))
-                    System.IO.Directory.Delete(folder, true);
-            }
+            string folder = ProtokitePlaytest.DeviceIdFilePathForTesting == null ? null : System.IO.Path.GetDirectoryName(ProtokitePlaytest.DeviceIdFilePathForTesting);
+            ProtokitePlaytest.DeviceIdFilePathForTesting = null;
             if (_settings != null)
             {
                 _settings.PlaytestingEnabled = _wasEnabled;
@@ -98,6 +94,16 @@ namespace Protokite.Playtest.Tests
             }
             _consent?.Dispose();
             _consent = null;
+            Assert.IsTrue(passEnded, "The finishing pass ended before its folder is deleted");
+            // A file a recording's thread still holds must not fail the test for the folder.
+            try
+            {
+                if (folder != null && System.IO.Directory.Exists(folder))
+                    System.IO.Directory.Delete(folder, true);
+            }
+            catch (System.IO.IOException)
+            {
+            }
         }
 
         [Test]

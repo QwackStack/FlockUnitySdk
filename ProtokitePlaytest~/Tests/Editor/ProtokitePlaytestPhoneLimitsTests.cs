@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Reflection;
 using System.Threading;
@@ -71,8 +72,9 @@ namespace Protokite.Playtest.Tests
             Application.logMessageReceived -= Heard;
             if (FlockClient.IsInitialized)
                 FlockClient.Shutdown();
+            // Waited for before the reset, which forgets the pass after 5 s; judged once everything else is put back.
+            bool passEnded = ProtokitePlaytest.WaitForEarlierRecordingsForTesting(TimeSpan.FromSeconds(30));
             ProtokitePlaytest.ResetForNewLaunch();
-            Assert.IsTrue(ProtokitePlaytest.WaitForEarlierRecordingsForTesting(TimeSpan.FromSeconds(10)), "The finishing pass ended before its folder is deleted");
             ProtokitePlaytestVideoEncoders.ActAsAndroidForTesting = false;
             ProtokitePlaytestPhoneConditions.ThermalStatusForTesting = null;
             ProtokitePlaytestPhoneConditions.BatteryForTesting = null;
@@ -82,6 +84,7 @@ namespace Protokite.Playtest.Tests
             ProtokitePlaytest.RecordingsFolderForTesting = null;
             ProtokitePlaytest.DeviceIdFilePathForTesting = null;
             _settings.Dispose();
+            Assert.IsTrue(passEnded, "The finishing pass ended before its folder is deleted");
             try
             {
                 if (Directory.Exists(_folder))
@@ -220,8 +223,20 @@ namespace Protokite.Playtest.Tests
             Frames(1);
             Assert.AreEqual(30, FramesCapturedInTwoSeconds(), 1, "Precondition: 15 frames a second on a phone at rest");
 
-            SetThermalStatus(2);
-            FramesUntilThePhoneIsAskedAgain();
+            // On a machine that writes decimals with a comma, the line still reads as it does everywhere.
+            CultureInfo before = CultureInfo.CurrentCulture;
+            CultureInfo decimalComma = (CultureInfo)CultureInfo.InvariantCulture.Clone();
+            decimalComma.NumberFormat.NumberDecimalSeparator = ",";
+            CultureInfo.CurrentCulture = decimalComma;
+            try
+            {
+                SetThermalStatus(2);
+                FramesUntilThePhoneIsAskedAgain();
+            }
+            finally
+            {
+                CultureInfo.CurrentCulture = before;
+            }
             Assert.AreEqual(15, FramesCapturedInTwoSeconds(), 1, "Half the frame rate while the phone is warm");
             Assert.AreEqual(ProtokitePlaytestTestVideoState.Recording, ProtokitePlaytest.TestVideoState, "Still recording");
             Assert.AreEqual(1, LinesSaying("so the test video takes 7.5 frames a second, half its rate, until the phone cools"), "Said once, not at every question");

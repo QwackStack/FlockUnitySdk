@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 
@@ -27,7 +28,7 @@ namespace Flock
         /// <summary>Makes a folder of its own under the parent, named for the time and eight random hex digits, and holds its lock. Null when it could not.</summary>
         internal static FlockLaunchFolder Create(string parentFolder, string namePrefix = "")
         {
-            string name = namePrefix + DateTime.UtcNow.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N").Substring(0, 8);
+            string name = namePrefix + DateTime.UtcNow.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture) + "-" + Guid.NewGuid().ToString("N").Substring(0, 8);
             string folder = System.IO.Path.GetFullPath(System.IO.Path.Combine(parentFolder, name));
             try
             {

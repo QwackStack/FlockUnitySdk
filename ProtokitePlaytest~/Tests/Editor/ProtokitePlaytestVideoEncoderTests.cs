@@ -477,6 +477,58 @@ namespace Protokite.Playtest.Tests
             Assert.IsTrue(output[0].IsKeyframe);
             Assert.IsNotNull(output[0].DecoderSettings, "The first frame carries the stream's settings");
             Assert.AreEqual("a stand-in encoder", description);
+            Assert.IsTrue(standIn.IsShutDown, "Shut down before it is let go");
+            Assert.GreaterOrEqual(standIn.QuietBeforeShutdown.TotalMilliseconds, ProtokitePlaytestWindowsVideoEncoder.QuietBeforeLettingGoMs,
+                "Finished, and still quiet for a while before it is shut down");
+        }
+
+        // NVIDIA's encoder crashed the editor on one of Windows' own threads when let go with frames still on their way (two editors encoding at once).
+        // Frames the recording cannot read are taken all the same: the encoder still holds them until they are.
+        [TestCase(false)]
+        [TestCase(true)]
+        [UnityPlatform(RuntimePlatform.WindowsEditor)]
+        public void AnEncoderThatHandsFramesBackThroughEventsHandsBackWhatItHoldsAndIsShutDownBeforeItIsLetGo(bool itsFramesCannotBeRead)
+        {
+            StandInEventEncoder standIn = new StandInEventEncoder { HoldsFramesUntilDrained = true, HandsBackUnreadableFrames = itsFramesCannotBeRead };
+            List<ProtokitePlaytestEncodedFrame> output = new List<ProtokitePlaytestEncodedFrame>();
+            RealEncoding.OnItsOwnThread(() =>
+            {
+                using (ProtokitePlaytestWindowsVideoEncoder encoder = new ProtokitePlaytestWindowsVideoEncoder { TransformForTesting = () => standIn })
+                {
+                    Assert.IsTrue(encoder.Configure(Settings(), out string error), error);
+                    Assert.IsTrue(encoder.Start(out error), error);
+                    for (int i = 0; i < 3; i++)
+                        Assert.IsTrue(encoder.Encode(RealEncoding.MovingPicture(i), i * FrameMs, FrameMs, output, out error), error);
+                    // Let go without finishing, as a recording that ends on a failure or a quit does.
+                }
+            });
+            Assert.AreEqual(0, output.Count, "Precondition: the stand-in still held every frame");
+            Assert.IsTrue(standIn.IsShutDown, "Shut down before it is let go");
+            Assert.AreEqual(0, standIn.FramesStillHeldAtShutdown, "Every frame it held came back before it was shut down");
+            Assert.GreaterOrEqual(standIn.QuietBeforeShutdown.TotalMilliseconds, ProtokitePlaytestWindowsVideoEncoder.QuietBeforeLettingGoMs,
+                "Quiet for a while once drained, as NVIDIA's encoder needs, before it is shut down and let go");
+            Assert.AreEqual(0, standIn.CallsAfterShutdown, "Nothing is asked of it once it is shut down");
+            Assert.AreEqual(0, standIn.CallsRefused, "No call its events did not allow");
+        }
+
+        // A stream that never started has nothing to drain; the encoder is still left quiet and shut down before it is let go.
+        [Test]
+        [UnityPlatform(RuntimePlatform.WindowsEditor)]
+        public void AnEncoderThatRefusesToStartAStreamIsNotDrainedButIsShutDown()
+        {
+            StandInEventEncoder standIn = new StandInEventEncoder { RefusesToStartAStream = true };
+            string error = null;
+            RealEncoding.OnItsOwnThread(() =>
+            {
+                using (ProtokitePlaytestWindowsVideoEncoder encoder = new ProtokitePlaytestWindowsVideoEncoder { TransformForTesting = () => standIn })
+                {
+                    Assert.IsTrue(encoder.Configure(Settings(), out error), error);
+                    Assert.IsFalse(encoder.Start(out error), "Precondition: the stream was refused");
+                }
+            });
+            StringAssert.Contains("would not start a stream", error);
+            Assert.AreEqual(0, standIn.DrainsAsked, "A stream that never started is not drained");
+            Assert.IsTrue(standIn.IsShutDown, "Shut down before it is let go");
         }
 
         [Test]

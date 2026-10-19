@@ -4,6 +4,7 @@ using System.IO;
 using System.Threading.Tasks;
 using UnityEditor;
 using UnityEngine;
+using static System.FormattableString;
 
 namespace Protokite.Playtest.Editor
 {
@@ -356,7 +357,7 @@ namespace Protokite.Playtest.Editor
                             summary.Error != null ? MessageType.Warning : MessageType.Info);
                         break;
                     }
-                    EditorGUILayout.HelpBox($"Saved {summary.VideoSeconds:0.0} seconds, {summary.FramesWritten} frames, to {summary.FilePath}" +
+                    EditorGUILayout.HelpBox(Invariant($"Saved {summary.VideoSeconds:0.0} seconds, {summary.FramesWritten} frames, to {summary.FilePath}") +
                         (summary.Error != null ? ". It could not be written to the end: " + summary.Error : "."), summary.Error != null ? MessageType.Warning : MessageType.Info);
                     if (GUILayout.Button("Show Test Video"))
                         EditorUtility.RevealInFinder(summary.FilePath);

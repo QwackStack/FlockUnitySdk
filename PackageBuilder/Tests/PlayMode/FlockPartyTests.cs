@@ -524,12 +524,16 @@ namespace Flock.Tests.PlayMode
         {
             FlockMultiplayerProvider multiplayer = SignedInAs(A, refreshSeconds: 0.2);
             Assert.AreEqual(TimeSpan.FromSeconds(0.2), multiplayer.Parties.RefreshInterval);
+            System.Diagnostics.Stopwatch window = System.Diagnostics.Stopwatch.StartNew();
             Task<FlockParty> created = multiplayer.CreatePartyAsync();
             yield return Done(created, "the party was made");
 
+            // Four reads however slow the frames: the 10 s a game gets by default would send its first after 7.5 s at the soonest.
+            yield return FlockTestWait.Until(() => _server.Count(FakePartyServer.Mine) >= 4, "four refreshes at the game's 0.2 s");
             yield return RealSeconds(1.5f);
             int reads = _server.Count(FakePartyServer.Mine);
-            Assert.That(reads, Is.InRange(4, 11), "About one read every 0.2 s, jittered");
+            // Each read comes no sooner than 0.15 s (its jitter) after the last, in however long the window took.
+            Assert.LessOrEqual(reads, (int)(window.Elapsed.TotalSeconds / 0.15) + 1, "About one read every 0.2 s, jittered");
         }
 
         [UnityTest]

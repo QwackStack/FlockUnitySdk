@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -96,6 +97,45 @@ namespace Flock.Tests.Editor
 
         private static string MarkerJson(string sessionId) =>
             "{\"session_id\":\"" + sessionId + "\",\"last_state\":\"foreground\",\"last_alive_utc\":\"2026-09-27T10:05:00Z\",\"exception_count\":2}";
+
+        // ---- The name ----
+
+        // Launch folders are taken over oldest first by name, so a machine set to another calendar (Thai, 2569) still names them by the Gregorian date.
+        [Test]
+        public void ALaunchFolderMadeOnAMachineWithAnotherCalendar_IsNamedForTheGregorianDate()
+        {
+            CultureInfo anotherCalendar;
+            try
+            {
+                anotherCalendar = (CultureInfo)new CultureInfo("th-TH").Clone();
+                anotherCalendar.DateTimeFormat.Calendar = new ThaiBuddhistCalendar();
+            }
+            catch (Exception ex) when (ex is CultureNotFoundException || ex is ArgumentException)
+            {
+                Assert.Ignore("This runtime offers no culture with another calendar to stand in for one: " + ex.Message);
+                return;
+            }
+            CultureInfo before = CultureInfo.CurrentCulture;
+            string dayBefore = DateTime.UtcNow.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
+            FlockLaunchFolder folder;
+            CultureInfo.CurrentCulture = anotherCalendar;
+            try
+            {
+                folder = FlockLaunchFolder.Create(LaunchesFolder);
+            }
+            finally
+            {
+                CultureInfo.CurrentCulture = before;
+            }
+            string dayAfter = DateTime.UtcNow.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
+            Assert.IsNotNull(folder);
+            folder.Dispose();
+
+            Assert.AreNotEqual(dayBefore, DateTime.UtcNow.ToString("yyyyMMdd", anotherCalendar), "Precondition: the stand-in culture writes another year");
+            string name = Path.GetFileName(folder.Path);
+            Assert.IsTrue(name.StartsWith(dayBefore + "-", StringComparison.Ordinal) || name.StartsWith(dayAfter + "-", StringComparison.Ordinal),
+                $"{name} starts with the Gregorian date {dayBefore}");
+        }
 
         // ---- The lock ----
 
@@ -347,8 +387,8 @@ namespace Flock.Tests.Editor
             File.SetLastWriteTimeUtc(old, overAMinute);
             File.SetLastWriteTimeUtc(oldNested, overAMinute);
             File.SetLastWriteTimeUtc(oldKept, overAMinute);
-            // Another process's write in progress is not a crash's leftovers.
-            File.SetLastWriteTimeUtc(fresh, DateTime.UtcNow - TimeSpan.FromSeconds(50));
+            // Another process's write in progress is not a crash's leftovers; half a minute old, it stays under the minute on a slow runner too.
+            File.SetLastWriteTimeUtc(fresh, DateTime.UtcNow - TimeSpan.FromSeconds(30));
 
             Assert.AreEqual(1, FlockTemporaryFiles.DeleteLeftOverFiles(_root, false));
             Assert.IsTrue(File.Exists(fresh));

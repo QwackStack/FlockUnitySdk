@@ -89,15 +89,17 @@ namespace Flock.Tests.PlayMode
             Hosting hosting = new Hosting();
             yield return RelayedHostOnItsOwnIp(hosting);
             FlockMultiplayerSessions sessions = _h.Client.Multiplayer.Sessions;
-            yield return FlockTestWait.Until(() => sessions.ReadsForRelayedPlayersForTesting, "the host reads the session for relayed players", 3f);
+            yield return FlockTestWait.Until(() => sessions.ReadsForRelayedPlayersForTesting, "the host reads the session for relayed players");
             int before = _server.Count(FakeSessionServer.Read);
-            yield return new UnityEngine.WaitForSecondsRealtime(1f);
-            Assert.GreaterOrEqual(_server.Count(FakeSessionServer.Read) - before, 3, "Read about every 0.2 s");
+            System.Diagnostics.Stopwatch window = System.Diagnostics.Stopwatch.StartNew();
+            // Four reads however slow the frames; at the 2 s a host reads at otherwise, the fourth comes 4.5 s after the first at the soonest.
+            yield return FlockTestWait.Until(() => _server.Count(FakeSessionServer.Read) - before >= 4, "four reads for relayed players");
+            Assert.Less(window.Elapsed.TotalSeconds, 4.0, "Read about every 0.2 s");
 
             FlockRelayBridge bridge = FlockJoinChecks.RelayBridgeForTesting(hosting.Session);
             hosting.Manager.Shutdown();
-            yield return FlockTestWait.Until(() => bridge.IsClosed, "the bridge closed with the netcode", 5f);
-            yield return FlockTestWait.Until(() => !sessions.ReadsForRelayedPlayersForTesting, "the reads stopped", 3f);
+            yield return FlockTestWait.Until(() => bridge.IsClosed, "the bridge closed with the netcode");
+            yield return FlockTestWait.Until(() => !sessions.ReadsForRelayedPlayersForTesting, "the reads stopped");
             yield return new UnityEngine.WaitForSecondsRealtime(0.3f);
             int after = _server.Count(FakeSessionServer.Read);
             yield return new UnityEngine.WaitForSecondsRealtime(1f);
@@ -115,7 +117,7 @@ namespace Flock.Tests.PlayMode
             yield return RelayedPlayer(hosting, B, WithToken(SeatedWithToken(hosting, B)), relays, players);
             _server.PublishesSeat(hosting.OnServer, B, SeatOnTheRelay(relays[0].Address));
 
-            yield return FlockTestWait.Until(() => _h.Logger.Warnings.Any(warning => warning.Contains("cannot be let in")), "the refusal was said", 3f);
+            yield return FlockTestWait.Until(() => _h.Logger.Warnings.Any(warning => warning.Contains("cannot be let in")), "the refusal was said");
             yield return new UnityEngine.WaitForSecondsRealtime(1.5f);
             Assert.AreEqual(1, _h.Logger.Warnings.Count(warning => warning.Contains("cannot be let in")), "Said once across about seven readings");
         }
@@ -126,11 +128,11 @@ namespace Flock.Tests.PlayMode
             Hosting hosting = new Hosting();
             yield return RelayedHostOnItsOwnIp(hosting);
             FlockMultiplayerSessions sessions = _h.Client.Multiplayer.Sessions;
-            yield return FlockTestWait.Until(() => sessions.ReadsForRelayedPlayersForTesting, "the host reads the session for relayed players", 3f);
+            yield return FlockTestWait.Until(() => sessions.ReadsForRelayedPlayersForTesting, "the host reads the session for relayed players");
 
             // Refused as out of the session while the server still seats it: the read that learns why finds the session going on.
             _server.AnswerNext(FakeSessionServer.Read, FakeSessionServer.Refused(404, "multiplayer.session_not_found"));
-            yield return FlockTestWait.Until(() => hosting.Session.Relay.ReadForPlayersRefused, "the refused read stopped", 3f);
+            yield return FlockTestWait.Until(() => hosting.Session.Relay.ReadForPlayersRefused, "the refused read stopped");
             int after = _server.Count(FakeSessionServer.Read);
             yield return new UnityEngine.WaitForSecondsRealtime(1f);
             Assert.LessOrEqual(_server.Count(FakeSessionServer.Read) - after, 1, "Not started again for this relay: at most the read that learns why");

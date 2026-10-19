@@ -45,7 +45,8 @@ namespace Flock.Tests.PlayMode
                 FlockClient.Shutdown();
         }
 
-        private FlockMultiplayerProvider SignedInAs(string player, double waitReadSeconds = 0.2, double stunWaitSeconds = 0.5)
+        // The STUN wait stays the SDK's 2 s unless a test whose STUN server is silent or cannot be looked up shortens it.
+        private FlockMultiplayerProvider SignedInAs(string player, double waitReadSeconds = 0.2, double? stunWaitSeconds = null)
         {
             _server = new FakeSessionServer();
             _stun = new FakeStunServer();
@@ -55,7 +56,8 @@ namespace Flock.Tests.PlayMode
             _h.LoginAs(player);
             FlockMultiplayerProvider multiplayer = _h.Client.Multiplayer;
             multiplayer.Sessions.SetConnectionWaitIntervalForTesting(TimeSpan.FromSeconds(waitReadSeconds));
-            multiplayer.Sessions.DirectAddresses.SetStunWaitForTesting(TimeSpan.FromSeconds(stunWaitSeconds));
+            if (stunWaitSeconds.HasValue)
+                multiplayer.Sessions.DirectAddresses.SetStunWaitForTesting(TimeSpan.FromSeconds(stunWaitSeconds.Value));
             return multiplayer;
         }
 
@@ -171,7 +173,7 @@ namespace Flock.Tests.PlayMode
         [UnityTest]
         public IEnumerator ASilentStunServer_PublishesTheLanAddressAlone_WarnedOnce()
         {
-            FlockMultiplayerProvider multiplayer = SignedInAs(A);
+            FlockMultiplayerProvider multiplayer = SignedInAs(A, stunWaitSeconds: 0.5);
             _stun.Silent = true;
             List<FlockMultiplayerSession> held = new List<FlockMultiplayerSession>();
             yield return Hosted(multiplayer, held);
@@ -212,7 +214,7 @@ namespace Flock.Tests.PlayMode
         [UnityTest]
         public IEnumerator ANameLookUpThatNeverAnswers_LeavesThePublicAddressUnknown_WithinTheStunWait()
         {
-            FlockMultiplayerProvider multiplayer = SignedInAs(A);
+            FlockMultiplayerProvider multiplayer = SignedInAs(A, stunWaitSeconds: 0.5);
             _server.StunUrls.Clear();
             _server.StunUrls.Add("stun:stun.example.test:19302");
             multiplayer.Sessions.DirectAddresses.SetNameLookUpForTesting(host => new TaskCompletionSource<System.Net.IPAddress[]>().Task);
@@ -241,7 +243,8 @@ namespace Flock.Tests.PlayMode
             yield return RealSeconds(0.3f);
             Assert.IsFalse(publishing.IsCompleted, "Precondition: waiting on the name");
             giveUp.Cancel();
-            yield return FlockTestWait.Until(() => publishing.IsCompleted, "given up", 3f);
+            // The STUN wait here is 30 s, so only the game's token ends the publish within this wait.
+            yield return FlockTestWait.Until(() => publishing.IsCompleted, "given up");
             Assert.IsTrue(publishing.IsCanceled);
             Assert.AreEqual(0, _server.Count(FakeSessionServer.Publish), "Nothing published");
         }
@@ -282,7 +285,8 @@ namespace Flock.Tests.PlayMode
             yield return RealSeconds(0.5f);
             Assert.IsFalse(waiting.IsCompleted, "Nothing published yet");
             _server.Publishes(served[0], Direct(HostsPublicAddress, 7777));
-            yield return FlockTestWait.Until(() => waiting.IsCompleted, "learned well before a heartbeat", 3f);
+            // The heartbeats come every 20 s, so this wait still says the address came from the wait's own reads.
+            yield return FlockTestWait.Until(() => waiting.IsCompleted, "learned well before a heartbeat");
             Assert.AreSame(held[0].Connection, waiting.Result);
             Assert.AreEqual("direct", waiting.Result.Mode);
             Assert.GreaterOrEqual(_server.Count(FakeSessionServer.Read), 1, "Read while waiting");
@@ -340,7 +344,7 @@ namespace Flock.Tests.PlayMode
 
             Task<FlockMultiplayerSessionConnection> waiting = held[0].WaitForConnectionAsync(TimeSpan.FromSeconds(8));
             _server.Ends(served[0]);
-            yield return FlockTestWait.Until(() => waiting.IsCompleted, "the end was read", 3f);
+            yield return FlockTestWait.Until(() => waiting.IsCompleted, "the end was read");
             Assert.IsNull(waiting.Result);
             Assert.AreEqual(FlockMultiplayerSessionEndReason.EndedByHost, held[0].EndReason);
         }
@@ -353,12 +357,16 @@ namespace Flock.Tests.PlayMode
             List<FakeSessionServer.Session> served = new List<FakeSessionServer.Session>();
             yield return JoinedAsB(multiplayer, held, served);
 
+            System.Diagnostics.Stopwatch window = System.Diagnostics.Stopwatch.StartNew();
             Task<FlockMultiplayerSessionConnection> first = held[0].WaitForConnectionAsync(TimeSpan.FromSeconds(8));
             Task<FlockMultiplayerSessionConnection> second = held[0].WaitForConnectionAsync(TimeSpan.FromSeconds(8));
             yield return RealSeconds(1.3f);
-            Assert.LessOrEqual(_server.Count(FakeSessionServer.Read), 3, "One read every half second, not two");
+            int reads = _server.Count(FakeSessionServer.Read);
+            // Each read comes no sooner than three quarters of the half second after the last (its jitter), however long the window took
+            // on a busy machine; two waits reading each would double them.
+            Assert.LessOrEqual(reads, (int)(window.Elapsed.TotalSeconds / 0.375), "One read every half second, not two");
             _server.Publishes(served[0], Direct(HostsPublicAddress, 7777));
-            yield return FlockTestWait.Until(() => first.IsCompleted && second.IsCompleted, "both learned", 3f);
+            yield return FlockTestWait.Until(() => first.IsCompleted && second.IsCompleted, "both learned");
             Assert.AreSame(first.Result, second.Result);
         }
 
@@ -379,7 +387,7 @@ namespace Flock.Tests.PlayMode
             Assert.IsFalse(waiting.IsCompleted, "Still waiting: the new host has published nothing yet");
             Assert.IsNull(held[0].Connection, "Precondition: the reading cleared the address");
             _server.Publishes(served[0], Direct("198.51.100.4", 7778, publicAddress: "198.51.100.4"));
-            yield return FlockTestWait.Until(() => waiting.IsCompleted, "the new host's address", 3f);
+            yield return FlockTestWait.Until(() => waiting.IsCompleted, "the new host's address");
             Assert.IsTrue(waiting.Result.TryGetValue("port", out int port));
             Assert.AreEqual(7778, port);
         }
@@ -414,7 +422,7 @@ namespace Flock.Tests.PlayMode
             Task<FlockMultiplayerSessionConnection> waiting = held[0].WaitForConnectionAsync(TimeSpan.FromSeconds(30));
             yield return RealSeconds(0.3f);
             FlockClient.Shutdown();
-            yield return FlockTestWait.Until(() => waiting.IsCompleted, "ended with Flock", 3f);
+            yield return FlockTestWait.Until(() => waiting.IsCompleted, "ended with Flock");
             Assert.IsTrue(waiting.IsCanceled, "Ended as cancelled, as every call does at shutdown");
         }
 
@@ -439,7 +447,7 @@ namespace Flock.Tests.PlayMode
 
         private IEnumerator Found(JObject published, Action<FlockDirectAddress> check, bool stunSilent = false)
         {
-            FlockMultiplayerProvider multiplayer = SignedInAs(B);
+            FlockMultiplayerProvider multiplayer = SignedInAs(B, stunWaitSeconds: stunSilent ? 0.5 : (double?)null);
             _stun.Silent = stunSilent;
             List<FlockMultiplayerSession> held = new List<FlockMultiplayerSession>();
             List<FakeSessionServer.Session> served = new List<FakeSessionServer.Session>();

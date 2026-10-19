@@ -8,33 +8,41 @@ namespace Flock.Tests.Support
     // test run (the framework fails a test on an unexpected one), and let a test assert what was reported.
     public class RecordingFlockLogger : IFlockLogger
     {
-        public readonly List<string> Infos = new List<string>();
-        public readonly List<string> Warnings = new List<string>();
-        public readonly List<string> Errors = new List<string>();
-        public readonly List<string> Debugs = new List<string>();
+        private readonly List<string> _infos = new List<string>();
+        private readonly List<string> _warnings = new List<string>();
+        private readonly List<string> _errors = new List<string>();
+        private readonly List<string> _debugs = new List<string>();
 
-        // The SDK logs from threads of its own too (the relay's, a direct link's), so each list is written and read under its own lock.
-        public void LogInfo(string message) => Add(Infos, message);
-        public void LogWarning(string message) => Add(Warnings, message);
-        public void LogError(string message) => Add(Errors, message);
-        public void LogError(string message, Exception exception) => Add(Errors, $"{message}: {exception?.Message}");
-        public void LogException(Exception exception) => Add(Errors, exception?.Message ?? "");
-        public void LogDebug(string message) => Add(Debugs, message);
+        // The SDK logs from threads of its own too (the relay's, a direct link's), so each level is written under its own lock and
+        // read as a copy taken under it: a test's LINQ over a level never walks a list another thread is adding to.
+        public List<string> Infos => Copy(_infos);
+        public List<string> Warnings => Copy(_warnings);
+        public List<string> Errors => Copy(_errors);
+        public List<string> Debugs => Copy(_debugs);
+
+        public void LogInfo(string message) => Add(_infos, message);
+        public void LogWarning(string message) => Add(_warnings, message);
+        public void LogError(string message) => Add(_errors, message);
+        public void LogError(string message, Exception exception) => Add(_errors, $"{message}: {exception?.Message}");
+        public void LogException(Exception exception) => Add(_errors, exception?.Message ?? "");
+        public void LogDebug(string message) => Add(_debugs, message);
 
         public void Clear()
         {
-            foreach (List<string> level in new[] { Infos, Warnings, Errors, Debugs })
+            foreach (List<string> level in new[] { _infos, _warnings, _errors, _debugs })
             {
                 lock (level)
                     level.Clear();
             }
         }
 
-        /// <summary>True when any message at the given level contains <paramref name="fragment"/>.</summary>
-        public bool Logged(List<string> level, string fragment)
+        /// <summary>True when any message in <paramref name="level"/> (a level read from this logger) contains <paramref name="fragment"/>.</summary>
+        public bool Logged(List<string> level, string fragment) => level.Exists(m => m != null && m.Contains(fragment));
+
+        private static List<string> Copy(List<string> level)
         {
             lock (level)
-                return level.Exists(m => m != null && m.Contains(fragment));
+                return new List<string>(level);
         }
 
         private static void Add(List<string> level, string message)

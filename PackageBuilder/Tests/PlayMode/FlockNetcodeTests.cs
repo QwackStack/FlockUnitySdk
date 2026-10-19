@@ -122,7 +122,7 @@ namespace Flock.Tests.PlayMode
             _h.LoginAs(player);
             FlockMultiplayerProvider multiplayer = _h.Client.Multiplayer;
             multiplayer.Sessions.SetConnectionWaitIntervalForTesting(TimeSpan.FromSeconds(0.2));
-            multiplayer.Sessions.DirectAddresses.SetStunWaitForTesting(TimeSpan.FromSeconds(0.5));
+            // The STUN server here always answers, so its wait stays the SDK's 2 s: a slow answer is not taken for none.
             return multiplayer;
         }
 

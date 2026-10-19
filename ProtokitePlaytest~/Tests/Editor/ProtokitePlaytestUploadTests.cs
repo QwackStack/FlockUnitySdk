@@ -77,6 +77,8 @@ namespace Protokite.Playtest.Tests
             _uploader.ReleaseEverything();
             if (FlockClient.IsInitialized)
                 FlockClient.Shutdown();
+            // Waited for before the reset, which forgets the pass after 5 s; judged once everything else is put back.
+            bool passEnded = ProtokitePlaytest.WaitForEarlierRecordingsForTesting(TimeSpan.FromSeconds(30));
             ProtokitePlaytest.ResetForNewLaunch();
             ProtokitePlaytest.BeforeFinishingEachEarlierRecordingForTesting = null;
             ProtokitePlaytest.RecordingFileForTesting = null;
@@ -84,6 +86,7 @@ namespace Protokite.Playtest.Tests
             ProtokitePlaytest.VideoFrameSourceForTesting = null;
             ProtokitePlaytest.RecordingsFolderForTesting = null;
             ProtokitePlaytest.DeviceIdFilePathForTesting = null;
+            ProtokitePlaytest.QuitWaitForTesting = null;
             ProtokitePlaytest.NetworkForTesting = null;
             ProtokitePlaytestVideoEncoders.ActAsAndroidForTesting = false;
             ProtokitePlaytestVideoEncoders.LookForEncodersForTesting = null;
@@ -92,8 +95,16 @@ namespace Protokite.Playtest.Tests
             FlockHttpClient.UseFileUploader(null);
             FlockHttpClient.Configure(TimeSpan.FromSeconds(30));
             _settings.Dispose();
-            if (Directory.Exists(_folder))
-                Directory.Delete(_folder, true);
+            Assert.IsTrue(passEnded, "The finishing pass ended before its folder is deleted");
+            // A file a recording's thread still holds must not fail the test for the folder.
+            try
+            {
+                if (Directory.Exists(_folder))
+                    Directory.Delete(_folder, true);
+            }
+            catch (IOException)
+            {
+            }
         }
 
         private static FlockFakeTransport Transport(bool video = true, Action<FlockFakeTransport> linkRoutes = null)
@@ -403,6 +414,8 @@ namespace Protokite.Playtest.Tests
         [UnityTest]
         public IEnumerator NothingIsUploadedWhenTheGameQuits()
         {
+            FakeFrameSource source = new FakeFrameSource();
+            ProtokitePlaytest.VideoFrameSourceForTesting = (settings, format) => source;
             using (FlockTestClient flock = StartFlock(Transport()))
             {
                 ProtokitePlaytest.Refresh();
@@ -410,6 +423,9 @@ namespace Protokite.Playtest.Tests
                 yield return TheSessionStarts(flock);
                 string runFolder = ProtokitePlaytest.RecordingRunForTesting.FolderPath;
                 Frames(30);
+                RecordingsUnderWay.LetTheEncoderTakeEveryFrameBeforeQuitting(source);
+                // Not the bound this test is about: a slow disk closes and renames the file in its own time.
+                ProtokitePlaytest.QuitWaitForTesting = TimeSpan.FromSeconds(30);
                 ProtokitePlaytest.HandleGameQuitting();
                 Assert.IsNotNull(ProtokitePlaytest.FinishedVideo?.FilePath, "Precondition: quitting finished the file");
                 yield return ForAWhile();
@@ -744,7 +760,8 @@ namespace Protokite.Playtest.Tests
         {
             PlantWaitingRecording("20260101-000000-00000001", "pk-9", "session-gvid");
             ManualResetEventSlim letItFinish = new ManualResetEventSlim(false);
-            ProtokitePlaytest.BeforeFinishingEachEarlierRecordingForTesting = folder => letItFinish.Wait(TimeSpan.FromSeconds(5));
+            // Held well past the second below, however slow the machine; let go in the finally.
+            ProtokitePlaytest.BeforeFinishingEachEarlierRecordingForTesting = folder => letItFinish.Wait(TimeSpan.FromSeconds(30));
             try
             {
                 ProtokitePlaytest.StartFinishingEarlierRecordings();

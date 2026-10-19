@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Threading;
+using static System.FormattableString;
 
 namespace Protokite.Playtest
 {
@@ -55,7 +56,7 @@ namespace Protokite.Playtest
         public string DescribeTimesInTheBackground()
             => TimesInTheBackground == 0 ? ""
                 : $" The game went to the background {TimesInTheBackground} time(s); waiting for the frames on their way took at most " +
-                  $"{LongestWaitForFramesOnTheirWayMs:0.0} ms on the main thread, and the encoder's part at most {LongestHandOverMs:0.0} ms.";
+                  Invariant($"{LongestWaitForFramesOnTheirWayMs:0.0} ms on the main thread, and the encoder's part at most {LongestHandOverMs:0.0} ms.");
 
         /// <summary>The reason as the end of a sentence, for example "it reached its length limit".</summary>
         public static string Describe(ProtokitePlaytestVideoStopReason reason)
@@ -121,6 +122,7 @@ namespace Protokite.Playtest
         private volatile bool _sizeLimitReached;
         private volatile bool _couldNotWrite;
         private volatile bool _written;
+        private readonly ManualResetEventSlim _fileFinished = new ManualResetEventSlim(false);
         private volatile bool _encoderStarted;
 
         // The main thread's.
@@ -302,8 +304,11 @@ namespace Protokite.Playtest
             _toEncode.CompleteAdding();
         }
 
-        /// <summary>Waits up to <paramref name="timeout"/> for the file to be finished; true when it is.</summary>
-        public bool WaitUntilWritten(TimeSpan timeout) => _encodingThread.Join(timeout) && _written;
+        /// <summary>Waits up to <paramref name="timeout"/> for the file to be finished; true when it is. The encoder may still be letting go.</summary>
+        public bool WaitUntilWritten(TimeSpan timeout) => _fileFinished.Wait(timeout) && _written;
+
+        /// <summary>Waits up to <paramref name="timeout"/> for the recording to end, its file finished and its encoder let go; true when it has.</summary>
+        public bool WaitUntilEnded(TimeSpan timeout) => _encodingThread.Join(timeout);
 
         /// <summary>What became of the recording. Meaningful once <see cref="HasFinishedWriting"/> is true.</summary>
         public ProtokitePlaytestVideoRecordingSummary Summary()
@@ -507,13 +512,10 @@ namespace Protokite.Playtest
             finally
             {
                 _written = true;
+                _fileFinished.Set();
             }
-        }
-
-        private void FinishFileNow()
-        {
-            _toWrite.CompleteAdding();
-            _writingThread.Join();
+            // Let go once the file is finished: a graphics card's encoder takes a moment to, which neither the file nor a quit waiting
+            // for it should spend.
             try
             {
                 _encoder.Dispose();
@@ -522,6 +524,12 @@ namespace Protokite.Playtest
             {
                 _encodeError = _encodeError ?? "the encoder could not be closed: " + ex.Message;
             }
+        }
+
+        private void FinishFileNow()
+        {
+            _toWrite.CompleteAdding();
+            _writingThread.Join();
 
             if (!_file.Close(out string closeError) && !_couldNotWrite)
             {

@@ -99,7 +99,7 @@ namespace Flock.Tests.PlayMode
             using (CancellationTokenSource stop = new CancellationTokenSource())
             {
                 Task<FlockNetcodeStartResult> first = held[0].StartNetcodeAsync(manager, null, stop.Token);
-                yield return FlockTestWait.Until(() => _server.Count(FakeSessionServer.Publish) == 1, "the first start published", 5f);
+                yield return FlockTestWait.Until(() => _server.Count(FakeSessionServer.Publish) == 1, "the first start published");
                 stop.Cancel();
                 Task<FlockNetcodeStartResult> second = held[0].StartNetcodeAsync(manager);
                 yield return null;
@@ -145,7 +145,7 @@ namespace Flock.Tests.PlayMode
             // A publish whose answer is slow and does not stop for cancelling, as a slow server's.
             FakeSessionServer.Held publish = _server.HoldNext(FakeSessionServer.Publish);
             Task<FlockNetcodeStartResult> first = held[0].StartNetcodeAsync(manager);
-            yield return FlockTestWait.Until(() => _server.Count(FakeSessionServer.Publish) == 1, "the first start published", 5f);
+            yield return FlockTestWait.Until(() => _server.Count(FakeSessionServer.Publish) == 1, "the first start published");
             Assert.IsTrue(manager.IsHost, "Precondition: the first start's netcode runs");
 
             Task<FlockNetcodeStartResult> second = held[0].StartNetcodeAsync(manager);

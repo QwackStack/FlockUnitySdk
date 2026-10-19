@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [1.89.0]
 
-Found by playing through Flock's relay on a real network (Cloudflare's relay).
+Found by playing through Flock's relay on a real network (Cloudflare's relay), and by running every test many times under load.
 
 ### Fixed
 
@@ -21,6 +21,17 @@ Found by playing through Flock's relay on a real network (Cloudflare's relay).
   its silence.
 - **The warning a lost relay logs now says how to fix it** (start the netcode again), as every failure does; it used to name
   the cause alone.
+- **A playtest recording on Windows lets go of a graphics card's encoder only once the encoder has finished its own work.**
+  NVIDIA's encoder still works on Windows' threads for a moment after it says it has handed every frame back, and let go then
+  it could crash the game (measured with two editors recording at once: every run crashed). The encoder now hands back what it
+  holds, sends nothing for 200 ms, stops streaming and is shut down, as Windows asks of such an encoder, before it is let go;
+  1,500 encoders let go under the same load held. The recording's file is finished first, so it takes none of that time.
+- **Analytics events queued within one tick of the clock are sent in the order they came.** Each queued event's file is named
+  for the time, and Windows' clock moves only every millisecond or more, so events queued in one tick went in a random order;
+  a clock that steps back did the same. The names now always grow within a launch.
+- **Log lines and failure messages read the same on every machine**: a number with decimals is written with a point whatever
+  the machine's culture (`within 2.5 s`, never `within 2,5 s`), and a launch folder or playtest form is named for the Gregorian
+  date on a machine set to another calendar (a Thai or Saudi Windows wrote another year).
 
 
 ## [1.88.1]

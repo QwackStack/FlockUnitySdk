@@ -5,6 +5,7 @@ using System.Threading;
 using Flock.Logging;
 using Newtonsoft.Json;
 using UnityEngine;
+using static System.FormattableString;
 
 namespace Flock.Analytics
 {
@@ -244,7 +245,7 @@ namespace Flock.Analytics
             else
                 ClearPersistedState();
 
-            _logger.LogInfo($"Session ended: {SessionId} | Duration: {snapshot.DurationSeconds:F1}s | Screens: {snapshot.ScreensViewed} | Pauses: {snapshot.PauseCount} | AvgFPS: {snapshot.AverageFps:F0}{(snapshot.IsBounce ? " [BOUNCE]" : "")}");
+            _logger.LogInfo(Invariant($"Session ended: {SessionId} | Duration: {snapshot.DurationSeconds:F1}s | Screens: {snapshot.ScreensViewed} | Pauses: {snapshot.PauseCount} | AvgFPS: {snapshot.AverageFps:F0}{(snapshot.IsBounce ? " [BOUNCE]" : "")}"));
 
             FlockEvents.InvokeSessionEnded(new FlockSessionEndedArgs(snapshot, reason));
 
@@ -432,7 +433,7 @@ namespace Flock.Analytics
 
                 if (pausedDuration > _config.SessionTimeoutSeconds)
                 {
-                    _logger.LogInfo($"Session timeout exceeded ({pausedDuration:F0}s > {_config.SessionTimeoutSeconds:F0}s). New session required.");
+                    _logger.LogInfo(Invariant($"Session timeout exceeded ({pausedDuration:F0}s > {_config.SessionTimeoutSeconds:F0}s). New session required."));
 
                     FlockSessionSnapshot snapshot = End(FlockSessionEndReason.Timeout);
                     if (snapshot != null)
@@ -461,7 +462,7 @@ namespace Flock.Analytics
 
             OnQuitFlush?.Invoke(snapshot);
 
-            _logger.LogInfo($"Session ending on quit: {SessionId} | Duration: {snapshot.DurationSeconds:F1}s");
+            _logger.LogInfo(Invariant($"Session ending on quit: {SessionId} | Duration: {snapshot.DurationSeconds:F1}s"));
         }
 
      

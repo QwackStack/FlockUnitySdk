@@ -9,6 +9,7 @@ using Flock.Exceptions;
 using Flock.Logging;
 using Unity.Netcode;
 using Unity.Netcode.Transports.UTP;
+using static System.FormattableString;
 // Unity Transport 2.x names its endpoint NetworkEndpoint, 1.x NetworkEndPoint (each netcode takes its own).
 #if FLOCK_UNITY_TRANSPORT_2
 using TransportEndpoint = Unity.Networking.Transport.NetworkEndpoint;
@@ -197,7 +198,7 @@ namespace Flock.Providers
                     {
                         giveUp.Cancel();
                         refused = _session.HasEnded ? FlockNetcodeRefusedReason.SessionEnded : FlockNetcodeRefusedReason.FlockUnreachable;
-                        unreachableBecause = $"Flock did not answer the check of their join token within {CheckTime().TotalSeconds:0.#} s";
+                        unreachableBecause = Invariant($"Flock did not answer the check of their join token within {CheckTime().TotalSeconds:0.#} s");
                     }
                 }
                 catch (OperationCanceledException)

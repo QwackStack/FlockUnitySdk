@@ -61,6 +61,8 @@ namespace Protokite.Playtest.Tests
         [TearDown]
         public void TearDown()
         {
+            // Waited for before the reset, which forgets the pass after 5 s; judged once everything else is put back.
+            bool passEnded = ProtokitePlaytest.WaitForEarlierRecordingsForTesting(TimeSpan.FromSeconds(30));
             ProtokitePlaytest.ResetForNewLaunch();
             foreach (ProtokitePlaytestDriver driver in Resources.FindObjectsOfTypeAll<ProtokitePlaytestDriver>())
                 Object.Destroy(driver.gameObject);
@@ -69,15 +71,22 @@ namespace Protokite.Playtest.Tests
             foreach (Object made in _made)
                 Object.Destroy(made);
             _made.Clear();
-            Assert.IsTrue(ProtokitePlaytest.WaitForEarlierRecordingsForTesting(TimeSpan.FromSeconds(10)), "The finishing pass ended before its folder is deleted");
             ProtokitePlaytest.RecordingsFolderForTesting = null;
             ProtokitePlaytest.DeviceIdFilePathForTesting = null;
             _consent?.Dispose();
             _consent = null;
             if (_settings != null && _settingsAsTheyWere != null)
                 JsonUtility.FromJsonOverwrite(_settingsAsTheyWere, _settings);
-            if (_folder != null && Directory.Exists(_folder))
-                Directory.Delete(_folder, true);
+            Assert.IsTrue(passEnded, "The finishing pass ended before its folder is deleted");
+            // A file a recording's thread still holds must not fail the test for the folder.
+            try
+            {
+                if (_folder != null && Directory.Exists(_folder))
+                    Directory.Delete(_folder, true);
+            }
+            catch (IOException)
+            {
+            }
         }
 
         // A still picture: a red band across the top half, over a plain background, so every frame of the video is the same.

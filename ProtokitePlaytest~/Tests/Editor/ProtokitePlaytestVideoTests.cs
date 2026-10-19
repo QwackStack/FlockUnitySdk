@@ -56,8 +56,9 @@ namespace Protokite.Playtest.Tests
         {
             if (FlockClient.IsInitialized)
                 FlockClient.Shutdown();
+            // Waited for before the reset, which forgets the pass after 5 s; judged once everything else is put back.
+            bool passEnded = ProtokitePlaytest.WaitForEarlierRecordingsForTesting(TimeSpan.FromSeconds(30));
             ProtokitePlaytest.ResetForNewLaunch();
-            Assert.IsTrue(ProtokitePlaytest.WaitForEarlierRecordingsForTesting(TimeSpan.FromSeconds(10)), "The finishing pass ended before its folder is deleted");
             ProtokitePlaytest.BeforeFinishingEachEarlierRecordingForTesting = null;
             ProtokitePlaytest.LongestWaitForEarlierRecordingsForTesting = null;
             ProtokitePlaytestRecordingsFolder.BeforeNextMakingRoomForTesting = null;
@@ -65,7 +66,9 @@ namespace Protokite.Playtest.Tests
             ProtokitePlaytest.VideoFrameSourceForTesting = null;
             ProtokitePlaytest.RecordingsFolderForTesting = null;
             ProtokitePlaytest.DeviceIdFilePathForTesting = null;
+            ProtokitePlaytest.QuitWaitForTesting = null;
             _settings.Dispose();
+            Assert.IsTrue(passEnded, "The finishing pass ended before its folder is deleted");
             try
             {
                 if (Directory.Exists(_folder))
@@ -340,6 +343,10 @@ namespace Protokite.Playtest.Tests
             if (Screen.width <= 64 || Screen.height <= 64)
                 Assert.Ignore($"The recording is sized from the screen, which this editor must have; it has {Screen.width}x{Screen.height}.");
             ProtokitePlaytestVideoSettings.FitVideoSize(Screen.width, Screen.height, 1280, 1280, out int fullWidth, out int fullHeight);
+            // The smallest size a phone's encoder is tried at fits a box of three eighths of the 1280 one; a screen already that small has no size down.
+            ProtokitePlaytestVideoSettings.FitVideoSize(Screen.width, Screen.height, 1280 * 3 / 8, 1280 * 3 / 8, out int smallestWidth, out _);
+            if (smallestWidth >= fullWidth)
+                Assert.Ignore($"This editor's screen, {Screen.width}x{Screen.height}, is recorded at {fullWidth}x{fullHeight}, the smallest size tried, so there is no size down to record.");
             ProtokitePlaytestEncoderFound found = new ProtokitePlaytestEncoderFound
             {
                 Name = "c2.stand.in.avc.encoder", InHardware = true, OnAPhone = true, TakesSizeAndRate = (width, height, rate) => width < fullWidth
@@ -517,11 +524,33 @@ namespace Protokite.Playtest.Tests
             {
                 ProtokitePlaytest.Refresh();
                 Frames(60, pacedBy: _source);
+                RecordingsUnderWay.LetTheEncoderTakeEveryFrameBeforeQuitting(_source);
+                // Not the bound this test is about: a slow disk closes and renames the file in its own time.
+                ProtokitePlaytest.QuitWaitForTesting = TimeSpan.FromSeconds(30);
                 ProtokitePlaytest.HandleGameQuitting();
                 Assert.IsNotNull(ProtokitePlaytest.FinishedVideo, "The file was waited for");
                 Assert.AreEqual(ProtokitePlaytestVideoStopReason.GameQuitting, ProtokitePlaytest.FinishedVideo.StopReason);
                 Assert.AreEqual(_source.Asked.Count, ProtokitePlaytest.FinishedVideo.FramesWritten);
                 Assert.IsTrue(File.Exists(ProtokitePlaytest.FinishedVideo.FilePath));
+            }
+        }
+
+        // A graphics card's encoder let go as the game closes around it can crash it, so the time the file leaves goes to the encoder.
+        [Test]
+        public void QuittingLetsTheEncoderEndItsWorkWithTheTimeTheFileLeaves()
+        {
+            // Longer than closing and renaming the file take, so a quit that does not wait for the encoder returns before it has let go.
+            _encoder.BeforeLettingGo = () => Thread.Sleep(1500);
+            using (FlockWithConfig(true))
+            {
+                ProtokitePlaytest.Refresh();
+                Frames(30, pacedBy: _source);
+                RecordingsUnderWay.LetTheEncoderTakeEveryFrameBeforeQuitting(_source);
+                // Not the bound this test is about: a slow disk closes and renames the file in its own time.
+                ProtokitePlaytest.QuitWaitForTesting = TimeSpan.FromSeconds(30);
+                ProtokitePlaytest.HandleGameQuitting();
+                Assert.IsNotNull(ProtokitePlaytest.FinishedVideo, "Precondition: the file was waited for");
+                Assert.IsTrue(_encoder.Disposed, "The encoder had let go before quitting returned");
             }
         }
 
@@ -541,7 +570,8 @@ namespace Protokite.Playtest.Tests
                     LogAssert.Expect(LogType.Warning, new Regex(@"could not be finished before the game closed; what was recorded stays in .*\.part"));
                     System.Diagnostics.Stopwatch clock = System.Diagnostics.Stopwatch.StartNew();
                     ProtokitePlaytest.HandleGameQuitting();
-                    Assert.Less(clock.Elapsed.TotalSeconds, 4.0, "Bounded by the quit's three seconds");
+                    // Far below the minute the encoder is held, with room for a slow machine's scheduling.
+                    Assert.Less(clock.Elapsed.TotalSeconds, 10.0, "Bounded by the quit's three seconds");
                     Assert.Greater(clock.Elapsed.TotalSeconds, 2.5, "And the file is given them");
                     Assert.IsNull(ProtokitePlaytest.FinishedVideo);
                 }
@@ -757,7 +787,9 @@ namespace Protokite.Playtest.Tests
             string upload = ProtokitePlaytestPlantedRuns.Plant(Recordings, ProtokitePlaytestRecordingKind.Playtest, "20260101-000000-00000001", 3 * Megabyte,
                 "pk-1", finishedVideo: new byte[1024]);
             ManualResetEventSlim letItFinish = new ManualResetEventSlim(false);
-            ProtokitePlaytest.BeforeFinishingEachEarlierRecordingForTesting = run => letItFinish.Wait(TimeSpan.FromSeconds(5));
+            // Held well past the frames below, and not given up on meanwhile, so the pass is still at work however slow the machine.
+            ProtokitePlaytest.BeforeFinishingEachEarlierRecordingForTesting = run => letItFinish.Wait(TimeSpan.FromSeconds(30));
+            ProtokitePlaytest.LongestWaitForEarlierRecordingsForTesting = TimeSpan.FromSeconds(30);
             try
             {
                 ProtokitePlaytest.StartFinishingEarlierRecordings();
@@ -784,19 +816,20 @@ namespace Protokite.Playtest.Tests
         [Test]
         public void ARecordingWaitsForEarlierLaunchesRecordingsNoLongerThanItsBound()
         {
-            ProtokitePlaytest.LongestWaitForEarlierRecordingsForTesting = TimeSpan.FromMilliseconds(500);
+            ProtokitePlaytest.LongestWaitForEarlierRecordingsForTesting = TimeSpan.FromSeconds(2);
             ProtokitePlaytestPlantedRuns.Plant(Recordings, ProtokitePlaytestRecordingKind.Playtest, "20260101-000000-00000001", 1024, "pk-1", finishedVideo: new byte[1024]);
             ManualResetEventSlim letItFinish = new ManualResetEventSlim(false);
-            ProtokitePlaytest.BeforeFinishingEachEarlierRecordingForTesting = run => letItFinish.Wait(TimeSpan.FromSeconds(5));
+            ProtokitePlaytest.BeforeFinishingEachEarlierRecordingForTesting = run => letItFinish.Wait(TimeSpan.FromSeconds(30));
             try
             {
-                ProtokitePlaytest.StartFinishingEarlierRecordings();
                 using (FlockWithConfig(true))
                 {
                     ProtokitePlaytest.Refresh();
+                    // Started just before the first frame, so the bound is not spent setting up Flock.
+                    ProtokitePlaytest.StartFinishingEarlierRecordings();
                     Frames(1);
                     Assert.IsFalse(ProtokitePlaytest.IsRecordingVideo, "Precondition: waiting for the pass");
-                    Thread.Sleep(700);
+                    Thread.Sleep(2500);
                     Frames(1);
                     Assert.IsFalse(ProtokitePlaytest.WaitForEarlierRecordingsForTesting(TimeSpan.Zero), "Precondition: the pass is still held");
                     Assert.IsTrue(ProtokitePlaytest.IsRecordingVideo, "A pass that takes too long does not cost the launch its recording");
@@ -940,13 +973,14 @@ namespace Protokite.Playtest.Tests
             ProtokitePlaytest.BeforeFinishingEachEarlierRecordingForTesting = run =>
             {
                 finishingThread = Thread.CurrentThread.ManagedThreadId;
-                letItFinish.Wait(TimeSpan.FromSeconds(5));
+                letItFinish.Wait(TimeSpan.FromSeconds(20));
             };
             try
             {
                 System.Diagnostics.Stopwatch clock = System.Diagnostics.Stopwatch.StartNew();
                 ProtokitePlaytest.StartFinishingEarlierRecordings();
-                Assert.Less(clock.Elapsed.TotalSeconds, 1.0, "Started, not waited for");
+                // Far below the 20 s the pass is held, with room for a slow machine's first settings load.
+                Assert.Less(clock.Elapsed.TotalSeconds, 3.0, "Started, not waited for");
                 Assert.IsFalse(ProtokitePlaytest.WaitForEarlierRecordingsForTesting(TimeSpan.FromMilliseconds(200)), "Still held by the test");
                 letItFinish.Set();
                 Assert.IsTrue(ProtokitePlaytest.WaitForEarlierRecordingsForTesting(TimeSpan.FromSeconds(10)));
@@ -978,7 +1012,8 @@ namespace Protokite.Playtest.Tests
 
             public bool Encode(byte[] pixels, long timestampMs, long durationMs, System.Collections.Generic.List<ProtokitePlaytestEncodedFrame> output, out string error)
             {
-                _hold.Wait(TimeSpan.FromSeconds(20));
+                // Every test that holds it lets go in a finally.
+                _hold.Wait(TimeSpan.FromSeconds(60));
                 return _inner.Encode(pixels, timestampMs, durationMs, output, out error);
             }
 

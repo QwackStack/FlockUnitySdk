@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Threading.Tasks;
 using Flock.Exceptions;
@@ -28,7 +29,7 @@ namespace Flock.Tests.Editor
         private static readonly DateTime DeliverAt =
             new DateTime(DateTime.UtcNow.Year + 1, 8, 5, 12, 0, 0, DateTimeKind.Utc);
 
-        private static readonly string DeliverAtWire = DeliverAt.ToString("yyyy-MM-ddTHH:mm:ss") + "Z";
+        private static readonly string DeliverAtWire = DeliverAt.ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture) + "Z";
 
         private static readonly string ScheduledBody =
             "{\"result\":{\"id\":\"sched-1\",\"game_id\":\"g\",\"studio_id\":\"s\",\"player_id\":\"player-a\"," +
@@ -208,7 +209,7 @@ namespace Flock.Tests.Editor
 
                 JObject body = ParseBody(h.Transport.LastTo(FlockEndpoints.NotificationSchedule).JsonBody);
                 string deliverAt = (string)body["deliver_at"];
-                StringAssert.StartsWith(DeliverAt.ToString("yyyy-MM-ddTHH:mm:ss"), deliverAt);
+                StringAssert.StartsWith(DeliverAt.ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture), deliverAt);
                 StringAssert.EndsWith("Z", deliverAt, "deliver_at must be sent as UTC, not local time.");
             }
         }
@@ -217,6 +218,9 @@ namespace Flock.Tests.Editor
         [Test]
         public void Schedule_ConvertsLocalTimeToUtc()
         {
+            // The SDK converts with this machine's own time zone, which a test cannot set, and where it is UTC there is nothing to convert.
+            if (TimeZoneInfo.Local.GetUtcOffset(DeliverAt) == TimeSpan.Zero)
+                Assert.Ignore("This machine's time zone is UTC at the delivery time, so a local time and its UTC instant cannot be told apart; it runs in a time zone with an offset.");
             FlockFakeTransport transport = ScheduleTransport();
             using (FlockTestClient h = FlockTestClient.Create(transport))
             {
@@ -228,7 +232,7 @@ namespace Flock.Tests.Editor
 
                 JObject body = ParseBody(h.Transport.LastTo(FlockEndpoints.NotificationSchedule).JsonBody);
                 string deliverAt = (string)body["deliver_at"];
-                Assert.AreEqual(DeliverAt, DateTime.Parse(deliverAt, null, System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal),
+                Assert.AreEqual(DeliverAt, DateTime.Parse(deliverAt, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal),
                     "A local DateTime must land on the wire as the same instant in UTC.");
             }
         }
@@ -290,8 +294,8 @@ namespace Flock.Tests.Editor
                 DateTime after = DateTime.UtcNow;
 
                 JObject body = JObject.Parse(h.Transport.LastTo(FlockEndpoints.NotificationSchedule).JsonBody);
-                DateTime sent = DateTime.Parse((string)body["deliver_at"], null,
-                    System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal);
+                DateTime sent = DateTime.Parse((string)body["deliver_at"], CultureInfo.InvariantCulture,
+                    DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal);
 
                 Assert.GreaterOrEqual(sent, before.AddHours(4).AddSeconds(-5));
                 Assert.LessOrEqual(sent, after.AddHours(4).AddSeconds(5));

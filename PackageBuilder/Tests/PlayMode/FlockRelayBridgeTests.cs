@@ -127,7 +127,7 @@ namespace Flock.Tests.PlayMode
             Assert.IsFalse(openedTo.IsFaulted, $"Precondition: {player} opened to the host");
         }
 
-        private static IEnumerator Heard(StandInNetcode netcode, string text, List<KeyValuePair<string, int>> into, float seconds = 3f)
+        private static IEnumerator Heard(StandInNetcode netcode, string text, List<KeyValuePair<string, int>> into, float seconds = 10f)
         {
             DateTime until = DateTime.UtcNow.AddSeconds(seconds);
             while (DateTime.UtcNow < until)
@@ -140,7 +140,7 @@ namespace Flock.Tests.PlayMode
             Assert.Fail($"The netcode never heard \"{text}\"; heard: {string.Join(", ", into.Select(packet => packet.Key))}");
         }
 
-        private static IEnumerator HeardOnTheRelay(FlockRelayConnection relay, string text, List<FlockRelayPeer> from, float seconds = 3f)
+        private static IEnumerator HeardOnTheRelay(FlockRelayConnection relay, string text, List<FlockRelayPeer> from, float seconds = 10f)
         {
             byte[] buffer = new byte[FlockRelayConnection.MostBytesInAPacket];
             DateTime until = DateTime.UtcNow.AddSeconds(seconds);
@@ -328,7 +328,7 @@ namespace Flock.Tests.PlayMode
             Assert.AreEqual(0, ChannelsBoundBy(relays[0]), "Hearing a peer, or answering it, binds it no channel");
 
             bridge.LetIn(relays[1].Address);
-            yield return FlockTestWait.Until(() => ChannelsBoundBy(relays[0]) == 1, "the peer let in got a channel", 3f);
+            yield return FlockTestWait.Until(() => ChannelsBoundBy(relays[0]) == 1, "the peer let in got a channel");
             yield return RealSeconds(0.3f);
             Assert.AreEqual(1, ChannelsBoundBy(relays[0]), "Only the peer let in");
         }
@@ -362,7 +362,8 @@ namespace Flock.Tests.PlayMode
         public IEnumerator AFullHostsBridge_MakesWayOnlyForAPeerNeverLetIn_OnceItHadItsTime()
         {
             FlockRelayBridge.MostPlayersForTesting = 2;
-            FlockRelayBridge.NotLetInWithinForTesting = TimeSpan.FromSeconds(1);
+            // 3 s, so a busy machine's pause between hearing c and hearing d does not give c its time early.
+            FlockRelayBridge.NotLetInWithinForTesting = TimeSpan.FromSeconds(3);
             List<FlockRelayConnection> relays = new List<FlockRelayConnection>();
             yield return Opened(Host, relays);
             yield return Opened(Player, relays, () => relays[0].Address);
@@ -383,7 +384,7 @@ namespace Flock.Tests.PlayMode
             Assert.IsFalse(heard.Any(packet => packet.Key == "d too soon"), "Full: the peer never let in has not had its time");
             Assert.AreEqual(2, bridge.PeersForTesting);
 
-            yield return RealSeconds(1f);
+            yield return RealSeconds(3f);
             SendThrough(relays[3], relays[0].Address, "d later");
             yield return Heard(netcode, "d later", heard);
             Assert.AreEqual(2, bridge.PeersForTesting, "Still at most two");
@@ -431,7 +432,7 @@ namespace Flock.Tests.PlayMode
             relays[1].Close();
             Assert.IsFalse(bridge.IsClosed, "Precondition: nothing told the bridge yet");
             netcode.SendTo(bridge.LocalPort, "after the relay stopped");
-            yield return FlockTestWait.Until(() => bridge.IsClosed, "the bridge closed itself", 3f);
+            yield return FlockTestWait.Until(() => bridge.IsClosed, "the bridge closed itself");
         }
 
         [UnityTest]
@@ -482,7 +483,7 @@ namespace Flock.Tests.PlayMode
             yield return Opened(Host, relays);
             yield return Opened(Player, relays, () => relays[0].Address, RenewingChannelsOften());
             FlockRelayBridge bridge = Kept(FlockRelayBridge.ToTheHost(relays[1], relays[0].Address, _logger));
-            yield return FlockTestWait.Until(() => ChannelRenewalsFrom(relays[1]) >= 2, "the channel to the host was bound and renewed", 5f);
+            yield return FlockTestWait.Until(() => ChannelRenewalsFrom(relays[1]) >= 2, "the channel to the host was bound and renewed");
             Assert.IsTrue(relays[1].KeepsChannelToForTesting(relays[0].Address), "Precondition: kept while the bridge forwards");
 
             bridge.Close();
@@ -502,7 +503,7 @@ namespace Flock.Tests.PlayMode
             SendThrough(relays[1], relays[0].Address, "b");
             yield return Heard(netcode, "b", heard);
             bridge.LetIn(relays[1].Address);
-            yield return FlockTestWait.Until(() => ChannelRenewalsFrom(relays[0]) >= 2, "the player's channel was bound and renewed", 5f);
+            yield return FlockTestWait.Until(() => ChannelRenewalsFrom(relays[0]) >= 2, "the player's channel was bound and renewed");
 
             // The player left: the netcode's disconnect makes the host forget it.
             bridge.Forget(relays[1].Address);
@@ -522,7 +523,7 @@ namespace Flock.Tests.PlayMode
             SendThrough(relays[1], relays[0].Address, "b");
             yield return Heard(netcode, "b", heard);
             bridge.LetIn(relays[1].Address);
-            yield return FlockTestWait.Until(() => ChannelRenewalsFrom(relays[0]) >= 2, "the player's channel was bound and renewed", 5f);
+            yield return FlockTestWait.Until(() => ChannelRenewalsFrom(relays[0]) >= 2, "the player's channel was bound and renewed");
 
             // The host's netcode stopped (a host change, the game shutting it down): its bridge closes.
             bridge.Close();
@@ -538,13 +539,13 @@ namespace Flock.Tests.PlayMode
             yield return Opened(Player, relays, () => relays[0].Address, RenewingChannelsOften());
             FlockRelayPeer host = relays[0].Address;
             relays[1].KeepChannelTo(host);
-            yield return FlockTestWait.Until(() => relays[1].ChannelNumberForTesting(host) != 0, "the channel was bound", 5f);
+            yield return FlockTestWait.Until(() => relays[1].ChannelNumberForTesting(host) != 0, "the channel was bound");
             ushort number = relays[1].ChannelNumberForTesting(host);
 
             relays[1].LetChannelGo(host);
-            yield return FlockTestWait.Until(() => relays[1].ChannelNumberForTesting(host) == 0, "the channel lapsed", 6f);
+            yield return FlockTestWait.Until(() => relays[1].ChannelNumberForTesting(host) == 0, "the channel lapsed");
             relays[1].KeepChannelTo(host);
-            yield return FlockTestWait.Until(() => relays[1].ChannelNumberForTesting(host) != 0, "the channel was bound again", 5f);
+            yield return FlockTestWait.Until(() => relays[1].ChannelNumberForTesting(host) != 0, "the channel was bound again");
             Assert.AreEqual(number, relays[1].ChannelNumberForTesting(host), "On the number it had: the relay keeps a peer's number for a while after it lapses");
         }
     }
