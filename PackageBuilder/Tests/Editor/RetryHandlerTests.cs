@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.Threading;
 using System.Threading.Tasks;
 using Flock.Exceptions;
@@ -217,6 +218,34 @@ namespace Flock.Tests
 
             Assert.AreEqual(1, logger.Warnings.Count);
             StringAssert.StartsWith("Operation failed after 1 attempt(s)", logger.Warnings[0]);
+        }
+
+        // A machine that writes decimals with a comma still reads "0.0s": every message reads the same wherever it is logged.
+        [Test]
+        public void TheWaitInARetryWarning_ReadsTheSameOnAMachineThatWritesDecimalsWithAComma()
+        {
+            RecordingFlockLogger logger = new RecordingFlockLogger();
+            RetryHandler handler = NoDelayHandler(1, logger);
+            CultureInfo decimalComma = (CultureInfo)CultureInfo.InvariantCulture.Clone();
+            decimalComma.NumberFormat.NumberDecimalSeparator = ",";
+
+            Assert.Throws<FlockNetworkException>(() => Run(() =>
+            {
+                CultureInfo before = CultureInfo.CurrentCulture;
+                CultureInfo.CurrentCulture = decimalComma;
+                try
+                {
+                    // The first try fails at once, so its warning is written on this thread, before the first wait.
+                    return handler.ExecuteAsync<int>(() => throw new FlockNetworkException("timeout"), CancellationToken.None);
+                }
+                finally
+                {
+                    CultureInfo.CurrentCulture = before;
+                }
+            }));
+
+            Assert.AreEqual("1,5", 1.5.ToString(decimalComma), "Precondition: the stand-in culture writes a comma");
+            StringAssert.Contains("Retrying in 0.0s", logger.Warnings[0]);
         }
 
         // MaxDelay is the longest wait, jitter included: the backoff grows to MaxDelay and jitter is applied after.

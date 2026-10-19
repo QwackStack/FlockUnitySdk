@@ -15,6 +15,25 @@ namespace Flock.Analytics
     internal static class FlockEventCacheNames
     {
         internal const string Extension = ".evt";
+
+        private static long _lastStamp;
+
+        /// <summary>Stands in for the clock's ticks, so a test can hold the clock still or step it back.</summary>
+        internal static Func<long> ClockTicksForTesting;
+
+        // The clock's ticks, but always later than the last stamp this launch handed out: the clock can show one tick for several
+        // writes in a row (Windows' moves every millisecond or more) or step back, and the names must keep the order events came in.
+        internal static long NextStamp()
+        {
+            long now = ClockTicksForTesting?.Invoke() ?? DateTime.UtcNow.Ticks;
+            while (true)
+            {
+                long last = Interlocked.Read(ref _lastStamp);
+                long next = Math.Max(now, last + 1);
+                if (Interlocked.CompareExchange(ref _lastStamp, next, last) == last)
+                    return next;
+            }
+        }
     }
 
     // Spool directory: one event = one JSON file. The filename starts with a
@@ -90,7 +109,7 @@ namespace Flock.Analytics
             if (evt == null)
                 return null;
 
-            string name = $"{DateTime.UtcNow.Ticks:D19}_{Guid.NewGuid():N}";
+            string name = $"{FlockEventCacheNames.NextStamp():D19}_{Guid.NewGuid():N}";
             string finalPath = Path.Combine(_dir, name + Extension);
             string tmpPath = FlockTemporaryFiles.MakePath(finalPath);
 

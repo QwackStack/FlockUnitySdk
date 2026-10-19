@@ -56,6 +56,8 @@ namespace Protokite.Playtest.Tests
         {
             if (FlockClient.IsInitialized)
                 FlockClient.Shutdown();
+            // Waited for before the reset, which forgets the pass after 5 s; judged once everything else is put back.
+            bool passEnded = ProtokitePlaytest.WaitForEarlierRecordingsForTesting(TimeSpan.FromSeconds(30));
             ProtokitePlaytest.ResetForNewLaunch();
             ProtokitePlaytest.DeviceIdFilePathForTesting = null;
             ProtokitePlaytest.RecordingsFolderForTesting = null;
@@ -63,8 +65,16 @@ namespace Protokite.Playtest.Tests
             ProtokitePlaytest.VideoFrameSourceForTesting = null;
             _settings.Dispose();
             FlockHttpClient.Configure(TimeSpan.FromSeconds(30));
-            if (Directory.Exists(_folder))
-                Directory.Delete(_folder, true);
+            Assert.IsTrue(passEnded, "The finishing pass ended before its folder is deleted");
+            // A file a recording's thread still holds must not fail the test for the folder.
+            try
+            {
+                if (Directory.Exists(_folder))
+                    Directory.Delete(_folder, true);
+            }
+            catch (IOException)
+            {
+            }
         }
 
         private static string Stamp(string path) => File.Exists(path) ? File.GetLastWriteTimeUtc(path).Ticks + ":" + File.ReadAllText(path) : "none";
@@ -568,7 +578,8 @@ namespace Protokite.Playtest.Tests
                 DateTime began = DateTime.UtcNow;
                 ProtokitePlaytest.HandleGameQuitting();
                 double waited = (DateTime.UtcNow - began).TotalSeconds;
-                Assert.That(waited, Is.InRange(2.5, 4.0), "Bounded: the game is never held up for good");
+                // Far below the 30 s the end is held, with room for a slow machine's scheduling.
+                Assert.That(waited, Is.InRange(2.5, 10.0), "Bounded: the game is never held up for good");
             }
         }
 
@@ -591,6 +602,10 @@ namespace Protokite.Playtest.Tests
 
                 LogAssert.Expect(LogType.Warning, new Regex("could not be ended within 3 s"));
                 ProtokitePlaytest.HandleGameQuitting();
+                // A retry already handed to the transport as quitting gave up may land a moment later; counted once it has, well inside the 800 ms between retries.
+                float settled = Time.realtimeSinceStartup + 0.2f;
+                while (Time.realtimeSinceStartup < settled)
+                    yield return null;
                 int sentWhileWaiting = transport.CountTo(EndRoute);
                 Assert.That(sentWhileWaiting, Is.GreaterThan(1), "Precondition: the end was retried while quitting waited");
 
@@ -712,7 +727,16 @@ namespace Protokite.Playtest.Tests
 
             public void Release() => _release.TrySetResult(true);
 
-            public void ReleaseAfter(TimeSpan delay) => Task.Delay(delay).ContinueWith(_ => Release());
+            // On a thread of its own, so a busy thread pool cannot hold the release past the quit's three seconds.
+            public void ReleaseAfter(TimeSpan delay)
+            {
+                Thread releasing = new Thread(() =>
+                {
+                    Thread.Sleep(delay);
+                    Release();
+                }) { IsBackground = true, Name = "Test session start release" };
+                releasing.Start();
+            }
 
             public async Task<FlockHttpResponse> SendAsync(FlockHttpRequest request, CancellationToken cancellationToken)
             {

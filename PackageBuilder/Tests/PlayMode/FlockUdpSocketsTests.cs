@@ -69,7 +69,8 @@ namespace Flock.Tests.PlayMode
         [Test]
         public void ARefusedDualStack_IsRemembered_SoLaterSocketsGoStraightToIpv4()
         {
-            Assume.That(FamilyThisMachineGives(), Is.EqualTo(AddressFamily.InterNetworkV6), "This machine has no IPv6 to refuse");
+            if (FamilyThisMachineGives() != AddressFamily.InterNetworkV6)
+                Assert.Ignore("This machine has no IPv6 to refuse");
             FlockUdpSockets.DualStackRefusedForTesting = true;
             using (Socket refused = FlockUdpSockets.Open())
                 Assert.AreEqual(AddressFamily.InterNetwork, refused.AddressFamily);
@@ -89,7 +90,8 @@ namespace Flock.Tests.PlayMode
         public void AnIpv4Address_IsSentToInItsIpv6Form_OnlyOnADualStackSocket()
         {
             IPEndPoint server = new IPEndPoint(IPAddress.Parse("162.159.207.0"), 3478);
-            Assume.That(FamilyThisMachineGives(), Is.EqualTo(AddressFamily.InterNetworkV6), "This machine has no IPv6 to map to");
+            if (FamilyThisMachineGives() != AddressFamily.InterNetworkV6)
+                Assert.Ignore("This machine has no IPv6 to map to");
             using (Socket dualStack = FlockUdpSockets.Open())
             {
                 IPEndPoint toward = FlockUdpSockets.Toward(dualStack, server);

@@ -1201,7 +1201,8 @@ namespace Flock.Tests.PlayMode
         [UnityTest]
         public IEnumerator ARetriedHeartbeatAfterAPlayerSwitch_IsNotSentAsTheNewPlayer()
         {
-            FlockMultiplayerProvider multiplayer = SignedInAs(A, retries: 1, retryWaitMilliseconds: 1000);
+            // The retry waits 3 s, so the switch 0.2 s after the refusal comes well before it on a busy machine.
+            FlockMultiplayerProvider multiplayer = SignedInAs(A, retries: 1, retryWaitMilliseconds: 3000);
             _server.HeartbeatSeconds = 1;
             _server.AnswerNext(FakeSessionServer.Heartbeat, FakeSessionServer.Refused(429, "request.rate_limited"));
             FakeSessionServer.Held firstTry = _server.HoldNext(FakeSessionServer.Heartbeat);
@@ -1213,7 +1214,7 @@ namespace Flock.Tests.PlayMode
 
             // The switch and a long frame (a scene load) after it: the retry's wait ends before a frame could end the session.
             _h.LoginAs(C);
-            System.Threading.Thread.Sleep(1200);
+            System.Threading.Thread.Sleep(3200);
             yield return RealSeconds(0.5f);
             Assert.AreEqual(1, _server.Count(FakeSessionServer.Heartbeat), "The retry did not go out as the new player");
             Assert.IsTrue(hosted.Result.HasEnded, "The session ended with its sign-in");

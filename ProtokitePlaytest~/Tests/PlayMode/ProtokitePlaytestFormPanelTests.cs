@@ -88,9 +88,10 @@ namespace Protokite.Playtest.Tests
             if (FlockClient.IsInitialized)
                 FlockClient.Shutdown();
             FlockHttpClient.Configure(TimeSpan.FromSeconds(30));
+            // Waited for before the reset, which forgets the pass after 5 s; judged once everything else is put back.
+            bool passEnded = ProtokitePlaytest.WaitForEarlierRecordingsForTesting(TimeSpan.FromSeconds(30));
             ProtokitePlaytest.ResetForNewLaunch();
             Time.timeScale = _timeScaleBefore;
-            Assert.IsTrue(ProtokitePlaytest.WaitForEarlierRecordingsForTesting(TimeSpan.FromSeconds(10)), "The finishing pass ended before its folder is deleted");
             ProtokitePlaytest.DeviceIdFilePathForTesting = null;
             ProtokitePlaytest.RecordingsFolderForTesting = null;
             ProtokitePlaytest.FeedbackFormsFolderForTesting = _formsBefore;
@@ -103,6 +104,7 @@ namespace Protokite.Playtest.Tests
                 _settings.FeedbackFormKey = _oldKey;
                 _settings.PauseTheGameWhileTheFormIsOpen = _oldPause;
             }
+            Assert.IsTrue(passEnded, "The finishing pass ended before its folder is deleted");
             try
             {
                 if (_folder != null && Directory.Exists(_folder))

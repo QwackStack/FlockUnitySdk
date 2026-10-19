@@ -35,9 +35,13 @@ namespace Protokite.Playtest.Tests
         public int BlocksReturned => Volatile.Read(ref _blocksReturned);
         public bool IsReadyForAnotherFrame => Ready && !Stopped;
 
-        /// <summary>Waits, up to the bound, until every frame asked for but the newest has been through the encoder, as the time before a game's next frame would.</summary>
-        public void WaitForTheEncoderToCatchUp(int mostMilliseconds = 500)
+        /// <summary>Waits, up to the bound, until every frame asked for but the newest has been through the encoder, as the time before a game's next frame would; true once it has.</summary>
+        public bool WaitForTheEncoderToCatchUp(int mostMilliseconds = 500)
             => SpinWait.SpinUntil(() => BlocksReturned >= Asked.Count - 1, mostMilliseconds);
+
+        /// <summary>Waits, up to the bound, until every frame asked for has been through the encoder; true once it has.</summary>
+        public bool WaitForTheEncoderToTakeEveryFrame(TimeSpan most)
+            => SpinWait.SpinUntil(() => BlocksReturned >= Asked.Count, most);
 
         /// <summary>True stands in for a screen with no size (a minimized window): a frame asked for is not captured.</summary>
         public bool ScreenHasNoSize;
@@ -92,14 +96,25 @@ namespace Protokite.Playtest.Tests
     // The encoder starts on a thread below the game's priority, which a busy machine runs late: 30 frames once ended before it ran.
     internal static class RecordingsUnderWay
     {
-        /// <summary>Waits, a few seconds at most, until each recording under way has started its encoder or failed to; until then it captures nothing.</summary>
+        private static readonly TimeSpan LongestEncoderStart = TimeSpan.FromSeconds(20);
+
+        /// <summary>Waits, 20 seconds at most, until each recording under way has started its encoder or failed to; until then it captures nothing.</summary>
         public static void LetTheirEncodersStart()
         {
             LetItsEncoderStart(ProtokitePlaytest.VideoRecordingForTesting);
             LetItsEncoderStart(ProtokitePlaytest.TestVideoForTesting);
         }
 
-        // Each recording is waited for once: an encoder that never starts fails its test rather than stall every frame.
+        /// <summary>Takes no new frame, hands the newest over with one more frame, and waits for the encoder to take every frame, so only closing and renaming the file are left for the quit's three seconds.</summary>
+        public static void LetTheEncoderTakeEveryFrameBeforeQuitting(FakeFrameSource source)
+        {
+            source.Ready = false;
+            ProtokitePlaytest.UpdateVideo(1.0 / 60.0);
+            NUnit.Framework.Assert.IsTrue(source.WaitForTheEncoderToTakeEveryFrame(TimeSpan.FromSeconds(20)),
+                $"Precondition: the encoder took every frame before the game quit ({source.BlocksReturned} of {source.Asked.Count})");
+        }
+
+        // Each recording is waited for once, and an encoder that neither starts nor fails to within the bound fails its test there rather than stall every frame.
         private static readonly ConditionalWeakTable<ProtokitePlaytestVideoRecording, object> WaitedFor = new ConditionalWeakTable<ProtokitePlaytestVideoRecording, object>();
 
         private static void LetItsEncoderStart(ProtokitePlaytestVideoRecording recording)
@@ -107,7 +122,11 @@ namespace Protokite.Playtest.Tests
             if (recording == null || recording.EncoderHasStarted || WaitedFor.TryGetValue(recording, out object _))
                 return;
             WaitedFor.Add(recording, new object());
-            recording.WaitUntilTheEncoderHasStartedForTesting(TimeSpan.FromSeconds(5));
+            System.Diagnostics.Stopwatch waited = System.Diagnostics.Stopwatch.StartNew();
+            bool started = recording.WaitUntilTheEncoderHasStartedForTesting(LongestEncoderStart);
+            // False before the bound is an encoder that could not start, which its own test judges; false at the bound is one that never answered.
+            NUnit.Framework.Assert.IsTrue(started || waited.Elapsed < LongestEncoderStart,
+                "The recording's encoder neither started nor failed to start within 20 s, so no frame could be captured");
         }
     }
 
@@ -126,11 +145,11 @@ namespace Protokite.Playtest.Tests
             return found != null && found.Exists(encoder => encoder.InHardware);
         }
 
-        /// <summary>Leaves a test inconclusive on a PC whose graphics card has no H.264 encoder: what it checks is the encoder, not this PC.</summary>
-        public static void AssumeAGraphicsCardEncoder()
+        /// <summary>Skips a test on a PC whose graphics card has no H.264 encoder: what it checks is the encoder, not this PC. Skipped, never inconclusive: Unity's test runner exits 2 on an inconclusive test.</summary>
+        public static void SkipWithoutAGraphicsCardEncoder()
         {
-            bool offered = GraphicsCardEncoderOffered(out string whatIsOffered);
-            NUnit.Framework.Assume.That(offered, "This test drives a graphics card's H.264 encoder, and this PC has none: " + whatIsOffered);
+            if (!GraphicsCardEncoderOffered(out string whatIsOffered))
+                NUnit.Framework.Assert.Ignore("This test drives a graphics card's H.264 encoder, and this PC has none: " + whatIsOffered);
         }
 
         /// <summary>Runs the work on a thread of its own, as a recording's encoding thread does, and throws here what it threw there.</summary>
@@ -195,8 +214,11 @@ namespace Protokite.Playtest.Tests
         public int FailAtFrame = -1;
 
         public bool Finished;
-        public bool Disposed;
+        public volatile bool Disposed;
         public readonly List<long> DurationsMs = new List<long>();
+
+        /// <summary>Runs as it is let go, before it counts as let go, as a graphics card's encoder takes a moment to.</summary>
+        public Action BeforeLettingGo;
 
         /// <summary>True keeps every frame inside the encoder until it finishes or lets go, as a phone's encoder may hold its last frames.</summary>
         public bool HoldsEveryFrame;
@@ -297,6 +319,10 @@ namespace Protokite.Playtest.Tests
             output.Add(frame);
         }
 
-        public void Dispose() => Disposed = true;
+        public void Dispose()
+        {
+            BeforeLettingGo?.Invoke();
+            Disposed = true;
+        }
     }
 }

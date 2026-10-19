@@ -344,6 +344,13 @@ namespace Protokite.Playtest
             [PreserveSig] int GetEvent(uint flags, out IMFMediaEvent mediaEvent);
         }
 
+        [ComImport, Guid("97ec2ea4-0e42-4937-97ac-9d6d328824e1"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        internal interface IMFShutdown
+        {
+            [PreserveSig] int Shutdown();
+            [PreserveSig] int GetShutdownStatus(out uint status);
+        }
+
         [ComImport, Guid("DF598932-F10C-4E39-BBA2-C308F101DAA3"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
         internal interface IMFMediaEvent
         {

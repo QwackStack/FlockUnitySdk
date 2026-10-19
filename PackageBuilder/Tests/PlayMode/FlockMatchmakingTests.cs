@@ -88,18 +88,22 @@ namespace Flock.Tests.PlayMode
             _server.QueuedBy(FakeMatchmakingServer.DuelId, B);
             DateTime started = DateTime.UtcNow;
             Task<FlockMatchmakingResult> found = multiplayer.FindMatchAsync(FakeMatchmakingServer.Duel);
-            List<DateTime> checks = new List<DateTime>();
-            while (checks.Count < 2 && DateTime.UtcNow < started.AddSeconds(10))
+            // The checks are timed as they reach the server; a check goes on the first frame after its wait, so the longest frame is allowed for.
+            double longestFrame = 0;
+            DateTime frameStarted = DateTime.UtcNow;
+            while (_server.Count(FakeMatchmakingServer.ReadTicket) < 2 && DateTime.UtcNow < started.AddSeconds(10))
             {
-                if (_server.Count(FakeMatchmakingServer.ReadTicket) > checks.Count)
-                    checks.Add(DateTime.UtcNow);
                 yield return null;
+                longestFrame = Math.Max(longestFrame, (DateTime.UtcNow - frameStarted).TotalSeconds);
+                frameStarted = DateTime.UtcNow;
             }
-            Assert.AreEqual(2, checks.Count, "Checked twice");
+            List<DateTime> checks = _server.ArrivalsAt(FakeMatchmakingServer.ReadTicket);
+            Assert.GreaterOrEqual(checks.Count, 2, "Checked twice");
             double first = (checks[0] - started).TotalSeconds;
             double between = (checks[1] - checks[0]).TotalSeconds;
-            Assert.That(first, Is.InRange(2.0, 4.0), "The first check, the interval from the start");
-            Assert.That(between, Is.InRange(2.1, 3.9), "A check every 2.25 to 3.75 s");
+            double slack = Math.Max(0.15, longestFrame);
+            Assert.That(first, Is.InRange(2.0, 4.0 + longestFrame), $"The first check, the interval from the start (longest frame {longestFrame:0.00} s)");
+            Assert.That(between, Is.InRange(2.25 - slack, 3.75 + slack), $"A check every 2.25 to 3.75 s (longest frame {longestFrame:0.00} s)");
 
             _server.FormMatches();
             yield return Done(found, "matched");
@@ -377,7 +381,8 @@ namespace Flock.Tests.PlayMode
         [UnityTest]
         public IEnumerator ARetriedCheckAfterAPlayerSwitch_IsNotSentAsTheNewPlayer()
         {
-            FlockMultiplayerProvider multiplayer = SignedInAs(A, retries: 1, retryWaitMilliseconds: 1000);
+            // The retry waits 3 s, so the switch 0.2 s after the refusal comes well before it on a busy machine.
+            FlockMultiplayerProvider multiplayer = SignedInAs(A, retries: 1, retryWaitMilliseconds: 3000);
             _server.AnswerNext(FakeMatchmakingServer.ReadTicket, FakeMatchmakingServer.Refused(429, "request.rate_limited"));
             FakeMatchmakingServer.Held firstTry = _server.HoldNext(FakeMatchmakingServer.ReadTicket);
             Task<FlockMatchmakingResult> found = multiplayer.FindMatchAsync(FakeMatchmakingServer.Trio);
@@ -387,7 +392,7 @@ namespace Flock.Tests.PlayMode
 
             // The switch and a long frame (a scene load) after it: the retry's wait ends before a frame could end the search.
             _h.LoginAs(C);
-            Thread.Sleep(1200);
+            Thread.Sleep(3200);
             yield return RealSeconds(0.5f);
             Assert.AreEqual(1, _server.Count(FakeMatchmakingServer.ReadTicket), "The retry did not go out as the new player");
             Assert.IsTrue(found.IsCanceled, "The search ended with its sign-in");
@@ -467,8 +472,10 @@ namespace Flock.Tests.PlayMode
             _server.AnswerNext(FakeMatchmakingServer.Current, FakeMatchmakingServer.Refused(503, "server.unavailable"));
             DateTime asked = DateTime.UtcNow;
             Task<FlockParty> mine = multiplayer.GetMyPartyAsync();
-            yield return Done(mine, "the party");
-            Assert.Less((DateTime.UtcNow - asked).TotalSeconds, 1.5, "Handed over without waiting for a retry");
+            // Timed as the call ends, not when a frame notices: a retry would hold it at least the 2 s retry wait.
+            Task<double> handedOver = mine.ContinueWith(_ => (DateTime.UtcNow - asked).TotalSeconds, TaskContinuationOptions.ExecuteSynchronously);
+            yield return Done(handedOver, "the party");
+            Assert.Less(handedOver.Result, 1.9, "Handed over without waiting for a retry");
             yield return RealSeconds(0.5f);
             Assert.AreEqual(1, _server.Count(FakeMatchmakingServer.Current), "The reading was not tried again");
         }

@@ -7,7 +7,7 @@ using static Protokite.Playtest.ProtokitePlaytestMediaFoundation;
 namespace Protokite.Playtest.Tests
 {
     /// <summary>Stands in for a graphics card's encoder that hands frames back through events, keeping Windows' rule: one output call per "has output" event.</summary>
-    internal sealed class StandInEventEncoder : IMFTransform, IMFMediaEventGenerator
+    internal sealed class StandInEventEncoder : IMFTransform, IMFMediaEventGenerator, IMFShutdown
     {
         /// <summary>Windows' answer to an output call no event allowed (E_UNEXPECTED).</summary>
         internal const int Unexpected = unchecked((int)0x8000FFFF);
@@ -38,19 +38,65 @@ namespace Protokite.Playtest.Tests
         /// <summary>The output buffer its new output type needs after a format change, refusing a smaller one; 0 for none.</summary>
         public uint OutputBufferBytesAfterTheChange;
 
+        /// <summary>Keeps every frame until told to drain, as a graphics card's encoder still working on frames does.</summary>
+        public bool HoldsFramesUntilDrained;
+
+        /// <summary>Hands back bytes that are no H.264 byte stream, which the recording cannot read.</summary>
+        public bool HandsBackUnreadableFrames;
+
+        /// <summary>Refuses to start a stream, as an encoder another program holds may.</summary>
+        public bool RefusesToStartAStream;
+
         public int FormatChanges { get; private set; }
+
+        /// <summary>How many times it was told to drain.</summary>
+        public int DrainsAsked { get; private set; }
 
         /// <summary>Calls its events did not allow, each answered as Windows answers them.</summary>
         public int CallsRefused { get; private set; }
 
+        /// <summary>Whether it was shut down, as Windows asks of an encoder that hands frames back through events before it is let go.</summary>
+        public bool IsShutDown { get; private set; }
+
+        /// <summary>Frames handed in and not yet handed back when it was shut down; -1 when it never was.</summary>
+        public int FramesStillHeldAtShutdown { get; private set; } = -1;
+
+        /// <summary>Calls made after it was shut down, a second shutdown included.</summary>
+        public int CallsAfterShutdown { get; private set; }
+
+        /// <summary>How long it had sent no event when it was shut down.</summary>
+        public TimeSpan QuietBeforeShutdown { get; private set; }
+
+        private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
+        private TimeSpan _lastEventTakenAt;
+
+        public int Shutdown()
+        {
+            if (IsShutDown)
+                CallsAfterShutdown++;
+            IsShutDown = true;
+            FramesStillHeldAtShutdown = _timesHandedIn.Count;
+            QuietBeforeShutdown = _clock.Elapsed - _lastEventTakenAt;
+            return Ok;
+        }
+
+        public int GetShutdownStatus(out uint status)
+        {
+            status = 0;
+            return IsShutDown ? Ok : NotImplemented;
+        }
+
         public int GetEvent(uint flags, out IMFMediaEvent mediaEvent)
         {
+            if (IsShutDown)
+                CallsAfterShutdown++;
             if (_events.Count == 0)
             {
                 mediaEvent = null;
                 return NoEventsAvailable;
             }
             uint type = _events.Dequeue();
+            _lastEventTakenAt = _clock.Elapsed;
             if (type == EventNeedInput)
                 _inputsAllowed++;
             else if (type == EventHaveOutput)
@@ -93,15 +139,32 @@ namespace Protokite.Playtest.Tests
 
         public int ProcessMessage(uint message, IntPtr parameter)
         {
+            if (IsShutDown)
+                CallsAfterShutdown++;
             if (message == MessageStartOfStream)
+            {
+                if (RefusesToStartAStream)
+                    return NotAccepting;
                 _events.Enqueue(EventNeedInput);
+            }
             else if (message == MessageCommandDrain)
+            {
+                DrainsAsked++;
+                // Every frame it held and has not announced comes out before the drain is complete.
+                int announced = _outputsAllowed + (_waitingForANewOutputType ? 1 : 0);
+                foreach (uint queued in _events)
+                    announced += queued == EventHaveOutput ? 1 : 0;
+                for (int held = _timesHandedIn.Count - announced; held > 0; held--)
+                    _events.Enqueue(EventHaveOutput);
                 _events.Enqueue(EventDrainComplete);
+            }
             return Ok;
         }
 
         public int ProcessInput(uint streamId, IMFSample sample, uint flags)
         {
+            if (IsShutDown)
+                CallsAfterShutdown++;
             if (_inputsAllowed == 0)
             {
                 CallsRefused++;
@@ -110,13 +173,16 @@ namespace Protokite.Playtest.Tests
             _inputsAllowed--;
             sample.GetSampleTime(out long time);
             _timesHandedIn.Enqueue(time);
-            _events.Enqueue(EventHaveOutput);
+            if (!HoldsFramesUntilDrained)
+                _events.Enqueue(EventHaveOutput);
             _events.Enqueue(EventNeedInput);
             return Ok;
         }
 
         public int ProcessOutput(uint flags, uint count, ref OutputDataBuffer buffer, out uint status)
         {
+            if (IsShutDown)
+                CallsAfterShutdown++;
             status = 0;
             if (_outputsAllowed == 0)
             {
@@ -132,7 +198,8 @@ namespace Protokite.Playtest.Tests
                 return StreamChange;
             }
 
-            byte[] bytes = _framesHandedBack > 0 ? LaterFrame
+            byte[] bytes = HandsBackUnreadableFrames ? new byte[] { 0x12, 0x34, 0x56, 0x78 }
+                : _framesHandedBack > 0 ? LaterFrame
                 : GivesSettingsOnlyOnItsOutputType ? Keyframe
                 : Join(StreamSettings, Keyframe);
             // The caller's own sample object, shared with this pointer: it is the caller's to let go of.

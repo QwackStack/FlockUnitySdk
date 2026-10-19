@@ -1,4 +1,5 @@
 using UnityEngine;
+using static System.FormattableString;
 
 namespace Protokite.Playtest
 {
@@ -78,7 +79,7 @@ namespace Protokite.Playtest
                     {
                         recording.RecordsAtHalfTheFrameRate = true;
                         Debug.Log(LogPrefix + $"Android says it has started to slow the phone down for heat (thermal status {_thermalStatus}), so {what} takes " +
-                            $"{recording.FramesPerSecond / 2.0:0.#} frames a second, half its rate, until the phone cools.");
+                            Invariant($"{recording.FramesPerSecond / 2.0:0.#} frames a second, half its rate, until the phone cools."));
                     }
                     break;
                 default:

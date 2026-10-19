@@ -27,12 +27,22 @@ namespace Protokite.Playtest.Tests
 
         private ProtokitePlaytestScreenFrameSource Source(int width, int height, int blocks = 4)
         {
-            Assume.That(SystemInfo.graphicsUVStartsAtTop, "These pictures are laid out for a graphics API whose textures start at the top");
-            Assert.IsNull(ProtokitePlaytestScreenFrameSource.WhyThisDeviceCannotRecord(ProtokitePlaytestPixelFormat.Nv12), "Precondition: this editor's graphics card can capture");
+            // Skipped, never failed or left inconclusive: what is checked is the capture, not this editor's graphics card, and Unity's test runner exits 2 on an inconclusive test.
+            string whyThisDeviceCannotRecord = ProtokitePlaytestScreenFrameSource.WhyThisDeviceCannotRecord(ProtokitePlaytestPixelFormat.Nv12);
+            if (whyThisDeviceCannotRecord != null)
+                Assert.Ignore($"This editor's graphics card cannot capture, as {SystemInfo.graphicsDeviceType}: {whyThisDeviceCannotRecord}");
             ProtokitePlaytestScreenFrameSource source = ProtokitePlaytestScreenFrameSource.Create(width, height, blocks, out string whyNot);
             Assert.IsNotNull(source, whyNot);
             _sources.Add(source);
             return source;
+        }
+
+        // For the tests that read a picture's colours where they are: the pictures are laid out top row first.
+        private ProtokitePlaytestScreenFrameSource SourceForPictures(int width, int height, int blocks = 4)
+        {
+            if (!SystemInfo.graphicsUVStartsAtTop)
+                Assert.Ignore($"These pictures are laid out for a graphics API whose textures start at the top (Direct3D, Metal, Vulkan); this editor draws with {SystemInfo.graphicsDeviceType}.");
+            return Source(width, height, blocks);
         }
 
         // A picture in sRGB colours whose first row in memory is its top, the way the screen's copy is where textures start at the
@@ -87,7 +97,7 @@ namespace Protokite.Playtest.Tests
         public void AFrameIsUprightAndItsColoursAreTheEncodersWithinOne()
         {
             const int width = 256, height = 128;
-            ProtokitePlaytestScreenFrameSource source = Source(width, height);
+            ProtokitePlaytestScreenFrameSource source = SourceForPictures(width, height);
             ProtokitePlaytestCapturedFrame frame = CaptureOne(source, Picture(width, height, (x, y) => Quadrants(x, y, width, height)), 1234);
 
             Assert.AreEqual(1234, frame.TimestampMs);
@@ -101,7 +111,7 @@ namespace Protokite.Playtest.Tests
         [Test]
         public void APictureOfAnotherSizeIsScaledToTheVideo()
         {
-            ProtokitePlaytestScreenFrameSource source = Source(256, 128);
+            ProtokitePlaytestScreenFrameSource source = SourceForPictures(256, 128);
             ProtokitePlaytestCapturedFrame frame = CaptureOne(source, Picture(640, 320, (x, y) => Quadrants(x, y, 640, 320)));
             AssertColourAt(frame.Pixels, 256, 128, 64, 32, Red, "Top left");
             AssertColourAt(frame.Pixels, 256, 128, 192, 96, White, "Bottom right");
@@ -111,7 +121,7 @@ namespace Protokite.Playtest.Tests
         public void APictureTurnedOnItsSideKeepsItsShapeBetweenBlackMargins()
         {
             // A phone turned upright mid-recording: the video stays sideways, and the upright picture keeps its shape in the middle.
-            ProtokitePlaytestScreenFrameSource source = Source(256, 128);
+            ProtokitePlaytestScreenFrameSource source = SourceForPictures(256, 128);
             ProtokitePlaytestCapturedFrame frame = CaptureOne(source, Picture(64, 128, (x, y) => Quadrants(x, y, 64, 128)));
             AssertColourAt(frame.Pixels, 256, 128, 112, 32, Red, "The picture's top left, 96 pixels in");
             AssertColourAt(frame.Pixels, 256, 128, 144, 32, Green, "Its top right");
@@ -121,7 +131,7 @@ namespace Protokite.Playtest.Tests
             AssertColourAt(frame.Pixels, 256, 128, 236, 64, Black, "The right margin");
 
             // Control: turned back, the same source fills the video again.
-            frame = CaptureOne(Source(256, 128), Picture(256, 128, (x, y) => Quadrants(x, y, 256, 128)));
+            frame = CaptureOne(SourceForPictures(256, 128), Picture(256, 128, (x, y) => Quadrants(x, y, 256, 128)));
             AssertColourAt(frame.Pixels, 256, 128, 20, 32, Red, "No margin once the shapes match");
         }
 
@@ -129,7 +139,7 @@ namespace Protokite.Playtest.Tests
         public void APictureOfNearlyTheVideosShapeFillsItWithoutMargins()
         {
             // The video's sides are rounded down to multiples of 16, so a screen's own shape is never exactly the video's.
-            ProtokitePlaytestScreenFrameSource source = Source(256, 128);
+            ProtokitePlaytestScreenFrameSource source = SourceForPictures(256, 128);
             ProtokitePlaytestCapturedFrame frame = CaptureOne(source, Picture(250, 128, (x, y) => Red));
             AssertColourAt(frame.Pixels, 256, 128, 0, 64, Red, "The left edge");
             AssertColourAt(frame.Pixels, 256, 128, 255, 64, Red, "The right edge");
@@ -152,7 +162,7 @@ namespace Protokite.Playtest.Tests
         {
             // 848 is the width 854 is recorded at. An edge down the middle must sit at the same pixel on every row.
             const int width = 848, height = 480, edge = 424;
-            ProtokitePlaytestScreenFrameSource source = Source(width, height);
+            ProtokitePlaytestScreenFrameSource source = SourceForPictures(width, height);
             ProtokitePlaytestCapturedFrame frame = CaptureOne(source, Picture(width, height, (x, y) => x < edge ? Black : White));
             foreach (int row in new[] { 0, 1, height / 2, height - 2, height - 1 })
             {

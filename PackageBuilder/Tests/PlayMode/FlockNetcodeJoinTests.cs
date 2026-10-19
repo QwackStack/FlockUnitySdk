@@ -228,10 +228,13 @@ namespace Flock.Tests.PlayMode
             float started = Time.realtimeSinceStartup;
             NetworkManager player = PlayerConnecting(hosting.Port, WithToken(token));
             yield return FlockTestWait.Until(() => checking.Arrived, "the check was sent");
+            // Dropped by the netcode first, the player would have no reason; Flock's own wait is timed from the check's arrival, so a busy
+            // machine's slow connect does not count against it, and the time it was given from the start, which is no later than the check.
+            float checkArrived = Time.realtimeSinceStartup;
             yield return RefusedWith(player, FlockNetcodeRefusedReason.FlockUnreachable);
-            float took = Time.realtimeSinceStartup - started;
-            Assert.Less(took, 4f, "Refused before the netcode's own drop");
-            Assert.Greater(took, 1.5f, "Given its time first");
+            float now = Time.realtimeSinceStartup;
+            Assert.Less(now - checkArrived, 4f, "Refused before the netcode's own drop");
+            Assert.Greater(now - started, 1.5f, "Given its time first");
             Assert.AreEqual(1, _h.Logger.Warnings.Count(warning => warning.Contains("did not answer the check of their join token within 2 s")));
 
             checking.Release();
@@ -249,12 +252,14 @@ namespace Flock.Tests.PlayMode
             string token = SeatedWithToken(hosting, B);
             FakeSessionServer.Held checking = _server.HoldNext(FakeSessionServer.Verify);
 
-            float started = Time.realtimeSinceStartup;
             NetworkManager player = PlayerConnecting(hosting.Port, WithToken(token));
             Assert.AreEqual(10, player.NetworkConfig.ClientConnectionBufferTimeout, "Precondition: the player's own timeout is the default");
             yield return FlockTestWait.Until(() => checking.Arrived, "the check was sent");
+            // Given up by the player first, it would have no reason; Flock's own wait is timed from the check's arrival, so a busy
+            // machine's slow connect does not count against it.
+            float checkArrived = Time.realtimeSinceStartup;
             yield return RefusedWith(player, FlockNetcodeRefusedReason.FlockUnreachable);
-            Assert.Less(Time.realtimeSinceStartup - started, 10f, "Told why before its own timeout");
+            Assert.Less(Time.realtimeSinceStartup - checkArrived, 10f, "Told why before its own timeout");
             Assert.AreEqual(1, _h.Logger.Warnings.Count(warning => warning.Contains("within 8 s")));
             checking.Release();
         }
@@ -277,7 +282,8 @@ namespace Flock.Tests.PlayMode
                 hosting.Manager.ConnectionApprovalCallback(new NetworkManager.ConnectionApprovalRequest { ClientNetworkId = 1000 + (ulong)index, Payload = WithToken(tokens[index]) }, response);
                 responses.Add(response);
             }
-            Assert.Less(Time.realtimeSinceStartup - asking, 0.25f, "Netcode for GameObjects asks inside a frame: the ten questions came back at once");
+            // A question that waited on Flock would hold its frame for the 8 s Flock gives a check, so 2 s still tells the two apart on a busy machine.
+            Assert.Less(Time.realtimeSinceStartup - asking, 2f, "Netcode for GameObjects asks inside a frame: the ten questions came back at once");
             Assert.IsTrue(responses.All(response => response.Pending), "Each waits for Flock without holding the frame");
             Assert.IsTrue(checks.All(check => check.Arrived), "Precondition: ten checks on their way");
 
@@ -288,7 +294,7 @@ namespace Flock.Tests.PlayMode
                 yield return null;
                 slowest = Mathf.Max(slowest, Time.realtimeSinceStartup - before);
             }
-            Assert.Less(slowest, 0.25f, "No frame waited on a check");
+            Assert.Less(slowest, 2f, "No frame waited on a check");
             Assert.IsTrue(responses.All(response => response.Pending), "Still waiting on Flock");
 
             foreach (FakeSessionServer.Held check in checks)

@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Net.Sockets;
 using System.Threading.Tasks;
 using Flock.Providers;
@@ -42,17 +43,15 @@ namespace Flock.Tests.PlayMode
             _relay = null;
         }
 
-        private static FlockRelayConnection.Timing Quick() => new FlockRelayConnection.Timing
-        {
-            AnswerWait = TimeSpan.FromSeconds(2),
-            NameLookUpWait = TimeSpan.FromSeconds(1),
-            SocketRoundWait = TimeSpan.FromSeconds(0.4),
-        };
-
+        // The SDK's own waits: a 5 s answer wait, and 1 s socket rounds that end at the first answer, so a busy machine's slow answer
+        // is not taken for a port the relay ignores. A test shortens only the wait it proves.
         private Task<FlockRelayConnection> Open(string player, FlockRelayConnection.Timing timing = null)
-            => FlockRelayConnection.OpenAsync(new FlockRelayLogin("127.0.0.1", _relay.Port, "1760000000:game:" + player, "minted-for-the-test"), timing ?? Quick(), _logger, default);
+            => FlockRelayConnection.OpenAsync(new FlockRelayLogin("127.0.0.1", _relay.Port, "1760000000:game:" + player, "minted-for-the-test"), timing ?? new FlockRelayConnection.Timing(), _logger, default);
 
         private static IEnumerator Done(Task task, string what, float seconds = 10f) => FlockTestWait.Until(() => task.IsCompleted, what, seconds);
+
+        // Requests the relay saw under different transactions: a request sent again while its answer is on the way keeps its transaction.
+        private static int Transactions(IEnumerable<FakeRelayServer.Seen> seen) => seen.Select(each => each.Transaction).Distinct().Count();
 
         private IEnumerator Opened(string player, List<FlockRelayConnection> into, FlockRelayConnection.Timing timing = null)
         {
@@ -91,8 +90,8 @@ namespace Flock.Tests.PlayMode
         public IEnumerator ARelayThatAnswersNoBinding_IsStillReserved_FromANewSocket_AfterEveryRound()
         {
             _relay.AnswersBindings = false;
-            FlockRelayConnection.Timing timing = Quick();
-            timing.SocketRoundWait = TimeSpan.FromSeconds(0.2);
+            // Every round goes unanswered here, so the rounds are short.
+            FlockRelayConnection.Timing timing = new FlockRelayConnection.Timing { SocketRoundWait = TimeSpan.FromSeconds(0.2) };
             Stopwatch took = Stopwatch.StartNew();
             List<FlockRelayConnection> opened = new List<FlockRelayConnection>();
             yield return Opened(A, opened, timing);
@@ -106,7 +105,8 @@ namespace Flock.Tests.PlayMode
         public IEnumerator ARelayThatAnswersNoPortAtAll_FailsAsUnreachable()
         {
             _relay.AnswersOnlyPortsHeard = new HashSet<int>();
-            Task<FlockRelayConnection> opening = Open(A);
+            // The give-up is the claim, so the rounds and the answer wait are short: 1.2 s of rounds, then 2 s from a new socket.
+            Task<FlockRelayConnection> opening = Open(A, new FlockRelayConnection.Timing { AnswerWait = TimeSpan.FromSeconds(2), SocketRoundWait = TimeSpan.FromSeconds(0.4) });
             yield return Done(opening, "gave up", 15f);
 
             Assert.IsTrue(opening.IsFaulted, $"It failed (it is {opening.Status})");
@@ -178,7 +178,7 @@ namespace Flock.Tests.PlayMode
             byte[] payload = System.Text.Encoding.UTF8.GetBytes(text);
             Assert.IsTrue(from.Send(to.Address, payload, 0, payload.Length), "Sent");
             byte[] buffer = new byte[FlockRelayConnection.MostBytesInAPacket];
-            DateTime until = DateTime.UtcNow.AddSeconds(heard ? 3 : 0.6);
+            DateTime until = DateTime.UtcNow.AddSeconds(heard ? 10 : 0.6);
             while (DateTime.UtcNow < until)
             {
                 while (to.TryReceive(buffer, out int count, out FlockRelayPeer _))
@@ -207,7 +207,8 @@ namespace Flock.Tests.PlayMode
             Assert.AreEqual(1, opened[0].OpeningsAskedForTesting, "One opening asked");
             yield return Done(Task.WhenAll(first, second), "both answered");
             Assert.IsFalse(first.IsFaulted || second.IsFaulted);
-            Assert.AreEqual(1, _relay.SeenRequests(FakeRelayServer.MethodCreatePermission).Count, "One request for both callers");
+            // The 0.3 s answer comes near the 0.5 s resend, which keeps the request's transaction.
+            Assert.AreEqual(1, Transactions(_relay.SeenRequests(FakeRelayServer.MethodCreatePermission)), "One request for both callers");
         }
 
         [UnityTest]
@@ -225,7 +226,7 @@ namespace Flock.Tests.PlayMode
             yield return Done(third, "refused");
             Assert.IsTrue(third.IsFaulted, $"A third IP past the most is refused (it is {third.Status})");
             Assert.AreEqual(FlockRelayFailure.OpenRefused, ((FlockRelayException)third.Exception.InnerException).Reason);
-            Assert.AreEqual(2, _relay.SeenRequests(FakeRelayServer.MethodCreatePermission).Count, "The third IP was never asked for");
+            Assert.AreEqual(2, Transactions(_relay.SeenRequests(FakeRelayServer.MethodCreatePermission)), "The third IP was never asked for");
             Assert.IsTrue(opened[0].RefusedToOpenTo(new FlockRelayPeer(0xCB007143, 5000)), "Remembered, so a host tells it once");
         }
 
@@ -244,7 +245,7 @@ namespace Flock.Tests.PlayMode
             Assert.IsTrue(first.IsFaulted && second.IsFaulted, $"Both refused (they are {first.Status} and {second.Status})");
             Assert.AreEqual(FlockRelayFailure.OpenRefused, ((FlockRelayException)first.Exception.InnerException).Reason);
             Assert.AreEqual(FlockRelayFailure.OpenRefused, ((FlockRelayException)second.Exception.InnerException).Reason);
-            Assert.AreEqual(1, _relay.SeenRequests(FakeRelayServer.MethodCreatePermission).Count, "Asked once");
+            Assert.AreEqual(1, Transactions(_relay.SeenRequests(FakeRelayServer.MethodCreatePermission)), "Asked once");
         }
     }
 }

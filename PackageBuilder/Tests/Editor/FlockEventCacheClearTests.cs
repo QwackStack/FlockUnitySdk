@@ -1,6 +1,10 @@
 using System;
+using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
 using Flock.Analytics;
 using Flock.Exceptions;
 using Flock.Logging;
@@ -94,6 +98,33 @@ namespace Flock.Tests.Editor
             cache.Clear();
 
             Assert.AreEqual(0, cache.PendingCount);
+        }
+
+        // Windows' clock shows one tick for several writes in a row, and a clock can step back: events still go in the order they came.
+        [Test]
+        public void EventsWrittenOnOneClockTickOrAfterTheClockStepsBack_AreSentInTheOrderTheyCame()
+        {
+            long tick = DateTime.UtcNow.Ticks;
+            int written = 0;
+            FlockEventCacheNames.ClockTicksForTesting = () => written < 25 ? tick : tick - TimeSpan.TicksPerSecond;
+            List<string> sent = new List<string>();
+            try
+            {
+                FlockEventCache<Dummy> cache = new FlockEventCache<Dummy>(_tempDir, "sub", 100, 10, new NullFlockLogger());
+                for (; written < 50; written++)
+                    Assert.IsNotNull(cache.Enqueue(new Dummy { Value = written.ToString(CultureInfo.InvariantCulture) }), "Precondition: queued");
+                cache.FlushAsync((batch, ct) =>
+                {
+                    sent.AddRange(batch.Select(entry => entry.Value));
+                    return Task.CompletedTask;
+                }, CancellationToken.None).GetAwaiter().GetResult();
+            }
+            finally
+            {
+                FlockEventCacheNames.ClockTicksForTesting = null;
+            }
+
+            CollectionAssert.AreEqual(Enumerable.Range(0, 50).Select(i => i.ToString(CultureInfo.InvariantCulture)).ToList(), sent);
         }
     }
 }

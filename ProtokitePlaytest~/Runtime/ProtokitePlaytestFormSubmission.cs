@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Text;
 using Newtonsoft.Json;
@@ -136,7 +137,7 @@ namespace Protokite.Playtest
         internal string Keep(ProtokitePlaytestFormSubmission submission, out string error)
         {
             // Named for when it was written, then made unique: forms from one launch keep their order, and none lands on another's name.
-            string name = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss-fff") + "-" + Guid.NewGuid().ToString("N").Substring(0, 8) + Extension;
+            string name = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss-fff", CultureInfo.InvariantCulture) + "-" + Guid.NewGuid().ToString("N").Substring(0, 8) + Extension;
             string path = Path.Combine(Folder, name);
             string temporary = path + "." + Guid.NewGuid().ToString("N") + TemporarySuffix;
             try

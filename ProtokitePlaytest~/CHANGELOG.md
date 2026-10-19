@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 It is released with the Flock SDK, at the Flock SDK's version.
 
 
+## [1.89.0]
+
+### Fixed
+- **A recording on Windows lets go of a graphics card's encoder only once the encoder has finished its own work.** NVIDIA's
+  encoder still works on Windows' threads for a moment after it says it has handed every frame back, and let go then it could
+  crash the game (measured with two editors recording at once: every run crashed). The encoder now hands back what it holds,
+  sends nothing for 200 ms, stops streaming and is shut down, as Windows asks of such an encoder, before it is let go; 1,500
+  encoders let go under the same load held. The file is finished first, so it takes none of that time; quitting waits for the
+  files and then gives each encoder what is left of its 3 s.
+- **Log lines read the same on every machine**: sizes, rates and times are written with a point whatever the machine's culture
+  (`7.5 frames a second`, never `7,5`), and a form kept for sending is named for the Gregorian date on a machine set to another
+  calendar.
+
+
 ## [1.88.0]
 
 ### Changed

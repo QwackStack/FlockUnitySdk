@@ -60,7 +60,8 @@ namespace Protokite.Playtest.Tests
             ProtokitePlaytest.FeedbackFormsFolderForTesting = KeptForms;
             ProtokitePlaytest.VideoEncoderForTesting = () => new FakeH264Encoder();
             ProtokitePlaytest.VideoFrameSourceForTesting = (settings, format) => new FakeFrameSource();
-            ProtokitePlaytest.SelfTestWaitSecondsForTesting = 5.0;
+            // No step here ends by its wait running out, so the bound is only slack for a slow machine.
+            ProtokitePlaytest.SelfTestWaitSecondsForTesting = 30.0;
             _storage = new StorageForTests();
             FlockHttpClient.UseFileUploader(_storage);
         }
@@ -70,6 +71,8 @@ namespace Protokite.Playtest.Tests
         {
             if (FlockClient.IsInitialized)
                 FlockClient.Shutdown();
+            // Waited for before the reset, which forgets the pass after 5 s; judged once everything else is put back.
+            bool passEnded = ProtokitePlaytest.WaitForEarlierRecordingsForTesting(TimeSpan.FromSeconds(30));
             ProtokitePlaytest.ResetForNewLaunch();
             _storage.LetGo();
             ProtokitePlaytest.DeviceIdFilePathForTesting = null;
@@ -85,8 +88,16 @@ namespace Protokite.Playtest.Tests
             FlockHttpClient.UseFileUploader(null);
             FlockHttpClient.Configure(TimeSpan.FromSeconds(30));
             _settings.Dispose();
-            if (Directory.Exists(_folder))
-                Directory.Delete(_folder, true);
+            Assert.IsTrue(passEnded, "The finishing pass ended before its folder is deleted");
+            // A file a recording's thread still holds must not fail the test for the folder.
+            try
+            {
+                if (Directory.Exists(_folder))
+                    Directory.Delete(_folder, true);
+            }
+            catch (IOException)
+            {
+            }
         }
 
         private static FlockTestClient StartFlock(FakeProtokite protokite, int flockRetries = 0)
@@ -126,7 +137,8 @@ namespace Protokite.Playtest.Tests
             yield return Frames(() => ProtokitePlaytest.PlaytestSessionId != null, 5f, "The launch's session started");
         }
 
-        private static IEnumerator TheRunEnds(Task<ProtokitePlaytestSelfTestReport> run, float seconds = 30f)
+        // Longer than the 30 s any one step may wait, so a slow step fails as itself rather than as a run that never ended.
+        private static IEnumerator TheRunEnds(Task<ProtokitePlaytestSelfTestReport> run, float seconds = 120f)
             => Frames(() => run.IsCompleted, seconds, "The self-test finished");
 
         private static ProtokitePlaytestSelfTestStep StepNamed(ProtokitePlaytestSelfTestReport report, string startsWith)

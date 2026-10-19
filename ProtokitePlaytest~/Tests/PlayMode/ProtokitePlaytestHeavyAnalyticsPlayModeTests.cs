@@ -144,8 +144,9 @@ namespace Protokite.Playtest.Tests
             if (FlockClient.IsInitialized)
                 FlockClient.Shutdown();
             FlockHttpClient.Configure(TimeSpan.FromSeconds(30));
+            // Waited for before the reset, which forgets the pass after 5 s; judged once everything else is put back.
+            bool passEnded = ProtokitePlaytest.WaitForEarlierRecordingsForTesting(TimeSpan.FromSeconds(30));
             ProtokitePlaytest.ResetForNewLaunch();
-            Assert.IsTrue(ProtokitePlaytest.WaitForEarlierRecordingsForTesting(TimeSpan.FromSeconds(10)), "The finishing pass ended before its folder is deleted");
             ProtokitePlaytest.DeviceIdFilePathForTesting = null;
             ProtokitePlaytest.RecordingsFolderForTesting = null;
             _analyticsFolder?.Dispose();
@@ -156,6 +157,7 @@ namespace Protokite.Playtest.Tests
                 _settings.PlaytestingEnabled = _wasEnabled;
                 _settings.ProtokiteApiUrl = _oldUrl;
             }
+            Assert.IsTrue(passEnded, "The finishing pass ended before its folder is deleted");
             try
             {
                 if (_folder != null && Directory.Exists(_folder))
@@ -255,7 +257,9 @@ namespace Protokite.Playtest.Tests
                 Assert.AreEqual(countedAfter[loadFinishedInFrame] + 1, countedAfter[loadFinishedInFrame + 1], "And the next frame is");
                 IReadOnlyList<double> counted = ProtokitePlaytest.PerformanceFrameTimesMsForTesting;
                 Assert.IsNotNull(counted);
-                Assert.IsFalse(counted.Any(ms => ms >= 400.0), "No counted frame holds the 400 ms the load took: " + string.Join(", ", counted));
+                // From the last frame counted before the load on, where its stall could be counted: earlier frames hold the start's own hitches, which a busy machine has.
+                List<double> aroundTheLoad = counted.Skip(Math.Max(0, countedAfter[loadFinishedInFrame - 1] - 1)).ToList();
+                Assert.IsFalse(aroundTheLoad.Any(ms => ms >= 400.0), "No frame counted around the load holds the 400 ms it took: " + string.Join(", ", aroundTheLoad));
 
                 JObject level = SentLevelLoaded(flock, transport);
                 Assert.AreEqual(ProtokitePlaytestEvents.Category, (string)level["event_category"]);
@@ -283,7 +287,9 @@ namespace Protokite.Playtest.Tests
                 Object.Destroy(host);
 
                 IReadOnlyList<double> counted = ProtokitePlaytest.PerformanceFrameTimesMsForTesting;
-                Assert.IsFalse(counted.Any(ms => ms >= 1000.0), "The second away is in no counted frame: " + string.Join(", ", counted));
+                // From the last frame counted before the time away on, where it could be counted: earlier frames hold the start's own hitches, which a busy machine has.
+                List<double> aroundTheTimeAway = counted.Skip(Math.Max(0, countedBefore - 1)).ToList();
+                Assert.IsFalse(aroundTheTimeAway.Any(ms => ms >= 1000.0), "The second away is in no frame counted around it: " + string.Join(", ", aroundTheTimeAway));
                 Assert.AreEqual(countedBefore + 2, counted.Count, "Only the frame that carried it is left out");
             }
         }

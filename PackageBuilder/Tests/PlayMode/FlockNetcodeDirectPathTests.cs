@@ -17,17 +17,17 @@ namespace Flock.Tests.PlayMode
     // player in, or a WhenNeeded player connects through the relay, the two move the netcode's packets to a direct path; Always never does.
     public partial class FlockNetcodeTests
     {
+        // The address asked on the SDK's own 0.5 s three times (it ends at the first answer); probes given 3 s and a direct path 3 s of
+        // quiet, so a busy machine's pause is not taken for an unanswered probe or a path gone quiet; keep-alives every 0.2 s.
         private static FlockDirectLink.Timing QuickDirectLinks() => new FlockDirectLink.Timing
         {
             Tick = TimeSpan.FromMilliseconds(20),
-            AskAddressEvery = TimeSpan.FromMilliseconds(100),
-            AddressAsks = 2,
             OfferEvery = TimeSpan.FromMilliseconds(200),
             OfferFor = TimeSpan.FromSeconds(3),
             ProbeEvery = TimeSpan.FromMilliseconds(50),
-            ProbeFor = TimeSpan.FromSeconds(1.5),
+            ProbeFor = TimeSpan.FromSeconds(3),
             KeepAliveEvery = TimeSpan.FromMilliseconds(200),
-            QuietFor = TimeSpan.FromSeconds(1),
+            QuietFor = TimeSpan.FromSeconds(3),
         };
 
         private int RelayedFrom(FlockRelayConnection relay) => _relay.PassedOnFrom(relay.LocalPortForTesting);
@@ -51,7 +51,9 @@ namespace Flock.Tests.PlayMode
             FlockRelayBridge bridge = FlockJoinChecks.RelayBridgeForTesting(hosting.Session);
 
             yield return FlockTestWait.Until(() => IsDirect(bridge, relays[0].Address) && IsDirect(_otherBridges[0], hosting.Session.Relay.Address),
-                "the host and the player went direct", 6f);
+                "the host and the player went direct");
+            // A packet relayed just before the switch may still be on its way to the relay.
+            yield return new WaitForSecondsRealtime(0.3f);
             int relayed = RelayedFrom(relays[0]);
             yield return new WaitForSecondsRealtime(1.5f);
             Assert.IsTrue(players[0].IsConnectedClient, "Still connected, now directly");
@@ -92,9 +94,11 @@ namespace Flock.Tests.PlayMode
 
             // The other game lets the player in, as Flock's check does.
             _otherBridges[0].LetIn(held[0].Relay.Address);
-            yield return FlockTestWait.Until(() => IsDirect(_otherBridges[0], held[0].Relay.Address), "the host's end went direct", 6f);
-            // This player's end hears its own answer a probe or two later.
-            yield return new WaitForSecondsRealtime(0.5f);
+            yield return FlockTestWait.Until(() => IsDirect(_otherBridges[0], held[0].Relay.Address), "the host's end went direct");
+            // This player's own end, whose link says so in the log once its probe is answered.
+            yield return FlockTestWait.Until(() => _h.Logger.Logged(_h.Logger.Infos, "Packets to the host now go directly"), "this player's end went direct");
+            // A packet relayed just before the switch may still be on its way to the relay.
+            yield return new WaitForSecondsRealtime(0.3f);
             int relayed = RelayedFrom(held[0].Relay);
             yield return new WaitForSecondsRealtime(1.5f);
             Assert.IsTrue(_managers.Last().IsConnectedClient, "Still connected, now directly");

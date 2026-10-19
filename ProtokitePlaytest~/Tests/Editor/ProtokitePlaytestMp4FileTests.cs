@@ -567,7 +567,7 @@ namespace Protokite.Playtest.Tests
         [UnityPlatform(RuntimePlatform.WindowsEditor)]
         public void ARealRecordingDecodesFrameForFrameAndSurvivesACut()
         {
-            RealEncoding.AssumeAGraphicsCardEncoder();
+            RealEncoding.SkipWithoutAGraphicsCardEncoder();
             const int frames = 40;
             List<ProtokitePlaytestEncodedFrame> encoded = new List<ProtokitePlaytestEncodedFrame>();
             RealEncoding.OnItsOwnThread(() =>

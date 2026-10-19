@@ -16,8 +16,10 @@ namespace Flock.Tests.PlayMode
     // gone: the old connection leaving must not take the path the next one comes through.
     public partial class FlockNetcodeTests
     {
-        // The host lets a silent connection go after this, so a test need not wait Unity Transport's own 30 s.
-        private const int HostLetsASilentConnectionGoAfterMs = 2500;
+        // The host lets a silent connection go after this, so a test need not wait Unity Transport's own 30 s. 4.5 s: a busy machine has
+        // the next connection's check on its way well before the host notices the old one is gone, and the check, held until then, is
+        // still well inside the 8 s Flock gives it.
+        private const int HostLetsASilentConnectionGoAfterMs = 4500;
 
         private sealed class Reconnect
         {
@@ -32,7 +34,8 @@ namespace Flock.Tests.PlayMode
 
         // A relayed player let in; then its game closes its bridge (so the old netcode's goodbye never leaves) and connects again through a
         // new bridge on the same relay address. The next connection's token check is held until the host has let the old connection go.
-        private IEnumerator ReconnectingOnTheSameRelayAddress(Hosting hosting, Reconnect reconnect, FlockNetcodeOptions options)
+        // whileTheOldOneStays runs once that check is on its way and before the host lets the old connection go.
+        private IEnumerator ReconnectingOnTheSameRelayAddress(Hosting hosting, Reconnect reconnect, FlockNetcodeOptions options, Func<IEnumerator> whileTheOldOneStays = null)
         {
             yield return HostedWithNetcode(hosting, options, manager =>
             {
@@ -52,7 +55,9 @@ namespace Flock.Tests.PlayMode
             reconnect.Next = PlayerConnecting(next.LocalPort, WithToken(SeatedWithToken(hosting, B)));
             yield return FlockTestWait.Until(() => reconnect.Checking.Arrived, "the next connection's token is being checked");
             Assert.IsTrue(hosting.Manager.ConnectedClientsIds.Contains(reconnect.Old), "Precondition: the host has not noticed the old connection is gone");
-            yield return FlockTestWait.Until(() => !hosting.Manager.ConnectedClientsIds.Contains(reconnect.Old), "the host let the old connection go", 10f);
+            if (whileTheOldOneStays != null)
+                yield return whileTheOldOneStays();
+            yield return FlockTestWait.Until(() => !hosting.Manager.ConnectedClientsIds.Contains(reconnect.Old), "the host let the old connection go", 15f);
         }
 
         [UnityTest]
@@ -94,21 +99,27 @@ namespace Flock.Tests.PlayMode
             List<NetworkManager> strangers = new List<NetworkManager>();
             yield return RelayedPlayer(hosting, C, WithToken("made-up"), reconnect.Relays, strangers);
             yield return FlockTestWait.Until(() => reconnect.HostsBridge.PeersForTesting >= 1 && !reconnect.HostsBridge.PeerPortsForTesting.Contains(reconnect.Port),
-                "the refused player's place was given back", 5f);
+                "the refused player's place was given back");
         }
 
         [UnityTest]
         public IEnumerator AStrangerHeard_WhileTheNextConnectionIsChecked_LeavesItItsPlace()
         {
-            // Shorter than the old connection lived, longer than it takes a stranger to reach the host after it left.
-            FlockRelayBridge.NotLetInWithinForTesting = TimeSpan.FromSeconds(2);
+            // Shorter than the old connection lived (the host keeps a silent one 4.5 s), longer than it takes a stranger whose relay is
+            // already open to reach the host after the old connection left.
+            FlockRelayBridge.NotLetInWithinForTesting = TimeSpan.FromSeconds(3);
             Hosting hosting = new Hosting();
             Reconnect reconnect = new Reconnect();
-            yield return ReconnectingOnTheSameRelayAddress(hosting, reconnect, new FlockNetcodeOptions { Relay = FlockRelayUse.Always });
+            List<FlockRelayConnection> strangersRelay = new List<FlockRelayConnection>();
+            // The stranger's relay opens while the old connection stays, so only its netcode's start falls in the time counted.
+            yield return ReconnectingOnTheSameRelayAddress(hosting, reconnect, new FlockNetcodeOptions { Relay = FlockRelayUse.Always },
+                () => OtherRelay(C, strangersRelay, () => RelayAddressIn(Published())));
 
             // A stranger's first packet is what gives back places nobody was let into in their time.
-            List<NetworkManager> strangers = new List<NetworkManager>();
-            yield return RelayedPlayer(hosting, C, WithToken("made-up"), reconnect.Relays, strangers);
+            FlockRelayPeer hostsAddress = RelayAddressIn(Published());
+            strangersRelay[0].KeepChannelTo(hostsAddress);
+            FlockRelayBridge strangersBridge = OtherBridge(FlockRelayBridge.ToTheHost(strangersRelay[0], hostsAddress, _h.Logger));
+            PlayerConnecting(strangersBridge.LocalPort, WithToken("made-up"));
             yield return FlockTestWait.Until(() => reconnect.HostsBridge.PeersForTesting >= 2, "the host heard the stranger");
             reconnect.Checking.Release();
 

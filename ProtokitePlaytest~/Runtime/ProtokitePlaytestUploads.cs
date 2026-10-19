@@ -8,6 +8,7 @@ using Flock.Exceptions;
 using Flock.Http;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
+using static System.FormattableString;
 
 namespace Protokite.Playtest
 {
@@ -105,7 +106,7 @@ namespace Protokite.Playtest
             if (outcome.Uploaded && outcome.Deleted && ReferenceEquals(_recordingRun, run))
                 _recordingRun = null;
             if (outcome.Uploaded)
-                Debug.Log(LogPrefix + $"Playtest recording uploaded to Protokite session {sessionId} ({outcome.BytesSent / BytesPerMegabyte:0.#} MB); " +
+                Debug.Log(LogPrefix + Invariant($"Playtest recording uploaded to Protokite session {sessionId} ({outcome.BytesSent / BytesPerMegabyte:0.#} MB); ") +
                           (outcome.Deleted ? "it is no longer kept on disk." : "its files could not all be deleted now."));
             else
                 Debug.LogWarning(LogPrefix + "The playtest recording was not uploaded, so it is kept for a later launch to upload: " + outcome.WhyNot);

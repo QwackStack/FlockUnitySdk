@@ -5,6 +5,7 @@ using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 using Flock.Logging;
+using static System.FormattableString;
 
 namespace Flock.Providers
 {
@@ -35,7 +36,10 @@ namespace Flock.Providers
             internal TimeSpan RenewOpeningsEvery = TimeSpan.FromMinutes(4);
             internal TimeSpan RenewChannelsEvery = TimeSpan.FromMinutes(8);
             internal TimeSpan RetryRenewalAfter = TimeSpan.FromSeconds(15);
-            internal TimeSpan KeepAliveAfter = TimeSpan.FromSeconds(15);
+            // The relay is asked this often (a binding request), whatever else goes: the game's packets need no answer, so they say nothing of whether the relay still hears this device, and the ask keeps the way to the relay open through a router too.
+            internal TimeSpan AskTheRelayEvery = TimeSpan.FromSeconds(15);
+            // A relay that answered the asks and has answered nothing for this long is lost: this device's packets no longer reach it (a router that moved it to another port, a network that changed), though the relay's may still arrive.
+            internal TimeSpan RelayLostWhenSilent = TimeSpan.FromSeconds(45);
             // How long the relay keeps an opening and a channel without a renewal, as the standard sets them.
             internal TimeSpan OpeningLasts = TimeSpan.FromMinutes(5);
             internal TimeSpan ChannelLasts = TimeSpan.FromMinutes(10);
@@ -137,7 +141,7 @@ namespace Flock.Providers
         {
             IPAddress server = await FlockNameLookup.FindIpv4Async(login.Host, timing.NameLookUpWait, timing.NameLookUpForTesting, cancellationToken);
             if (server == null)
-                throw new FlockRelayException(FlockRelayFailure.Unreachable, $"The relay server's name {login.Host} could not be looked up within {timing.NameLookUpWait.TotalSeconds:0.#} s");
+                throw new FlockRelayException(FlockRelayFailure.Unreachable, Invariant($"The relay server's name {login.Host} could not be looked up within {timing.NameLookUpWait.TotalSeconds:0.#} s"));
             IPEndPoint endpoint = new IPEndPoint(server, login.Port);
             // Reserved from a socket the server answered; when none was, from a new one as before, and the reservation's own wait judges the server.
             Socket answered = await Task.Run(() => FlockRelaySocket.FindOneTheServerAnswers(endpoint, timing.SocketsTriedAtOnce, timing.RoundsOfSocketsTried, timing.SocketRoundWait, cancellationToken));
@@ -276,10 +280,13 @@ namespace Flock.Providers
                     TakeHandedOver();
                     if (_socket.WaitToRead(LongestPollMicroseconds))
                         ReadEverythingWaiting();
+                    // Any step may stop the relay (a refusal read, a request given up on, a renewal lapsed); nothing goes after that but the release.
                     long now = FlockRelayClock.Now();
                     _requests.SendAgainOrGiveUp(now);
                     _renewals.RenewDue(now);
-                    _requests.KeepAlive(now);
+                    _requests.AskTheRelay(now);
+                    if (_requests.HasStoppedAnswering(now))
+                        Lose($"the relay has answered nothing for {_timing.RelayLostWhenSilent.TotalSeconds:0} s, so this device no longer reaches it (the network or a router between them changed, or the relay stopped)");
                 }
             }
             catch (ObjectDisposedException)
@@ -356,7 +363,7 @@ namespace Flock.Providers
                 return;
             }
             if (code == FlockRelayRequests.NoAnswer)
-                Fail(FlockRelayFailure.Unreachable, $"The relay at {_login} did not answer within {_timing.AnswerWait.TotalSeconds:0.#} s.");
+                Fail(FlockRelayFailure.Unreachable, Invariant($"The relay at {_login} did not answer within {_timing.AnswerWait.TotalSeconds:0.#} s."));
             else if (code == 401 || code == 441)
                 Fail(FlockRelayFailure.WrongLogin, $"The relay at {_login} refused the login Flock minted ({code} {words}).");
             else if (code == 486 || code == 508)
@@ -384,7 +391,7 @@ namespace Flock.Providers
             }
             string host = new FlockRelayPeer(ip, 0).Ip;
             if (code == FlockRelayRequests.NoAnswer)
-                done.TrySetException(new FlockRelayException(FlockRelayFailure.Unreachable, $"The relay did not answer the opening to {host} within {_timing.AnswerWait.TotalSeconds:0.#} s."));
+                done.TrySetException(new FlockRelayException(FlockRelayFailure.Unreachable, Invariant($"The relay did not answer the opening to {host} within {_timing.AnswerWait.TotalSeconds:0.#} s.")));
             else if (code == 403)
                 done.TrySetException(new FlockRelayException(FlockRelayFailure.OpenRefused, $"The relay refused to open to {host} ({code} {words})."));
             else
@@ -416,7 +423,7 @@ namespace Flock.Providers
             }
             Volatile.Write(ref _stopSettled, 1);
             if (reason != null && wasOpen)
-                _logger.LogWarning(message);
+                _logger.LogWarning($"{message}\nFix: {FlockRelayFailure.FixFor(reason)}");
             FlockRelayException failure = reason == null ? null : new FlockRelayException(reason, message);
             if (failure == null)
                 _opened.TrySetCanceled();

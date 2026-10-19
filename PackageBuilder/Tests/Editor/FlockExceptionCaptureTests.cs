@@ -61,13 +61,43 @@ namespace Flock.Tests.Editor
         private static List<JObject> Queued(string logQueue)
             => FlockAnalyticsLaunches.QueuedEntries(logQueue).Select(path => JObject.Parse(File.ReadAllText(path))).ToList();
 
-        private static List<JObject> QueuedExceptions(FlockTestClient sdk)
-            => Queued(LogQueue(sdk)).Where(entry => (string)entry["data"]["type"] == "exception").ToList();
+        // Only the exceptions whose message carries the test's marker: the hooks hear the whole process, so a stray one is never counted.
+        private static List<JObject> QueuedExceptions(FlockTestClient sdk, string marker) => QueuedExceptions(LogQueue(sdk), marker);
+
+        private static List<JObject> QueuedExceptions(string logQueue, string marker)
+            => Queued(logQueue)
+                .Where(entry => (string)entry["data"]["type"] == "exception" && ((string)entry["message"] ?? "").IndexOf(marker, StringComparison.Ordinal) >= 0)
+                .ToList();
 
         private static JObject Extra(JObject entry) => (JObject)entry["data"]["extra_data"];
 
         // A marker naming each test's exceptions, so a stray one from elsewhere is never counted.
         private static string Named(string what) => "FlockExceptionCaptureTests " + what;
+
+        // Unity logs the test's own exception; expected by its marker, so any other failing log still fails the test.
+        private static void ExpectLogged(string marker) => LogAssert.Expect(LogType.Exception, new Regex(Regex.Escape(marker)));
+
+        // Faulted tasks left by earlier tests are finalized before this test's client listens, so none is queued as this test's.
+        private static void FinalizeLeftOverTasks()
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+        }
+
+        // The collector finalizes a task when it gets to it, so this collects until the test's own is queued, for up to five seconds.
+        private static List<JObject> CollectUntilQueued(FlockTestClient sdk, string marker)
+        {
+            System.Diagnostics.Stopwatch waited = System.Diagnostics.Stopwatch.StartNew();
+            List<JObject> queued;
+            do
+            {
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                Provider(sdk).HandleLaunchTick();
+                queued = QueuedExceptions(sdk, marker);
+            } while (queued.Count == 0 && waited.Elapsed < TimeSpan.FromSeconds(5));
+            return queued;
+        }
 
         [Test]
         public void AnExceptionBeforeSignInIsQueuedAndSentOnceAPlayerSignsIn()
@@ -78,7 +108,7 @@ namespace Flock.Tests.Editor
                 Debug.LogException(new InvalidOperationException(Named("before anyone signed in")));
                 Provider(sdk).HandleLaunchTick();
 
-                JObject queued = QueuedExceptions(sdk).Single();
+                JObject queued = QueuedExceptions(sdk, Named("before anyone signed in")).Single();
                 StringAssert.EndsWith(Named("before anyone signed in"), (string)queued["message"]);
                 Assert.AreEqual(FlockRepeatedExceptionCounter.SourceLog, (string)Extra(queued)["exception_source"]);
                 Assert.IsFalse(sdk.Transport.Sent(FlockEndpoints.LogEvent), "Nothing sends before sign-in");
@@ -101,28 +131,24 @@ namespace Flock.Tests.Editor
                 thread.Join();
                 Provider(sdk).HandleLaunchTick();
 
-                StringAssert.EndsWith(Named("on a thread of the game's own"), (string)QueuedExceptions(sdk).Single()["message"]);
+                StringAssert.EndsWith(Named("on a thread of the game's own"), (string)QueuedExceptions(sdk, Named("on a thread of the game's own")).Single()["message"]);
             }
         }
 
         [Test]
         public void AFaultedTaskNobodyAwaitsIsCaptured()
         {
+            // Unity may log it as the finalizer runs; the capture is what this test is about.
+            LogAssert.ignoreFailingMessages = true;
+            FinalizeLeftOverTasks();
             using (FlockTestClient sdk = Create())
             {
-                // Unity may log it as the finalizer runs; the capture is what this test is about.
-                LogAssert.ignoreFailingMessages = true;
                 FaultATaskNobodyAwaits(() => new InvalidOperationException(Named("a task nobody awaited")));
-                for (int attempt = 0; attempt < 5 && QueuedExceptions(sdk).Count == 0; attempt++)
-                {
-                    GC.Collect();
-                    GC.WaitForPendingFinalizers();
-                    Provider(sdk).HandleLaunchTick();
-                }
 
-                JObject queued = QueuedExceptions(sdk).Single();
-                Assert.AreEqual("InvalidOperationException: " + Named("a task nobody awaited"), (string)queued["message"]);
-                Assert.AreEqual(FlockRepeatedExceptionCounter.SourceUnobservedTask, (string)Extra(queued)["exception_source"]);
+                List<JObject> queued = CollectUntilQueued(sdk, Named("a task nobody awaited"));
+                Assert.AreEqual(1, queued.Count, "The task was finalized and its fault queued once, within five seconds");
+                Assert.AreEqual("InvalidOperationException: " + Named("a task nobody awaited"), (string)queued[0]["message"]);
+                Assert.AreEqual(FlockRepeatedExceptionCounter.SourceUnobservedTask, (string)Extra(queued[0])["exception_source"]);
             }
         }
 
@@ -292,20 +318,17 @@ namespace Flock.Tests.Editor
         [Test]
         public void AFaultedTaskWhoseMessageThrowsIsCapturedUnderItsTypeName()
         {
+            LogAssert.ignoreFailingMessages = true;
+            FinalizeLeftOverTasks();
             using (FlockTestClient sdk = Create())
             {
-                LogAssert.ignoreFailingMessages = true;
                 FaultATaskNobodyAwaits(() => new MessageThrowsException());
-                for (int attempt = 0; attempt < 5 && QueuedExceptions(sdk).Count == 0; attempt++)
-                {
-                    GC.Collect();
-                    GC.WaitForPendingFinalizers();
-                    Provider(sdk).HandleLaunchTick();
-                }
 
-                JObject queued = QueuedExceptions(sdk).Single();
-                Assert.AreEqual(UnreadableMessage, (string)queued["message"]);
-                Assert.AreEqual(FlockRepeatedExceptionCounter.SourceUnobservedTask, (string)Extra(queued)["exception_source"]);
+                // Its message cannot carry a marker, so its type, which only this file has, is the marker.
+                List<JObject> queued = CollectUntilQueued(sdk, nameof(MessageThrowsException));
+                Assert.AreEqual(1, queued.Count, "The task was finalized and its fault queued once, within five seconds");
+                Assert.AreEqual(UnreadableMessage, (string)queued[0]["message"]);
+                Assert.AreEqual(FlockRepeatedExceptionCounter.SourceUnobservedTask, (string)Extra(queued[0])["exception_source"]);
             }
         }
 
@@ -317,7 +340,7 @@ namespace Flock.Tests.Editor
                 Assert.DoesNotThrow(() => sdk.Client.Analytics.LogDiagnosticException(new MessageThrowsException()),
                     "A report must not throw back at the game that made it");
 
-                JObject queued = QueuedExceptions(sdk).Single();
+                JObject queued = QueuedExceptions(sdk, "(its message could not be read: FormatException)").Single();
                 StringAssert.EndsWith("(its message could not be read: FormatException)", (string)queued["message"]);
             }
         }
@@ -334,7 +357,7 @@ namespace Flock.Tests.Editor
                 Debug.unityLogger.logEnabled = true;
                 Provider(sdk).HandleLaunchTick();
 
-                JObject queued = QueuedExceptions(sdk).Single();
+                JObject queued = QueuedExceptions(sdk, Named("no thread caught this")).Single();
                 Assert.AreEqual("InvalidOperationException: " + Named("no thread caught this"), (string)queued["message"]);
                 Assert.AreEqual(FlockRepeatedExceptionCounter.SourceUnhandled, (string)Extra(queued)["exception_source"]);
             }
@@ -374,7 +397,7 @@ namespace Flock.Tests.Editor
                 thread.Join();
                 Provider(sdk).HandleLaunchTick();
 
-                JObject queued = QueuedExceptions(sdk).Single(entry => ((string)entry["message"]).EndsWith(Named("heard by two hooks")));
+                JObject queued = QueuedExceptions(sdk, Named("heard by two hooks")).Single();
                 Assert.AreEqual(FlockRepeatedExceptionCounter.SourceLog, (string)Extra(queued)["exception_source"],
                     "Unity's log and the domain both hear it; only the log's is kept");
             }
@@ -401,18 +424,18 @@ namespace Flock.Tests.Editor
         {
             using (FlockTestClient sdk = Create(config => config.AnalyticsConfig.RequireExplicitConsent = true))
             {
-                LogAssert.ignoreFailingMessages = true;
                 // Logged from one line both times, so the two are the same fault.
                 for (int time = 0; time < 2; time++)
                 {
                     if (time == 1)
                         sdk.Client.Analytics.SetConsent(true);
+                    ExpectLogged(Named("before and after consent"));
                     Debug.LogException(new InvalidOperationException(Named("before and after consent")));
                     Provider(sdk).ReportCapturedExceptions(10.0 + time, false);
                     if (time == 0)
                         Assert.IsEmpty(Queued(LogQueue(sdk)), "Precondition: nothing without consent");
                 }
-                Assert.AreEqual(1, QueuedExceptions(sdk).Count, "What was never sent is no repeat of anything");
+                Assert.AreEqual(1, QueuedExceptions(sdk, Named("before and after consent")).Count, "What was never sent is no repeat of anything");
             }
         }
 
@@ -427,7 +450,8 @@ namespace Flock.Tests.Editor
                 Debug.LogException(new InvalidOperationException(Named("the game's own")));
                 Provider(sdk).HandleLaunchTick();
 
-                StringAssert.EndsWith(Named("the game's own"), (string)QueuedExceptions(sdk).Single()["message"], "Only the game's exception");
+                Assert.IsEmpty(QueuedExceptions(sdk, "Token refresh failed"), "The SDK's own exception is not the game's");
+                StringAssert.EndsWith(Named("the game's own"), (string)QueuedExceptions(sdk, Named("the game's own")).Single()["message"], "The game's exception, once");
             }
         }
 
@@ -440,7 +464,7 @@ namespace Flock.Tests.Editor
                 Debug.LogError(Named("an error line"));
                 Provider(sdk).HandleLaunchTick();
 
-                Assert.IsEmpty(QueuedExceptions(sdk));
+                Assert.IsEmpty(QueuedExceptions(sdk, Named("an error line")));
             }
         }
 
@@ -453,10 +477,10 @@ namespace Flock.Tests.Editor
                 LogAssert.Expect(LogType.Exception, new Regex("with capture off"));
                 Debug.LogException(new InvalidOperationException(Named("with capture off")));
                 Provider(sdk).HandleLaunchTick();
-                Assert.IsEmpty(QueuedExceptions(sdk));
+                Assert.IsEmpty(QueuedExceptions(sdk, Named("with capture off")));
 
                 sdk.Client.Analytics.LogDiagnosticException(new InvalidOperationException(Named("reported by hand")));
-                StringAssert.EndsWith(Named("reported by hand"), (string)QueuedExceptions(sdk).Single()["message"]);
+                StringAssert.EndsWith(Named("reported by hand"), (string)QueuedExceptions(sdk, Named("reported by hand")).Single()["message"]);
             }
         }
 
@@ -478,15 +502,17 @@ namespace Flock.Tests.Editor
         {
             FlockTestClient sdk = Create();
             string logQueue = LogQueue(sdk);
-            LogAssert.ignoreFailingMessages = true;
             for (int frame = 0; frame < 100; frame++)
+            {
+                ExpectLogged(Named("every frame"));
                 Debug.LogException(new InvalidOperationException(Named("every frame")));
+            }
             Provider(sdk).HandleLaunchTick();
-            Assert.AreEqual(1, QueuedExceptions(sdk).Count, "The first at once, the rest counted");
+            Assert.AreEqual(1, QueuedExceptions(sdk, Named("every frame")).Count, "The first at once, the rest counted");
 
             // Shutting down closes the window early: no later frame would.
             sdk.Dispose();
-            List<JObject> queued = Queued(logQueue).Where(entry => (string)entry["data"]["type"] == "exception").ToList();
+            List<JObject> queued = QueuedExceptions(logQueue, Named("every frame"));
             Assert.AreEqual(2, queued.Count);
             JObject summary = queued.Single(entry => Extra(entry)["repeat_count"] != null);
             Assert.AreEqual(JTokenType.Integer, Extra(summary)["repeat_count"].Type);
@@ -500,16 +526,21 @@ namespace Flock.Tests.Editor
         {
             using (FlockTestClient sdk = Create())
             {
-                LogAssert.ignoreFailingMessages = true;
                 for (int fault = 0; fault <= FlockRepeatedExceptionCounter.MostDifferentFaultsPerLaunch; fault++)
+                {
+                    ExpectLogged(Named("fault " + Letters(fault)));
                     Debug.LogException(new InvalidOperationException(Named("fault " + Letters(fault))));
+                }
                 Provider(sdk).ReportCapturedExceptions(1000.0, false);
 
-                Assert.AreEqual(FlockRepeatedExceptionCounter.MostDifferentFaultsPerLaunch, QueuedExceptions(sdk).Count);
+                Assert.AreEqual(FlockRepeatedExceptionCounter.MostDifferentFaultsPerLaunch, QueuedExceptions(sdk, Named("fault ")).Count);
                 Assert.AreEqual(1, HeldBackCounts(sdk).Single(), "The 101st is counted and said so at once");
 
                 for (int fault = 200; fault < 205; fault++)
+                {
+                    ExpectLogged(Named("fault " + Letters(fault)));
                     Debug.LogException(new InvalidOperationException(Named("fault " + Letters(fault))));
+                }
                 Provider(sdk).ReportCapturedExceptions(1030.0, false);
                 Assert.AreEqual(1, HeldBackCounts(sdk).Count, "Not again within the minute");
 
@@ -627,16 +658,20 @@ namespace Flock.Tests.Editor
         {
             using (FlockTestClient sdk = CreateTracking())
             {
-                LogAssert.ignoreFailingMessages = true;
                 // Logged from one line twice, so the second is a repeat.
                 for (int time = 0; time < 2; time++)
+                {
+                    ExpectLogged(Named("counted"));
                     Debug.LogException(new InvalidOperationException(Named("counted")));
+                }
+                ExpectLogged(Named("counted on a thread"));
                 Thread thread = new Thread(() => Debug.LogException(new InvalidOperationException(Named("counted on a thread"))));
                 thread.Start();
                 thread.Join();
                 Provider(sdk).HandleLaunchTick();
 
-                Assert.AreEqual(2, QueuedExceptions(sdk).Count, "Precondition: the second was counted as a repeat, not reported");
+                // The marker matches both of this test's faults: the main thread's and the other thread's.
+                Assert.AreEqual(2, QueuedExceptions(sdk, Named("counted")).Count, "Precondition: the second was counted as a repeat, not reported");
                 Assert.AreEqual(3, Marker(sdk).ExceptionCount, "Repeats and other threads included, saved by the tick's heartbeat");
             }
         }
@@ -646,9 +681,11 @@ namespace Flock.Tests.Editor
         {
             using (FlockTestClient sdk = CreateTracking())
             {
-                LogAssert.ignoreFailingMessages = true;
                 for (int exception = 0; exception < FlockExceptionCapture.MostWaiting + 10; exception++)
+                {
+                    ExpectLogged(Named("burst"));
                     Debug.LogException(new InvalidOperationException(Named("burst")));
+                }
                 Provider(sdk).HandleLaunchTick();
 
                 Assert.AreEqual(FlockExceptionCapture.MostWaiting + 10, Marker(sdk).ExceptionCount, "Kept or lost, each was heard");

@@ -4,6 +4,7 @@ using System.IO;
 using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.Rendering;
+using static System.FormattableString;
 
 namespace Protokite.Playtest
 {
@@ -226,11 +227,11 @@ namespace Protokite.Playtest
             SaveSessionBesideRecording();
             AskThePhoneAtTheNextFrame();
             string cutShort = roomLimitedBy != null
-                ? $" (Max Recording Size Mb is {sizeLimit / BytesPerMegabyte:0.#} MB, but {roomLimitedBy} leaves only this much)"
+                ? Invariant($" (Max Recording Size Mb is {sizeLimit / BytesPerMegabyte:0.#} MB, but {roomLimitedBy} leaves only this much)")
                 : "";
             Debug.Log(LogPrefix + $"Recording video for the playtest to {_videoRecording.PartPath}, at {_videoRecording.Width}x{_videoRecording.Height} and " +
-                $"{settings.FramesPerSecond} frames a second, as H.264. It stops for good after {settings.MaxSeconds / 60.0:0.#} minutes of play, " +
-                $"before the file passes {settings.MaxBytes / BytesPerMegabyte:0.#} MB{cutShort}, or when the game stops it.");
+                Invariant($"{settings.FramesPerSecond} frames a second, as H.264. It stops for good after {settings.MaxSeconds / 60.0:0.#} minutes of play, ") +
+                Invariant($"before the file passes {settings.MaxBytes / BytesPerMegabyte:0.#} MB{cutShort}, or when the game stops it."));
         }
 
         /// <summary>What stopped a recording from starting.</summary>
@@ -352,7 +353,7 @@ namespace Protokite.Playtest
                 {
                     long line = ProtokitePlaytestPhoneConditions.LowStorageLine(space.Value.TotalBytes);
                     freeBytesRecordingsMayTake = space.Value.FreeBytes - line;
-                    phoneSpace = $"the phone has {space.Value.FreeBytes / BytesPerMegabyte:0.#} MB free, and recordings leave {line / BytesPerMegabyte:0.#} MB of it, " +
+                    phoneSpace = Invariant($"the phone has {space.Value.FreeBytes / BytesPerMegabyte:0.#} MB free, and recordings leave {line / BytesPerMegabyte:0.#} MB of it, ") +
                                  "where Android warns that storage is running out";
                 }
                 else
@@ -371,7 +372,7 @@ namespace Protokite.Playtest
             string budgetName = BudgetSettingName(settings);
             string budget = room.LimitedByTheDisk
                 ? $"the room the phone's free space leaves ({phoneSpace})"
-                : $"{budgetName} ({settings.DiskBudgetBytes / BytesPerMegabyte:0.#} MB)";
+                : Invariant($"{budgetName} ({settings.DiskBudgetBytes / BytesPerMegabyte:0.#} MB)");
             string forWhat = testVideo ? "a test video" : "this launch's recording";
             if (room.WaitingRecordingsDeleted > 0)
                 Debug.LogWarning(LogPrefix + $"Deleted {room.WaitingRecordingsDeleted} recording(s) earlier launches kept to be uploaded, the oldest first, to make room in {budget} for {forWhat}.");
@@ -384,13 +385,13 @@ namespace Protokite.Playtest
             {
                 run.DeleteEverything();
                 error = room.KeptRecordingsWaitingToUpload
-                    ? $"the recordings in {folder} take {room.BytesUsedByOtherRuns / BytesPerMegabyte:0.#} MB of {budget}, and those waiting to upload are kept " +
+                    ? Invariant($"the recordings in {folder} take {room.BytesUsedByOtherRuns / BytesPerMegabyte:0.#} MB of {budget}, and those waiting to upload are kept ") +
                       "while the player's answer holds them back (Wi-Fi only, and the device is not on Wi-Fi, or the question is still to be answered). " +
                       "They upload on Wi-Fi, which makes room again."
                     : room.LimitedByTheDisk
-                    ? $"{phoneSpace}, which leaves {room.BytesLeft / BytesPerMegabyte:0.#} MB for {forWhat} once the recordings in {folder} " +
-                      $"({room.BytesUsedByOtherRuns / BytesPerMegabyte:0.#} MB) are counted. Free some of the phone's storage."
-                    : $"the recordings in {folder} take {room.BytesUsedByOtherRuns / BytesPerMegabyte:0.#} MB of {budget}, and " +
+                    ? Invariant($"{phoneSpace}, which leaves {room.BytesLeft / BytesPerMegabyte:0.#} MB for {forWhat} once the recordings in {folder} ") +
+                      Invariant($"({room.BytesUsedByOtherRuns / BytesPerMegabyte:0.#} MB) are counted. Free some of the phone's storage.")
+                    : Invariant($"the recordings in {folder} take {room.BytesUsedByOtherRuns / BytesPerMegabyte:0.#} MB of {budget}, and ") +
                       (testVideo
                           ? "a test video makes room by deleting older test videos only, never a recording waiting to upload."
                           : "none of them can be deleted now, because their games are still running or another program is using them.") +
@@ -408,7 +409,7 @@ namespace Protokite.Playtest
             if (maxBytes != wanted && !run.SaveReservedBytes(maxBytes, out string saveError))
             {
                 maxBytes = Math.Min(maxBytes, wanted);
-                Debug.LogWarning(LogPrefix + $"The room {forWhat} may take could not be saved, so it stops at the {maxBytes / BytesPerMegabyte:0.#} MB saved before: {saveError}");
+                Debug.LogWarning(LogPrefix + Invariant($"The room {forWhat} may take could not be saved, so it stops at the {maxBytes / BytesPerMegabyte:0.#} MB saved before: {saveError}"));
             }
             settings.MaxBytes = maxBytes;
             startedRun = run;
@@ -451,7 +452,7 @@ namespace Protokite.Playtest
             else if (summary.Error != null)
             {
                 Debug.LogWarning(LogPrefix + $"The playtest video could not be written to the end: {summary.Error}. The {summary.FramesWritten} frames written before, " +
-                    $"{summary.VideoSeconds:0.0} seconds, are kept in {summary.FilePath}." + summary.DescribeTimesInTheBackground());
+                    Invariant($"{summary.VideoSeconds:0.0} seconds, are kept in {summary.FilePath}.") + summary.DescribeTimesInTheBackground());
             }
             else if (summary.FilePath == null)
             {
@@ -459,9 +460,9 @@ namespace Protokite.Playtest
             }
             else
             {
-                Debug.Log(LogPrefix + $"Playtest video saved to {summary.FilePath}: {summary.VideoSeconds:0.0} seconds, {summary.FramesWritten} frames, " +
-                    $"{summary.BytesWritten / (1024.0 * 1024.0):0.0} MB. It stopped because {why}. Encoding with {summary.EncodedBy} took {summary.AverageEncodeMs:0.00} ms a frame on average " +
-                    $"and {summary.LongestEncodeMs:0.00} ms at most, and one write took at most {summary.LongestWriteMs:0.00} ms. Frames dropped: " +
+                Debug.Log(LogPrefix + Invariant($"Playtest video saved to {summary.FilePath}: {summary.VideoSeconds:0.0} seconds, {summary.FramesWritten} frames, ") +
+                    Invariant($"{summary.BytesWritten / (1024.0 * 1024.0):0.0} MB. It stopped because {why}. Encoding with {summary.EncodedBy} took {summary.AverageEncodeMs:0.00} ms a frame on average ") +
+                    Invariant($"and {summary.LongestEncodeMs:0.00} ms at most, and one write took at most {summary.LongestWriteMs:0.00} ms. Frames dropped: ") +
                     $"{summary.FramesDroppedBecauseEncodingFellBehind} because encoding fell behind, {summary.FramesDroppedBecauseWritingFellBehind} because writing " +
                     $"fell behind, {summary.FramesNotReadyInTime} because earlier frames were still on their way, {summary.FramesLostOnTheGraphicsCard} lost on the " +
                     $"graphics card and {summary.FramesDroppedForWantOfABlock} for want of room." + summary.DescribeTimesInTheBackground());
@@ -477,10 +478,13 @@ namespace Protokite.Playtest
             StopTestVideoForQuitting();
         }
 
-        /// <summary>Waits what is left of the quit's time for the files; one not finished by then stays as its ".part" file.</summary>
+        /// <summary>Waits what is left of the quit's time for the files, then for their encoders to let go; a file not finished by then stays as its ".part" file.</summary>
         private static void WaitForVideoAtQuit(TimeSpan timeLeft)
         {
             DateTime until = DateTime.UtcNow + timeLeft;
+            // Held here: reporting a finished recording forgets it, and its encoder may still be letting go.
+            ProtokitePlaytestVideoRecording video = _videoRecording;
+            ProtokitePlaytestVideoRecording testVideo = _testVideo;
             if (_videoRecording != null)
             {
                 if (_videoRecording.WaitUntilWritten(timeLeft))
@@ -489,6 +493,9 @@ namespace Protokite.Playtest
                     Debug.LogWarning(LogPrefix + $"The playtest video could not be finished before the game closed; what was recorded stays in {_videoRecording.PartPath}.");
             }
             WaitForTestVideoAtQuit(Remaining(until));
+            // The files first; what is left lets each encoder end its own work before the game closes around it.
+            video?.WaitUntilEnded(Remaining(until));
+            testVideo?.WaitUntilEnded(Remaining(until));
         }
 
         // At quit nothing more is saved into the run, so a written one is let go now: the Editor stays open after Play Mode ends.
@@ -507,7 +514,8 @@ namespace Protokite.Playtest
             if (_videoRecording != null)
             {
                 _videoRecording.StopCapturing(ProtokitePlaytestVideoStopReason.GameQuitting);
-                _videoRecording.WaitUntilWritten(TimeSpan.FromSeconds(5));
+                // Its encoder let go too, so this launch's never starts beside one still ending.
+                _videoRecording.WaitUntilEnded(TimeSpan.FromSeconds(5));
             }
             _videoRecording = null;
             // Let go once the last launch's recording has been waited for, so this launch's pass may finish or keep it.

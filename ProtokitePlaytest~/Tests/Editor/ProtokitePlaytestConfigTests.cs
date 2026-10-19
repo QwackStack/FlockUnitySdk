@@ -407,10 +407,12 @@ namespace Protokite.Playtest.Tests
             {
                 LogAssert.Expect(LogType.Warning, new Regex("Could not fetch"));
                 ProtokitePlaytest.Refresh();
-                yield return WaitForRealSeconds(1.5f);
+                // Until the fetch gives up, however slowly the retries are run, rather than for a fixed time.
+                yield return FlockTestWait.Until(() => ProtokitePlaytest.Status == ProtokitePlaytestStatus.PlaytestConfigUnavailable, "The fetch gave up once its retries ran out");
 
                 Assert.AreEqual(3, transport.CountTo(ConfigRoute), "The Flock SDK's retry settings are used: one try and two retries");
-                Assert.AreEqual(ProtokitePlaytestStatus.PlaytestConfigUnavailable, ProtokitePlaytest.Status);
+                yield return WaitForRealSeconds(0.5f);
+                Assert.AreEqual(3, transport.CountTo(ConfigRoute), "Nothing more is sent once the fetch has given up");
             }
         }
 

@@ -55,6 +55,8 @@ namespace Protokite.Playtest.Tests
             Application.logMessageReceived -= HearWarnings;
             if (FlockClient.IsInitialized)
                 FlockClient.Shutdown();
+            // Waited for before the reset, which forgets the pass after 5 s; judged once everything else is put back.
+            bool passEnded = ProtokitePlaytest.WaitForEarlierRecordingsForTesting(TimeSpan.FromSeconds(30));
             ProtokitePlaytest.ResetForNewLaunch();
             ProtokitePlaytestVideoEncoders.ActAsAndroidForTesting = false;
             ProtokitePlaytestVideoEncoders.LookForEncodersForTesting = null;
@@ -68,8 +70,16 @@ namespace Protokite.Playtest.Tests
             if (File.Exists(uploadNetworkFile))
                 File.SetAttributes(uploadNetworkFile, FileAttributes.Normal);
             _settings.Dispose();
-            if (Directory.Exists(_folder))
-                Directory.Delete(_folder, true);
+            Assert.IsTrue(passEnded, "The finishing pass ended before its folder is deleted");
+            // A file a recording's thread still holds must not fail the test for the folder.
+            try
+            {
+                if (Directory.Exists(_folder))
+                    Directory.Delete(_folder, true);
+            }
+            catch (IOException)
+            {
+            }
         }
 
         private void HearWarnings(string message, string stack, LogType type)

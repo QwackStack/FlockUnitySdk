@@ -34,7 +34,6 @@ namespace Flock.Tests.PlayMode
             _relay = _relay ?? new FakeRelayServer();
             _server.RelayUrls.Clear();
             _server.RelayUrls.Add(_relay.Url);
-            _h.Client.Multiplayer.Sessions.RelayTiming.AnswerWait = TimeSpan.FromSeconds(2);
         }
 
         private string RelayServer => "127.0.0.1:" + _relay.Port;
@@ -59,7 +58,9 @@ namespace Flock.Tests.PlayMode
         private IEnumerator OtherRelay(string player, List<FlockRelayConnection> into, Func<FlockRelayPeer> openTo = null)
         {
             FlockRelayLogin login = new FlockRelayLogin("127.0.0.1", _relay.Port, "1760000000:game:" + player, "minted-for-the-test");
-            Task<FlockRelayConnection> opening = FlockRelayConnection.OpenAsync(login, new FlockRelayConnection.Timing { AnswerWait = TimeSpan.FromSeconds(2) }, _h.Logger, default);
+            // The SDK's own answer wait (5 s): these tests need the relay open, not a quick give-up, and 2 s gave up now and then on
+            // CI's busy runner (three sends unanswered in a burst; the fourth goes at 3.5 s).
+            Task<FlockRelayConnection> opening = FlockRelayConnection.OpenAsync(login, new FlockRelayConnection.Timing(), _h.Logger, default);
             yield return Done(opening, $"{player}'s relay opened");
             Assert.IsFalse(opening.IsFaulted, $"Precondition: {player}'s relay opened ({opening.Exception?.InnerException?.Message})");
             _otherRelays.Add(opening.Result);
@@ -140,7 +141,7 @@ namespace Flock.Tests.PlayMode
 
             yield return LetIn(hosting.Manager, players[0], 2);
             Assert.AreEqual(B, hosting.Session.PlayerForConnection(Newest(hosting.Manager)));
-            yield return FlockTestWait.Until(() => ChannelsBoundBy(hosting.Session.Relay) >= 1, "the host bound a channel to the player let in", 3f);
+            yield return FlockTestWait.Until(() => ChannelsBoundBy(hosting.Session.Relay) >= 1, "the host bound a channel to the player let in");
             Assert.AreEqual(1, FlockJoinChecks.RelayBridgeForTesting(hosting.Session).PeersForTesting);
         }
 
@@ -173,7 +174,7 @@ namespace Flock.Tests.PlayMode
 
             players[0].Shutdown();
             yield return FlockTestWait.Until(() => hosting.Manager.ConnectedClientsIds.Count == 1, "the host saw the player go", 15f);
-            yield return FlockTestWait.Until(() => bridge.PeersForTesting == 0, "the bridge forgot the player", 3f);
+            yield return FlockTestWait.Until(() => bridge.PeersForTesting == 0, "the bridge forgot the player");
         }
 
         [UnityTest]
@@ -260,7 +261,7 @@ namespace Flock.Tests.PlayMode
 
             Assert.AreEqual("direct", (string)Published()["mode"]);
             Assert.AreEqual(FlockRelayFailure.OpenRefused, started.Result.RelayFailureReason);
-            yield return FlockTestWait.Until(() => _relay.Releases == 1, "the relay address no player could reach was given back", 3f);
+            yield return FlockTestWait.Until(() => _relay.Releases == 1, "the relay address no player could reach was given back");
             Assert.IsTrue(hosting.Session.Relay == null || hosting.Session.Relay.HasStopped);
         }
 
@@ -272,7 +273,7 @@ namespace Flock.Tests.PlayMode
             FlockRelayBridge bridge = FlockJoinChecks.RelayBridgeForTesting(hosting.Session);
 
             hosting.Manager.Shutdown();
-            yield return FlockTestWait.Until(() => bridge.IsClosed, "the bridge closed with the netcode", 5f);
+            yield return FlockTestWait.Until(() => bridge.IsClosed, "the bridge closed with the netcode");
             Assert.IsTrue(hosting.Session.Relay.IsOpen, "The relay is the session's, open until it ends");
             Assert.IsFalse(hosting.Session.Relay.HandsArrivalsOver, "Arrivals are no longer handed to the closed bridge");
         }
@@ -357,7 +358,7 @@ namespace Flock.Tests.PlayMode
             Assert.AreEqual(1, _otherBridges[0].PeersForTesting, "The host heard the player through its relay");
             Assert.IsTrue(_otherBridges[0].TryGetPeer(LoopbackPortOfTheOnlyPeer(_otherBridges[0]), out FlockRelayPeer heard));
             Assert.AreEqual(held[0].Relay.Address, heard, "From the player's own relay address");
-            yield return FlockTestWait.Until(() => ChannelsBoundBy(held[0].Relay) >= 1, "the player bound a channel to the host", 3f);
+            yield return FlockTestWait.Until(() => ChannelsBoundBy(held[0].Relay) >= 1, "the player bound a channel to the host");
         }
 
         private static int LoopbackPortOfTheOnlyPeer(FlockRelayBridge bridge) => bridge.PeerPortsForTesting.Single();
@@ -445,11 +446,14 @@ namespace Flock.Tests.PlayMode
             {
                 _server.Publishes(served[0], OnTheHostsNetworkAt(relays[0].Address, port, UnansweringLanAddress));
                 NetworkManager client = Manager(FreePort());
-                // A game whose transport makes one short connect attempt, so the transport gives up before Flock's own 3 s.
-                TransportOf(client).ConnectTimeoutMS = 500;
+                // A game whose transport makes one 1 s connect attempt, so the transport gives up before Flock's own 3 s; the connect
+                // through the relay gets that one attempt too.
+                TransportOf(client).ConnectTimeoutMS = 1000;
                 TransportOf(client).MaxConnectAttempts = 1;
+                int triesRanOut = 0;
+                // Called only when Flock's own try on the host's network runs out.
+                FlockNetcode.TryOnTheHostsNetworkRanOutForTesting = manager => triesRanOut++;
                 LogAssert.Expect(LogType.Error, "Failed to connect to server.");
-                System.Diagnostics.Stopwatch took = System.Diagnostics.Stopwatch.StartNew();
                 Task<FlockNetcodeStartResult> started = held[0].StartNetcodeAsync(client);
                 yield return Done(started, "the start ended", 15f);
 
@@ -457,7 +461,7 @@ namespace Flock.Tests.PlayMode
                 Assert.AreEqual(FlockNetcodeStartOutcome.Connected, started.Result.Outcome, started.Result.RefusedReason);
                 Assert.IsTrue(started.Result.ThroughRelay, "The relay once the transport gave up");
                 Assert.Greater(silent.Available, 0, "The host's address on its network was tried first");
-                Assert.Less(took.Elapsed.TotalSeconds, 2.5, "Without waiting out Flock's own try");
+                Assert.AreEqual(0, triesRanOut, "Without waiting out Flock's own try");
             }
         }
 
@@ -519,7 +523,7 @@ namespace Flock.Tests.PlayMode
             });
             _server.Publishes(served[0], OnTheHostsNetworkAt(relays[0].Address, port, "127.0.0.1"));
             Task<FlockNetcodeStartResult> started = held[0].StartNetcodeAsync(Manager(FreePort()));
-            yield return FlockTestWait.Until(() => waiting.Count == 1, "the host heard the player and checks it", 5f);
+            yield return FlockTestWait.Until(() => waiting.Count == 1, "the host heard the player and checks it");
 
             // Longer than the try on the host's network: the host answered, so its check is waited for.
             yield return new WaitForSecondsRealtime(5f);
@@ -548,7 +552,7 @@ namespace Flock.Tests.PlayMode
                 _server.Publishes(served[0], OnTheHostsNetworkAt(relays[0].Address, port, UnansweringLanAddress));
                 NetworkManager client = Manager(FreePort());
                 Task<FlockNetcodeStartResult> started = held[0].StartNetcodeAsync(client);
-                yield return FlockTestWait.Until(() => silent.Available > 0, "the try on the host's network began", 5f);
+                yield return FlockTestWait.Until(() => silent.Available > 0, "the try on the host's network began");
                 client.Shutdown();
                 yield return Done(started, "ended", 10f);
 
@@ -607,7 +611,7 @@ namespace Flock.Tests.PlayMode
             {
                 _server.Publishes(served[0], OnTheHostsNetworkAt(relays[0].Address, port, UnansweringLanAddress));
                 Task<FlockNetcodeStartResult> started = held[0].StartNetcodeAsync(Manager(FreePort()));
-                yield return FlockTestWait.Until(() => silent.Available > 0, "the try on the host's network began", 5f);
+                yield return FlockTestWait.Until(() => silent.Available > 0, "the try on the host's network began");
                 Task leaving = held[0].LeaveAsync();
                 yield return Done(leaving, "left");
                 Assert.IsTrue(held[0].HasEnded, "Precondition: the session ended during the try");
@@ -858,7 +862,7 @@ namespace Flock.Tests.PlayMode
 
             NetworkManager client = _managers.Last();
             client.Shutdown();
-            yield return FlockTestWait.Until(() => !held[0].Relay.HandsArrivalsOver, "the bridge closed with the netcode", 5f);
+            yield return FlockTestWait.Until(() => !held[0].Relay.HandsArrivalsOver, "the bridge closed with the netcode");
         }
     }
 }
