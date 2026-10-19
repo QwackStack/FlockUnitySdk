@@ -36,6 +36,12 @@ namespace Flock.Providers
 
         // The relay thread's own.
         private readonly List<FlockRelayRequest> _waiting = new List<FlockRelayRequest>();
+        // The latest ask, when it went, and when the relay last answered anything; the relay thread's own.
+        private byte[] _askTransaction;
+        private long _lastAskAt;
+        private long _lastAnsweredAt;
+        // A relay may answer the reservation and never a binding request (from a socket it answered no binding on): its silence says nothing.
+        private bool _answersAsks;
 
         // The release on its way, known before it goes; the relay thread sends it again once on a stale nonce.
         private volatile byte[] _releaseTransaction;
@@ -125,16 +131,21 @@ namespace Flock.Providers
             }
         }
 
-        /// <summary>Something sent at least this often keeps the way to the relay open through a router or Docker's port forwarding. The relay thread's alone.</summary>
-        internal void KeepAlive(long now)
+        /// <summary>Asks the relay (a binding request) every <see cref="FlockRelayConnection.Timing.AskTheRelayEvery"/>, whatever else goes; it also keeps the way open through a router or Docker's port forwarding. The relay thread's alone.</summary>
+        internal void AskTheRelay(long now)
         {
-            if (now - _socket.LastSentAt < FlockRelayClock.Ticks(_timing.KeepAliveAfter))
+            if (_askTransaction != null && now - _lastAskAt < FlockRelayClock.Ticks(_timing.AskTheRelayEvery))
                 return;
-            SendBytes(FlockRelayWire.Write((ushort)(FlockRelayWire.BindingMethod | FlockRelayWire.RequestClass), FlockRelayWire.NewTransaction(),
+            _lastAskAt = now;
+            _askTransaction = FlockRelayWire.NewTransaction();
+            SendBytes(FlockRelayWire.Write((ushort)(FlockRelayWire.BindingMethod | FlockRelayWire.RequestClass), _askTransaction,
                 new List<KeyValuePair<ushort, byte[]>>(), null));
         }
 
-        /// <summary>Takes one of the relay's own messages: the release's answer, or an answer to a request waiting. The relay thread's alone.</summary>
+        /// <summary>True when the relay, which answered the asks, has answered nothing for <see cref="FlockRelayConnection.Timing.RelayLostWhenSilent"/>: this device no longer reaches it. The relay thread's alone.</summary>
+        internal bool HasStoppedAnswering(long now) => _answersAsks && now - _lastAnsweredAt >= FlockRelayClock.Ticks(_timing.RelayLostWhenSilent);
+
+        /// <summary>Takes one of the relay's own messages: the latest ask's answer, the release's, or an answer to a request waiting. The relay thread's alone.</summary>
         internal void Take(byte[] packet, int length)
         {
             FlockRelayWire.Message message = FlockRelayWire.Read(packet, length);
@@ -143,6 +154,12 @@ namespace Flock.Providers
             ushort answerClass = FlockRelayWire.ClassOf(message.Type);
             if (answerClass != FlockRelayWire.SuccessClass && answerClass != FlockRelayWire.ErrorClass)
                 return;
+            if (_askTransaction != null && SameTransaction(_askTransaction, message.Transaction))
+            {
+                _answersAsks = true;
+                _lastAnsweredAt = FlockRelayClock.Now();
+                return;
+            }
             byte[] release = _releaseTransaction;
             if (release != null && SameTransaction(release, message.Transaction))
             {
@@ -162,7 +179,7 @@ namespace Flock.Providers
         /// <summary>Gives the address back, sent from the calling thread so it goes out even while the game quits; asked only once a signed reservation was asked.</summary>
         internal void Release() => SendRelease();
 
-        /// <summary>Nothing more goes but the release: a renewal, a resend or a keep-alive the relay thread's turn reaches after the stop is dropped. Called by the stop before it asks whether a reservation went.</summary>
+        /// <summary>Nothing more goes but the release: a renewal, a resend or an ask the relay thread's turn reaches after the stop is dropped. Called by the stop before it asks whether a reservation went.</summary>
         internal void StopSending()
         {
             lock (_sendGate)
@@ -172,6 +189,7 @@ namespace Flock.Providers
         private void Answer(FlockRelayRequest request, FlockRelayWire.Message message, ushort answerClass)
         {
             _waiting.Remove(request);
+            _lastAnsweredAt = FlockRelayClock.Now();
             if (answerClass == FlockRelayWire.SuccessClass)
             {
                 request.Done(0, string.Empty, message);

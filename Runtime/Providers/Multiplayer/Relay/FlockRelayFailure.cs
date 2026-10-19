@@ -34,7 +34,7 @@ namespace Flock.Providers
         public const string OpenRefused = "relay_open_refused";
         /// <summary>The relay refused a request for another reason.</summary>
         public const string Refused = "relay_refused";
-        /// <summary>The relay let the address go: a renewal was refused, or none was answered before it lapsed.</summary>
+        /// <summary>The relay let the address go (a renewal was refused, or none was answered before it lapsed), or it has answered nothing for 45 s: this device's packets no longer reach it.</summary>
         public const string Lost = "relay_lost";
         /// <summary>The relay connection was closed by its owner (the session's end) before the call.</summary>
         public const string Closed = "relay_closed";

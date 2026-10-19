@@ -35,7 +35,10 @@ namespace Flock.Providers
             internal TimeSpan RenewOpeningsEvery = TimeSpan.FromMinutes(4);
             internal TimeSpan RenewChannelsEvery = TimeSpan.FromMinutes(8);
             internal TimeSpan RetryRenewalAfter = TimeSpan.FromSeconds(15);
-            internal TimeSpan KeepAliveAfter = TimeSpan.FromSeconds(15);
+            // The relay is asked this often (a binding request), whatever else goes: the game's packets need no answer, so they say nothing of whether the relay still hears this device, and the ask keeps the way to the relay open through a router too.
+            internal TimeSpan AskTheRelayEvery = TimeSpan.FromSeconds(15);
+            // A relay that answered the asks and has answered nothing for this long is lost: this device's packets no longer reach it (a router that moved it to another port, a network that changed), though the relay's may still arrive.
+            internal TimeSpan RelayLostWhenSilent = TimeSpan.FromSeconds(45);
             // How long the relay keeps an opening and a channel without a renewal, as the standard sets them.
             internal TimeSpan OpeningLasts = TimeSpan.FromMinutes(5);
             internal TimeSpan ChannelLasts = TimeSpan.FromMinutes(10);
@@ -276,10 +279,13 @@ namespace Flock.Providers
                     TakeHandedOver();
                     if (_socket.WaitToRead(LongestPollMicroseconds))
                         ReadEverythingWaiting();
+                    // Any step may stop the relay (a refusal read, a request given up on, a renewal lapsed); nothing goes after that but the release.
                     long now = FlockRelayClock.Now();
                     _requests.SendAgainOrGiveUp(now);
                     _renewals.RenewDue(now);
-                    _requests.KeepAlive(now);
+                    _requests.AskTheRelay(now);
+                    if (_requests.HasStoppedAnswering(now))
+                        Lose($"the relay has answered nothing for {_timing.RelayLostWhenSilent.TotalSeconds:0} s, so this device no longer reaches it (the network or a router between them changed, or the relay stopped)");
                 }
             }
             catch (ObjectDisposedException)
@@ -416,7 +422,7 @@ namespace Flock.Providers
             }
             Volatile.Write(ref _stopSettled, 1);
             if (reason != null && wasOpen)
-                _logger.LogWarning(message);
+                _logger.LogWarning($"{message}\nFix: {FlockRelayFailure.FixFor(reason)}");
             FlockRelayException failure = reason == null ? null : new FlockRelayException(reason, message);
             if (failure == null)
                 _opened.TrySetCanceled();

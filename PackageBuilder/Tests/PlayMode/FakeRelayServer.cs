@@ -89,6 +89,8 @@ namespace Flock.Tests.PlayMode
         private readonly Dictionary<int, int> _portsHeard = new Dictionary<int, int>();
         // Binding requests answered with the address they came from; off for a relay that ignores them.
         internal volatile bool AnswersBindings = true;
+        // Client ports whose packets no longer reach the relay, as a router that moved a device to another port leaves it; what the relay sends them still goes.
+        private readonly HashSet<int> _portsNoLongerHeard = new HashSet<int>();
 
         internal FakeRelayServer()
         {
@@ -105,6 +107,13 @@ namespace Flock.Tests.PlayMode
         {
             lock (_lock)
                 _dropsLeft[method] = times;
+        }
+
+        // Nothing more from this client port reaches the relay; packets for it still go out.
+        internal void StopHearing(int clientPort)
+        {
+            lock (_lock)
+                _portsNoLongerHeard.Add(clientPort);
         }
 
         // The next signed requests are answered 438 with a new nonce; -1 answers every one so.
@@ -222,6 +231,8 @@ namespace Flock.Tests.PlayMode
         {
             lock (_lock)
             {
+                if (_portsNoLongerHeard.Contains(from.Port))
+                    return;
                 if (!_portsHeard.ContainsKey(from.Port))
                     _portsHeard[from.Port] = _portsHeard.Count + 1;
                 if (AnswersOnlyPortsHeard != null && !AnswersOnlyPortsHeard.Contains(_portsHeard[from.Port]))

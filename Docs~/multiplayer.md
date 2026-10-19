@@ -370,7 +370,7 @@ so keep a default:
 | `relay_full` | The relay has no room for another address. |
 | `relay_open_refused` | The relay refused to let packets in from the host's relay address, or from a player's. |
 | `relay_refused` | The relay refused a request for another reason. |
-| `relay_lost` | The relay let the address go. |
+| `relay_lost` | The relay let the address go, or has answered nothing for 45 s (this device's packets no longer reach it). |
 | `relay_closed` | The relay connection was closed by the session's end before the call. |
 | `relay_not_on_this_platform` | A web player: a browser cannot send UDP. |
 

@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.89.0]
+
+Found by playing through Flock's relay on a real network (Cloudflare's relay).
+
+### Fixed
+
+- **A relay that stops answering this device is told lost within a minute** (`session.RelayLost` with `relay_lost`, the log
+  saying the relay has answered nothing for 45 s), so starting the netcode again opens another. A relay's own packets can keep
+  arriving after this device's stop reaching it (a router that moved the game to another port, a network that changed); until
+  now nothing asked the relay while the game's packets went, so it was told lost only when an opening was renewed, minutes
+  later, the player meanwhile timed out by the netcode. The relay is now asked every 15 s whatever else goes (a binding request,
+  which also keeps the way open through a router); any answer counts, and a relay that never answered an ask is not judged by
+  its silence.
+- **The warning a lost relay logs now says how to fix it** (start the netcode again), as every failure does; it used to name
+  the cause alone.
+
+
 ## [1.88.1]
 
 Each game keeps its own saved sign-in and analytics, and three relay fixes.

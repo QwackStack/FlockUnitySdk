@@ -6,11 +6,10 @@ using System.Threading;
 
 namespace Flock.Providers
 {
-    /// <summary>The UDP socket to one relay server (dual-stack where the platform allows): connected to it, never holding a sender, and remembering when it last sent.</summary>
+    /// <summary>The UDP socket to one relay server (dual-stack where the platform allows): connected to it, and never holding a sender.</summary>
     internal sealed class FlockRelaySocket
     {
         private readonly Socket _socket;
-        private long _lastSentAt;
 
         internal FlockRelaySocket(IPEndPoint server)
         {
@@ -26,7 +25,6 @@ namespace Flock.Providers
                 _socket.Close();
                 throw;
             }
-            _lastSentAt = FlockRelayClock.Now();
         }
 
         /// <summary>Takes a socket already connected to the relay server, such as one the server was heard to answer.</summary>
@@ -34,7 +32,6 @@ namespace Flock.Providers
         {
             _socket = connected;
             _socket.Blocking = false;
-            _lastSentAt = FlockRelayClock.Now();
         }
 
         /// <summary>A socket connected to <paramref name="server"/> that the server answered: a binding request goes out from <paramref name="socketsAtOnce"/> sockets at once, round after round, and the first one answered is kept. Some relay servers answer only some of the ports a device sends from (Cloudflare's, measured from two networks in 2026-10: about one in three, each port every time or never). Null when none was answered; blocks, so it runs off the main thread.</summary>
@@ -136,9 +133,6 @@ namespace Flock.Providers
             }
         }
 
-        /// <summary>When something last went out, as a <see cref="FlockRelayClock"/> reading.</summary>
-        internal long LastSentAt => Interlocked.Read(ref _lastSentAt);
-
         internal bool BlocksForTesting => _socket.Blocking;
 
         internal AddressFamily FamilyForTesting => _socket.AddressFamily;
@@ -163,7 +157,6 @@ namespace Flock.Providers
             {
                 return false;
             }
-            Interlocked.Exchange(ref _lastSentAt, FlockRelayClock.Now());
             return true;
         }
 

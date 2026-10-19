@@ -561,15 +561,154 @@ namespace Flock.Tests.PlayMode
             Assert.GreaterOrEqual(_relay.SeenRequests(FakeRelayServer.MethodRefresh).Count, 2, "A renewal unanswered was tried again");
         }
 
+        [Test]
+        public void TheTimingAGameGets_IsTheMeasuredOne()
+        {
+            // Every other test shortens these; a game gets these.
+            FlockRelayConnection.Timing timing = new FlockRelayConnection.Timing();
+            Assert.AreEqual(TimeSpan.FromSeconds(5), timing.NameLookUpWait, "A name lookup waits 5 s");
+            Assert.AreEqual(TimeSpan.FromSeconds(5), timing.AnswerWait, "An answer waits 5 s");
+            Assert.AreEqual(8, timing.SocketsTriedAtOnce, "8 sockets at once");
+            Assert.AreEqual(3, timing.RoundsOfSocketsTried, "3 rounds");
+            Assert.AreEqual(TimeSpan.FromSeconds(1), timing.SocketRoundWait, "Of a second");
+            Assert.AreEqual(TimeSpan.FromMinutes(4), timing.LongestBetweenReservationRenewals, "The reservation renewed at least every 4 min");
+            Assert.AreEqual(TimeSpan.FromMinutes(4), timing.RenewOpeningsEvery, "Openings every 4 min");
+            Assert.AreEqual(TimeSpan.FromMinutes(8), timing.RenewChannelsEvery, "Channels every 8 min");
+            Assert.AreEqual(TimeSpan.FromSeconds(15), timing.RetryRenewalAfter, "A renewal unanswered tried again after 15 s");
+            Assert.AreEqual(TimeSpan.FromMinutes(5), timing.OpeningLasts, "An opening lasts 5 min");
+            Assert.AreEqual(TimeSpan.FromMinutes(10), timing.ChannelLasts, "A channel 10 min");
+            Assert.AreEqual(TimeSpan.FromSeconds(15), timing.AskTheRelayEvery, "The relay asked every 15 s");
+            Assert.AreEqual(TimeSpan.FromSeconds(45), timing.RelayLostWhenSilent, "And lost once it answered nothing for 45 s");
+            Assert.AreEqual(TimeSpan.FromSeconds(1), timing.ReleaseAnswerWait, "A release's answer waited 1 s");
+            Assert.AreEqual(65, FlockRelayConnection.MostOpenings, "The most IPs an address opens to: 64 players and the host");
+            Assert.AreEqual(1400, FlockRelayConnection.MostBytesInAPacket, "The most bytes a packet carries");
+        }
+
         [UnityTest]
-        public IEnumerator KeepAlive_GoesOutWhenNothingElseDoes()
+        public IEnumerator TheRelayIsAskedEveryFewSeconds_WhateverElseGoes()
         {
             FlockRelayConnection.Timing timing = Quick();
-            timing.KeepAliveAfter = TimeSpan.FromSeconds(0.5);
+            timing.AskTheRelayEvery = TimeSpan.FromSeconds(0.5);
             List<FlockRelayConnection> opened = new List<FlockRelayConnection>();
             yield return Opened(A, opened, timing);
+            int before = _relay.SeenRequests(FakeRelayServer.MethodBinding).Count;
+            Stopwatch window = Stopwatch.StartNew();
             yield return RealSeconds(2.2f);
-            Assert.GreaterOrEqual(_relay.SeenRequests(FakeRelayServer.MethodBinding).Count, 3, "A binding request each half second of quiet");
+            Assert.That(_relay.SeenRequests(FakeRelayServer.MethodBinding).Count - before, Is.InRange(3, MostAsksIn(window, 0.5)), "A binding request each half second of quiet, and no more often");
+
+            // The game's packets going all the while (to an address the relay is open to, so they do go): asked all the same, since packets get no answer.
+            Task opening = opened[0].OpenToHostAsync(opened[0].Address);
+            yield return Done(opening, "opened to its own relay address");
+            Assert.IsFalse(opening.IsFaulted, "Precondition: opened");
+            int passedOn = _relay.PassedOnFrom(opened[0].LocalPortForTesting);
+            int whileSending = _relay.SeenRequests(FakeRelayServer.MethodBinding).Count;
+            window.Restart();
+            byte[] packet = System.Text.Encoding.UTF8.GetBytes("a packet of the game's");
+            DateTime until = DateTime.UtcNow.AddSeconds(2.2);
+            while (DateTime.UtcNow < until)
+            {
+                opened[0].Send(opened[0].Address, packet, 0, packet.Length);
+                yield return RealSeconds(0.05f);
+            }
+            Assert.Greater(_relay.PassedOnFrom(opened[0].LocalPortForTesting) - passedOn, 20, "Precondition: the packets reached the relay");
+            Assert.That(_relay.SeenRequests(FakeRelayServer.MethodBinding).Count - whileSending, Is.InRange(3, MostAsksIn(window, 0.5)), "Asked while packets go too");
+        }
+
+        // Asks go at least this far apart, so a window holds no more than this many (a slow frame lengthens the window, never the asks' pace).
+        private static int MostAsksIn(Stopwatch window, double secondsApart) => (int)(window.Elapsed.TotalSeconds / secondsApart) + 2;
+
+        private static FlockRelayConnection.Timing AskingOften()
+        {
+            FlockRelayConnection.Timing timing = Quick();
+            timing.AskTheRelayEvery = TimeSpan.FromSeconds(0.2);
+            timing.RelayLostWhenSilent = TimeSpan.FromSeconds(1);
+            return timing;
+        }
+
+        [UnityTest]
+        public IEnumerator ARelayThatStopsAnswering_IsLost_OnceSilentLongEnough()
+        {
+            // Lost after 2 s of silence here, so the moment's silence below stays well inside it on a slow machine.
+            FlockRelayConnection.Timing timing = AskingOften();
+            timing.RelayLostWhenSilent = TimeSpan.FromSeconds(2);
+            List<FlockRelayConnection> opened = new List<FlockRelayConnection>();
+            yield return Opened(A, opened, timing);
+            yield return RealSeconds(2.5f);
+            Assert.IsTrue(opened[0].IsOpen, "Control: a relay that answers stays, past the silence allowed");
+
+            // Silent for less than allowed, then answering again: it stays.
+            _relay.AnswersBindings = false;
+            yield return RealSeconds(0.5f);
+            _relay.AnswersBindings = true;
+            yield return RealSeconds(1f);
+            Assert.IsTrue(opened[0].IsOpen, "A moment's silence: still open");
+
+            // Silent for good: lost, saying why and what to do.
+            _relay.AnswersBindings = false;
+            yield return FlockTestWait.Until(() => opened[0].HasStopped, "the relay was lost", 6f);
+            Assert.AreEqual(FlockRelayFailure.Lost, opened[0].FailureReason);
+            // The connection reads as stopped a moment before its warning is written.
+            yield return FlockTestWait.Until(() => _logger.Warnings.ToArray().Any(warning => warning.Contains("has answered nothing for 2 s")), "the loss was said", 2f);
+            string[] said = _logger.Warnings.ToArray().Where(warning => warning.Contains("has answered nothing for 2 s")).ToArray();
+            Assert.AreEqual(1, said.Length, "Saying once that the relay answered nothing: " + string.Join(" | ", _logger.Warnings.ToArray()));
+            Assert.That(said[0], Does.Contain("Fix: " + FlockRelayFailure.FixFor(FlockRelayFailure.Lost)), "And how to fix it");
+        }
+
+        [UnityTest]
+        public IEnumerator ARelayThatNoLongerHearsThisDevice_IsLost_ThoughWhatItSendsStillArrives()
+        {
+            List<FlockRelayConnection> pair = new List<FlockRelayConnection>();
+            yield return HostAndPlayer(pair, AskingOften());
+            // The player's packets stop reaching the relay (a router that moved it to another port) while the host's still reach the player.
+            _relay.StopHearing(pair[1].LocalPortForTesting);
+            byte[] packet = System.Text.Encoding.UTF8.GetBytes("from the host");
+            byte[] buffer = new byte[FlockRelayConnection.MostBytesInAPacket];
+            int arrived = 0;
+            DateTime until = DateTime.UtcNow.AddSeconds(4);
+            while (!pair[1].HasStopped && DateTime.UtcNow < until)
+            {
+                pair[0].Send(pair[1].Address, packet, 0, packet.Length);
+                while (pair[1].TryReceive(buffer, out _, out _))
+                    arrived++;
+                yield return RealSeconds(0.05f);
+            }
+
+            Assert.IsTrue(pair[1].HasStopped, "The player's relay was lost");
+            Assert.AreEqual(FlockRelayFailure.Lost, pair[1].FailureReason);
+            Assert.Greater(arrived, 5, "Precondition: the host's packets kept arriving while the relay heard nothing from the player");
+            Assert.IsTrue(pair[0].IsOpen, "Control: the host, which the relay still hears, stays");
+        }
+
+        [UnityTest]
+        public IEnumerator ARelayThatNeverAnsweredAnAsk_IsNotJudgedByItsSilence()
+        {
+            // Reserved from a socket the relay answered no binding on.
+            _relay.AnswersBindings = false;
+            FlockRelayConnection.Timing timing = AskingOften();
+            timing.SocketRoundWait = TimeSpan.FromSeconds(0.2);
+            List<FlockRelayConnection> opened = new List<FlockRelayConnection>();
+            yield return Opened(A, opened, timing);
+            int before = _relay.SeenRequests(FakeRelayServer.MethodBinding).Count;
+            yield return RealSeconds(2f);
+
+            Assert.GreaterOrEqual(_relay.SeenRequests(FakeRelayServer.MethodBinding).Count - before, 5, "Precondition: asked all the while");
+            Assert.IsTrue(opened[0].IsOpen, "One that never answered an ask stays open");
+        }
+
+        [UnityTest]
+        public IEnumerator ARelayThatAnswersTheRenewals_Stays_ThoughItStopsAnsweringTheAsks()
+        {
+            FlockRelayConnection.Timing timing = AskingOften();
+            timing.LongestBetweenReservationRenewals = TimeSpan.FromSeconds(0.3);
+            List<FlockRelayConnection> opened = new List<FlockRelayConnection>();
+            yield return Opened(A, opened, timing);
+            yield return RealSeconds(0.5f);
+            _relay.AnswersBindings = false;
+            int renewals = _relay.SeenRequests(FakeRelayServer.MethodRefresh).Count;
+            yield return RealSeconds(2f);
+
+            Assert.GreaterOrEqual(_relay.SeenRequests(FakeRelayServer.MethodRefresh).Count - renewals, 4, "Precondition: renewed all the while");
+            Assert.IsTrue(opened[0].IsOpen, "One answering the renewals still hears this device, so it stays open");
         }
 
         [UnityTest]
@@ -805,10 +944,10 @@ namespace Flock.Tests.PlayMode
         [UnityTest]
         public IEnumerator Lost_NothingButTheReleaseGoesAfterIt()
         {
-            // A keep-alive due at every turn, and the reservation renewed every half second: the turn that hears the refusal would send
-            // one after the release if the stop did not end the sending.
+            // An ask due at every turn, and the reservation renewed every half second: the turn that hears the refusal would send one
+            // after the release if the stop did not end the sending.
             FlockRelayConnection.Timing timing = Quick();
-            timing.KeepAliveAfter = TimeSpan.Zero;
+            timing.AskTheRelayEvery = TimeSpan.Zero;
             timing.LongestBetweenReservationRenewals = TimeSpan.FromSeconds(0.5);
             List<FlockRelayConnection> opened = new List<FlockRelayConnection>();
             yield return Opened(A, opened, timing);
@@ -821,7 +960,7 @@ namespace Flock.Tests.PlayMode
             int firstRelease = seen.FindIndex(IsRelease);
             Assert.GreaterOrEqual(firstRelease, 0, "Precondition: the release went");
             Assert.AreEqual(0, seen.Skip(firstRelease + 1).Count(each => !IsRelease(each)), "Nothing but the release went after it");
-            Assert.Greater(_relay.SeenRequests(FakeRelayServer.MethodBinding).Count, 10, "Control: keep-alives went while the relay worked");
+            Assert.Greater(_relay.SeenRequests(FakeRelayServer.MethodBinding).Count, 10, "Control: asks went while the relay worked");
         }
 
         private static bool IsRelease(FakeRelayServer.Seen seen) => seen.Method == FakeRelayServer.MethodRefresh && seen.Class == 0x000 && seen.LifetimeAsked == 0;
