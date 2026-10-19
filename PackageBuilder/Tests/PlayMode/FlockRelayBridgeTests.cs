@@ -114,7 +114,9 @@ namespace Flock.Tests.PlayMode
         private IEnumerator Opened(string player, List<FlockRelayConnection> into, Func<FlockRelayPeer> openTo = null, FlockRelayConnection.Timing timing = null)
         {
             FlockRelayLogin login = new FlockRelayLogin("127.0.0.1", _relay.Port, "1760000000:game:" + player, "minted-for-the-test");
-            Task<FlockRelayConnection> opening = FlockRelayConnection.OpenAsync(login, timing ?? new FlockRelayConnection.Timing { AnswerWait = TimeSpan.FromSeconds(2) }, _logger, default);
+            // The SDK's own answer wait (5 s): these tests need the relay open, not a quick give-up, and 2 s gave up now and then on
+            // CI's busy runner (three sends unanswered in a burst; the fourth goes at 3.5 s).
+            Task<FlockRelayConnection> opening = FlockRelayConnection.OpenAsync(login, timing ?? new FlockRelayConnection.Timing(), _logger, default);
             yield return Done(opening, $"{player}'s relay opened");
             Assert.IsFalse(opening.IsFaulted, $"Precondition: {player}'s relay opened ({opening.Exception?.InnerException?.Message})");
             FlockRelayConnection connection = opening.Result;
@@ -457,7 +459,6 @@ namespace Flock.Tests.PlayMode
         // Channels renewed every second and kept by the relay for three, so a renewal that stops shows within a test.
         private static FlockRelayConnection.Timing RenewingChannelsOften() => new FlockRelayConnection.Timing
         {
-            AnswerWait = TimeSpan.FromSeconds(2),
             RenewChannelsEvery = TimeSpan.FromSeconds(1),
             ChannelLasts = TimeSpan.FromSeconds(3),
         };
