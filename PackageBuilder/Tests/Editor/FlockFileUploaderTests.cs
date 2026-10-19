@@ -141,14 +141,19 @@ namespace Flock.Tests
         [UnityTest]
         public IEnumerator ASlowUploadThatKeepsSendingIsNotGivenUp()
         {
-            // Read slowly for about four seconds against a one-second stall timeout: only an upload that never moves is given up.
-            _storage.ReadBytesPerTenthOfASecond = 256 * 1024;
-            FlockHttpClient.UseFileUploader(new UnityWebRequestFileUploader(TimeSpan.FromSeconds(1)));
-            Task<FlockFileUploadOutcome> upload = FlockHttpClient.UploadFileAsync(_storage.Url + "bucket/key", MakeFile(10 * 1024 * 1024), "video/webm");
+            // Read slowly for about six seconds against a three-second stall timeout: only an upload that never moves is given up, and
+            // an uploader that timed the whole upload would give this one up. The client counts what it hands to the socket, so the
+            // end of an upload drains from the kernel's buffers with nothing moving: on Linux loopback about 9 MiB (4 MiB sent, 6 MiB
+            // received), measured as 2.6 to 2.9 s at the 256 KiB a tenth this test read before (a one-second timeout gave it up on
+            // CI's Linux runner now and then) and 0.8 to 0.9 s at 1 MiB a tenth.
+            const int Size = 60 * 1024 * 1024;
+            _storage.ReadBytesPerTenthOfASecond = 1024 * 1024;
+            FlockHttpClient.UseFileUploader(new UnityWebRequestFileUploader(TimeSpan.FromSeconds(3)));
+            Task<FlockFileUploadOutcome> upload = FlockHttpClient.UploadFileAsync(_storage.Url + "bucket/key", MakeFile(Size), "video/webm");
             yield return FlockTestWait.Until(() => upload.IsCompleted, "The upload ended within 60 s", 60);
 
             Assert.IsTrue(upload.Result.IsUploaded, $"{upload.Result.Result} {upload.Result.StatusCode} {upload.Result.Body}");
-            Assert.AreEqual(10 * 1024 * 1024, _storage.Single().Body.Length);
+            Assert.AreEqual(Size, _storage.Single().Body.Length);
         }
 
         [UnityTest]
