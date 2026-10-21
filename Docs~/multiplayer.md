@@ -22,7 +22,7 @@ In the dashboard, open **Multiplayer → Sessions → Multiplayer settings**. Th
 | Host timeout (seconds) | 60 | A host silent for longer than this is replaced by the player seated longest. |
 | Session max age (seconds) | 14400 | Every session ends after this long (4 hours), however busy it is. |
 | Create a session when a match forms | On | Matched players get a session to play in. |
-| Hand out relay credentials | On | Players on different networks connect through Flock's relay. |
+| Hand out relay credentials | On | Players on different networks connect through Flock's relay. When off, only players on the host's network, or on a port forwarded to it, can connect. |
 
 Then make a queue for each mode under **Multiplayer → Matchmaking** (see [Matchmaking](#matchmaking)).
 
@@ -335,6 +335,11 @@ A start that neither hosts nor connects keeps the player's seat; call `session.L
 
 ### Through the relay, or directly
 
+Flock's relay runs on Cloudflare's network and is on for every game until it is switched off under **Multiplayer
+settings**. With it switched off, or while a studio's relay is paused until its bill is paid, players connect on the
+host's network or through a port forwarded to the host, and a player on another network gets `RelayFailed` with
+`relay_not_offered` or `relay_paused`.
+
 `FlockNetcodeOptions.Relay` chooses who goes through Flock's relay:
 
 | `FlockRelayUse` | Who goes through the relay |
@@ -460,8 +465,6 @@ and a relayed player telling the host its relay address (once for each address).
 
 ## Limits today
 
-- **Flock's relay is not live in production yet.** Until it is, players connect on the host's network or through a port
-  forwarded to the host, and a player on another network gets `RelayFailed` with `relay_not_offered`.
 - **No dedicated servers.** A player hosts every session.
 - **No skill or region matching yet.** Flock stores a search's attributes but matches in the order players search. Use a
   queue per mode and region (`coop-4-eu`, `coop-4-na`).
