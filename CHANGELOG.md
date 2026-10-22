@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.90.0]
+
+Payment error codes. This version adds no payment call; it makes every code Flock's payment routes send readable.
+
+### Added
+
+- **A `FlockErrorCode` member and a fix in `FlockErrorHints` for every code Flock's payment routes send** (redeeming a store
+  receipt, opening a web checkout): `PaymentProviderReceiptInvalid`, `PaymentProviderReceiptProductMismatch`,
+  `PaymentProviderProviderNotSupportedHere`, `PaymentProviderProviderNotFound`, `PaymentProviderCredentialsUnreadable`,
+  `PaymentProviderCheckoutFailed`, `ShopNotARealCurrencyItem`, `ShopRealCurrencySettlementUnavailable`,
+  `ShopWebhookProviderUnknown` and `ShopPurchaseNotFound`. Each read as `Unknown` until now. Several have more than one cause
+  that only the server's reason tells apart: a receipt the store does not know, the store refusing the game's own keys and a
+  store that is down all answer `PaymentProviderReceiptInvalid`. Each fix covers every cause, quoting the server's own words,
+  and `Docs~/errors.md` lists them under "One code, several causes". The tests use the bodies the server sent in a live run,
+  and the server's own messages for the causes no live run reached (a store out of reach, a store answer it cannot read, a
+  Google payment still pending, a receipt for another product, a provider refusing a checkout, an unknown purchase id).
+
+### Fixed
+
+- **`Docs~/errors.md`'s code table lists every member.** It had fallen 15 behind (`GameInvalidApiKey`, `GameMissingApiKey`,
+  `MultiplayerSeatMintLimit`, `PlayerExpiredToken`, `PlayerInvalidToken`, `PlayerMissingToken` and the nine `Request*`
+  codes); CI now checks each row against the enum.
+
+
 ## [1.89.0]
 
 Found by playing through Flock's relay on a real network (Cloudflare's relay), and by running every test many times under load.

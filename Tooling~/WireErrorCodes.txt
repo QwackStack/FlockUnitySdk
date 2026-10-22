@@ -32,7 +32,9 @@
 #   grep -rhoE '"[a-z_]+\.[a-z_]+"' <backend>/flock/packages/*/enums.py <backend>/common/helpers/error_codes.py \
 #     | tr -d '"' | sort -u
 #
-# Last refreshed 2026-10-15 for the API key, sign-in and request.* codes, measured against the local backend.
+# Last refreshed 2026-10-22 for the shop and payment_provider codes (the payment routes), read in those two packages'
+# code on the local backend (main aa402fc) and measured by the payment routes probe on 2026-10-21. Before that, on
+# 2026-10-15, for the API key, sign-in and request.* codes, measured against the local backend.
 # Before that, against the live backend: 2026-10-06 (93 codes in the spec, 105 /v1 paths), for the
 # matchmaking, party and multiplayer codes and the codes the spec gained since 2026-08-31. On 2026-10-08
 # the backend's matchmaking and session fixes added multiplayer.version_mismatch and
@@ -95,6 +97,8 @@ party.not_a_member
 party.not_found
 party.not_party_leader
 party.target_not_a_member
+payment_provider.checkout_failed
+payment_provider.provider_not_found
 player.account_already_linked
 player.account_not_linked
 player.apple_account_already_registered
@@ -132,6 +136,7 @@ shop.item_not_found
 shop.malformed_reward
 shop.pack_grants_nothing
 shop.player_not_found
+shop.purchase_not_found
 shop.reward_currency_not_held
 shop.shop_not_found
 shop.wallet_not_found
@@ -170,6 +175,15 @@ shop_item.shop_not_found
 #                          that does not exist, as when API URL ends in /v1, or a record a route did not find), request.method_not_allowed and
 #                          request.validation_failed (a member missing from the body) measured live 2026-10-15;
 #                          the rest read in the backend's handler.
+# payment_provider.* and shop.* below - from redeeming a store receipt (/v1/shop/validate-receipt) and opening a web
+#                          checkout (/v1/shop/checkout), each measured live by the payment routes probe on 2026-10-21.
+#                          The spec shows none of them: a route's own 422 codes are replaced there by the framework's
+#                          "Validation failed" answer, and neither route declares its 503 (read in the spec 2026-10-22).
+#                          receipt_invalid also answers 502 when the store cannot be reached, and
+#                          real_currency_settlement_unavailable 503 when the server has no webhook address.
+#                          shop.webhook_provider_unknown also comes from the webhook route the providers call.
+#                          Their members come before any call of this SDK reaches these routes: the payment plan adds
+#                          the codes first, then the store purchase call and web checkout, each in a release of its own.
 leaderboard.not_found
 analytics.currency_not_found
 multiplayer.join_code_unavailable
@@ -188,16 +202,27 @@ request.method_not_allowed
 request.conflict
 request.payload_too_large
 request.failed
+payment_provider.credentials_unreadable
+payment_provider.provider_not_supported_here
+payment_provider.receipt_invalid
+payment_provider.receipt_product_mismatch
+shop.not_a_real_currency_item
+shop.real_currency_settlement_unavailable
+shop.webhook_provider_unknown
 
 [waived]
-# Documented, but for features this SDK does not call — there is no surface for the error to reach.
-# Adding a member for one of these means the feature arrived, so move the code up to [documented] in the
-# same change. CI fails if a waived code turns out to have a member, which is what keeps this list honest
+# Sent only by routes this SDK does not call (declared in the spec, or read in the backend's code) — there is no
+# surface for the error to reach.
+# Adding a member for one of these means the feature arrived, or is being built, so move the code up to
+# [documented] or [undocumented] in the same change. CI fails if a waived code turns out to have a member, which is what keeps this list honest
 # rather than letting it become the place unwanted codes go to be forgotten.
 #
-# dashboard.* and the payment provider and refund codes below are sent by dashboard routes only, except
-# payment_provider.checkout_failed, which comes from the player-facing shop checkout route this SDK does not
-# call yet: move it up when checkout is added.
+# dashboard.* and the payment_provider.* and shop.* codes below are sent only by the dashboard's routes (setting up
+# payment providers and shops, refunds) or by the webhook route the payment providers call (shop.webhook_*), never by a
+# route a game calls; read in the backend's shop and payment_provider packages on 2026-10-22. shop.purchase_not_found
+# is up under [documented]: the dashboard's refund route sends it today, and a game will once Flock can read a purchase
+# for it. The backend also defines payment_provider.provider_already_configured, shop.purchase_already_settled and
+# shop.duplicate_provider_transaction, which nothing raises; add one the day it can reach a game.
 dashboard.ai_generation_failed
 dashboard.ai_limiter_unavailable
 dashboard.ai_provider_unavailable
@@ -207,10 +232,15 @@ dashboard.recommendations_busy
 dashboard.recommendations_disabled
 dashboard.request_not_sent
 dashboard.request_rate_limited
-payment_provider.checkout_failed
 payment_provider.encryption_unavailable
 payment_provider.missing_credential_fields
-payment_provider.provider_not_found
+payment_provider.refund_failed
 payment_provider.unknown_provider
-shop.purchase_not_found
+shop.game_version_game_mismatch
+shop.game_version_not_found
+shop.name_already_exists
+shop.not_a_currency_pack
+shop.production_version_immutable
 shop.purchase_not_refundable
+shop.webhook_payload_unreadable
+shop.webhook_signature_invalid
