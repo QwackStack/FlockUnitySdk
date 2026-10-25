@@ -91,7 +91,8 @@ namespace Flock.Providers
             _offersForTesting = Interlocked.Exchange(ref NextLinkOffersForTesting, null);
             _relayServer = relayServer;
             _addressServers = new List<IPEndPoint>(stunServers ?? new IPEndPoint[0]);
-            if (!_addressServers.Contains(relayServer))
+            // A relay server reached over IPv6 would answer with this socket's IPv6 address, which an offer cannot carry.
+            if (relayServer.AddressFamily == AddressFamily.InterNetwork && !_addressServers.Contains(relayServer))
                 _addressServers.Add(relayServer);
             _sendThroughTheRelay = sendThroughTheRelay;
             _handToTheNetcode = handToTheNetcode;
@@ -103,7 +104,7 @@ namespace Flock.Providers
                 random.GetBytes(_addressTransaction);
             }
             _addressRequest = FlockDirectAddresses.StunRequest(_addressTransaction);
-            Socket socket = FlockUdpSockets.Open();
+            Socket socket = FlockSockets.Open();
             try
             {
                 socket.ReceiveTimeout = Math.Max(1, (int)_timing.Tick.TotalMilliseconds);
@@ -274,9 +275,9 @@ namespace Flock.Providers
                     }
                     else
                     {
-                        EndPoint from = FlockUdpSockets.AnySender(_socket);
+                        EndPoint from = FlockSockets.AnySender(_socket);
                         int count = _socket.ReceiveFrom(buffer, ref from);
-                        Heard(buffer, count, FlockUdpSockets.AsHeard(from));
+                        Heard(buffer, count, FlockSockets.AsHeard(from));
                     }
                 }
                 catch (SocketException)
@@ -361,7 +362,7 @@ namespace Flock.Providers
                     // An answer proves both ways: this link's probe reached the peer, and the peer's answer came back.
                     try
                     {
-                        _socket.Connect(FlockUdpSockets.Toward(_socket, from));
+                        _socket.Connect(FlockSockets.Toward(_socket, from));
                     }
                     catch (SocketException)
                     {
@@ -513,7 +514,7 @@ namespace Flock.Providers
             try
             {
                 if (_direct == null)
-                    _socket.SendTo(bytes, FlockUdpSockets.Toward(_socket, to));
+                    _socket.SendTo(bytes, FlockSockets.Toward(_socket, to));
                 else if (to.Equals(_direct))
                     _socket.Send(bytes, 0, bytes.Length, SocketFlags.None);
             }

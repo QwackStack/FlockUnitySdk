@@ -357,6 +357,14 @@ relay, or a STUN server Flock lists) and try a direct path. When it works both w
 direct path that goes quiet for 4 seconds hands them back to the relay. The game does nothing in either case. The
 trade-off is that the host and a relayed player learn each other's IP address; use `Always` to keep them hidden.
 
+The relay is reached over UDP. On a network that blocks UDP to it (some phone hotspots, offices, schools and hotels), the
+SDK reaches the same relay over UDP on IPv6, then TCP, then TLS, each way Flock lists: each starts once the one before it has failed or
+had 2 seconds, so a blocked way costs the player about 2 seconds. The host and a player need not use the same way. Over
+TCP or TLS a lost packet holds back the ones after it until it is sent again, so play may stutter on a poor connection;
+with verbose logging on, the SDK says which way it uses when it is not UDP over IPv4. UDP is tried over IPv6 as well before any
+TCP or TLS (a phone hotspot that dropped UDP over IPv4 carried it over IPv6), and every way is tried over IPv6 for a network with
+IPv6 alone; the relay still gives an IPv4 relay address, so such a player plays with everyone else.
+
 When the relay cannot be used, `RelayFailureReason` is one of `FlockRelayFailure`'s reasons. The server can add reasons,
 so keep a default:
 
@@ -370,14 +378,14 @@ so keep a default:
 | `relay_not_in_session` | Flock says the player has no seat in the session. |
 | `flock_unreachable` | Flock did not answer the request for relay logins. |
 | `relay_logins_refused` | Flock refused the request for relay logins for another reason. |
-| `relay_unreachable` | The relay server could not be reached; some school, office and hotel networks block UDP. |
+| `relay_unreachable` | No way in to the relay worked: UDP, TCP and TLS, each way Flock lists, over IPv4 and IPv6, and the reason names every way tried and why it failed. A network that blocks all of them, or inspects encrypted traffic, leaves none. |
 | `relay_wrong_login` | The relay refused the login Flock minted. |
 | `relay_full` | The relay has no room for another address. |
 | `relay_open_refused` | The relay refused to let packets in from the host's relay address, or from a player's. |
 | `relay_refused` | The relay refused a request for another reason. |
 | `relay_lost` | The relay let the address go, or has answered nothing for 45 s (this device's packets no longer reach it). |
 | `relay_closed` | The relay connection was closed by the session's end before the call. |
-| `relay_not_on_this_platform` | A web player: a browser cannot send UDP. |
+| `relay_not_on_this_platform` | A web player: a browser cannot open the UDP or TCP connections the relay needs. |
 
 ### Who is joining
 
@@ -471,4 +479,4 @@ and a relayed player telling the host its relay address (once for each address).
 - **A host cannot remove a player, and a session's data is set once** when it is created.
 - **Netcode for GameObjects 1.x and 2.x only.** Other networking uses the session's published connection and join token
   directly; see [Other networking](#other-networking).
-- **Web players** can use parties, matchmaking and sessions, but not the relay: a browser cannot send UDP.
+- **Web players** can use parties, matchmaking and sessions, but not the relay: a browser cannot open the UDP or TCP connections it needs.

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Authentication;
 using System.Threading;
 using System.Threading.Tasks;
 using Flock.Logging;
@@ -9,7 +10,7 @@ using static System.FormattableString;
 
 namespace Flock.Providers
 {
-    /// <summary>One address on Flock's relay for one session, kept alive on a thread of its own; it hands raw packets over without waiting on the relay or making garbage.</summary>
+    /// <summary>One address on Flock's relay for one session, reached over UDP, TCP or TLS and kept alive on a thread of its own; it hands raw packets over without waiting on the relay or making garbage.</summary>
     // The connection's life and its thread; requests in FlockRelayRequests, renewals in FlockRelayRenewals, packets in FlockRelayPackets.
     internal sealed class FlockRelayConnection
     {
@@ -31,6 +32,10 @@ namespace Flock.Providers
             internal int SocketsTriedAtOnce = 8;
             internal int RoundsOfSocketsTried = 3;
             internal TimeSpan SocketRoundWait = TimeSpan.FromSeconds(1);
+            // How long a TCP connection, and a TLS handshake after it, may take.
+            internal TimeSpan ConnectWait = TimeSpan.FromSeconds(5);
+            // The next way in to the relay starts once the one before it failed or has had this long to open, so a way a network blocks costs this rather than its own waits.
+            internal TimeSpan NextWayAfter = TimeSpan.FromSeconds(2);
             // The reservation is renewed at half the time the relay grants, and at least this often.
             internal TimeSpan LongestBetweenReservationRenewals = TimeSpan.FromMinutes(4);
             internal TimeSpan RenewOpeningsEvery = TimeSpan.FromMinutes(4);
@@ -78,13 +83,13 @@ namespace Flock.Providers
         // The relay thread's own.
         private byte[] _received;
 
-        private FlockRelayConnection(FlockRelayLogin login, IPEndPoint server, Socket answered, Timing timing, IFlockLogger logger)
+        private FlockRelayConnection(FlockRelayLogin login, IPEndPoint server, FlockRelaySocket socket, Timing timing, IFlockLogger logger)
         {
             _login = login;
             _timing = timing;
             _logger = logger;
             ServerEndpoint = server;
-            _socket = answered != null ? new FlockRelaySocket(answered) : new FlockRelaySocket(server);
+            _socket = socket;
             _requests = new FlockRelayRequests(login, _socket, timing);
             _packets = new FlockRelayPackets(_socket);
             _renewals = new FlockRelayRenewals(_requests, _packets, timing, logger, Lose);
@@ -99,7 +104,7 @@ namespace Flock.Providers
         /// <summary>This player's address on the relay; the host publishes it, and players send to it.</summary>
         internal FlockRelayPeer Address => _address;
 
-        /// <summary>The relay server's address and port; it also answers a STUN request with the address it saw the request come from, at least from the ports it answers at all.</summary>
+        /// <summary>The relay server's address and the port of the way in; over UDP it also answers a STUN request with the address it saw the request come from, at least from the ports it answers at all.</summary>
         internal IPEndPoint ServerEndpoint { get; }
 
         /// <summary>The STUN servers Flock listed with the login, looked up; a direct link asks them as well as the relay server where it sees the link's socket. Set before the connection is handed out.</summary>
@@ -125,35 +130,46 @@ namespace Flock.Providers
         /// <summary>Realms and nonces the relay handed over to sign with: its login challenge, then each stale nonce answered.</summary>
         internal int NoncesTakenForTesting => _requests.NoncesTaken;
 
-        /// <summary>The relay server this address is on, as "name:port" from the login Flock minted; players reserve on the server the host uses.</summary>
+        /// <summary>The relay server this address is on, as "name:port" from the login Flock minted; players reserve on the server the host uses, by any way in to it.</summary>
         internal string Server => _login.ToString();
+
+        /// <summary>How this connection reaches the relay server: UDP, or TCP or TLS on a network that blocks UDP to it.</summary>
+        internal FlockRelayTransport Transport => _login.Transport;
+
+        /// <summary>True when the relay server is reached at its IPv6 address, for a network with IPv6 alone.</summary>
+        internal bool OverIpv6 => _login.OverIpv6;
+
+        /// <summary>The way in as a message names it, such as "turn.example.com:5349 over TLS".</summary>
+        internal string Way => _login.Way;
 
         internal int LocalPortForTesting => _socket.LocalPort;
 
-        internal System.Net.Sockets.AddressFamily SocketFamilyForTesting => _socket.FamilyForTesting;
+        internal AddressFamily SocketFamilyForTesting => _socket.FamilyForTesting;
 
 
         /// <summary>Whether the block arrived packets wait in has been made, which happens when the first one is kept.</summary>
         internal bool KeepsPacketsForTesting => _packets.KeepsPacketsForTesting;
 
-        /// <summary>Reserves an address on the relay with this login; fails with a <see cref="FlockRelayException"/> naming why. Cancelling closes it.</summary>
+        /// <summary>Reserves an address on the relay with this login, by its way in; fails with a <see cref="FlockRelayException"/> naming why. Cancelling closes it.</summary>
         internal static async Task<FlockRelayConnection> OpenAsync(FlockRelayLogin login, Timing timing, IFlockLogger logger, CancellationToken cancellationToken)
         {
-            IPAddress server = await FlockNameLookup.FindIpv4Async(login.Host, timing.NameLookUpWait, timing.NameLookUpForTesting, cancellationToken);
+            AddressFamily family = login.OverIpv6 ? AddressFamily.InterNetworkV6 : AddressFamily.InterNetwork;
+            IPAddress server = await FlockNameLookup.FindAsync(login.Host, family, timing.NameLookUpWait, timing.NameLookUpForTesting, cancellationToken);
             if (server == null)
-                throw new FlockRelayException(FlockRelayFailure.Unreachable, Invariant($"The relay server's name {login.Host} could not be looked up within {timing.NameLookUpWait.TotalSeconds:0.#} s"));
+                throw new FlockRelayException(FlockRelayFailure.Unreachable, Invariant($"The relay server's name {login.Host} gave no {(login.OverIpv6 ? "IPv6" : "IPv4")} address within {timing.NameLookUpWait.TotalSeconds:0.#} s"));
             IPEndPoint endpoint = new IPEndPoint(server, login.Port);
-            // Reserved from a socket the server answered; when none was, from a new one as before, and the reservation's own wait judges the server.
-            Socket answered = await Task.Run(() => FlockRelaySocket.FindOneTheServerAnswers(endpoint, timing.SocketsTriedAtOnce, timing.RoundsOfSocketsTried, timing.SocketRoundWait, cancellationToken));
+            FlockRelaySocket socket = login.Transport == FlockRelayTransport.Udp
+                ? await OpenUdpAsync(login, endpoint, timing, cancellationToken)
+                : await OpenStreamAsync(login, endpoint, timing, cancellationToken);
             FlockRelayConnection connection;
             try
             {
-                connection = new FlockRelayConnection(login, endpoint, answered, timing, logger);
+                connection = new FlockRelayConnection(login, endpoint, socket, timing, logger);
             }
-            catch (SocketException failure)
+            catch
             {
-                answered?.Close();
-                throw new FlockRelayException(FlockRelayFailure.Unreachable, $"No way to send to the relay at {login}: {failure.SocketErrorCode}", failure);
+                socket.Close();
+                throw;
             }
             using (cancellationToken.Register(connection.Close))
                 await connection._opened.Task;
@@ -163,6 +179,50 @@ namespace Flock.Providers
                 throw new OperationCanceledException(cancellationToken);
             }
             return connection;
+        }
+
+        // Reserved from a socket the server answered; when none was, from a new one as before, and the reservation's own wait judges the server.
+        private static async Task<FlockRelaySocket> OpenUdpAsync(FlockRelayLogin login, IPEndPoint endpoint, Timing timing, CancellationToken cancellationToken)
+        {
+            Socket answered = await Task.Run(() => FlockRelayUdpSocket.FindOneTheServerAnswers(endpoint, timing.SocketsTriedAtOnce, timing.RoundsOfSocketsTried, timing.SocketRoundWait, cancellationToken));
+            try
+            {
+                return answered != null ? new FlockRelayUdpSocket(answered) : new FlockRelayUdpSocket(endpoint);
+            }
+            catch (SocketException failure)
+            {
+                answered?.Close();
+                throw new FlockRelayException(FlockRelayFailure.Unreachable, $"No way to send to the relay at {login.Way}: {failure.SocketErrorCode}", failure);
+            }
+        }
+
+        // A connection the relay accepted, and over TLS a certificate the platform trusts for the relay's name, each within the connect wait.
+        private static async Task<FlockRelaySocket> OpenStreamAsync(FlockRelayLogin login, IPEndPoint endpoint, Timing timing, CancellationToken cancellationToken)
+        {
+            try
+            {
+                return await Task.Run(() => FlockRelayStreamSocket.Open(endpoint, login.Host, login.Transport == FlockRelayTransport.Tls, timing.ConnectWait, cancellationToken));
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception failure)
+            {
+                throw new FlockRelayException(FlockRelayFailure.Unreachable, $"The relay at {login.Way} {WhyNoConnection(failure, timing)}.", failure);
+            }
+        }
+
+        private static string WhyNoConnection(Exception failure, Timing timing)
+        {
+            SocketException socketFailure = failure as SocketException ?? failure.InnerException as SocketException;
+            if (socketFailure?.SocketErrorCode == SocketError.TimedOut)
+                return Invariant($"did not answer within {timing.ConnectWait.TotalSeconds:0.#} s");
+            if (socketFailure?.SocketErrorCode == SocketError.ConnectionRefused)
+                return "refused the connection";
+            if (failure is AuthenticationException)
+                return $"showed a certificate this device does not trust ({FlockExceptionText.OneLineMessageOf(failure)}); a network that inspects encrypted traffic does this";
+            return $"could not be connected to ({failure.GetType().Name}: {FlockExceptionText.OneLineMessageOf(failure)})";
         }
 
         /// <summary>Lets packets in from, and out to, every relay address sharing the IP of the host's relay address. The host and every player call it with the host's address; the relay renews it until closed.</summary>
@@ -280,6 +340,16 @@ namespace Flock.Providers
                     TakeHandedOver();
                     if (_socket.WaitToRead(LongestPollMicroseconds))
                         ReadEverythingWaiting();
+                    string ended = _socket.EndedBecause;
+                    if (ended != null)
+                    {
+                        // A stream the relay closed takes the reservation with it: told at once, not after the relay's silence.
+                        if (Volatile.Read(ref _state) == StateOpening)
+                            Fail(FlockRelayFailure.Unreachable, $"The relay at {_login.Way} stopped before it reserved an address: {ended}.");
+                        else
+                            Lose(ended);
+                        continue;
+                    }
                     // Any step may stop the relay (a refusal read, a request given up on, a renewal lapsed); nothing goes after that but the release.
                     long now = FlockRelayClock.Now();
                     _requests.SendAgainOrGiveUp(now);
@@ -296,7 +366,7 @@ namespace Flock.Providers
             catch (Exception failure)
             {
                 if (Volatile.Read(ref _stopping) == 0)
-                    Lose($"the relay connection stopped working ({failure.GetType().Name}: {FlockExceptionText.MessageOf(failure)})");
+                    Lose($"the relay connection stopped working ({failure.GetType().Name}: {FlockExceptionText.OneLineMessageOf(failure)})");
             }
             finally
             {
@@ -339,10 +409,12 @@ namespace Flock.Providers
                     // An earlier packet met a closed port, or nothing was there after all; whether the relay answers is judged by the answer wait alone.
                     return;
                 }
+                if (length <= 0)
+                    return;
                 if (!_packets.TryTake(_received, length))
                     _requests.Take(_received, length);
             }
-            while (_socket.Available > 0);
+            while (_socket.HasMoreWaiting);
         }
 
         // ---- answers that change what is open ----
@@ -353,7 +425,7 @@ namespace Flock.Providers
             {
                 if (!answer.TryGetAddress(FlockRelayWire.XorRelayedAddressAttribute, out FlockRelayPeer address))
                 {
-                    Fail(FlockRelayFailure.Refused, $"The relay at {_login} answered with no IPv4 relay address.");
+                    Fail(FlockRelayFailure.Refused, $"The relay at {_login.Way} answered with no IPv4 relay address.");
                     return;
                 }
                 _address = address;
@@ -363,13 +435,13 @@ namespace Flock.Providers
                 return;
             }
             if (code == FlockRelayRequests.NoAnswer)
-                Fail(FlockRelayFailure.Unreachable, Invariant($"The relay at {_login} did not answer within {_timing.AnswerWait.TotalSeconds:0.#} s."));
+                Fail(FlockRelayFailure.Unreachable, Invariant($"The relay at {_login.Way} did not answer within {_timing.AnswerWait.TotalSeconds:0.#} s."));
             else if (code == 401 || code == 441)
-                Fail(FlockRelayFailure.WrongLogin, $"The relay at {_login} refused the login Flock minted ({code} {words}).");
+                Fail(FlockRelayFailure.WrongLogin, $"The relay at {_login.Way} refused the login Flock minted ({code} {words}).");
             else if (code == 486 || code == 508)
-                Fail(FlockRelayFailure.Full, $"The relay at {_login} has no room for another address ({code} {words}).");
+                Fail(FlockRelayFailure.Full, $"The relay at {_login.Way} has no room for another address ({code} {words}).");
             else
-                Fail(FlockRelayFailure.Refused, $"The relay at {_login} refused the reservation ({code} {words}).");
+                Fail(FlockRelayFailure.Refused, $"The relay at {_login.Way} refused the reservation ({code} {words}).");
         }
 
         private void Opened(uint ip, int code, string words, TaskCompletionSource<bool> done)
@@ -402,7 +474,7 @@ namespace Flock.Providers
 
         private void Fail(string reason, string message) => Stop(StateFailed, reason, message);
 
-        private void Lose(string what) => Stop(StateFailed, FlockRelayFailure.Lost, $"The relay connection to {_login} was lost: {what}.");
+        private void Lose(string what) => Stop(StateFailed, FlockRelayFailure.Lost, $"The relay connection to {_login.Way} was lost: {what}.");
 
         private void Stop(int finalState, string reason, string message)
         {

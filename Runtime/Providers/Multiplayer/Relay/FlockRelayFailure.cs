@@ -6,7 +6,7 @@ namespace Flock.Providers
     /// <summary>Why Flock's relay could not be used (FlockNetcodeStartResult.RelayFailureReason). An open set: compare with these and keep a default.</summary>
     public static class FlockRelayFailure
     {
-        /// <summary>A web player cannot send UDP.</summary>
+        /// <summary>A web player cannot open the UDP or TCP connections the relay needs.</summary>
         public const string NotOnThisPlatform = "relay_not_on_this_platform";
         /// <summary>Flock listed no relay: switched off for this game in the dashboard, or none set up.</summary>
         public const string NotOffered = "relay_not_offered";
@@ -24,7 +24,7 @@ namespace Flock.Providers
         public const string FlockUnreachable = "flock_unreachable";
         /// <summary>Flock refused the request for relay logins for another reason.</summary>
         public const string LoginsRefused = "relay_logins_refused";
-        /// <summary>The relay server's name could not be looked up, or the server did not answer.</summary>
+        /// <summary>The relay server's name could not be looked up, or the server did not answer by any way in Flock lists (UDP, TCP or TLS).</summary>
         public const string Unreachable = "relay_unreachable";
         /// <summary>The relay refused the login Flock minted.</summary>
         public const string WrongLogin = "relay_wrong_login";
@@ -53,7 +53,7 @@ namespace Flock.Providers
                 case NotInSession: return "Join the session again (JoinSessionAsync) before starting the netcode.";
                 case FlockUnreachable: return "Check the device is online, then start the netcode again.";
                 case LoginsRefused: return "Fix what the reason above names, then start the netcode again.";
-                case Unreachable: return "Check the device is online and that a firewall lets the game send UDP to the relay; otherwise players connect directly.";
+                case Unreachable: return "Check the device is online and that its network lets the game reach the relay over UDP, TCP or TLS (the reason above names each way tried and why it failed); otherwise players connect directly.";
                 case WrongLogin: return "Start the netcode again so Flock gives fresh relay logins.";
                 case Full: return "The relay has no room for another address now; try again shortly, or connect players directly.";
                 case OpenRefused: return "That address cannot come in through this relay: the player connects directly, or joins the session again.";
@@ -71,11 +71,15 @@ namespace Flock.Providers
         internal FlockRelayException(string reason, string message, Exception innerException = null) : base(message, innerException)
         {
             Reason = reason;
+            Cause = message;
             Operation = "Open the relay";
             Hint = FlockRelayFailure.FixFor(reason);
         }
 
         /// <summary>One of <see cref="FlockRelayFailure"/>'s reasons.</summary>
         internal string Reason { get; }
+
+        /// <summary>What went wrong, without the operation in front or the fix after, so several can be told in one message.</summary>
+        internal string Cause { get; }
     }
 }

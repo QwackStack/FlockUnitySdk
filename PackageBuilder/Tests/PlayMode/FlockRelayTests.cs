@@ -1028,7 +1028,7 @@ namespace Flock.Tests.PlayMode
         {
             List<FlockRelayConnection> opened = new List<FlockRelayConnection>();
             yield return Opened(A, opened);
-            FlockRelaySocket socket = (FlockRelaySocket)typeof(FlockRelayConnection)
+            FlockRelayUdpSocket socket = (FlockRelayUdpSocket)typeof(FlockRelayConnection)
                 .GetField("_socket", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).GetValue(opened[0]);
             Assert.IsFalse(socket.BlocksForTesting, "A full send buffer drops a packet rather than holding the sender");
         }
@@ -1137,20 +1137,25 @@ namespace Flock.Tests.PlayMode
             Assert.AreSame(first.Result, again.Result, "An open relay is handed back as it is");
         }
 
+        // A server's name is what tells it apart (every way in to one server reaches the same relay), so a second server gets a name of its own,
+        // looked up as this machine.
+        private static Task<System.Net.IPAddress[]> Loopback(string host) => Task.FromResult(new[] { System.Net.IPAddress.Loopback });
+
         [UnityTest]
         public IEnumerator OpenRelayOn_TheHostsServer_ReplacesARelayOpenOnAnother_AndKeepsOneOnIt()
         {
             using (FakeRelayServer hosts = new FakeRelayServer())
             {
                 FlockMultiplayerProvider multiplayer = SignedInAs(A);
-                _server.RelayUrls.Add(hosts.Url);
+                _server.RelayUrls.Add(hosts.UdpUrlNamed("hosts.relay.test"));
+                multiplayer.Sessions.RelayTiming.NameLookUpForTesting = Loopback;
                 List<FlockMultiplayerSession> held = new List<FlockMultiplayerSession>();
                 yield return Hosted(multiplayer, held);
                 Task<FlockRelayConnection> anyServer = held[0].OpenRelayAsync();
                 yield return Done(anyServer, "opened on the first server Flock lists");
                 Assert.AreEqual(1, _relay.Reservations, "Precondition: on the first");
 
-                string hostsServer = "127.0.0.1:" + hosts.Port;
+                string hostsServer = "hosts.relay.test:" + hosts.Port;
                 Task<FlockRelayConnection> onTheHosts = held[0].OpenRelayOnAsync(hostsServer);
                 yield return Done(onTheHosts, "opened on the host's server");
                 Assert.IsFalse(onTheHosts.IsFaulted, onTheHosts.Exception?.InnerException?.Message);
@@ -1217,7 +1222,8 @@ namespace Flock.Tests.PlayMode
             FlockMultiplayerProvider multiplayer = SignedInAs(A);
             using (FakeRelayServer silent = new FakeRelayServer { Silent = true })
             {
-                _server.RelayUrls.Insert(0, silent.Url);
+                _server.RelayUrls.Insert(0, silent.UdpUrlNamed("main.relay.test"));
+                multiplayer.Sessions.RelayTiming.NameLookUpForTesting = Loopback;
                 _relay.Password = "not-what-flock-minted";
                 // The silent relay costs its three short socket rounds and the 5 s answer wait.
                 multiplayer.Sessions.RelayTiming.SocketRoundWait = TimeSpan.FromSeconds(0.2);
@@ -1228,6 +1234,7 @@ namespace Flock.Tests.PlayMode
                 yield return Done(opening, "refused", 20f);
                 Assert.AreEqual(1, Transactions(_relay.SeenRequests(FakeRelayServer.MethodAllocate).Where(seen => seen.Signed)), "Precondition: the next relay was asked too");
                 Assert.AreEqual(FlockRelayFailure.Unreachable, ReasonOf(opening), "Flock's main relay's reason, not the next one's wrong login");
+            StringAssert.Contains("main.relay.test", ((FlockRelayException)opening.Exception.InnerException).Message, "Each server tried is named");
             }
         }
 
@@ -1249,12 +1256,13 @@ namespace Flock.Tests.PlayMode
         {
             FlockMultiplayerProvider multiplayer = SignedInAs(A);
             _server.RelayUrls.Clear();
-            _server.RelayUrls.Add("turn:relay.test:3479?transport=tcp");
+            _server.RelayUrls.Add("turns:relay.test:5349?transport=udp");
+            _server.RelayUrls.Add("turn:[::1]:3479");
             List<FlockMultiplayerSession> held = new List<FlockMultiplayerSession>();
             yield return Hosted(multiplayer, held);
             Task<FlockRelayConnection> opening = held[0].OpenRelayAsync();
             yield return Done(opening, "refused");
-            Assert.AreEqual(FlockRelayFailure.NotOffered, ReasonOf(opening), "A relay over TCP alone is none this client can use");
+            Assert.AreEqual(FlockRelayFailure.NotOffered, ReasonOf(opening), "A relay over DTLS or IPv6 alone is none this client can use");
         }
 
         [UnityTest]

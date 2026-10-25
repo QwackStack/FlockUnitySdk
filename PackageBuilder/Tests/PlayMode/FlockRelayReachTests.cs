@@ -35,7 +35,7 @@ namespace Flock.Tests.PlayMode
         public void TearDown()
         {
             FlockRelayConnection.MostOpeningsForTesting = null;
-            FlockUdpSockets.ResetForTesting();
+            FlockSockets.ResetForTesting();
             foreach (FlockRelayConnection connection in _connections)
                 connection.Close();
             _connections.Clear();
@@ -97,7 +97,7 @@ namespace Flock.Tests.PlayMode
             yield return Opened(A, opened, timing);
 
             Assert.IsTrue(opened[0].IsOpen, "A relay that ignores bindings is reserved all the same");
-            Assert.AreEqual(FlockUdpSocketsTests.FamilyThisMachineGives(), opened[0].SocketFamilyForTesting, "The socket made when no search socket was answered is dual-stack too");
+            Assert.AreEqual(FlockSocketsTests.FamilyThisMachineGives(), opened[0].SocketFamilyForTesting, "The socket made when no search socket was answered is dual-stack too");
             Assert.GreaterOrEqual(took.Elapsed.TotalSeconds, 0.55, "After every round went unanswered");
         }
 
@@ -123,7 +123,7 @@ namespace Flock.Tests.PlayMode
             List<FlockRelayConnection> opened = new List<FlockRelayConnection>();
             yield return Opened(A, opened);
 
-            Assert.AreEqual(FlockUdpSocketsTests.FamilyThisMachineGives(), opened[0].SocketFamilyForTesting);
+            Assert.AreEqual(FlockSocketsTests.FamilyThisMachineGives(), opened[0].SocketFamilyForTesting);
             Assert.IsTrue(opened[0].IsOpen);
             Assert.AreEqual(1, _relay.Reservations, "Reserved from the one port the relay answers, through the IPv4 address in its IPv6 form");
         }
@@ -131,7 +131,7 @@ namespace Flock.Tests.PlayMode
         [UnityTest]
         public IEnumerator ARelayADualStackSocketCannotConnectTo_IsReachedFromAPlainIpv4Socket()
         {
-            FlockUdpSockets.DualStackConnectRefusedForTesting = true;
+            FlockSockets.DualStackConnectRefusedForTesting = true;
             _relay.AnswersOnlyPortsHeard = new HashSet<int> { 3 };
             List<FlockRelayConnection> opened = new List<FlockRelayConnection>();
             yield return Opened(A, opened);
@@ -143,7 +143,7 @@ namespace Flock.Tests.PlayMode
         [UnityTest]
         public IEnumerator WithoutIpv6_ARelayIsReachedFromAPlainIpv4Socket()
         {
-            FlockUdpSockets.DualStackRefusedForTesting = true;
+            FlockSockets.DualStackRefusedForTesting = true;
             _relay.AnswersOnlyPortsHeard = new HashSet<int> { 3 };
             List<FlockRelayConnection> opened = new List<FlockRelayConnection>();
             yield return Opened(A, opened);
