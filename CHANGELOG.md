@@ -22,6 +22,20 @@ Payment error codes. This version adds no payment call; it makes every code Floc
   and `Docs~/errors.md` lists them under "One code, several causes". The tests use the bodies the server sent in a live run,
   and the server's own messages for the causes no live run reached (a store out of reach, a store answer it cannot read, a
   Google payment still pending, a receipt for another product, a provider refusing a checkout, an unknown purchase id).
+- **The codes of Flock's payment hardening**, a server change that gives a receipt's causes codes of their own and makes the
+  purchase routes act for the signed-in player: `PaymentProviderStoreUnavailable` (the store could not be asked) and
+  `PaymentProviderReceiptPending` (Google is still waiting for the payment), whose fix is to send the same receipt again
+  later; `PaymentProviderStoreCredentialsRejected` (the store refused the game's own keys, a setting the studio fixes);
+  `PaymentProviderReceiptBelongsToAnotherPlayer` (the purchase was started for, or already redeemed by, another player);
+  `ShopPlayerMismatch` (a purchase naming another player than the one signed in; leave `playerId` out of
+  `Shop.PurchaseAsync`) and `ShopPlayerRequired` (no sign-in and no player).
+
+### Changed
+
+- **Three fixes follow the payment hardening.** `PaymentProviderReceiptInvalid`'s now leads with the causes it keeps (the
+  receipt itself, a store answer that could not be read) and still covers the ones an older server sends it for.
+  `ShopPurchaseNotFound`'s covers another player's purchase and an unknown status, and
+  `PlayerInventoryInventoryEntryNotFound`'s another player's entry, which a server with the hardening answers as not found.
 
 ### Fixed
 

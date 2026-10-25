@@ -32,7 +32,9 @@
 #   grep -rhoE '"[a-z_]+\.[a-z_]+"' <backend>/flock/packages/*/enums.py <backend>/common/helpers/error_codes.py \
 #     | tr -d '"' | sort -u
 #
-# Last refreshed 2026-10-22 for the shop and payment_provider codes (the payment routes), read in those two packages'
+# Last refreshed 2026-10-23 for the payment hardening (backend fix/sdk-payment-hardening, not yet merged): four
+# payment_provider codes and shop.player_mismatch and shop.player_required, read in its code. Before that, on
+# 2026-10-22, for the shop and payment_provider codes (the payment routes), read in those two packages'
 # code on the local backend (main aa402fc) and measured by the payment routes probe on 2026-10-21. Before that, on
 # 2026-10-15, for the API key, sign-in and request.* codes, measured against the local backend.
 # Before that, against the live backend: 2026-10-06 (93 codes in the spec, 105 /v1 paths), for the
@@ -99,6 +101,10 @@ party.not_party_leader
 party.target_not_a_member
 payment_provider.checkout_failed
 payment_provider.provider_not_found
+payment_provider.receipt_belongs_to_another_player
+payment_provider.receipt_pending
+payment_provider.store_credentials_rejected
+payment_provider.store_unavailable
 player.account_already_linked
 player.account_not_linked
 player.apple_account_already_registered
@@ -135,7 +141,9 @@ shop.insufficient_funds
 shop.item_not_found
 shop.malformed_reward
 shop.pack_grants_nothing
+shop.player_mismatch
 shop.player_not_found
+shop.player_required
 shop.purchase_not_found
 shop.reward_currency_not_held
 shop.shop_not_found
@@ -220,9 +228,14 @@ shop.webhook_provider_unknown
 # dashboard.* and the payment_provider.* and shop.* codes below are sent only by the dashboard's routes (setting up
 # payment providers and shops, refunds) or by the webhook route the payment providers call (shop.webhook_*), never by a
 # route a game calls; read in the backend's shop and payment_provider packages on 2026-10-22. shop.purchase_not_found
-# is up under [documented]: the dashboard's refund route sends it today, and a game will once Flock can read a purchase
-# for it. The backend also defines payment_provider.provider_already_configured, shop.purchase_already_settled and
+# is up under [documented]: the dashboard's refund route sends it, and so do the player's own purchase reads of the
+# payment hardening. The backend also defines payment_provider.provider_already_configured, shop.purchase_already_settled and
 # shop.duplicate_provider_transaction, which nothing raises; add one the day it can reach a game.
+# The payment hardening (backend fix/sdk-payment-hardening, read 2026-10-23) adds two more for routes no game calls:
+# payment_provider.notification_signature_invalid (the store notification route Apple and Google call) and
+# game_config.invalid_real_currency_code (saving a currency config in the dashboard). Its spec also lists
+# payment_provider.missing_credential_fields and encryption_unavailable on the receipt and checkout routes, but only the
+# dashboard's save of a provider's keys raises them; reading the stored keys raises credentials_unreadable alone.
 dashboard.ai_generation_failed
 dashboard.ai_limiter_unavailable
 dashboard.ai_provider_unavailable
@@ -232,8 +245,10 @@ dashboard.recommendations_busy
 dashboard.recommendations_disabled
 dashboard.request_not_sent
 dashboard.request_rate_limited
+game_config.invalid_real_currency_code
 payment_provider.encryption_unavailable
 payment_provider.missing_credential_fields
+payment_provider.notification_signature_invalid
 payment_provider.refund_failed
 payment_provider.unknown_provider
 shop.game_version_game_mismatch

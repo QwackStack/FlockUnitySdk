@@ -101,8 +101,12 @@ namespace Flock.Exceptions
         PaymentProviderCredentialsUnreadable,       // payment_provider.credentials_unreadable
         PaymentProviderProviderNotFound,            // payment_provider.provider_not_found
         PaymentProviderProviderNotSupportedHere,    // payment_provider.provider_not_supported_here
+        PaymentProviderReceiptBelongsToAnotherPlayer, // payment_provider.receipt_belongs_to_another_player
         PaymentProviderReceiptInvalid,              // payment_provider.receipt_invalid
+        PaymentProviderReceiptPending,              // payment_provider.receipt_pending
         PaymentProviderReceiptProductMismatch,      // payment_provider.receipt_product_mismatch
+        PaymentProviderStoreCredentialsRejected,    // payment_provider.store_credentials_rejected
+        PaymentProviderStoreUnavailable,            // payment_provider.store_unavailable
 
         // player.* (MissingToken, ExpiredToken and InvalidToken come from the sign-in check of a route that acts as the player)
         PlayerAccountAlreadyLinked,                 // player.account_already_linked
@@ -159,7 +163,7 @@ namespace Flock.Exceptions
         RequestUnauthorized,                        // request.unauthorized
         RequestValidationFailed,                    // request.validation_failed
 
-        // shop.*
+        // shop.* (PlayerMismatch and PlayerRequired come from the purchase routes' check of which player a call acts for)
         ShopCurrencyNotHeld,                        // shop.currency_not_held
         ShopCurrencyTemplateNotFound,               // shop.currency_template_not_found
         ShopInsufficientFunds,                      // shop.insufficient_funds
@@ -167,7 +171,9 @@ namespace Flock.Exceptions
         ShopMalformedReward,                        // shop.malformed_reward
         ShopNotARealCurrencyItem,                   // shop.not_a_real_currency_item
         ShopPackGrantsNothing,                      // shop.pack_grants_nothing
+        ShopPlayerMismatch,                         // shop.player_mismatch
         ShopPlayerNotFound,                         // shop.player_not_found
+        ShopPlayerRequired,                         // shop.player_required
         ShopPurchaseNotFound,                       // shop.purchase_not_found
         ShopRealCurrencyNeedsCheckout,              // shop.real_currency_needs_checkout
         ShopRealCurrencySettlementUnavailable,      // shop.real_currency_settlement_unavailable

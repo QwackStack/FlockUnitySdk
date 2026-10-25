@@ -93,18 +93,26 @@ catch (FlockException ex) when (ex.IsAlreadyRegistered())
 
 ## One code, several causes
 
-A few codes, all from Flock's payment routes (redeeming a store receipt, opening a web checkout), cover more than one cause.
-The server's reason (`ServerMessage`) tells them apart, and the `Hint` covers each, so read the reason before deciding what to
-tell the player:
+A few codes, all from Flock's payment and purchase routes (redeeming a store receipt, opening a web checkout, reading a
+purchase, consuming an inventory entry), cover more than one cause. The server's reason (`ServerMessage`) tells them apart, and
+the `Hint` covers each, so read the reason before deciding what to tell the player:
 
 | Code | Causes |
 |------|--------|
-| `PaymentProviderReceiptInvalid` | The store does not know the receipt or refunded it; the store refused the game's own keys (`Apple returned 401`, `Google rejected the service account`); the store was busy or down (a 429 or 5xx, or an answer the server could not read) or could not be reached (HTTP 502); a Google payment is still pending (`purchase state is 2`). In the last two, send the same receipt again later |
+| `PaymentProviderReceiptInvalid` | The store does not know the receipt or refunded it, or the receipt lacks the store's ids; the store's answer could not be read (send the same receipt again later). An older Flock server also sends it for three causes newer ones give codes of their own: the store refused the game's own keys (`Apple returned 401`, `Google rejected the service account`), the store was busy, down or out of reach (a 429 or 5xx; HTTP 502), and a Google payment still pending (`purchase state is 2`); send the same receipt again later for those last two |
+| `PaymentProviderReceiptBelongsToAnotherPlayer` | The store purchase was started for another player, or another player already redeemed the receipt (HTTP 403) |
 | `PaymentProviderReceiptProductMismatch` | The shop item has no product id for that store, or the receipt is for another product |
 | `PaymentProviderProviderNotFound` | The provider was never connected, or it is paused |
 | `PaymentProviderCredentialsUnreadable` | The keys stored for the provider cannot be read, or cannot be used (HTTP 503; a setting of the game, so trying again does not help) |
 | `ShopRealCurrencySettlementUnavailable` | No web checkout provider is connected and active (HTTP 422), or the Flock server has no address for payment confirmations (HTTP 503) |
 | `ShopWebhookProviderUnknown` | The provider named does not open web checkouts, or several are active and none was named |
+| `ShopPurchaseNotFound` | No purchase of the signed-in player has that id (another player's reads the same), or purchases were listed by a status the server does not have (HTTP 422) |
+| `PlayerInventoryInventoryEntryNotFound` | No entry has that id in this game, or, while a player is signed in, it is another player's entry |
+
+Two payment codes are never final: `PaymentProviderStoreUnavailable` (the store could not be asked) and
+`PaymentProviderReceiptPending` (Google is still waiting for the player's payment). Leave the store's purchase unfinished and
+send the same receipt again later. `PaymentProviderStoreCredentialsRejected` is the studio's to fix (the store refused the
+game's own keys); the receipt goes through once the keys are fixed.
 
 ## Money safety
 
@@ -180,8 +188,12 @@ tell the player:
 | `PaymentProviderCredentialsUnreadable` | `payment_provider.credentials_unreadable` |
 | `PaymentProviderProviderNotFound` | `payment_provider.provider_not_found` |
 | `PaymentProviderProviderNotSupportedHere` | `payment_provider.provider_not_supported_here` |
+| `PaymentProviderReceiptBelongsToAnotherPlayer` | `payment_provider.receipt_belongs_to_another_player` |
 | `PaymentProviderReceiptInvalid` | `payment_provider.receipt_invalid` |
+| `PaymentProviderReceiptPending` | `payment_provider.receipt_pending` |
 | `PaymentProviderReceiptProductMismatch` | `payment_provider.receipt_product_mismatch` |
+| `PaymentProviderStoreCredentialsRejected` | `payment_provider.store_credentials_rejected` |
+| `PaymentProviderStoreUnavailable` | `payment_provider.store_unavailable` |
 | `PlayerAccountAlreadyLinked` | `player.account_already_linked` |
 | `PlayerAccountNotLinked` | `player.account_not_linked` |
 | `PlayerAppleAccountAlreadyRegistered` | `player.apple_account_already_registered` |
@@ -230,7 +242,9 @@ tell the player:
 | `ShopMalformedReward` | `shop.malformed_reward` |
 | `ShopNotARealCurrencyItem` | `shop.not_a_real_currency_item` |
 | `ShopPackGrantsNothing` | `shop.pack_grants_nothing` |
+| `ShopPlayerMismatch` | `shop.player_mismatch` |
 | `ShopPlayerNotFound` | `shop.player_not_found` |
+| `ShopPlayerRequired` | `shop.player_required` |
 | `ShopPurchaseNotFound` | `shop.purchase_not_found` |
 | `ShopRealCurrencyNeedsCheckout` | `shop.real_currency_needs_checkout` |
 | `ShopRealCurrencySettlementUnavailable` | `shop.real_currency_settlement_unavailable` |

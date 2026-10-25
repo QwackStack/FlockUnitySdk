@@ -126,9 +126,10 @@ namespace Flock.Tests
         }
 
         // Every refusal of the payment routes (redeeming a store receipt, opening a web checkout), body as the backend sends it:
-        // copied from live responses on 2026-10-21, one row per reason, except the last six, the backend's own messages, not seen
-        // live (a store that cannot be reached, a store answer it cannot read, a Google payment still pending, a receipt for
-        // another product, a provider that would not open a checkout, a purchase id the game does not have).
+        // the first nineteen copied from live responses on 2026-10-21, one row per reason; the next six the backend's own messages,
+        // not seen live (a store that cannot be reached, a store answer it cannot read, a Google payment still pending, a receipt
+        // for another product, a provider that would not open a checkout, a purchase id the game does not have); the rest the
+        // payment hardening's, each marked below as measured or read.
         private static readonly object[] PaymentRefusals =
         {
             new object[] { 503, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"payment_provider.credentials_unreadable\",\"message\":\"Apple credentials could not be used to sign a request\"}}", FlockErrorCode.PaymentProviderCredentialsUnreadable },
@@ -156,6 +157,16 @@ namespace Flock.Tests
             new object[] { 422, typeof(FlockValidationException), "{\"detail\":{\"code\":\"payment_provider.receipt_product_mismatch\",\"message\":\"Receipt is for 'gems_10', but this item sells 'gems_100'\"}}", FlockErrorCode.PaymentProviderReceiptProductMismatch },
             new object[] { 502, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"payment_provider.checkout_failed\",\"message\":\"Could not open a tap checkout: gateway timeout\"}}", FlockErrorCode.PaymentProviderCheckoutFailed },
             new object[] { 404, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"shop.purchase_not_found\",\"message\":\"Purchase not found\"}}", FlockErrorCode.ShopPurchaseNotFound },
+            // The payment hardening's codes (backend fix/sdk-payment-hardening): the server's own messages, read in its code.
+            new object[] { 422, typeof(FlockValidationException), "{\"detail\":{\"code\":\"payment_provider.receipt_invalid\",\"message\":\"Receipt rejected: could not read the transaction Apple returned\"}}", FlockErrorCode.PaymentProviderReceiptInvalid },
+            new object[] { 503, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"payment_provider.store_unavailable\",\"message\":\"Apple could not be asked about this receipt (HTTP 503); try again later\"}}", FlockErrorCode.PaymentProviderStoreUnavailable },
+            new object[] { 422, typeof(FlockValidationException), "{\"detail\":{\"code\":\"payment_provider.store_credentials_rejected\",\"message\":\"Apple rejected this game's store credentials (HTTP 401); the studio's payment settings need fixing before receipts can be verified\"}}", FlockErrorCode.PaymentProviderStoreCredentialsRejected },
+            new object[] { 422, typeof(FlockValidationException), "{\"detail\":{\"code\":\"payment_provider.receipt_pending\",\"message\":\"Google reports this payment as still in progress; ask again later\"}}", FlockErrorCode.PaymentProviderReceiptPending },
+            new object[] { 403, typeof(FlockAuthException), "{\"detail\":{\"code\":\"payment_provider.receipt_belongs_to_another_player\",\"message\":\"Receipt refused: the store purchase belongs to a different player\"}}", FlockErrorCode.PaymentProviderReceiptBelongsToAnotherPlayer },
+            new object[] { 403, typeof(FlockAuthException), "{\"detail\":{\"code\":\"payment_provider.receipt_belongs_to_another_player\",\"message\":\"Receipt refused: this store transaction was redeemed by another player\"}}", FlockErrorCode.PaymentProviderReceiptBelongsToAnotherPlayer },
+            new object[] { 403, typeof(FlockAuthException), "{\"detail\":{\"code\":\"shop.player_mismatch\",\"message\":\"player_id does not match the signed-in player\"}}", FlockErrorCode.ShopPlayerMismatch },
+            new object[] { 422, typeof(FlockValidationException), "{\"detail\":{\"code\":\"shop.player_required\",\"message\":\"Send the player's token, or name player_id in the body\"}}", FlockErrorCode.ShopPlayerRequired },
+            new object[] { 422, typeof(FlockValidationException), "{\"detail\":{\"code\":\"shop.purchase_not_found\",\"message\":\"Unknown purchase status 'done'\"}}", FlockErrorCode.ShopPurchaseNotFound },
         };
 
         [TestCaseSource(nameof(PaymentRefusals))]
@@ -177,7 +188,8 @@ namespace Flock.Tests
         }
 
         // These codes each have more than one cause, and only the server's reason tells them apart, so the hint covers every
-        // cause. A phrase marked as the server's is quoted in the hint, so it must be one a refusal above really carries.
+        // cause; a cause that is not final yet gets "send it again later", never the bad receipt's fix. A phrase marked as the
+        // server's is quoted in the hint, so it must be one a refusal above really carries.
         private static readonly object[] PaymentCauses =
         {
             new object[] { FlockErrorCode.PaymentProviderReceiptInvalid, "Apple returned 401", true },
@@ -196,6 +208,19 @@ namespace Flock.Tests
             new object[] { FlockErrorCode.ShopRealCurrencySettlementUnavailable, "PAYMENT_WEBHOOK_BASE_URL is not configured", true },
             new object[] { FlockErrorCode.ShopWebhookProviderUnknown, "does not open web checkouts", true },
             new object[] { FlockErrorCode.ShopWebhookProviderUnknown, "Several payment providers are active", true },
+            new object[] { FlockErrorCode.PaymentProviderReceiptInvalid, "could not read", true },
+            new object[] { FlockErrorCode.PaymentProviderReceiptInvalid, "An older Flock server", false },
+            new object[] { FlockErrorCode.PaymentProviderStoreUnavailable, "send the same receipt again later", false },
+            new object[] { FlockErrorCode.PaymentProviderReceiptPending, "send the same receipt again later", false },
+            new object[] { FlockErrorCode.PaymentProviderStoreCredentialsRejected, "the same receipt goes through", false },
+            new object[] { FlockErrorCode.PaymentProviderStoreCredentialsRejected, "Google Play Console", false },
+            new object[] { FlockErrorCode.PaymentProviderReceiptBelongsToAnotherPlayer, "belongs to a different player", true },
+            new object[] { FlockErrorCode.PaymentProviderReceiptBelongsToAnotherPlayer, "redeemed by another player", true },
+            new object[] { FlockErrorCode.ShopPurchaseNotFound, "another player's purchase", false },
+            new object[] { FlockErrorCode.ShopPurchaseNotFound, "Unknown purchase status", true },
+            new object[] { FlockErrorCode.ShopPlayerMismatch, "Leave playerId out", false },
+            // Consuming while signed in answers another player's entry as not found (the same hardening).
+            new object[] { FlockErrorCode.PlayerInventoryInventoryEntryNotFound, "another player's", false },
         };
 
         [TestCaseSource(nameof(PaymentCauses))]
