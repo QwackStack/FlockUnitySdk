@@ -26,6 +26,9 @@ namespace Flock.Tests.PlayMode
         private const string B = "player-b";
         private const int EngineSamplesAFrameVaryBy = 50;
         private const int AllocationsAControlFrameMakes = 100;
+        // A sending frame lasts as long as a game's at 60 a second: ten test-runner frames on a busy runner ended with most packets still
+        // on their way (73 of 1000 taken over TCP, 2021.3 on CI, 2026-10-25).
+        private const int AGamesFrameMilliseconds = 16;
 
         private FakeRelayServer _relay;
         private RecordingFlockLogger _logger;
@@ -353,6 +356,7 @@ namespace Flock.Tests.PlayMode
                     player.Send(host.Address, payload, 0, payload.Length);
                     host.Send(player.Address, payload, 0, payload.Length);
                 }
+                Thread.Sleep(AGamesFrameMilliseconds);
                 while (host.TryReceive(buffer, out int count, out FlockRelayPeer from))
                     received++;
                 while (player.TryReceive(buffer, out int count, out FlockRelayPeer from))
@@ -373,7 +377,7 @@ namespace Flock.Tests.PlayMode
             string counts = $"quiet frames {string.Join(",", quiet)}; sending frames {string.Join(",", working)}; allocating frames {string.Join(",", allocating)}";
             Assert.Greater(allocating.Min(), quiet.Max() + EngineSamplesAFrameVaryBy, $"Control: the count sees {made.Count} allocations ({counts})");
             Assert.LessOrEqual(working.OrderByDescending(count => count).ElementAt(1), quiet.Max() + EngineSamplesAFrameVaryBy, $"Sending over TCP and taking 100 packets a frame adds no allocation ({counts})");
-            Assert.Greater(received, 100, "Control: packets were taken while measured");
+            Assert.Greater(received, 100, $"Control: packets were taken while measured ({received} of 1000)");
         }
 
         private static bool Cancelled(Task task) => task.IsCanceled || (task.IsFaulted && task.Exception.InnerException is OperationCanceledException);
