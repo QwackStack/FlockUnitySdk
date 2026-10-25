@@ -6,14 +6,18 @@ using System.Threading.Tasks;
 
 namespace Flock.Providers
 {
-    /// <summary>A server's IPv4 address from its name, for the STUN and relay servers Flock lists.</summary>
+    /// <summary>A server's address from its name, for the STUN and relay servers Flock lists.</summary>
     internal static class FlockNameLookup
     {
-        /// <summary>The first IPv4 address of <paramref name="host"/> (an address as written is taken as it is), or null when none comes within <paramref name="wait"/>: a lookup takes no token and can hang for as long as the network's resolver does.</summary>
-        internal static async Task<IPAddress> FindIpv4Async(string host, TimeSpan wait, Func<string, Task<IPAddress[]>> lookUpForTesting, CancellationToken cancellationToken)
+        /// <summary>The first IPv4 address of <paramref name="host"/>, as <see cref="FindAsync"/> finds it.</summary>
+        internal static Task<IPAddress> FindIpv4Async(string host, TimeSpan wait, Func<string, Task<IPAddress[]>> lookUpForTesting, CancellationToken cancellationToken)
+            => FindAsync(host, AddressFamily.InterNetwork, wait, lookUpForTesting, cancellationToken);
+
+        /// <summary>The first address of <paramref name="family"/> for <paramref name="host"/> (an address as written is taken as it is), or null when none comes within <paramref name="wait"/>: a lookup takes no token and can hang for as long as the network's resolver does.</summary>
+        internal static async Task<IPAddress> FindAsync(string host, AddressFamily family, TimeSpan wait, Func<string, Task<IPAddress[]>> lookUpForTesting, CancellationToken cancellationToken)
         {
             if (IPAddress.TryParse(host, out IPAddress literal))
-                return literal.AddressFamily == AddressFamily.InterNetwork ? literal : null;
+                return literal.AddressFamily == family ? literal : null;
             Task<IPAddress[]> looking = lookUpForTesting != null ? lookUpForTesting(host) : Dns.GetHostAddressesAsync(host);
             FlockMultiplayerSessions.LetRun(looking);
             using (CancellationTokenSource stopWaiting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
@@ -26,7 +30,7 @@ namespace Flock.Providers
             }
             foreach (IPAddress address in looking.Result)
             {
-                if (address.AddressFamily == AddressFamily.InterNetwork)
+                if (address.AddressFamily == family)
                     return address;
             }
             return null;

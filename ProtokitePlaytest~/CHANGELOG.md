@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 It is released with the Flock SDK, at the Flock SDK's version.
 
 
+## [1.89.1]
+
+No changes to the Protokite Playtest package: this version is released together with the Flock SDK's relay fix for networks
+that block UDP.
+
+
 ## [1.89.0]
 
 ### Fixed

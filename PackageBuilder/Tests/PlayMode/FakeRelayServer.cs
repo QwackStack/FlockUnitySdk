@@ -1,9 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net;
+using System.Net.Security;
 using System.Net.Sockets;
+using System.Security.Authentication;
 using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Threading;
 
@@ -16,6 +20,11 @@ namespace Flock.Tests.PlayMode
     // its own reservations (channel frames to a peer that bound a channel back, data indications otherwise). Every success to a
     // signed request is signed and every answer fingerprinted. A test chooses silences, refusals, stale nonces and lifetimes, and can
     // make it answer as Cloudflare's relay did on 2026-10-12: an IP of its own for each reservation, and only some client ports answered.
+    // Made with streams, it also takes TURN over TCP and over TLS (a certificate for relay.test, localhost and 127.0.0.1 no platform
+    // trusts), framed as Cloudflare's relay framed them on 2026-10-25: each message whole, channel frames padded to 4 bytes. A reservation
+    // made over a stream ends when the stream does, as coturn does (Cloudflare's not measured). It listens on IPv6 loopback too, on the
+    // same ports, where the machine has one (HasIpv6), and gives a client reaching it over IPv6 an IPv4 relay address, as Cloudflare's
+    // relay did on 2026-10-25; a test can make it ignore either family, as a network without it would.
     internal sealed class FakeRelayServer : IDisposable
     {
         internal const string Realm = "test-realm";
@@ -27,7 +36,17 @@ namespace Flock.Tests.PlayMode
         private const ushort XorMappedAddress = 0x0020, Fingerprint = 0x8028;
 
         private readonly UdpClient _socket;
+        private readonly UdpClient _socket6;
         private readonly Thread _thread;
+        private readonly Thread _thread6;
+        private readonly TcpListener _tcp;
+        private readonly TcpListener _tls;
+        private readonly TcpListener _tcp6;
+        private readonly TcpListener _tls6;
+        private readonly X509Certificate2 _certificate;
+        private readonly Dictionary<IPEndPoint, StreamClient> _streams = new Dictionary<IPEndPoint, StreamClient>();
+        private int _unreadableStreamBytes;
+        private int _streamsAccepted;
         private readonly object _lock = new object();
         private readonly List<Reservation> _reservations = new List<Reservation>();
         private readonly List<Seen> _seen = new List<Seen>();
@@ -43,6 +62,7 @@ namespace Flock.Tests.PlayMode
             public string Transaction;
             public uint? LifetimeAsked;
             public int ClientPort;
+            public bool OverIpv6;
             public DateTime At;
         }
 
@@ -91,17 +111,260 @@ namespace Flock.Tests.PlayMode
         internal volatile bool AnswersBindings = true;
         // Client ports whose packets no longer reach the relay, as a router that moved a device to another port leaves it; what the relay sends them still goes.
         private readonly HashSet<int> _portsNoLongerHeard = new HashSet<int>();
+        // Nothing sent over UDP reaches the relay, as on a network that blocks UDP to it; streams still do.
+        internal volatile bool IgnoresUdp;
+        // TCP connections are taken and then never read from or answered (no TLS handshake either), as a network that lets the connection
+        // through and nothing after it.
+        internal volatile bool StreamsSilent;
+        // Streams are not read from while this is set, so what a client sends piles up behind them.
+        internal volatile bool PauseStreamReading;
+        // Nothing from a client of this family reaches the relay (a stream of it is closed at once), as on a network without it.
+        internal volatile bool IgnoresIpv4;
+        internal volatile bool IgnoresIpv6;
+        // UDP over IPv4 alone never reaches the relay, as through a phone hotspot that carried UDP over IPv6 only (measured 2026-10-25).
+        internal volatile bool IgnoresUdpOverIpv4;
 
-        internal FakeRelayServer()
+        internal FakeRelayServer(bool withStreams = false)
         {
-            _socket = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
-            Port = ((IPEndPoint)_socket.Client.LocalEndPoint).Port;
-            _thread = new Thread(Serve) { IsBackground = true, Name = "Fake relay server" };
+            // One port on both loopbacks, so a login's one port reaches either; another pair is tried when the IPv6 port is taken.
+            for (int attempt = 0; ; attempt++)
+            {
+                _socket = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
+                Port = ((IPEndPoint)_socket.Client.LocalEndPoint).Port;
+                _socket6 = OnIpv6Loopback(() => new UdpClient(new IPEndPoint(IPAddress.IPv6Loopback, Port)), out bool taken);
+                if (!taken || attempt == 20)
+                    break;
+                _socket.Close();
+            }
+            _thread = new Thread(() => Serve(_socket)) { IsBackground = true, Name = "Fake relay server" };
             _thread.Start();
+            if (_socket6 != null)
+            {
+                _thread6 = new Thread(() => Serve(_socket6)) { IsBackground = true, Name = "Fake relay server on IPv6" };
+                _thread6.Start();
+            }
+            if (!withStreams)
+                return;
+            _certificate = new X509Certificate2(Convert.FromBase64String(FakeRelayCertificate.Pfx), FakeRelayCertificate.Password, X509KeyStorageFlags.Exportable);
+            _tcp = Listen(stream => stream, out _tcp6);
+            _tls = Listen(Secured, out _tls6);
+            TcpPort = ((IPEndPoint)_tcp.LocalEndpoint).Port;
+            TlsPort = ((IPEndPoint)_tls.LocalEndpoint).Port;
         }
+
+        // True where the machine has an IPv6 loopback the relay listens on too (a CI container may have none).
+        internal bool HasIpv6 => _socket6 != null;
+
+        // Made on IPv6 loopback, or null where the machine has none; taken is true when the port was in use, so another may be tried.
+        private static T OnIpv6Loopback<T>(Func<T> make, out bool taken) where T : class
+        {
+            taken = false;
+            try
+            {
+                return make();
+            }
+            catch (SocketException failure)
+            {
+                taken = failure.SocketErrorCode == SocketError.AddressAlreadyInUse;
+                return null;
+            }
+        }
+
+        private bool Ignores(IPEndPoint client) => client.AddressFamily == AddressFamily.InterNetworkV6 && !client.Address.IsIPv4MappedToIPv6 ? IgnoresIpv6 : IgnoresIpv4;
+
+        // The address a request came from, for an answer: the client reads none from the relay, so an IPv6 one is left out rather than written.
+        private static byte[][] MappedTo(IPEndPoint from)
+            => from.AddressFamily == AddressFamily.InterNetwork ? new[] { Attr(XorMappedAddress, Address(from)) } : new byte[0][];
 
         internal int Port { get; }
         internal string Url => $"turn:127.0.0.1:{Port}?transport=udp";
+        internal int TcpPort { get; }
+        internal int TlsPort { get; }
+        internal string TcpUrl => $"turn:127.0.0.1:{TcpPort}?transport=tcp";
+        // The certificate names relay.test, so a client checks it against that name; the test looks relay.test up as 127.0.0.1.
+        internal string TlsUrl => $"turns:relay.test:{TlsPort}?transport=tcp";
+        internal string UdpUrlNamed(string host) => $"turn:{host}:{Port}?transport=udp";
+        internal string TcpUrlNamed(string host) => $"turn:{host}:{TcpPort}?transport=tcp";
+
+        // Stream connections open now, and bytes a client sent that were no TURN message (a channel frame sent without its padding misreads the next).
+        internal int StreamConnections
+        {
+            get { lock (_lock) return _streams.Count; }
+        }
+
+        internal int UnreadableStreamBytes => Volatile.Read(ref _unreadableStreamBytes);
+
+        // TCP connections the relay took, on either stream port, however they ended.
+        internal int StreamsAccepted => Volatile.Read(ref _streamsAccepted);
+
+        // The relay closes every stream, as one that restarted or dropped its connections would; their reservations end with them.
+        internal void CloseEveryStream()
+        {
+            List<StreamClient> open;
+            lock (_lock)
+                open = _streams.Values.ToList();
+            foreach (StreamClient client in open)
+                client.Close();
+        }
+
+        // The relay resets every stream (no orderly close), so a client's read fails with the platform's own words for it.
+        internal void ResetEveryStream()
+        {
+            List<StreamClient> open;
+            lock (_lock)
+                open = _streams.Values.ToList();
+            foreach (StreamClient client in open)
+            {
+                // The socket itself, not the stream over it, which would close in order first.
+                client.Tcp.Client.LingerState = new LingerOption(true, 0);
+                client.Tcp.Client.Close();
+            }
+        }
+
+        private sealed class StreamClient
+        {
+            internal TcpClient Tcp;
+            internal Stream Stream;
+            internal IPEndPoint From;
+            internal readonly object WriteGate = new object();
+
+            internal void Close()
+            {
+                try
+                {
+                    Tcp.Close();
+                }
+                catch (Exception)
+                {
+                    // Already gone.
+                }
+            }
+        }
+
+        private Stream Secured(Stream stream)
+        {
+            SslStream tls = new SslStream(stream, false);
+            tls.AuthenticateAsServer(_certificate, false, SslProtocols.Tls12, false);
+            return tls;
+        }
+
+        // A listener on IPv4 loopback, and one on the same port on IPv6 loopback where the machine has it.
+        private TcpListener Listen(Func<Stream, Stream> secure, out TcpListener onIpv6)
+        {
+            TcpListener listener = null;
+            onIpv6 = null;
+            for (int attempt = 0; attempt <= 20; attempt++)
+            {
+                listener = new TcpListener(IPAddress.Loopback, 0);
+                listener.Start();
+                int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+                onIpv6 = OnIpv6Loopback(() =>
+                {
+                    TcpListener six = new TcpListener(IPAddress.IPv6Loopback, port);
+                    six.Start();
+                    return six;
+                }, out bool taken);
+                if (!taken || !HasIpv6)
+                    break;
+                listener.Stop();
+            }
+            TcpListener four = listener;
+            new Thread(() => Accept(four, secure)) { IsBackground = true, Name = "Fake relay server streams" }.Start();
+            if (onIpv6 != null)
+            {
+                TcpListener six = onIpv6;
+                new Thread(() => Accept(six, secure)) { IsBackground = true, Name = "Fake relay server streams on IPv6" }.Start();
+            }
+            return listener;
+        }
+
+        private void Accept(TcpListener listener, Func<Stream, Stream> secure)
+        {
+            while (!_stopped)
+            {
+                TcpClient tcp;
+                try
+                {
+                    tcp = listener.AcceptTcpClient();
+                    Interlocked.Increment(ref _streamsAccepted);
+                }
+                catch (Exception)
+                {
+                    return;
+                }
+                new Thread(() => ServeStream(tcp, secure)) { IsBackground = true, Name = "Fake relay server stream" }.Start();
+            }
+        }
+
+        private void ServeStream(TcpClient tcp, Func<Stream, Stream> secure)
+        {
+            StreamClient client = new StreamClient { Tcp = tcp, From = (IPEndPoint)tcp.Client.RemoteEndPoint };
+            try
+            {
+                if (Ignores(client.From))
+                    return;
+                tcp.NoDelay = true;
+                if (StreamsSilent)
+                {
+                    while (!_stopped && tcp.Connected)
+                        Thread.Sleep(50);
+                    return;
+                }
+                client.Stream = secure(tcp.GetStream());
+                lock (_lock)
+                    _streams[client.From] = client;
+                byte[] held = new byte[0];
+                byte[] chunk = new byte[16384];
+                while (!_stopped)
+                {
+                    while (PauseStreamReading && !_stopped)
+                        Thread.Sleep(10);
+                    int count = client.Stream.Read(chunk, 0, chunk.Length);
+                    if (count <= 0)
+                        return;
+                    held = held.Concat(chunk.Take(count)).ToArray();
+                    while (held.Length >= 4)
+                    {
+                        int length = (held[2] << 8) | held[3];
+                        int whole;
+                        if ((held[0] & 0xC0) == 0x40)
+                            whole = 4 + length + (4 - length % 4) % 4;
+                        else if ((held[0] & 0xC0) == 0 && Read32(held, 4) == MagicCookie)
+                            whole = 20 + length;
+                        else
+                        {
+                            Interlocked.Add(ref _unreadableStreamBytes, held.Length);
+                            return;
+                        }
+                        if (held.Length < whole)
+                            break;
+                        byte[] message = held.Take(whole).ToArray();
+                        held = held.Skip(whole).ToArray();
+                        try
+                        {
+                            Handle(message, client.From);
+                        }
+                        catch (Exception failure)
+                        {
+                            UnityEngine.Debug.LogError("Fake relay server: " + failure);
+                        }
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                // The client went, or the relay closed it.
+            }
+            finally
+            {
+                lock (_lock)
+                {
+                    _streams.Remove(client.From);
+                    _reservations.RemoveAll(each => each.Client.Equals(client.From));
+                }
+                client.Close();
+            }
+        }
 
         internal void DropNext(ushort method, int times)
         {
@@ -194,15 +457,17 @@ namespace Flock.Tests.PlayMode
 
         private string CurrentNonce => "nonce-" + _nonceNumber;
 
-        private void Serve()
+        private void Serve(UdpClient socket)
         {
             while (!_stopped)
             {
-                IPEndPoint from = new IPEndPoint(IPAddress.Any, 0);
+                IPEndPoint from = new IPEndPoint(socket.Client.AddressFamily == AddressFamily.InterNetworkV6 ? IPAddress.IPv6Any : IPAddress.Any, 0);
                 byte[] packet;
                 try
                 {
-                    packet = _socket.Receive(ref from);
+                    packet = socket.Receive(ref from);
+                    if (IgnoresUdp || (IgnoresUdpOverIpv4 && socket == _socket))
+                        continue;
                 }
                 catch (SocketException failure) when (failure.SocketErrorCode == SocketError.ConnectionReset)
                 {
@@ -229,6 +494,9 @@ namespace Flock.Tests.PlayMode
 
         private void Handle(byte[] packet, IPEndPoint from)
         {
+            if (Ignores(from))
+                return;
+            bool overIpv6 = from.AddressFamily == AddressFamily.InterNetworkV6;
             lock (_lock)
             {
                 if (_portsNoLongerHeard.Contains(from.Port))
@@ -244,7 +512,7 @@ namespace Flock.Tests.PlayMode
                 int length = (packet[2] << 8) | packet[3];
                 lock (_lock)
                 {
-                    _seen.Add(new Seen { Method = 0xFFFF, ClientPort = from.Port, At = DateTime.UtcNow });
+                    _seen.Add(new Seen { Method = 0xFFFF, ClientPort = from.Port, OverIpv6 = overIpv6, At = DateTime.UtcNow });
                     if (Silent)
                         return;
                     Reservation sender = ReservationOf(from);
@@ -264,7 +532,7 @@ namespace Flock.Tests.PlayMode
             bool signed = attributes.ContainsKey(Username) && integrityAt >= 0;
             uint? lifetimeAsked = attributes.TryGetValue(Lifetime, out byte[] lifetime) ? Read32(lifetime, 0) : (uint?)null;
             lock (_lock)
-                _seen.Add(new Seen { Method = method, Class = messageClass, Signed = signed, Transaction = Hex(transaction), LifetimeAsked = lifetimeAsked, ClientPort = from.Port, At = DateTime.UtcNow });
+                _seen.Add(new Seen { Method = method, Class = messageClass, Signed = signed, Transaction = Hex(transaction), LifetimeAsked = lifetimeAsked, ClientPort = from.Port, OverIpv6 = overIpv6, At = DateTime.UtcNow });
             if (Silent)
                 return;
 
@@ -279,7 +547,7 @@ namespace Flock.Tests.PlayMode
             if (method == Binding)
             {
                 if (AnswersBindings)
-                    SendTo(Answer(type, transaction, 0x0100, new[] { Attr(XorMappedAddress, Address(from)) }, null), from);
+                    SendTo(Answer(type, transaction, 0x0100, MappedTo(from), null), from);
                 return;
             }
             lock (_lock)
@@ -356,12 +624,9 @@ namespace Flock.Tests.PlayMode
                             byte[] forged = Answer(type, transaction, 0x0100, new[] { Attr(XorRelayedAddress, Address(new IPEndPoint(IPAddress.Parse("198.51.100.66"), 4444))) }, Key("someone-else", "forged"));
                             SendTo(forged, from);
                         }
-                        return Answer(type, transaction, 0x0100, new[]
-                        {
-                            Attr(XorRelayedAddress, Address(new IPEndPoint(IPAddress.Parse(reservation.Ip), reservation.RelayedPort))),
-                            Attr(XorMappedAddress, Address(from)),
-                            Attr(Lifetime, Be32((uint)ReservationLifetime.TotalSeconds)),
-                        }, key);
+                        return Answer(type, transaction, 0x0100, new[] { Attr(XorRelayedAddress, Address(new IPEndPoint(IPAddress.Parse(reservation.Ip), reservation.RelayedPort))) }
+                            .Concat(MappedTo(from))
+                            .Concat(new[] { Attr(Lifetime, Be32((uint)ReservationLifetime.TotalSeconds)) }).ToArray(), key);
                     }
                     case Refresh:
                     {
@@ -608,9 +873,27 @@ namespace Flock.Tests.PlayMode
 
         private void SendNow(byte[] bytes, IPEndPoint to)
         {
+            StreamClient client;
+            lock (_lock)
+                _streams.TryGetValue(to, out client);
+            if (client != null)
+            {
+                try
+                {
+                    lock (client.WriteGate)
+                        client.Stream.Write(bytes, 0, bytes.Length);
+                }
+                catch (Exception)
+                {
+                    // A client already gone.
+                }
+                return;
+            }
+            if (IgnoresUdp)
+                return;
             try
             {
-                _socket.Send(bytes, bytes.Length, to);
+                (to.AddressFamily == AddressFamily.InterNetworkV6 ? _socket6 : _socket).Send(bytes, bytes.Length, to);
             }
             catch (Exception)
             {
@@ -622,7 +905,14 @@ namespace Flock.Tests.PlayMode
         {
             _stopped = true;
             _socket.Close();
+            _socket6?.Close();
+            _tcp?.Stop();
+            _tls?.Stop();
+            _tcp6?.Stop();
+            _tls6?.Stop();
+            CloseEveryStream();
             _thread.Join(1000);
+            _thread6?.Join(1000);
         }
     }
 }

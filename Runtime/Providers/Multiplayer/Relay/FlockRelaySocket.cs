@@ -6,15 +6,47 @@ using System.Threading;
 
 namespace Flock.Providers
 {
+    /// <summary>The way a relay connection sends to and reads from its relay server: UDP, or a TCP or TLS stream for a network that blocks UDP to the relay. Either hands over one whole message (a STUN message or a channel frame) at a time, and a send never holds the calling thread.</summary>
+    internal abstract class FlockRelaySocket
+    {
+        /// <summary>True over UDP, where a request or its answer may be lost and is sent again; a stream delivers it or ends.</summary>
+        internal abstract bool LosesPackets { get; }
+
+        /// <summary>True on a stream, where each channel frame is padded to 4 bytes, as the standard asks of TCP and TLS.</summary>
+        internal bool PadsChannelFrames => !LosesPackets;
+
+        /// <summary>Null while the way is open; why it ended once the relay closed a stream or the stream broke. UDP never ends.</summary>
+        internal virtual string EndedBecause => null;
+
+        /// <summary>The port this socket sends from, which the relay sees.</summary>
+        internal abstract int LocalPort { get; }
+
+        internal abstract AddressFamily FamilyForTesting { get; }
+
+        /// <summary>True while another whole message is waiting to be read.</summary>
+        internal abstract bool HasMoreWaiting { get; }
+
+        /// <summary>Sends one whole message, from any thread; false when it was dropped (a full buffer, a closed socket), which the answer wait judges.</summary>
+        internal abstract bool TrySend(byte[] bytes, int offset, int count);
+
+        /// <summary>Waits up to <paramref name="microseconds"/> for a whole message; true when one is there.</summary>
+        internal abstract bool WaitToRead(int microseconds);
+
+        /// <summary>Copies the next whole message into <paramref name="into"/>; its length, 0 when none was there.</summary>
+        internal abstract int Receive(byte[] into);
+
+        internal abstract void Close();
+    }
+
     /// <summary>The UDP socket to one relay server (dual-stack where the platform allows): connected to it, and never holding a sender.</summary>
-    internal sealed class FlockRelaySocket
+    internal sealed class FlockRelayUdpSocket : FlockRelaySocket
     {
         private readonly Socket _socket;
 
-        internal FlockRelaySocket(IPEndPoint server)
+        internal FlockRelayUdpSocket(IPEndPoint server)
         {
             // Connected, so only the relay's own packets are read, and sends need no address of their own.
-            _socket = FlockUdpSockets.OpenConnectedTo(server);
+            _socket = FlockSockets.OpenConnectedTo(server);
             try
             {
                 // A full send buffer drops a packet rather than holding the game's thread.
@@ -28,7 +60,7 @@ namespace Flock.Providers
         }
 
         /// <summary>Takes a socket already connected to the relay server, such as one the server was heard to answer.</summary>
-        internal FlockRelaySocket(Socket connected)
+        internal FlockRelayUdpSocket(Socket connected)
         {
             _socket = connected;
             _socket.Blocking = false;
@@ -50,7 +82,7 @@ namespace Flock.Providers
                         Socket socket;
                         try
                         {
-                            socket = FlockUdpSockets.OpenConnectedTo(server);
+                            socket = FlockSockets.OpenConnectedTo(server);
                         }
                         catch (SocketException)
                         {
@@ -133,17 +165,17 @@ namespace Flock.Providers
             }
         }
 
+        internal override bool LosesPackets => true;
+
         internal bool BlocksForTesting => _socket.Blocking;
 
-        internal AddressFamily FamilyForTesting => _socket.AddressFamily;
+        internal override AddressFamily FamilyForTesting => _socket.AddressFamily;
 
-        /// <summary>The port this socket sends from, which the relay sees.</summary>
-        internal int LocalPort => ((IPEndPoint)_socket.LocalEndPoint).Port;
+        internal override int LocalPort => ((IPEndPoint)_socket.LocalEndPoint).Port;
 
-        internal int Available => _socket.Available;
+        internal override bool HasMoreWaiting => _socket.Available > 0;
 
-        /// <summary>Sends one packet, from any thread; false when the socket refused it or is closed, which the answer wait judges.</summary>
-        internal bool TrySend(byte[] bytes, int offset, int count)
+        internal override bool TrySend(byte[] bytes, int offset, int count)
         {
             try
             {
@@ -160,11 +192,10 @@ namespace Flock.Providers
             return true;
         }
 
-        /// <summary>Waits up to <paramref name="microseconds"/> for something to read; true when something is there.</summary>
-        internal bool WaitToRead(int microseconds) => _socket.Poll(microseconds, SelectMode.SelectRead);
+        internal override bool WaitToRead(int microseconds) => _socket.Poll(microseconds, SelectMode.SelectRead);
 
-        internal int Receive(byte[] into) => _socket.Receive(into);
+        internal override int Receive(byte[] into) => _socket.Receive(into);
 
-        internal void Close() => _socket.Close();
+        internal override void Close() => _socket.Close();
     }
 }

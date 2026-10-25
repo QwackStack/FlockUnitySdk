@@ -97,7 +97,7 @@ namespace Flock.Providers
             {
                 int length;
                 if (channel != 0)
-                    length = FlockRelayWire.WriteChannelFrame(_sendBuffer, channel, data, offset, count);
+                    length = FlockRelayWire.WriteChannelFrame(_sendBuffer, channel, data, offset, count, _socket.PadsChannelFrames);
                 else
                 {
                     FlockRelayWire.WriteUInt32(_indicationTransaction, 8, ++_indicationsSent);

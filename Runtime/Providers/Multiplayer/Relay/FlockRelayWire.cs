@@ -120,13 +120,16 @@ namespace Flock.Providers
             return SendIndicationOverhead + count + padding;
         }
 
-        /// <summary>A channel frame carrying <paramref name="count"/> bytes, written into <paramref name="into"/> without garbage; its length.</summary>
-        internal static int WriteChannelFrame(byte[] into, ushort channel, byte[] data, int offset, int count)
+        /// <summary>A channel frame carrying <paramref name="count"/> bytes, written into <paramref name="into"/> without garbage, padded to 4 bytes when <paramref name="padded"/> (on a TCP or TLS stream, as the standard asks); its length.</summary>
+        internal static int WriteChannelFrame(byte[] into, ushort channel, byte[] data, int offset, int count, bool padded = false)
         {
+            int padding = padded ? (4 - count % 4) % 4 : 0;
             WriteUInt16(into, 0, channel);
             WriteUInt16(into, 2, (ushort)count);
             Buffer.BlockCopy(data, offset, into, ChannelFrameHeaderLength, count);
-            return ChannelFrameHeaderLength + count;
+            for (int i = 0; i < padding; i++)
+                into[ChannelFrameHeaderLength + count + i] = 0;
+            return ChannelFrameHeaderLength + count + padding;
         }
 
         /// <summary>A channel frame's number and how many of its bytes are data (they start after its four-byte header); false when the packet is not a whole channel frame.</summary>

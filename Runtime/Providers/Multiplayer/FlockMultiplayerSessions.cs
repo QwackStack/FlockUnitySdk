@@ -339,11 +339,11 @@ namespace Flock.Providers
             return verified.PlayerId;
         }
 
-        /// <summary>The player's address on Flock's relay for this session, opened once and shared by every caller until it fails or the session ends, which closes it; on <paramref name="server"/> ("name:port") when one is named, else on the first relay Flock lists that answers. A caller's token only stops its own wait. Fails with a <see cref="FlockRelayException"/> naming why.</summary>
+        /// <summary>The player's address on Flock's relay for this session, opened once and shared by every caller until it fails or the session ends, which closes it; on <paramref name="server"/> ("name:port", the server matched by its name over any way in) when one is named, else on the first way in to a relay Flock lists that opens (UDP, then TCP, then TLS). A caller's token only stops its own wait. Fails with a <see cref="FlockRelayException"/> naming why.</summary>
         internal async Task<FlockRelayConnection> OpenRelayAsync(FlockMultiplayerSession session, string server, CancellationToken cancellationToken)
         {
             if (Application.platform == RuntimePlatform.WebGLPlayer)
-                throw new FlockRelayException(FlockRelayFailure.NotOnThisPlatform, "A web player cannot send UDP, so it cannot use Flock's relay");
+                throw new FlockRelayException(FlockRelayFailure.NotOnThisPlatform, "A web player cannot open the UDP or TCP connections Flock's relay needs, so it cannot use it");
             RequireRunning(session);
             Task<FlockRelayConnection> opening = session.RelayOpening;
             if (opening != null && !HasFailed(opening) && !IsOn(session, opening, server))
@@ -378,12 +378,12 @@ namespace Flock.Providers
         private static bool HasFailed(Task<FlockRelayConnection> opening)
             => opening.IsFaulted || opening.IsCanceled || (opening.Status == TaskStatus.RanToCompletion && opening.Result.HasStopped);
 
-        // Whether an opening serves a caller who needs the relay on server; any server does for one who named none.
+        // Whether an opening serves a caller who needs the relay on server (by any way in to it); any server does for one who named none.
         private static bool IsOn(FlockMultiplayerSession session, Task<FlockRelayConnection> opening, string server)
-            => server == null || string.Equals(session.RelayServerAsked, server, StringComparison.OrdinalIgnoreCase)
-               || (opening.Status == TaskStatus.RanToCompletion && string.Equals(opening.Result.Server, server, StringComparison.OrdinalIgnoreCase));
+            => server == null || FlockRelayLogin.SameServer(session.RelayServerAsked, server)
+               || (opening.Status == TaskStatus.RanToCompletion && FlockRelayLogin.SameServer(opening.Result.Server, server));
 
-        // Logins named with the session, then each relay server Flock lists in turn, or the one named; the session's end stops it at any step.
+        // Logins named with the session, then the first way in that opens to the relay servers Flock lists, or to the one named; the session's end stops it at any step.
         private async Task<FlockRelayConnection> OpenRelayForAsync(FlockMultiplayerSession session, string server)
         {
             CancellationToken stop = session.RelayStopToken;
@@ -405,31 +405,18 @@ namespace Flock.Providers
                 throw new FlockRelayException(FlockRelayFailure.NotOffered, "Flock listed no relay for this game: it is switched off for the game in the Flock dashboard, or no relay is set up");
             if (server != null)
             {
-                // Players reach the host only from the relay server it is on, since only that server's addresses share the IP it opened to.
-                logins = logins.FindAll(login => string.Equals(login.ToString(), server, StringComparison.OrdinalIgnoreCase));
+                // Players reach the host only on the relay server it is on, though by any way in to it (the host on UDP, a player whose network blocks UDP over TLS).
+                logins = logins.FindAll(login => login.IsOn(server));
                 if (logins.Count == 0)
                     throw new FlockRelayException(FlockRelayFailure.ServerNotListed, $"Flock does not list the relay server the host uses ({server}) for this player");
             }
             // Looked up while the relay opens: a direct link learns its own address from them, since a relay server may answer few of a device's ports (Cloudflare's, measured).
             Task<List<IPEndPoint>> stunServers = FlockDirectAddresses.LookUpStunServersAsync(answer, RelayTiming.NameLookUpWait, RelayTiming.NameLookUpForTesting, stop);
             LetRun(stunServers);
-            FlockRelayException first = null;
-            foreach (FlockRelayLogin login in logins)
-            {
-                try
-                {
-                    FlockRelayConnection connection = await FlockRelayConnection.OpenAsync(login, RelayTiming, _client.Logger, stop);
-                    session.Relay = connection;
-                    connection.StunServers = await stunServers;
-                    return connection;
-                }
-                catch (FlockRelayException failure)
-                {
-                    // The first server Flock lists is its main one, so its reason is the one told when none opens.
-                    first = first ?? failure;
-                }
-            }
-            throw first;
+            FlockRelayConnection connection = await FlockRelayWays.OpenFirstAsync(logins, RelayTiming, _client.Logger, stop);
+            session.Relay = connection;
+            connection.StunServers = await stunServers;
+            return connection;
         }
 
         private static FlockRelayException RelayLoginsRefused(FlockException failure)
