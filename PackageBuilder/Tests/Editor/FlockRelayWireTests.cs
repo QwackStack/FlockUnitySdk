@@ -293,6 +293,33 @@ namespace Flock.Tests.Editor
         }
 
         [Test]
+        public void Ways_CloudflaresAlternatePorts_AreTriedRightAfterTheirKind()
+        {
+            // Flock's answer once it lists Cloudflare's alternate listeners: its own URLs, then UDP 443, TCP 80 and TLS 443 (backend, 2026-10-25).
+            RelayCredentialsRecord answer = new RelayCredentialsRecord
+            {
+                IceServers = new List<IceServerRecord>
+                {
+                    new IceServerRecord
+                    {
+                        Urls = new List<string>
+                        {
+                            "turn:turn.cloudflare.com:3478?transport=udp", "turn:turn.cloudflare.com:3478?transport=tcp", "turns:turn.cloudflare.com:5349?transport=tcp",
+                            "turn:turn.cloudflare.com:443?transport=udp", "turn:turn.cloudflare.com:80?transport=tcp", "turns:turn.cloudflare.com:443?transport=tcp",
+                        },
+                        Username = "u", Credential = "p",
+                    },
+                },
+            };
+            CollectionAssert.AreEqual(new[]
+            {
+                "turn.cloudflare.com:3478 over UDP", "turn.cloudflare.com:443 over UDP", "turn.cloudflare.com:3478 over UDP on IPv6", "turn.cloudflare.com:443 over UDP on IPv6",
+                "turn.cloudflare.com:3478 over TCP", "turn.cloudflare.com:80 over TCP", "turn.cloudflare.com:5349 over TLS", "turn.cloudflare.com:443 over TLS",
+                "turn.cloudflare.com:3478 over TCP on IPv6", "turn.cloudflare.com:80 over TCP on IPv6", "turn.cloudflare.com:5349 over TLS on IPv6", "turn.cloudflare.com:443 over TLS on IPv6",
+            }, FlockRelayLogin.InTheOrderTried(FlockRelayLogin.InAnswer(answer)).Select(login => login.Way).ToArray());
+        }
+
+        [Test]
         public void Ways_ToAServerGivenAsAnIpv4Address_HaveNoIpv6Twin()
         {
             List<FlockRelayLogin> listed = new List<FlockRelayLogin> { new FlockRelayLogin("203.0.113.9", 3478, "u", "p"), new FlockRelayLogin("relay.test", 3478, "u", "p") };

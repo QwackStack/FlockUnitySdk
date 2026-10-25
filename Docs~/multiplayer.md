@@ -358,8 +358,9 @@ direct path that goes quiet for 4 seconds hands them back to the relay. The game
 trade-off is that the host and a relayed player learn each other's IP address; use `Always` to keep them hidden.
 
 The relay is reached over UDP. On a network that blocks UDP to it (some phone hotspots, offices, schools and hotels), the
-SDK reaches the same relay over UDP on IPv6, then TCP, then TLS, each way Flock lists: each starts once the one before it has failed or
-had 2 seconds, so a blocked way costs the player about 2 seconds. The host and a player need not use the same way. Over
+SDK reaches the same relay over UDP on IPv6, then TCP, then TLS, on every port Flock lists (the web ports 80 and 443 too, where
+listed): each starts once the one before it has failed or had its time, half a second for another port of the same kind and 2
+seconds otherwise, so a blocked way costs the player about that. The host and a player need not use the same way. Over
 TCP or TLS a lost packet holds back the ones after it until it is sent again, so play may stutter on a poor connection;
 with verbose logging on, the SDK says which way it uses when it is not UDP over IPv4. UDP is tried over IPv6 as well before any
 TCP or TLS (a phone hotspot that dropped UDP over IPv4 carried it over IPv6), and every way is tried over IPv6 for a network with
