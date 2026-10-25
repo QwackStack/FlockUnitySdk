@@ -13,9 +13,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - **A player whose network blocks UDP to Flock's relay now reaches it another way.** Until now the SDK used UDP over IPv4 alone,
   so on a network that drops it hosting or joining through the relay failed with `relay_unreachable` after about 8 seconds. A
   phone hotspot measured for this release dropped UDP over IPv4 and carried everything else. The SDK now tries UDP over IPv4,
-  then UDP over IPv6, then TCP and TLS over IPv4, then over IPv6, each way Flock lists (for Flock's relay today: UDP and TCP on
-  3478, TLS on 5349). Each next way starts once the one before it has failed or had 2 seconds, so a blocked way costs about 2
-  seconds, and a network where UDP over IPv4 works tries nothing else. The first way to open is kept and every other is closed,
+  then UDP over IPv6, then TCP and TLS over IPv4, then over IPv6, on every port Flock lists (the relay's usual ports, and the web
+  ports 80 and 443 where Flock lists them). Each next way starts once the one before it has failed or had its time: half a second
+  for another port of the same kind, 2 seconds otherwise. A blocked way costs about that, and a network where UDP over IPv4 works
+  tries nothing else. The first way to open is kept and every other is closed,
   giving back any relay address it reserved. Over TCP or TLS a lost packet holds back the ones after it until it is sent again,
   so play may stutter on a poor connection; with verbose logging, the SDK says which way it uses and why. TLS is checked by the
   platform: a network that inspects encrypted traffic is refused and told so.

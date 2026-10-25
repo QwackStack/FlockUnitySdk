@@ -7,7 +7,7 @@ using Flock.Logging;
 
 namespace Flock.Providers
 {
-    /// <summary>Opens a relay address through the first way in that works, for a network that blocks some of them (UDP to the relay, as some phone hotspots and offices do): UDP over IPv4, then over IPv6, then TCP and TLS over IPv4, then over IPv6, each starting once the one before it failed or has had <see cref="FlockRelayConnection.Timing.NextWayAfter"/> to open. The first to open is kept; every other is closed, giving back any address it reserved.</summary>
+    /// <summary>Opens a relay address through the first way in that works, for a network that blocks some of them (UDP to the relay, as some phone hotspots and offices do): UDP over IPv4, then over IPv6, then TCP and TLS over IPv4, then over IPv6, each starting once the one before it failed or has had its time to open: <see cref="FlockRelayConnection.Timing.NextPortAfter"/> before another port of the same transport and family, <see cref="FlockRelayConnection.Timing.NextWayAfter"/> otherwise. The first to open is kept; every other is closed, giving back any address it reserved.</summary>
     internal static class FlockRelayWays
     {
         /// <summary>Run once a way has opened and before it is handed out, so a test can end the session then.</summary>
@@ -42,7 +42,7 @@ namespace Flock.Providers
                         Task<FlockRelayConnection> opening = FlockRelayConnection.OpenAsync(ways[started.Count], timing, logger, raceOver.Token);
                         FlockMultiplayerSessions.LetRun(opening);
                         started.Add(opening);
-                        nextWayDue = started.Count < ways.Count ? FlockWaiting.DelayAsync(timing.NextWayAfter, raceOver.Token) : null;
+                        nextWayDue = started.Count < ways.Count ? FlockWaiting.DelayAsync(TimeBefore(ways[started.Count - 1], ways[started.Count], timing), raceOver.Token) : null;
                         continue;
                     }
                     if (!anyOpening)
@@ -87,6 +87,10 @@ namespace Flock.Providers
             }
             return kept;
         }
+
+        // Another port of the way just started (the same transport and family) comes soon after it; the next kind of way waits longer.
+        private static TimeSpan TimeBefore(FlockRelayLogin started, FlockRelayLogin next, FlockRelayConnection.Timing timing)
+            => next.Transport == started.Transport && next.OverIpv6 == started.OverIpv6 ? timing.NextPortAfter : timing.NextWayAfter;
 
         // The first way, in the order tried, that opened: of two that opened together, the better one.
         private static FlockRelayConnection FirstOpened(List<Task<FlockRelayConnection>> started)

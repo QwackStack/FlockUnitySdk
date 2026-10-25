@@ -1203,7 +1203,7 @@ namespace Flock.Tests.PlayMode
             using (FakeRelayServer silent = new FakeRelayServer { Silent = true })
             {
                 _server.RelayUrls.Insert(0, silent.Url);
-                // The silent relay costs its three short socket rounds and the 5 s answer wait the next relay answers within.
+                // The next relay's UDP way starts 0.5 s after the silent one's, which is still searching for a socket it answers then.
                 multiplayer.Sessions.RelayTiming.SocketRoundWait = TimeSpan.FromSeconds(0.2);
                 List<FlockMultiplayerSession> held = new List<FlockMultiplayerSession>();
                 yield return Hosted(multiplayer, held);
@@ -1211,7 +1211,7 @@ namespace Flock.Tests.PlayMode
                 Task<FlockRelayConnection> opening = held[0].OpenRelayAsync();
                 yield return Done(opening, "the relay opened", 20f);
                 Assert.IsFalse(opening.IsFaulted, opening.Exception?.InnerException?.Message);
-                Assert.Greater(silent.SeenRequests(FakeRelayServer.MethodAllocate).Count, 0, "Precondition: the first relay was asked");
+                Assert.Greater(silent.AllSeen().Count, 0, "Precondition: the first relay was asked (its socket search's binding requests)");
                 Assert.AreEqual(1, _relay.Reservations, "Reserved on the next relay Flock lists");
             }
         }

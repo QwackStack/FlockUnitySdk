@@ -409,6 +409,30 @@ namespace Flock.Tests.PlayMode
             Assert.AreEqual(0, _relay.StreamsAccepted, "The UDP way ended by the session's end did not start the TCP way");
         }
 
+        [UnityTest]
+        public IEnumerator Ways_AnotherPortOfTheSameKind_StartsHalfASecondAfterOneNothingAnswers()
+        {
+            // Two UDP ports of one server, as Flock lists UDP on 3478 and 443: the first unanswered, the second answering.
+            using (FakeRelayServer silent = new FakeRelayServer { Silent = true })
+            {
+                FlockRelayConnection.Timing timing = new FlockRelayConnection.Timing { NameLookUpForTesting = Loopback };
+                List<FlockRelayLogin> ways = new List<FlockRelayLogin>
+                {
+                    new FlockRelayLogin("127.0.0.1", silent.Port, "1760000000:game:" + A, "minted-for-the-test"),
+                    Login(A, FlockRelayTransport.Udp),
+                };
+                Stopwatch clock = Stopwatch.StartNew();
+                Task<FlockRelayConnection> opening = FlockRelayWays.OpenFirstAsync(ways, timing, _logger, CancellationToken.None);
+                Task<double> openedAt = SecondsWhenDone(opening, clock);
+                yield return Done(openedAt, "the relay opened");
+                Assert.IsFalse(opening.IsFaulted, opening.Exception?.InnerException?.Message);
+                _connections.Add(opening.Result);
+
+                Assert.AreEqual($"127.0.0.1:{_relay.Port} over UDP", opening.Result.Way);
+                Assert.That(openedAt.Result, Is.InRange(0.4, 1.6), "The second port started 0.5 s after the first, not the 2 s another kind of way waits");
+            }
+        }
+
         // ---- the session's ways in ----
 
         private FlockMultiplayerProvider SignedInAs(string player, params string[] relayUrls)

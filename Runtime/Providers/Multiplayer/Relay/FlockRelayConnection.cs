@@ -36,6 +36,8 @@ namespace Flock.Providers
             internal TimeSpan ConnectWait = TimeSpan.FromSeconds(5);
             // The next way in to the relay starts once the one before it failed or has had this long to open, so a way a network blocks costs this rather than its own waits.
             internal TimeSpan NextWayAfter = TimeSpan.FromSeconds(2);
+            // As NextWayAfter, for another port of the same transport and family (UDP on 443 after 3478): a network blocks them alike more often than not.
+            internal TimeSpan NextPortAfter = TimeSpan.FromSeconds(0.5);
             // The reservation is renewed at half the time the relay grants, and at least this often.
             internal TimeSpan LongestBetweenReservationRenewals = TimeSpan.FromMinutes(4);
             internal TimeSpan RenewOpeningsEvery = TimeSpan.FromMinutes(4);
