@@ -56,10 +56,11 @@ namespace Flock.Tests.Editor
         public void NothingInTheRuntimeWaitsOnAThreadOrATimerWebGLDoesNotHave()
         {
             Regex unsafeWait = new Regex(@"ConfigureAwait\(\s*(continueOnCapturedContext\s*:\s*)?false\s*\)|Task\.Delay\(|Task\.Run\(|ThreadPool\.|Threading\.Timer|new Timer\(|new Thread\(|RunContinuationsAsynchronously");
-            // The relay client, its bridge and the bridge's direct links run on threads of their own and never in a web player: OpenRelayAsync
-            // refuses one before anything starts, and a direct link is only made by a bridge.
-            List<string> found = FlockRuntimeSource.LinesMatching(unsafeWait, "FlockWaiting.cs", "FlockRelayConnection.cs", "FlockRelayBridge.cs", "FlockDirectLink.cs");
+            // The relay client, its TCP and TLS streams, its bridge and the bridge's direct links run on threads of their own and never in a web
+            // player: OpenRelayAsync refuses one before anything starts, a stream is only made by a relay connection, and a direct link by a bridge.
+            List<string> found = FlockRuntimeSource.LinesMatching(unsafeWait, "FlockWaiting.cs", "FlockRelayConnection.cs", "FlockRelayStreamSocket.cs", "FlockRelayBridge.cs", "FlockDirectLink.cs");
             Assert.IsNotEmpty(FlockRuntimeSource.LinesMatchingIn("FlockRelayConnection.cs", unsafeWait), "Control: the relay's own thread is what the scan would find");
+            Assert.IsNotEmpty(FlockRuntimeSource.LinesMatchingIn("FlockRelayStreamSocket.cs", unsafeWait), "Control: a stream's reading and sending threads are what the scan would find");
             Assert.IsNotEmpty(FlockRuntimeSource.LinesMatchingIn("FlockRelayBridge.cs", unsafeWait), "Control: the bridge's loopback threads are what the scan would find");
             Assert.IsNotEmpty(FlockRuntimeSource.LinesMatchingIn("FlockDirectLink.cs", unsafeWait), "Control: a direct link's own thread is what the scan would find");
             Assert.IsEmpty(found, "Wait through FlockWaiting (ResumeOnCallersThread, DelayAsync) instead:\n" + string.Join("\n", found));

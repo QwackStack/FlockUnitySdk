@@ -111,7 +111,7 @@ namespace Flock.Providers
                 _waiting.Add(request);
         }
 
-        /// <summary>An answer may be lost on the way: the same bytes again, under the same transaction, so the relay knows it for a repeat; given up on after the answer wait. The relay thread's alone.</summary>
+        /// <summary>Over UDP an answer may be lost on the way: the same bytes again, under the same transaction, so the relay knows it for a repeat (a stream delivers it or ends, so it goes once); given up on after the answer wait. The relay thread's alone.</summary>
         internal void SendAgainOrGiveUp(long now)
         {
             for (int i = _waiting.Count - 1; i >= 0 && i < _waiting.Count; i--)
@@ -122,7 +122,7 @@ namespace Flock.Providers
                     _waiting.RemoveAt(i);
                     request.Done(NoAnswer, "no answer", null);
                 }
-                else if (request.Sends < MostSends && now >= request.NextSendAt)
+                else if (_socket.LosesPackets && request.Sends < MostSends && now >= request.NextSendAt)
                 {
                     SendBytes(request.Bytes);
                     request.NextSendAt = now + FlockRelayClock.Ticks(FirstResend) * (1L << request.Sends);

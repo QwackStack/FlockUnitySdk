@@ -27,6 +27,9 @@ namespace Flock.Tests.PlayMode
         // packet adds 100 or more to a frame that sends 100, so this margin still sees it, and each control allocates 100 a frame.
         private const int EngineSamplesAFrameVaryBy = 50;
         private const int AllocationsAControlFrameMakes = 100;
+        // A sending frame lasts as long as a game's at 60 a second: ten test-runner frames on a busy runner ended with most packets still
+        // on their way (73 of 1000 taken over TCP, 2021.3 on CI, 2026-10-25).
+        private const int AGamesFrameMilliseconds = 16;
 
         // Garbage per packet raises every sending frame; the engine alone raised one of ten to 8 on a busy machine (2021.3, 2026-10-15).
         private static int SecondNoisiestFrame(List<int> frames) => frames.OrderByDescending(count => count).ElementAt(1);
@@ -438,6 +441,7 @@ namespace Flock.Tests.PlayMode
                     player.Send(host.Address, payload, 0, payload.Length);
                     host.Send(player.Address, payload, 0, payload.Length);
                 }
+                Thread.Sleep(AGamesFrameMilliseconds);
                 while (host.TryReceive(buffer, out int count, out FlockRelayPeer from))
                     received++;
                 while (player.TryReceive(buffer, out int count, out FlockRelayPeer from))
@@ -458,7 +462,7 @@ namespace Flock.Tests.PlayMode
             string counts = $"quiet frames {string.Join(",", quiet)}; sending frames {string.Join(",", working)}; allocating frames {string.Join(",", allocating)}";
             Assert.Greater(allocating.Min(), quiet.Max() + EngineSamplesAFrameVaryBy, $"Control: the count sees {made.Count} allocations ({counts})");
             Assert.LessOrEqual(SecondNoisiestFrame(working), quiet.Max() + EngineSamplesAFrameVaryBy, $"Sending and taking 100 packets a frame adds no allocation to the frame ({counts})");
-            Assert.Greater(received, 100, "Control: packets were taken while measured");
+            Assert.Greater(received, 100, $"Control: packets were taken while measured ({received} of 1000)");
         }
 
         // ---- renewals ----
@@ -1028,7 +1032,7 @@ namespace Flock.Tests.PlayMode
         {
             List<FlockRelayConnection> opened = new List<FlockRelayConnection>();
             yield return Opened(A, opened);
-            FlockRelaySocket socket = (FlockRelaySocket)typeof(FlockRelayConnection)
+            FlockRelayUdpSocket socket = (FlockRelayUdpSocket)typeof(FlockRelayConnection)
                 .GetField("_socket", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).GetValue(opened[0]);
             Assert.IsFalse(socket.BlocksForTesting, "A full send buffer drops a packet rather than holding the sender");
         }
@@ -1137,20 +1141,25 @@ namespace Flock.Tests.PlayMode
             Assert.AreSame(first.Result, again.Result, "An open relay is handed back as it is");
         }
 
+        // A server's name is what tells it apart (every way in to one server reaches the same relay), so a second server gets a name of its own,
+        // looked up as this machine.
+        private static Task<System.Net.IPAddress[]> Loopback(string host) => Task.FromResult(new[] { System.Net.IPAddress.Loopback });
+
         [UnityTest]
         public IEnumerator OpenRelayOn_TheHostsServer_ReplacesARelayOpenOnAnother_AndKeepsOneOnIt()
         {
             using (FakeRelayServer hosts = new FakeRelayServer())
             {
                 FlockMultiplayerProvider multiplayer = SignedInAs(A);
-                _server.RelayUrls.Add(hosts.Url);
+                _server.RelayUrls.Add(hosts.UdpUrlNamed("hosts.relay.test"));
+                multiplayer.Sessions.RelayTiming.NameLookUpForTesting = Loopback;
                 List<FlockMultiplayerSession> held = new List<FlockMultiplayerSession>();
                 yield return Hosted(multiplayer, held);
                 Task<FlockRelayConnection> anyServer = held[0].OpenRelayAsync();
                 yield return Done(anyServer, "opened on the first server Flock lists");
                 Assert.AreEqual(1, _relay.Reservations, "Precondition: on the first");
 
-                string hostsServer = "127.0.0.1:" + hosts.Port;
+                string hostsServer = "hosts.relay.test:" + hosts.Port;
                 Task<FlockRelayConnection> onTheHosts = held[0].OpenRelayOnAsync(hostsServer);
                 yield return Done(onTheHosts, "opened on the host's server");
                 Assert.IsFalse(onTheHosts.IsFaulted, onTheHosts.Exception?.InnerException?.Message);
@@ -1198,7 +1207,7 @@ namespace Flock.Tests.PlayMode
             using (FakeRelayServer silent = new FakeRelayServer { Silent = true })
             {
                 _server.RelayUrls.Insert(0, silent.Url);
-                // The silent relay costs its three short socket rounds and the 5 s answer wait the next relay answers within.
+                // The next relay's UDP way starts 0.5 s after the silent one's, which is still searching for a socket it answers then.
                 multiplayer.Sessions.RelayTiming.SocketRoundWait = TimeSpan.FromSeconds(0.2);
                 List<FlockMultiplayerSession> held = new List<FlockMultiplayerSession>();
                 yield return Hosted(multiplayer, held);
@@ -1206,7 +1215,7 @@ namespace Flock.Tests.PlayMode
                 Task<FlockRelayConnection> opening = held[0].OpenRelayAsync();
                 yield return Done(opening, "the relay opened", 20f);
                 Assert.IsFalse(opening.IsFaulted, opening.Exception?.InnerException?.Message);
-                Assert.Greater(silent.SeenRequests(FakeRelayServer.MethodAllocate).Count, 0, "Precondition: the first relay was asked");
+                Assert.Greater(silent.AllSeen().Count, 0, "Precondition: the first relay was asked (its socket search's binding requests)");
                 Assert.AreEqual(1, _relay.Reservations, "Reserved on the next relay Flock lists");
             }
         }
@@ -1217,7 +1226,8 @@ namespace Flock.Tests.PlayMode
             FlockMultiplayerProvider multiplayer = SignedInAs(A);
             using (FakeRelayServer silent = new FakeRelayServer { Silent = true })
             {
-                _server.RelayUrls.Insert(0, silent.Url);
+                _server.RelayUrls.Insert(0, silent.UdpUrlNamed("main.relay.test"));
+                multiplayer.Sessions.RelayTiming.NameLookUpForTesting = Loopback;
                 _relay.Password = "not-what-flock-minted";
                 // The silent relay costs its three short socket rounds and the 5 s answer wait.
                 multiplayer.Sessions.RelayTiming.SocketRoundWait = TimeSpan.FromSeconds(0.2);
@@ -1228,6 +1238,7 @@ namespace Flock.Tests.PlayMode
                 yield return Done(opening, "refused", 20f);
                 Assert.AreEqual(1, Transactions(_relay.SeenRequests(FakeRelayServer.MethodAllocate).Where(seen => seen.Signed)), "Precondition: the next relay was asked too");
                 Assert.AreEqual(FlockRelayFailure.Unreachable, ReasonOf(opening), "Flock's main relay's reason, not the next one's wrong login");
+            StringAssert.Contains("main.relay.test", ((FlockRelayException)opening.Exception.InnerException).Message, "Each server tried is named");
             }
         }
 
@@ -1249,12 +1260,13 @@ namespace Flock.Tests.PlayMode
         {
             FlockMultiplayerProvider multiplayer = SignedInAs(A);
             _server.RelayUrls.Clear();
-            _server.RelayUrls.Add("turn:relay.test:3479?transport=tcp");
+            _server.RelayUrls.Add("turns:relay.test:5349?transport=udp");
+            _server.RelayUrls.Add("turn:[::1]:3479");
             List<FlockMultiplayerSession> held = new List<FlockMultiplayerSession>();
             yield return Hosted(multiplayer, held);
             Task<FlockRelayConnection> opening = held[0].OpenRelayAsync();
             yield return Done(opening, "refused");
-            Assert.AreEqual(FlockRelayFailure.NotOffered, ReasonOf(opening), "A relay over TCP alone is none this client can use");
+            Assert.AreEqual(FlockRelayFailure.NotOffered, ReasonOf(opening), "A relay over DTLS or IPv6 alone is none this client can use");
         }
 
         [UnityTest]

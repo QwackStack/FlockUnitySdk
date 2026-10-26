@@ -12,6 +12,18 @@ It is released with the Flock SDK, at the Flock SDK's version.
 No changes to the Protokite Playtest package: this version is released together with the Flock SDK's payment error codes.
 
 
+## [1.89.2]
+
+No changes to the Protokite Playtest package: this version is released together with the Flock SDK's relay fix for networks
+that let only web traffic through.
+
+
+## [1.89.1]
+
+No changes to the Protokite Playtest package: this version is released together with the Flock SDK's relay fix for networks
+that block UDP.
+
+
 ## [1.89.0]
 
 ### Fixed

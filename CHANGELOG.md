@@ -44,6 +44,43 @@ Payment error codes. This version adds no payment call; it makes every code Floc
   codes); CI now checks each row against the enum.
 
 
+## [1.89.2]
+
+### Fixed
+
+- **A network that lets only web traffic through reaches Flock's relay in about 5 seconds, not 10.** Flock is adding the relay's
+  web ports (UDP 443, TCP 80, TLS 443) beside its usual ones, and with every way 2 seconds apart a player behind such a network
+  would wait about 10 seconds for TCP on 80. Another port of the same kind (the same transport, on the same IPv4 or IPv6)
+  now starts half a second after one that has not answered; other ways still wait 2 seconds. A network where UDP over IPv4 works
+  still opens on the relay's usual port before any web port is tried.
+
+
+## [1.89.1]
+
+### Fixed
+
+- **A player whose network blocks UDP to Flock's relay now reaches it another way.** Until now the SDK used UDP over IPv4 alone,
+  so on a network that drops it hosting or joining through the relay failed with `relay_unreachable` after about 8 seconds. A
+  phone hotspot measured for this release dropped UDP over IPv4 and carried everything else. The SDK now tries UDP over IPv4,
+  then UDP over IPv6, then TCP and TLS over IPv4, then over IPv6, each way Flock lists (for Flock's relay today: UDP and TCP on
+  3478, TLS on 5349). Each next way starts once the one before it has failed or had 2 seconds, so a blocked way costs about 2
+  seconds, and a network where UDP over IPv4 works tries nothing else. The first way to open is kept and every other is closed,
+  giving back any relay address it reserved. Over TCP or TLS a lost packet holds back the ones after it until it is sent again,
+  so play may stutter on a poor connection; with verbose logging, the SDK says which way it uses and why. TLS is checked by the
+  platform: a network that inspects encrypted traffic is refused and told so.
+- **A player on a network with IPv6 alone reaches the relay at its IPv6 address.** The relay still gives an IPv4 relay address,
+  so the player plays with everyone else. Until now the relay was looked up as IPv4 only, so such a network had no way in.
+- **A joining player reaches the host's relay server by any way in to it**, not only by the exact address and port the host
+  used: a host on UDP and a player on TLS play together. A relay server is told apart by its name.
+- **When no way in opens, `relay_unreachable` names every way tried and why each failed** (no answer within 5 s, the connection
+  refused, a certificate this device does not trust), and its fix names UDP, TCP and TLS. When one way reached the relay and was
+  refused (a wrong login, no room), that reason is told rather than another way's silence.
+- **A relay connection over TCP or TLS that the relay closes is told lost at once** (`session.RelayLost` with `relay_lost`),
+  not after the 45 seconds a silent relay is given.
+- **A relay failure that quotes the platform's own words is one line.** Windows words a reset connection with line breaks at the
+  end, which cut a player's log line short of the fix after it.
+
+
 ## [1.89.0]
 
 Found by playing through Flock's relay on a real network (Cloudflare's relay), and by running every test many times under load.

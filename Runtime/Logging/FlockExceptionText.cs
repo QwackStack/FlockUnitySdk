@@ -19,6 +19,19 @@ namespace Flock.Logging
             }
         }
 
+        /// <summary>The message as one line, for quoting inside another: the platform's own socket and stream messages end in a line break
+        /// (Windows), and one quoted so cut a player's log line short of everything after it (measured 2026-10-25).</summary>
+        internal static string OneLineMessageOf(Exception exception)
+        {
+            char[] text = MessageOf(exception).ToCharArray();
+            for (int i = 0; i < text.Length; i++)
+            {
+                if (char.IsControl(text[i]))
+                    text[i] = ' ';
+            }
+            return new string(text).Trim();
+        }
+
         /// <summary>As Unity's log names an exception: its type, then its message.</summary>
         internal static string Describe(Exception exception) => $"{exception.GetType().Name}: {MessageOf(exception)}";
 

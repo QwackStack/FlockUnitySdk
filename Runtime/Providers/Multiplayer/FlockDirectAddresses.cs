@@ -154,13 +154,13 @@ namespace Flock.Providers
             Array.Copy(Guid.NewGuid().ToByteArray(), transaction, 12);
             byte[] request = StunRequest(transaction);
 
-            using (UdpClient udp = FlockUdpSockets.OpenClient())
+            using (UdpClient udp = FlockSockets.OpenClient())
             using (CancellationTokenSource stopWaiting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
             {
                 AskedFromForTesting = udp.Client.AddressFamily;
                 try
                 {
-                    await udp.SendAsync(request, request.Length, FlockUdpSockets.Toward(udp.Client, server));
+                    await udp.SendAsync(request, request.Length, FlockSockets.Toward(udp.Client, server));
                 }
                 catch (SocketException)
                 {
@@ -233,6 +233,9 @@ namespace Flock.Providers
         // The address this device sends from toward the internet; a UDP socket picks its route on Connect and sends nothing.
         internal static string LanAddressToward(IPAddress target)
         {
+            // Addresses are offered as IPv4 alone; a relay server reached over IPv6 says nothing of this device's IPv4 LAN address.
+            if (target.AddressFamily != AddressFamily.InterNetwork)
+                return null;
             try
             {
                 using (Socket socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp))

@@ -713,8 +713,10 @@ namespace Flock.Tests.PlayMode
                 List<FlockRelayConnection> relays = new List<FlockRelayConnection>();
                 yield return PlayerAgainstARelayedHost(new FlockNetcodeOptions { Relay = FlockRelayUse.Always }, (host, port) =>
                 {
-                    // Flock lists another server first; the host's is the second.
-                    _server.RelayUrls.Insert(0, first.Url);
+                    // Flock lists another server first (a server is told apart by its name, looked up here as this machine, so it would
+                    // answer); the host's is the second.
+                    _server.RelayUrls.Insert(0, first.UdpUrlNamed("first.relay.test"));
+                    _h.Client.Multiplayer.Sessions.RelayTiming.NameLookUpForTesting = name => Task.FromResult(new[] { System.Net.IPAddress.Loopback });
                     return RelayedOnThisMachine(host, port);
                 }, started, held, relays);
 

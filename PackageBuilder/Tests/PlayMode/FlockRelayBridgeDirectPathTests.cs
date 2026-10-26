@@ -135,7 +135,7 @@ namespace Flock.Tests.PlayMode
             Pair pair = new Pair();
             yield return Paired(pair);
             yield return BothDirect(pair);
-            AddressFamily dualStack = FlockUdpSocketsTests.FamilyThisMachineGives();
+            AddressFamily dualStack = FlockSocketsTests.FamilyThisMachineGives();
             Assert.AreEqual(dualStack, pair.Relays[0].SocketFamilyForTesting, "The relay socket is dual-stack where the platform allows");
             Assert.AreEqual(dualStack, pair.HostsLink.FamilyForTesting, "So is each link's");
             Assert.AreEqual(dualStack, pair.PlayersLink.FamilyForTesting);
@@ -150,7 +150,7 @@ namespace Flock.Tests.PlayMode
         [UnityTest]
         public IEnumerator WithoutIpv6_TwoBridges_StillGoDirect_FromPlainIpv4Sockets()
         {
-            FlockUdpSockets.DualStackRefusedForTesting = true;
+            FlockSockets.DualStackRefusedForTesting = true;
             Pair pair = new Pair();
             yield return Paired(pair);
             yield return BothDirect(pair);

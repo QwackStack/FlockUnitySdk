@@ -171,6 +171,20 @@ namespace Flock.Tests.Editor
         }
 
         [Test]
+        public void ChannelFrame_OnAStream_IsPaddedToFourBytes_WithZeros()
+        {
+            byte[] data = { 1, 2, 3, 4, 5 };
+            byte[] buffer = Enumerable.Repeat((byte)0xEE, 16).ToArray();
+            int length = FlockRelayWire.WriteChannelFrame(buffer, 0x4001, data, 0, data.Length, padded: true);
+
+            Assert.AreEqual(12, length, "Four bytes before the data, five of data, three of padding");
+            CollectionAssert.AreEqual(new byte[] { 0, 0, 0 }, buffer.Skip(9).Take(3).ToArray(), "The padding is zeros");
+            Assert.IsTrue(FlockRelayWire.TryReadChannelFrame(buffer, length, out _, out int count));
+            Assert.AreEqual(5, count, "The frame still says how much of it is data");
+            Assert.AreEqual(8, FlockRelayWire.WriteChannelFrame(buffer, 0x4001, data, 0, 4, padded: true), "Data already a multiple of 4 gets no padding");
+        }
+
+        [Test]
         public void ErrorCode_ReadsClassAndNumber()
         {
             byte[] unauthorized = new byte[] { 0, 0, 4, 1 }.Concat(Encoding.UTF8.GetBytes("Unauthorized")).ToArray();
@@ -190,51 +204,139 @@ namespace Flock.Tests.Editor
             Assert.AreEqual(FlockRelayWire.RequestClass, FlockRelayWire.ClassOf(0x0003));
         }
 
-        [TestCase("turn:relay.test:3479?transport=udp", "relay.test", 3479)]
-        [TestCase("turn:relay.test:3479", "relay.test", 3479)]
-        [TestCase("turn:relay.test", "relay.test", 3478)]
-        [TestCase("TURN:Relay.Test:5000?Transport=UDP", "Relay.Test", 5000)]
-        [TestCase("turn:203.0.113.9:3479?transport=udp", "203.0.113.9", 3479)]
-        public void RelayServer_UdpAddresses_AreRead(string url, string host, int port)
+        [TestCase("turn:relay.test:3479?transport=udp", "relay.test", 3479, "Udp")]
+        [TestCase("turn:relay.test:3479", "relay.test", 3479, "Udp")]
+        [TestCase("turn:relay.test", "relay.test", 3478, "Udp")]
+        [TestCase("TURN:Relay.Test:5000?Transport=UDP", "Relay.Test", 5000, "Udp")]
+        [TestCase("turn:203.0.113.9:3479?transport=udp", "203.0.113.9", 3479, "Udp")]
+        [TestCase("turn:relay.test:3479?transport=tcp", "relay.test", 3479, "Tcp")]
+        [TestCase("turn:relay.test:80?TRANSPORT=TCP", "relay.test", 80, "Tcp")]
+        [TestCase("turn:relay.test?transport=tcp", "relay.test", 3478, "Tcp")]
+        [TestCase("turns:relay.test:5349?transport=tcp", "relay.test", 5349, "Tls")]
+        [TestCase("turns:relay.test:443", "relay.test", 443, "Tls")]
+        [TestCase("TURNS:relay.test", "relay.test", 5349, "Tls")]
+        public void RelayServer_UdpTcpAndTlsAddresses_AreRead(string url, string host, int port, string transport)
         {
-            Assert.IsTrue(FlockRelayLogin.TryReadUdpServer(url, out string readHost, out int readPort));
+            Assert.IsTrue(FlockRelayLogin.TryReadServer(url, out string readHost, out int readPort, out FlockRelayTransport readTransport));
             Assert.AreEqual(host, readHost);
             Assert.AreEqual(port, readPort);
+            Assert.AreEqual(transport, readTransport.ToString());
         }
 
-        [TestCase("turn:relay.test:3479?transport=tcp")]
-        [TestCase("turns:relay.test:5349?transport=tcp")]
+        [TestCase("turns:relay.test:5349?transport=udp")]
+        [TestCase("turn:relay.test:3479?transport=sctp")]
         [TestCase("turn:[::1]:3478")]
+        [TestCase("turns:[::1]:5349")]
         [TestCase("turn::3478")]
         [TestCase("turn:relay.test:70000")]
         [TestCase("turn:relay.test:port")]
         [TestCase("stun:stun.l.google.com:19302")]
+        [TestCase("stuns:stun.test:5349")]
         [TestCase("")]
         [TestCase(null)]
         public void RelayServer_AnythingElse_IsLeftOut(string url)
         {
-            Assert.IsFalse(FlockRelayLogin.TryReadUdpServer(url, out _, out _));
+            Assert.IsFalse(FlockRelayLogin.TryReadServer(url, out _, out _, out _));
         }
 
         [Test]
-        public void Logins_AreFlocksUdpRelays_InFlocksOrder()
+        public void Logins_AreEveryWayInFlockLists_InFlocksOrder()
         {
             RelayCredentialsRecord answer = new RelayCredentialsRecord
             {
                 IceServers = new List<IceServerRecord>
                 {
-                    new IceServerRecord { Urls = new List<string> { "turn:main.test:3479?transport=udp", "turn:main.test:3479?transport=tcp" }, Username = "u1", Credential = "p1" },
+                    new IceServerRecord { Urls = new List<string> { "turns:main.test:5349?transport=tcp", "turn:main.test:3479?transport=udp", "turn:main.test:3479?transport=tcp" }, Username = "u1", Credential = "p1" },
                     new IceServerRecord { Urls = new List<string> { "turn:no-login.test:3479" } },
-                    new IceServerRecord { Urls = new List<string> { "turn:next.test:3480" }, Username = "u2", Credential = "p2" },
+                    new IceServerRecord { Urls = new List<string> { "turn:next.test:3480", "turns:next.test:5349?transport=udp" }, Username = "u2", Credential = "p2" },
                     new IceServerRecord { Urls = new List<string> { "stun:stun.test:19302" } },
                     null,
                 },
             };
             List<FlockRelayLogin> logins = FlockRelayLogin.InAnswer(answer);
-            CollectionAssert.AreEqual(new[] { "main.test:3479", "next.test:3480" }, logins.Select(login => login.ToString()).ToArray());
+            CollectionAssert.AreEqual(new[] { "main.test:5349 over TLS", "main.test:3479 over UDP", "main.test:3479 over TCP", "next.test:3480 over UDP" }, logins.Select(login => login.Way).ToArray(),
+                "Every way Flock lists that this client speaks, in Flock's order (DTLS left out)");
             Assert.AreEqual("u1", logins[0].Username);
-            Assert.AreEqual("p2", logins[1].Password);
+            Assert.AreEqual("p2", logins[3].Password);
             Assert.IsEmpty(FlockRelayLogin.InAnswer(new RelayCredentialsRecord()), "No servers listed");
+        }
+
+        [Test]
+        public void ExceptionText_QuotedInARelayCause_IsOneLine()
+        {
+            // As Windows words a reset connection: a line break at the end, here with a NUL after it too.
+            System.IO.IOException reset = new System.IO.IOException("Unable to read data from the transport connection: An existing connection was forcibly closed by the remote host.\r\n\0");
+            Assert.AreEqual("Unable to read data from the transport connection: An existing connection was forcibly closed by the remote host.", Flock.Logging.FlockExceptionText.OneLineMessageOf(reset));
+            Assert.AreEqual("two lines  one", Flock.Logging.FlockExceptionText.OneLineMessageOf(new Exception("two lines\r\none")));
+        }
+
+        [Test]
+        public void Ways_AreTried_UdpOnEitherFamily_ThenTcpAndTls_OverIpv4_ThenOverIpv6_EachInFlocksOrder()
+        {
+            List<FlockRelayLogin> listed = new List<FlockRelayLogin>
+            {
+                new FlockRelayLogin("main.test", 5349, "u", "p", FlockRelayTransport.Tls),
+                new FlockRelayLogin("main.test", 3479, "u", "p", FlockRelayTransport.Tcp),
+                new FlockRelayLogin("main.test", 3479, "u", "p"),
+                new FlockRelayLogin("next.test", 443, "u", "p", FlockRelayTransport.Tls),
+                new FlockRelayLogin("next.test", 3480, "u", "p"),
+            };
+            CollectionAssert.AreEqual(new[]
+            {
+                "main.test:3479 over UDP", "next.test:3480 over UDP", "main.test:3479 over UDP on IPv6", "next.test:3480 over UDP on IPv6",
+                "main.test:3479 over TCP", "main.test:5349 over TLS", "next.test:443 over TLS",
+                "main.test:3479 over TCP on IPv6", "main.test:5349 over TLS on IPv6", "next.test:443 over TLS on IPv6",
+            }, FlockRelayLogin.InTheOrderTried(listed).Select(login => login.Way).ToArray());
+            List<FlockRelayLogin> onIpv6 = FlockRelayLogin.InTheOrderTried(listed).Where(way => way.Way.EndsWith("on IPv6")).ToList();
+            Assert.AreEqual(5, onIpv6.Count);
+            Assert.IsTrue(onIpv6.All(way => way.OverIpv6) && onIpv6.All(way => way.Username == "u" && way.Password == "p"), "The same logins, at the server's IPv6 address");
+        }
+
+        [Test]
+        public void Ways_CloudflaresAlternatePorts_AreTriedRightAfterTheirKind()
+        {
+            // Flock's answer once it lists Cloudflare's alternate listeners: its own URLs, then UDP 443, TCP 80 and TLS 443 (backend, 2026-10-25).
+            RelayCredentialsRecord answer = new RelayCredentialsRecord
+            {
+                IceServers = new List<IceServerRecord>
+                {
+                    new IceServerRecord
+                    {
+                        Urls = new List<string>
+                        {
+                            "turn:turn.cloudflare.com:3478?transport=udp", "turn:turn.cloudflare.com:3478?transport=tcp", "turns:turn.cloudflare.com:5349?transport=tcp",
+                            "turn:turn.cloudflare.com:443?transport=udp", "turn:turn.cloudflare.com:80?transport=tcp", "turns:turn.cloudflare.com:443?transport=tcp",
+                        },
+                        Username = "u", Credential = "p",
+                    },
+                },
+            };
+            CollectionAssert.AreEqual(new[]
+            {
+                "turn.cloudflare.com:3478 over UDP", "turn.cloudflare.com:443 over UDP", "turn.cloudflare.com:3478 over UDP on IPv6", "turn.cloudflare.com:443 over UDP on IPv6",
+                "turn.cloudflare.com:3478 over TCP", "turn.cloudflare.com:80 over TCP", "turn.cloudflare.com:5349 over TLS", "turn.cloudflare.com:443 over TLS",
+                "turn.cloudflare.com:3478 over TCP on IPv6", "turn.cloudflare.com:80 over TCP on IPv6", "turn.cloudflare.com:5349 over TLS on IPv6", "turn.cloudflare.com:443 over TLS on IPv6",
+            }, FlockRelayLogin.InTheOrderTried(FlockRelayLogin.InAnswer(answer)).Select(login => login.Way).ToArray());
+        }
+
+        [Test]
+        public void Ways_ToAServerGivenAsAnIpv4Address_HaveNoIpv6Twin()
+        {
+            List<FlockRelayLogin> listed = new List<FlockRelayLogin> { new FlockRelayLogin("203.0.113.9", 3478, "u", "p"), new FlockRelayLogin("relay.test", 3478, "u", "p") };
+            CollectionAssert.AreEqual(new[] { "203.0.113.9:3478 over UDP", "relay.test:3478 over UDP", "relay.test:3478 over UDP on IPv6" },
+                FlockRelayLogin.InTheOrderTried(listed).Select(login => login.Way).ToArray());
+        }
+
+        [TestCase("turn.example.com:3478", "turn.example.com:5349", true)]
+        [TestCase("Turn.Example.com:3478", "turn.example.com:443", true)]
+        [TestCase("turn.example.com:3478", "turn.example.com", true)]
+        [TestCase("turn.example.com:3478", "other.example.com:3478", false)]
+        [TestCase("turn.example.com:3478", "turn.example.com.evil.test:3478", false)]
+        [TestCase("turn.example.com:3478", null, false)]
+        public void SameServer_IsTheSameName_OverAnyPort(string one, string other, bool same)
+        {
+            Assert.AreEqual(same, FlockRelayLogin.SameServer(one, other));
+            Assert.AreEqual(same, new FlockRelayLogin(one.Split(':')[0], 3478, "u", "p").IsOn(other));
         }
 
         [Test]
