@@ -51,7 +51,8 @@ deserialization.
 `PurchaseAsync` spends only game currencies from the player's wallet, so a purchase it makes is paid at once and its
 `Status` reads `paid` (`IsPaid` is true). An item priced in a currency the game's currency config lists as real money is
 refused with `FlockErrorCode.ShopRealCurrencyNeedsCheckout` (the server reads that list for the Game Version picked in
-Flock > Settings): price it in a game currency, or leave it out of what the game sells this way. `Status` is still one of `PurchaseResultStatuses` (`pending`, `paid`, `failed`, `expired`, `refunded`), a
+Flock > Settings): price it in a game currency, or sell it through a store and redeem the store's purchase (see "Store
+purchases" below). `Status` is still one of `PurchaseResultStatuses` (`pending`, `paid`, `failed`, `expired`, `refunded`), a
 string for the same reason as `reward.Type`, and reads `paid` when the server leaves it out. A purchase or consume that
 reports a wallet also writes it into the cached player data, so the next `GetMyDataByTemplateAsync` reads the new balance
 rather than the one from before.
@@ -90,5 +91,42 @@ player the store's own price for the product, in their currency and with their t
 exactly as set in the dashboard, and is never null: an item with no product id reads an empty map. `Type` is one of
 `ShopItemTypes`: in a store, a `CurrencyPack` or `Consumable` item is a consumable product and a `Standard` item a one-time
 product. Store names and item kinds are strings rather than enums, for the same reason as `reward.Type`.
+
+## Store purchases
+
+When the App Store or Google Play has charged the player, hand Flock the store's purchase and it delivers the item: the
+server asks the store itself, checks the product is the item's `StoreProductIds` entry for that store, and grants the item
+to the signed-in player.
+
+```csharp
+// Apple: StoreKit's transaction id. Google Play: the product id and the purchase token.
+StoreReceipt receipt = StoreReceipt.FromGooglePlay(productId, purchaseToken);
+try
+{
+    PurchaseResult purchase = await FlockClient.Instance.Shop.RedeemStoreReceiptAsync(item.Id, receipt);
+    // Delivered: now finish the purchase in the store library (consume or acknowledge it).
+}
+catch (FlockException e)
+{
+    // Not delivered: leave the store's purchase unfinished, so the store hands it back at the next launch.
+    // e.ErrorCode says why; PaymentProviderStoreUnavailable and PaymentProviderReceiptPending mean "send it again later".
+}
+```
+
+- **Finish the store's purchase only once this call returns.** A refusal leaves it unfinished, and the store hands it back
+  to the game at the next launch to be sent again; Google refunds a purchase nobody finished after three days.
+- **It is safe to send again.** One store purchase makes one Flock purchase, so a repeat (a lost answer, a second launch)
+  returns what the first delivered, `Granted` included, and grants nothing more. The SDK sends it again by itself after an
+  answer that never came or a store that could not be asked, under the client's retry settings; keys the server cannot read
+  are not sent again. A wallet purchase is never sent twice; this one may be.
+- **It acts for the signed-in player** and throws `FlockAuthException` when nobody is signed in. If the player signs out or
+  changes while it is being sent again, the next attempt is not sent and the call ends with `OperationCanceledException`.
+- **It is never queued offline.** The store's unfinished purchase is the queue: send it again when the store hands it back.
+- The ids are sent exactly as given; one with a space before or after it is refused rather than trimmed.
+- `Status` reads `paid` for a delivered purchase. A receipt already redeemed and since refunded reads `refunded`: nothing
+  more is delivered, and the store's purchase can be finished all the same. The wallet it reports is written into the
+  cached player data, as a purchase's is.
+- **Revenue is recorded by the server**, once per store purchase, at the item's `Price` and `Currency`; this call records no
+  analytics transaction of its own (unlike `PurchaseAsync`, whose wallet purchases are never counted as revenue).
 
 See also: [Codegen](codegen.md) for typed shop accessors and the `FlockShopItemId` / `FlockFundId` enums, and [Player Data & Game Commands](player-data.md) for `AddGameFundsAsync`.

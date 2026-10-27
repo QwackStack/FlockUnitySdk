@@ -56,6 +56,20 @@ namespace Flock.Models
         public string PlayerId { get; set; }
     }
 
+    // No player_id: the server redeems for the player the sign-in names.
+    internal class StoreReceiptRedemption
+    {
+        [JsonProperty("shop_item_id")]
+        public string ShopItemId { get; set; }
+
+        [JsonProperty("provider")]
+        public string Provider { get; set; }
+
+        // Ids only: Apple's transaction_id, or Google's product_id and purchase_token.
+        [JsonProperty("receipt")]
+        public Dictionary<string, string> Receipt { get; set; }
+    }
+
     public class PlayerInventory
     {
         [JsonProperty("id")]

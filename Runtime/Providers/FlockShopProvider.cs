@@ -215,9 +215,69 @@ namespace Flock.Providers
                 throw;
             }
 
+            RequirePurchaseNamed(result, "Read the player's inventory and wallet to see whether it went through before offering it again; the SDK never sends a wallet purchase twice.");
             RecordPurchaseInTheBackground(shopItem, shopItemId, nameof(PurchaseStatus.Purchased), purchaser);
-            ApplyWalletToPlayerCache(result?.Wallet);
+            ApplyWalletToPlayerCache(result.Wallet);
             return result;
+        }
+
+        /// <summary>Redeems a purchase a store made for a shop item, as the signed-in player: Flock asks the store and delivers the item. Safe to send again: one store purchase makes one Flock purchase, and a repeat returns what the first delivered. The wallet is also written into the cached player data.</summary>
+        public async Task<PurchaseResult> RedeemStoreReceiptAsync(
+            string shopItemId, StoreReceipt receipt,
+            CancellationToken cancellationToken = default)
+        {
+            RequireNotEmpty(shopItemId, "Shop Item ID");
+            Dictionary<string, string> ids = ReceiptIds(receipt);
+            int? redeemer = SignInToActFor;
+            if (!redeemer.HasValue)
+                throw new FlockAuthException("No player is signed in") { Hint = FlockErrorHints.SignInFirst };
+
+            // A store purchase makes one Flock purchase, so this one may be sent again (payment plan D-P3), unlike a wallet purchase.
+            PurchaseResult result = await ExecuteAsync(async () =>
+            {
+                StoreReceiptRedemption request = new StoreReceiptRedemption
+                {
+                    ShopItemId = shopItemId,
+                    Provider = receipt.Store,
+                    Receipt = ids
+                };
+                return await FlockHttpClient.PostAsync<PurchaseResult>(
+                    $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.ShopValidateReceipt}", request, Client.GetBaseHeaders(), cancellationToken);
+            }, "Redeem store receipt", cancellationToken, idempotent: true, actsForSignIn: redeemer);
+
+            RequirePurchaseNamed(result, "Leave the store's purchase unfinished and send the same receipt again: it cannot be paid for twice.");
+            ApplyWalletToPlayerCache(result.Wallet);
+            return result;
+        }
+
+        // The receipt's ids as the route takes them, each exactly as the store issued it.
+        private Dictionary<string, string> ReceiptIds(StoreReceipt receipt)
+        {
+            if (receipt == null)
+                throw new FlockValidationException("No store receipt was given") { Hint = "Pass the store's purchase as StoreReceipt.FromAppleAppStore or StoreReceipt.FromGooglePlay." };
+            if (receipt.Store == PaymentProviders.AppleAppStore)
+                return new Dictionary<string, string> { { "transaction_id", AsTheStoreIssuedIt(receipt.TransactionId, "App Store transaction id") } };
+            return new Dictionary<string, string>
+            {
+                { "product_id", AsTheStoreIssuedIt(receipt.ProductId, "Google Play product id") },
+                { "purchase_token", AsTheStoreIssuedIt(receipt.PurchaseToken, "Google Play purchase token") }
+            };
+        }
+
+        // A store id with spaces around it is a bug where it was copied; trimming it here would hide that bug.
+        private string AsTheStoreIssuedIt(string id, string name)
+        {
+            RequireNotEmpty(id, name, $"Pass the {name} the store gave for this purchase.");
+            if (char.IsWhiteSpace(id[0]) || char.IsWhiteSpace(id[id.Length - 1]))
+                throw new FlockValidationException($"The {name} starts or ends with a space") { Hint = $"Pass the {name} exactly as the store gave it; spaces around it come from wherever it was copied or stored." };
+            return id;
+        }
+
+        // A 2xx that names no purchase is not Flock's answer about one: without this, PurchaseResult's default status would read it as paid.
+        private static void RequirePurchaseNamed(PurchaseResult result, string fix)
+        {
+            if (result == null || string.IsNullOrEmpty(result.PurchaseId))
+                throw new FlockSerializationException("The server's answer named no purchase, so whether it went through is unknown") { Hint = fix };
         }
 
         // The purchase never waits on its records: they are analytics, and their sending and retries must not hold up or fail

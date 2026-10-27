@@ -18,7 +18,7 @@ namespace Flock.Exceptions
         private const string ApiUrlAlone = "The API URL in Flock > Settings must be the Flock server's address alone, such as https://api.example.com, with no /v1 or other path after it.";
 
         // A purchase and the shop reads take the shop item's own id, which a newcomer cannot tell from the item's name.
-        private const string ShopItemIdFromShop = "Shop.PurchaseAsync and Shop.GetItemAsync take the shop item's Id (ShopItem.Id, read from its shop with Shop.GetAllAsync, Shop.GetByNameAsync or Shop.GetItemsByShopAsync), not the item's name or the shop's id. If the id is right, check the API Key in Flock > Settings is the key of the game that owns the shop.";
+        private const string ShopItemIdFromShop = "Shop.PurchaseAsync, Shop.RedeemStoreReceiptAsync and Shop.GetItemAsync take the shop item's Id (ShopItem.Id, read from its shop with Shop.GetAllAsync, Shop.GetByNameAsync or Shop.GetItemsByShopAsync), not the item's name or the shop's id. If the id is right, check the API Key in Flock > Settings is the key of the game that owns the shop.";
 
         // A wallet is built once, at registration; neither a purchase nor Commands.AddGameFundsAsync adds a currency to it.
         private const string WalletHoldsTemplateCurrencies = "A wallet holds the currencies of its Game Version's currency template, each starting at zero when the player registers.";
@@ -27,7 +27,10 @@ namespace Flock.Exceptions
         private const string PaymentsPage = "Monetization > Payments in the Flock dashboard";
 
         // A receipt the store has not settled yet is never finished at the store, so it comes back to be sent again.
-        private const string SendTheReceiptAgainLater = "leave the store's purchase unfinished and send the same receipt again later.";
+        private const string SendTheReceiptAgainLater = "leave the store's purchase unfinished and send the same receipt again later with Shop.RedeemStoreReceiptAsync.";
+
+        // A setup fault met while redeeming a store purchase: the player has paid the store, and nothing was kept.
+        private const string PaidInTheStoreAlready = " If this came from Shop.RedeemStoreReceiptAsync, the player has already paid the store: leave the store's purchase unfinished, and the same receipt redeems once this is fixed.";
 
         // A store refusing the game's own keys is fixed by the studio, never by the player.
         private const string StoreKeysFix = "check the App Store or Google Play keys under " + PaymentsPage + ", and that the Google service account has access to the app in the Google Play Console.";
@@ -92,7 +95,7 @@ namespace Flock.Exceptions
             { FlockErrorCode.PlayerTemplateNotFoundByName, "No player-data template by that name. " + AuthorAndSync },
             { FlockErrorCode.GameCommandAchievementNotFound, "No achievement by that id. " + AuthorAndSync },
             { FlockErrorCode.GameCommandCurrencyNotFound, "The player's wallet has no currency by that code. " + WalletHoldsTemplateCurrencies + " Use one of those codes, letter case included, or add the currency to the currency template in the Flock dashboard." },
-            { FlockErrorCode.ShopCurrencyTemplateNotFound, "This Game Version has no currency template (a player-data template tagged currency), so no player has a wallet to pay from. Create one in the Flock dashboard under the version this build runs (the Game Version in Flock > Settings)." },
+            { FlockErrorCode.ShopCurrencyTemplateNotFound, "This Game Version has no currency template (a player-data template tagged currency), so no player has a wallet to pay from. Create one in the Flock dashboard under the version this build runs (the Game Version in Flock > Settings)." + PaidInTheStoreAlready },
             { FlockErrorCode.GameCommandTemplateValidationFailed, "The value does not match the template's schema. Compare the field names and types in the Flock dashboard, then re-run Flock > Settings > Code Generation > Sync Schemas so the generated types match." },
             { FlockErrorCode.GameCommandPlayerDataNotLinkedToTemplate, "That record is not linked to a template, so template-aware commands cannot act on it. Re-create it from the template in the Flock dashboard." },
             { FlockErrorCode.GameCommandNotAWallet, "That record is not a wallet. Currency commands only work on wallet-typed player data." },
@@ -105,9 +108,9 @@ namespace Flock.Exceptions
             { FlockErrorCode.GamePatchPatchNotFound, "No patch by that id. " + AuthorInDashboard + " Call Config.ClearCache() if it was re-published while the game was running." },
             { FlockErrorCode.GamePatchGameConfigNotFound, "The patch points at a config that no longer exists. Re-check the config it patches in the Flock dashboard." },
             { FlockErrorCode.GameConfigInvalidTag, "The backend does not accept that config tag. Valid tags are the SchemaTag values — if generated code is sending something else, re-run Flock > Settings > Code Generation > Sync Schemas." },
-            { FlockErrorCode.ShopMalformedReward, "The item's stored reward cannot be granted, so the purchase was refused rather than half-applied. Fix that item's rewards in the Flock dashboard — no change to the call will work around it." },
-            { FlockErrorCode.ShopPackGrantsNothing, "This currency pack has no rewards configured, so buying it would grant nothing. Add its rewards in the Flock dashboard, or take it off sale." },
-            { FlockErrorCode.ShopRealCurrencyNeedsCheckout, "This item is priced in a currency the game's currency config lists as real money, and Shop.PurchaseAsync only spends game currencies from the player's wallet. Price the item in a game currency in the Flock dashboard, or leave it out of what the game sells through Shop.PurchaseAsync." },
+            { FlockErrorCode.ShopMalformedReward, "The item's stored reward cannot be granted, so the purchase was refused rather than half-applied. Fix that item's rewards in the Flock dashboard — no change to the call will work around it." + PaidInTheStoreAlready },
+            { FlockErrorCode.ShopPackGrantsNothing, "This currency pack has no rewards configured, so buying it would grant nothing. Add its rewards in the Flock dashboard, or take it off sale." + PaidInTheStoreAlready },
+            { FlockErrorCode.ShopRealCurrencyNeedsCheckout, "This item is priced in a currency the game's currency config lists as real money, and Shop.PurchaseAsync only spends game currencies from the player's wallet. Price the item in a game currency in the Flock dashboard, or sell it through the App Store or Google Play and redeem the store's purchase with Shop.RedeemStoreReceiptAsync (ShopItem.IsRealMoney says which items these are)." },
             { FlockErrorCode.GameMissingStudioId, "The game record has no studio attached. Fix it in the Flock dashboard — nothing in the Unity project can supply it." },
             { FlockErrorCode.LogEventGameNotFound, "The API key does not resolve to a game, so log events have nowhere to land. Check the API Key in Flock > Settings against the dashboard." },
             { FlockErrorCode.AssetAssetNotFound, "No asset by that id. Upload it in the Flock dashboard and publish it to this game version." },
@@ -136,14 +139,14 @@ namespace Flock.Exceptions
             // Runtime state the caller can act on rather than misconfiguration.
             { FlockErrorCode.ShopInsufficientFunds, "The player cannot afford this item. Read the wallet balance before offering the purchase." },
             { FlockErrorCode.ShopCurrencyNotHeld, "The player's wallet has no balance in the item's currency. " + WalletHoldsTemplateCurrencies + " Price the item in one of those, or add the currency to the currency template in the Flock dashboard." },
-            { FlockErrorCode.ShopWalletNotFound, "This player has no wallet in this Game Version. The server makes a player's wallet when the player registers, from the version's currency template, so a player who registered before that template existed, or under another Game Version, has none. Create the currency template first, then register the player under this build's Game Version." },
+            { FlockErrorCode.ShopWalletNotFound, "This player has no wallet in this Game Version. The server makes a player's wallet when the player registers, from the version's currency template, so a player who registered before that template existed, or under another Game Version, has none. Create the currency template first, then register the player under this build's Game Version." + PaidInTheStoreAlready },
             { FlockErrorCode.GameCommandPlayerDataNotFound, "The player has no record for that template yet. Reads do not create it — write it first with Commands.UpdatePlayerDataAsync." },
             { FlockErrorCode.PlayerDataNotFound, "The player has no record for that template yet. Reads do not create it — write it first with Commands.UpdatePlayerDataAsync." },
             { FlockErrorCode.AnalyticsCurrencyNotFound, "Transaction analytics need a currency entity for this game. Create one in the Flock dashboard." },
             { FlockErrorCode.AnalyticsInvalidCurrencyId, "AnalyticsTransactionRequest.CurrencyId is not a 26-character ULID. Leave it null and set CurrencyCode instead — the backend resolves the code to an id." },
             { FlockErrorCode.AnalyticsSessionNotFound, "That analytics session is no longer open on the server. The SDK opens one on sign-in and closes it on logout; a new one starts on the next sign-in." },
             { FlockErrorCode.GameCommandRateLimited, "Too many writes to that player-data row. Send the fields together in one Commands.UpdatePlayerDataAsync call instead of one Commands.UpdatePlayerDataFieldAsync per field." },
-            { FlockErrorCode.ShopRewardCurrencyNotHeld, "The reward pays out a currency the player's wallet does not have. " + WalletHoldsTemplateCurrencies + " Reward one of those, or add the currency to the currency template in the Flock dashboard." },
+            { FlockErrorCode.ShopRewardCurrencyNotHeld, "The reward pays out a currency the player's wallet does not have. " + WalletHoldsTemplateCurrencies + " Reward one of those, or add the currency to the currency template in the Flock dashboard." + PaidInTheStoreAlready },
             { FlockErrorCode.PlayerInventoryAlreadyUsed, "That inventory entry has already been consumed — each one is spendable once. Re-read Shop.GetPlayerInventoryAsync before offering it again." },
             { FlockErrorCode.PlayerInventoryInventoryEntryNotFound, "No inventory entry by that id in this game, or, while a player is signed in, the entry is another player's, which the server answers the same way. Shop.ConsumeAsync takes the signed-in player's own entry id — a PurchaseResult.Inventory.Id — not the shop item id." },
 

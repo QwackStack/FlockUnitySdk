@@ -31,6 +31,38 @@ namespace Flock.Models
         public const string Moyasar = "moyasar";
     }
 
+    /// <summary>A purchase a store made, as Flock redeems it: the App Store's transaction id, or Google Play's product id and purchase token. Make one with <see cref="FromAppleAppStore"/> or <see cref="FromGooglePlay"/>.</summary>
+    public sealed class StoreReceipt
+    {
+        /// <summary>The store that made the purchase: <see cref="PaymentProviders.AppleAppStore"/> or <see cref="PaymentProviders.GooglePlay"/>.</summary>
+        public string Store { get; }
+
+        /// <summary>The App Store's transaction id (StoreKit's transaction id); null for Google Play.</summary>
+        public string TransactionId { get; }
+
+        /// <summary>The Google Play product id the player bought; null for the App Store.</summary>
+        public string ProductId { get; }
+
+        /// <summary>The Google Play purchase token; null for the App Store.</summary>
+        public string PurchaseToken { get; }
+
+        private StoreReceipt(string store, string transactionId, string productId, string purchaseToken)
+        {
+            Store = store;
+            TransactionId = transactionId;
+            ProductId = productId;
+            PurchaseToken = purchaseToken;
+        }
+
+        /// <summary>An App Store purchase, by its transaction id, exactly as StoreKit gave it.</summary>
+        public static StoreReceipt FromAppleAppStore(string transactionId)
+            => new StoreReceipt(PaymentProviders.AppleAppStore, transactionId, null, null);
+
+        /// <summary>A Google Play purchase, by its product id and purchase token, exactly as Google Play gave them.</summary>
+        public static StoreReceipt FromGooglePlay(string productId, string purchaseToken)
+            => new StoreReceipt(PaymentProviders.GooglePlay, null, productId, purchaseToken);
+    }
+
     /// <summary>Where a purchase has got to. A wallet purchase is born paid; the others belong to real-money checkouts, whose result comes later. Strings rather than an enum: the server can add a status, and an unknown one must not break reading the purchase.</summary>
     public static class PurchaseResultStatuses
     {

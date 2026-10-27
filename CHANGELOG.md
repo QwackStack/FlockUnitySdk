@@ -6,6 +6,41 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.92.0]
+
+Store purchase validation. A game that has an App Store or Google Play purchase in hand can have Flock check it with the store
+and deliver the item.
+
+### Added
+
+- **`Shop.RedeemStoreReceiptAsync(shopItemId, StoreReceipt)`** redeems a store's purchase for a shop item as the signed-in
+  player: the server asks the store itself, checks the product is the item's `StoreProductIds` entry for that store, and
+  returns the `PurchaseResult` (what was granted, the inventory entry, the wallet, which is also written into the cached
+  player data). Make the receipt with `StoreReceipt.FromAppleAppStore(transactionId)` or
+  `StoreReceipt.FromGooglePlay(productId, purchaseToken)`. One store purchase makes one Flock purchase, so it may be sent
+  again, unlike a wallet purchase: the SDK re-sends it after an answer that never came or a store that could not be asked,
+  and a repeat returns what the first delivered. Finish the purchase in the store library only once this call returns.
+  Not queued offline; it throws `FlockAuthException` with nobody signed in; a retry is never sent once the player signs out
+  or changes; an id with a space before or after it is refused, not trimmed. A repeat of a receipt since refunded returns
+  status `refunded`. It records no analytics transaction: the server records each delivered store purchase as revenue.
+
+### Changed
+
+- **The payment fixes name the call:** "send the same receipt again later with `Shop.RedeemStoreReceiptAsync`";
+  `ShopRealCurrencyNeedsCheckout` points at selling the item through a store and redeeming it; `ShopItemNotFound` names it
+  among the calls that take a shop item id; and the five setup faults a store purchase can meet after the player has paid
+  (`ShopCurrencyTemplateNotFound`, `ShopWalletNotFound`, `ShopMalformedReward`, `ShopPackGrantsNothing`,
+  `ShopRewardCurrencyNotHeld`) say the same receipt redeems once the setup is fixed.
+- **A 5xx that names one of the game's own settings is not sent again**: `PaymentProviderCredentialsUnreadable` and
+  `ShopRealCurrencySettlementUnavailable` stay the same until the studio fixes them.
+
+### Fixed
+
+- **`Shop.PurchaseAsync` no longer reads an answer that names no purchase as paid.** A 2xx without a purchase id (`{}`)
+  read as a paid purchase, since `PurchaseResult.Status` defaults to `paid`; it now throws `FlockSerializationException`
+  saying to check the inventory and wallet before offering the item again.
+
+
 ## [1.91.0]
 
 Real-money shop items. A game can tell which shop items cost real money and read each one's product id in each store.

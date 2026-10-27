@@ -807,6 +807,300 @@ namespace Flock.Tests.Editor
             Assert.AreEqual("tap", PaymentProviders.Tap);
             Assert.AreEqual("moyasar", PaymentProviders.Moyasar);
         }
+
+        // ---- Redeeming a store's purchase (shop/validate-receipt) ----
+        // The answer is the purchase at the root, as the wallet purchase's is; a delivered store purchase reads paid.
+        private const string RedeemedPack =
+            "{\"purchase_id\":\"pur-9\",\"item_type\":\"currency_pack\",\"status\":\"paid\",\"inventory\":null," +
+            "\"granted\":[{\"type\":\"currency\",\"code\":\"gold\",\"amount\":100}],\"wallet\":";
+
+        // Refusals as the backend sent them to the payment probe on 2026-10-26 (main 644bf45); the last three are the
+        // backend's own messages for causes no probe can reach without a real store purchase.
+        private static readonly object[] ReceiptRefusals =
+        {
+            new object[] { 422, "{\"detail\":{\"code\":\"payment_provider.store_credentials_rejected\",\"message\":\"Apple rejected this game's store credentials (HTTP 401); the studio's payment settings need fixing before receipts can be verified\"}}", FlockErrorCode.PaymentProviderStoreCredentialsRejected },
+            new object[] { 422, "{\"detail\":{\"code\":\"payment_provider.receipt_invalid\",\"message\":\"Receipt rejected: no transaction_id supplied\"}}", FlockErrorCode.PaymentProviderReceiptInvalid },
+            new object[] { 422, "{\"detail\":{\"code\":\"payment_provider.receipt_product_mismatch\",\"message\":\"This item has no apple_app_store product id configured\"}}", FlockErrorCode.PaymentProviderReceiptProductMismatch },
+            new object[] { 404, "{\"detail\":{\"code\":\"payment_provider.provider_not_found\",\"message\":\"Provider 'apple_app_store' is not configured for this game\"}}", FlockErrorCode.PaymentProviderProviderNotFound },
+            new object[] { 404, "{\"detail\":{\"code\":\"shop.item_not_found\",\"message\":\"Shop item not found\"}}", FlockErrorCode.ShopItemNotFound },
+            new object[] { 422, "{\"detail\":{\"code\":\"payment_provider.receipt_pending\",\"message\":\"Google reports this payment as still in progress; ask again later\"}}", FlockErrorCode.PaymentProviderReceiptPending },
+            new object[] { 403, "{\"detail\":{\"code\":\"payment_provider.receipt_belongs_to_another_player\",\"message\":\"Receipt refused: this store transaction was redeemed by another player\"}}", FlockErrorCode.PaymentProviderReceiptBelongsToAnotherPlayer },
+            new object[] { 422, "{\"detail\":{\"code\":\"payment_provider.receipt_product_mismatch\",\"message\":\"Receipt is for 'com.flock.gems.small', but this item sells 'com.flock.gems'\"}}", FlockErrorCode.PaymentProviderReceiptProductMismatch },
+        };
+
+        private const string StoreUnavailable =
+            "{\"detail\":{\"code\":\"payment_provider.store_unavailable\",\"message\":\"apple_app_store could not be asked about this receipt ([Errno 111] Connection refused); try again later\"}}";
+        private const string UnreadableKeys =
+            "{\"detail\":{\"code\":\"payment_provider.credentials_unreadable\",\"message\":\"Apple credentials could not be used to sign a request\"}}";
+
+        [Test]
+        public void Redeem_AppStore_SendsItsTransactionId_AsTheSignedInPlayer()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.ShopValidateReceipt, FlockFakeTransport.Ok(RedeemedPack + "null}"));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                h.Run(() => h.Client.Shop.RedeemStoreReceiptAsync("item-1", StoreReceipt.FromAppleAppStore("2000000999999999")));
+
+                FlockHttpRequest sent = transport.AllTo(FlockEndpoints.ShopValidateReceipt)[0];
+                Assert.AreEqual("POST", sent.Method);
+                Assert.AreEqual("{\"shop_item_id\":\"item-1\",\"provider\":\"apple_app_store\",\"receipt\":{\"transaction_id\":\"2000000999999999\"}}", sent.JsonBody,
+                    "No player_id: the server redeems for the player the sign-in names.");
+                Assert.IsTrue(sent.Headers.ContainsKey("Authorization"), "Sent with the player's sign-in.");
+            }
+        }
+
+        [Test]
+        public void Redeem_GooglePlay_SendsItsProductIdAndPurchaseToken()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.ShopValidateReceipt, FlockFakeTransport.Ok(RedeemedPack + "null}"));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                h.Run(() => h.Client.Shop.RedeemStoreReceiptAsync("item-1", StoreReceipt.FromGooglePlay("com.flock.gems", "token-abc.AO-J1Oz")));
+
+                Assert.AreEqual("{\"shop_item_id\":\"item-1\",\"provider\":\"google_play\",\"receipt\":{\"product_id\":\"com.flock.gems\",\"purchase_token\":\"token-abc.AO-J1Oz\"}}",
+                    transport.AllTo(FlockEndpoints.ShopValidateReceipt)[0].JsonBody);
+            }
+        }
+
+        [Test]
+        public void Redeem_Delivered_ReturnsWhatItGranted_AndWritesTheWallet()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.ShopValidateReceipt, FlockFakeTransport.Ok(RedeemedPack + WalletJson("600") + "}"));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+                PrimeCachedWallet(h, "500");
+
+                PurchaseResult result = h.Run(() => h.Client.Shop.RedeemStoreReceiptAsync("item-1", StoreReceipt.FromAppleAppStore("2000000999999999")));
+
+                Assert.AreEqual("pur-9", result.PurchaseId);
+                Assert.IsTrue(result.IsPaid);
+                Assert.AreEqual(100, result.Granted[0].Amount);
+                Assert.AreEqual("600", CachedGold(h), "The cached wallet reads the balance the redemption reported.");
+            }
+        }
+
+        // The server answers a repeat with what the first delivered, so the SDK keeps no answer of its own to hand back.
+        [Test]
+        public void Redeem_SentAgain_AsksTheServerAgain()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.OnSequence(FlockEndpoints.ShopValidateReceipt,
+                FlockFakeTransport.Ok(RedeemedPack + "null}"),
+                FlockFakeTransport.Ok("{\"purchase_id\":\"pur-9\",\"item_type\":\"currency_pack\",\"status\":\"refunded\",\"granted\":[{\"type\":\"currency\",\"code\":\"gold\",\"amount\":100}]}"));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+                StoreReceipt receipt = StoreReceipt.FromAppleAppStore("2000000999999999");
+
+                h.Run(() => h.Client.Shop.RedeemStoreReceiptAsync("item-1", receipt));
+                PurchaseResult again = h.Run(() => h.Client.Shop.RedeemStoreReceiptAsync("item-1", receipt));
+
+                Assert.AreEqual(2, transport.CountTo(FlockEndpoints.ShopValidateReceipt));
+                Assert.AreEqual(PurchaseResultStatuses.Refunded, again.Status, "The repeat reads the purchase as it is now.");
+                Assert.AreEqual(100, again.Granted[0].Amount, "A repeat carries what the first redemption granted.");
+            }
+        }
+
+        [Test]
+        public void Redeem_NotSignedIn_ThrowsBeforeSending()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.SetReachable(true);
+
+                FlockAuthException ex = Assert.Throws<FlockAuthException>(() =>
+                    h.Run(() => h.Client.Shop.RedeemStoreReceiptAsync("item-1", StoreReceipt.FromAppleAppStore("2000000999999999"))));
+
+                Assert.AreEqual(FlockErrorHints.SignInFirst, ex.Hint);
+                Assert.AreEqual(0, transport.CountTo(FlockEndpoints.ShopValidateReceipt));
+            }
+        }
+
+        private static readonly object[] ReceiptsMissingAnId =
+        {
+            new object[] { null },
+            new object[] { StoreReceipt.FromAppleAppStore("") },
+            new object[] { StoreReceipt.FromAppleAppStore(null) },
+            new object[] { StoreReceipt.FromGooglePlay("", "token-abc") },
+            new object[] { StoreReceipt.FromGooglePlay("com.flock.gems", null) },
+        };
+
+        [TestCaseSource(nameof(ReceiptsMissingAnId))]
+        public void Redeem_WithoutAnId_ThrowsBeforeSending(StoreReceipt receipt)
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                FlockValidationException ex = Assert.Throws<FlockValidationException>(() => h.Run(() => h.Client.Shop.RedeemStoreReceiptAsync("item-1", receipt)));
+
+                Assert.IsNotEmpty(ex.Hint);
+                Assert.AreEqual(0, transport.CountTo(FlockEndpoints.ShopValidateReceipt));
+            }
+        }
+
+        // A store's id with spaces around it was mangled where it was copied; trimming it would hide that, so it is refused.
+        [TestCase(" 2000000999999999")]
+        [TestCase("2000000999999999\n")]
+        public void Redeem_AnIdWithSpacesAroundIt_IsRefused_NotTrimmed(string transactionId)
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                Assert.Throws<FlockValidationException>(() =>
+                    h.Run(() => h.Client.Shop.RedeemStoreReceiptAsync("item-1", StoreReceipt.FromAppleAppStore(transactionId))));
+                Assert.AreEqual(0, transport.CountTo(FlockEndpoints.ShopValidateReceipt));
+            }
+        }
+
+        [TestCaseSource(nameof(ReceiptRefusals))]
+        public void Redeem_Refusals_ParseToTheirCodes_AndAreNotSentAgain(int status, string body, FlockErrorCode expected)
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.ShopValidateReceipt, FlockFakeTransport.Status(status, body));
+            using (FlockTestClient h = FlockTestClient.Create(transport, config => config.RetryPolicy = RetriesEnabled()))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                FlockException ex = Assert.Catch<FlockException>(() =>
+                    h.Run(() => h.Client.Shop.RedeemStoreReceiptAsync("item-1", StoreReceipt.FromAppleAppStore("2000000999999999"))));
+
+                Assert.AreEqual(expected, ex.ErrorCode);
+                Assert.IsNotEmpty(ex.Hint);
+                Assert.AreEqual(1, transport.CountTo(FlockEndpoints.ShopValidateReceipt), "A refusal is the server's final word on this receipt for now.");
+            }
+        }
+
+        [Test]
+        public void Redeem_StoreUnavailable_IsSentAgain_ThenThrowsWithItsCode()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.ShopValidateReceipt, FlockFakeTransport.Status(503, StoreUnavailable));
+            using (FlockTestClient h = FlockTestClient.Create(transport, config => config.RetryPolicy = RetriesEnabled()))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                FlockException ex = Assert.Catch<FlockException>(() =>
+                    h.Run(() => h.Client.Shop.RedeemStoreReceiptAsync("item-1", StoreReceipt.FromAppleAppStore("2000000999999999"))));
+
+                Assert.AreEqual(FlockErrorCode.PaymentProviderStoreUnavailable, ex.ErrorCode);
+                Assert.AreEqual(4, transport.CountTo(FlockEndpoints.ShopValidateReceipt), "Sent again under the retry policy: the first try and three retries.");
+            }
+        }
+
+        // Keys the server cannot read stay unreadable until the studio enters them again, so the same receipt is not sent again.
+        [Test]
+        public void Redeem_UnreadableKeys_AreNotSentAgain()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.ShopValidateReceipt, FlockFakeTransport.Status(503, UnreadableKeys));
+            using (FlockTestClient h = FlockTestClient.Create(transport, config => config.RetryPolicy = RetriesEnabled()))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                FlockException ex = Assert.Catch<FlockException>(() =>
+                    h.Run(() => h.Client.Shop.RedeemStoreReceiptAsync("item-1", StoreReceipt.FromAppleAppStore("2000000999999999"))));
+
+                Assert.AreEqual(FlockErrorCode.PaymentProviderCredentialsUnreadable, ex.ErrorCode);
+                Assert.AreEqual(1, transport.CountTo(FlockEndpoints.ShopValidateReceipt));
+            }
+        }
+
+        // Unlike a wallet purchase, a redemption may be sent again after an answer that never arrived (payment plan D-P3).
+        [Test]
+        public void Redeem_DroppedConnection_IsSentAgain()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            using (FlockTestClient h = FlockTestClient.Create(transport, config => config.RetryPolicy = RetriesEnabled()))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+                transport.GoOffline();
+
+                Assert.Catch<FlockException>(() =>
+                    h.Run(() => h.Client.Shop.RedeemStoreReceiptAsync("item-1", StoreReceipt.FromAppleAppStore("2000000999999999"))));
+
+                Assert.AreEqual(4, transport.CountTo(FlockEndpoints.ShopValidateReceipt));
+            }
+        }
+
+        // A retry goes out as the player who redeemed or not at all: another player's sign-in never redeems the first player's receipt.
+        [Test]
+        public void Redeem_PlayerChangesWhileItIsSentAgain_IsNotSentAsTheNextPlayer()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            using (FlockTestClient h = FlockTestClient.Create(transport, config => config.RetryPolicy = RetriesEnabled()))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+                transport.Default(request =>
+                {
+                    h.LoginAs("player-b");
+                    return FlockFakeTransport.Status(503, StoreUnavailable);
+                });
+
+                Assert.Catch<OperationCanceledException>(() =>
+                    h.Run(() => h.Client.Shop.RedeemStoreReceiptAsync("item-1", StoreReceipt.FromAppleAppStore("2000000999999999"))));
+
+                Assert.AreEqual(1, transport.CountTo(FlockEndpoints.ShopValidateReceipt), "The retry would have gone out as player-b.");
+            }
+        }
+
+        // A 2xx that names no purchase says nothing about one; PurchaseResult's default status would read it as paid.
+        [TestCase("{}")]
+        [TestCase("{\"item_type\":\"currency_pack\",\"granted\":[]}")]
+        public void Redeem_AnswerNamingNoPurchase_Fails(string body)
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.ShopValidateReceipt, FlockFakeTransport.Ok(body));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                FlockSerializationException ex = Assert.Throws<FlockSerializationException>(() =>
+                    h.Run(() => h.Client.Shop.RedeemStoreReceiptAsync("item-1", StoreReceipt.FromAppleAppStore("2000000999999999"))));
+
+                StringAssert.Contains("send the same receipt again", ex.Hint);
+            }
+        }
+
+        [Test]
+        public void Purchase_AnswerNamingNoPurchase_Fails()
+        {
+            FlockFakeTransport transport = WithItem();
+            transport.On(FlockEndpoints.ShopTransaction, FlockFakeTransport.Ok("{}"));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                FlockSerializationException ex = Assert.Throws<FlockSerializationException>(() => h.Run(() => h.Client.Shop.PurchaseAsync("item-1")));
+
+                StringAssert.Contains("inventory and wallet", ex.Hint);
+            }
+        }
     }
 
     // Live: the catalog as the SDK reads it from the real backend, against the route's own answer. Manual only: needs FlockConfig.asset and the backend.
@@ -883,6 +1177,81 @@ namespace Flock.Tests.Editor
             FlockException refusal = unknown.Exception?.GetBaseException() as FlockException;
             Assert.IsNotNull(refusal, "An unknown item is refused.");
             Assert.AreEqual(FlockErrorCode.ShopItemShopItemNotFound, refusal.ErrorCode);
+        }
+
+        // Redeeming through the real route as a signed-in player: with no store purchase to hand, each answer is a refusal on its own code.
+        // A refusal past the sign-in and the body's checks proves the request went out signed in and in the route's shape.
+        [UnityTest, Explicit("Hits the live Flock backend using FlockConfig.asset; run manually from the Test Runner.")]
+        public IEnumerator Live_RedeemStoreReceipt_IsRefusedOnItsOwnCodes()
+        {
+            FlockConfigAsset asset = Resources.Load<FlockConfigAsset>("FlockConfig");
+            if (asset == null || !asset.IsValid(out string _) || string.IsNullOrEmpty(asset.gameVersionId))
+            {
+                Assert.Ignore("No usable FlockConfig.asset (missing fields or unresolved Game Version ID).");
+                yield break;
+            }
+            if (!FlockClient.IsInitialized)
+            {
+                FlockClient.Create(asset.ToInitConfig(), new NullFlockLogger());
+                _createdClient = true;
+            }
+
+            Task<PlayerLoginResponse> login = FlockClient.Instance.Authentication.LoginWithDeviceAsync(LiveDeviceId);
+            while (!login.IsCompleted)
+                yield return null;
+            if (login.IsFaulted)
+            {
+                if ((login.Exception?.GetBaseException() as FlockException)?.StatusCode == null)
+                {
+                    Assert.Ignore($"Live backend unreachable: {login.Exception?.GetBaseException().Message}");
+                    yield break;
+                }
+                Task<PlayerLoginResponse> register = FlockClient.Instance.Authentication.RegisterWithDeviceAsync(LiveDeviceId);
+                while (!register.IsCompleted)
+                    yield return null;
+                Assert.IsFalse(register.IsFaulted, $"The live test device could not sign in or register: {register.Exception?.GetBaseException().Message}");
+            }
+
+            Task<PaginatedResponse<Shop>> shops = FlockClient.Instance.Shop.GetAllAsync();
+            while (!shops.IsCompleted)
+                yield return null;
+            Assert.IsFalse(shops.IsFaulted, $"The shop read failed: {shops.Exception?.GetBaseException().Message}");
+            ShopItem item = null;
+            foreach (Shop shop in shops.Result.Items)
+                foreach (ShopItem candidate in shop.ShopItems)
+                    if (item == null && candidate.StoreProductIds.Count == 0)
+                        item = candidate;
+            if (item == null)
+            {
+                Assert.Ignore("This game has no shop item without store product ids to redeem against.");
+                yield break;
+            }
+
+            Task<PurchaseResult> apple = FlockClient.Instance.Shop.RedeemStoreReceiptAsync(item.Id, StoreReceipt.FromAppleAppStore("2000000999999999"));
+            while (!apple.IsCompleted)
+                yield return null;
+            AssertRefusedWith(apple, FlockErrorCode.PaymentProviderReceiptProductMismatch);
+
+            Task<PurchaseResult> google = FlockClient.Instance.Shop.RedeemStoreReceiptAsync(item.Id, StoreReceipt.FromGooglePlay("com.flock.live.none", "live-test-token"));
+            while (!google.IsCompleted)
+                yield return null;
+            AssertRefusedWith(google, FlockErrorCode.PaymentProviderReceiptProductMismatch);
+
+            // Counter-case: an item that does not exist.
+            Task<PurchaseResult> unknown = FlockClient.Instance.Shop.RedeemStoreReceiptAsync(UnknownItemId, StoreReceipt.FromAppleAppStore("2000000999999999"));
+            while (!unknown.IsCompleted)
+                yield return null;
+            AssertRefusedWith(unknown, FlockErrorCode.ShopItemNotFound);
+            Debug.Log($"[Flock] Live redemption: refused on its own codes for '{item.Name}' and for an unknown item.");
+        }
+
+        private const string LiveDeviceId = "flock-sdk-live-shop";
+
+        private static void AssertRefusedWith(Task task, FlockErrorCode expected)
+        {
+            FlockException ex = task.Exception?.GetBaseException() as FlockException;
+            Assert.IsNotNull(ex, $"Expected a refusal on {expected}.");
+            Assert.AreEqual(expected, ex.ErrorCode, ex.Message);
         }
     }
 }

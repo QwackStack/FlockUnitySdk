@@ -62,6 +62,7 @@ namespace Flock.Http
         public static string ShopById(string shopId) => $"shop/{shopId}";
         public static string ShopByName(string name) => $"shop/by-name/{Uri.EscapeDataString(name)}";
         public const string ShopTransaction = "shop/transaction";
+        public const string ShopValidateReceipt = "shop/validate-receipt";
         public static string ShopItemById(string shopItemId) => $"shop_item/{shopItemId}";
         public static string ShopItemsByShop(string shopId) => $"shop_item/shop/{shopId}";
         public static string PlayerInventoryByPlayer(string playerId) => $"player_inventory/player/{playerId}";
