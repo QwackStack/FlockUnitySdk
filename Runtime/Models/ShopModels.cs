@@ -10,6 +10,27 @@ namespace Flock.Models
         public const string Currency = "currency";
     }
 
+    /// <summary>What kind of item a shop item is (<see cref="ShopItem.Type"/>). Strings rather than an enum: the server can add a kind, and an unknown one must not break reading the item.</summary>
+    public static class ShopItemTypes
+    {
+        /// <summary>Lands in the player's inventory. In a store, set it up as a one-time (non-consumable) product.</summary>
+        public const string Standard = "standard";
+        /// <summary>Pays its rewards straight into the wallet. In a store, set it up as a consumable product.</summary>
+        public const string CurrencyPack = "currency_pack";
+        /// <summary>Lands in the inventory and grants its rewards when consumed. In a store, set it up as a consumable product.</summary>
+        public const string Consumable = "consumable";
+    }
+
+    /// <summary>The stores and web payment gateways Flock takes real money through, as the server names them (the keys of <see cref="ShopItem.StoreProductIds"/>). Strings rather than an enum: the server can add one, and an unknown one must not break reading an item.</summary>
+    public static class PaymentProviders
+    {
+        public const string AppleAppStore = "apple_app_store";
+        public const string GooglePlay = "google_play";
+        public const string Stripe = "stripe";
+        public const string Tap = "tap";
+        public const string Moyasar = "moyasar";
+    }
+
     /// <summary>Where a purchase has got to. A wallet purchase is born paid; the others belong to real-money checkouts, whose result comes later. Strings rather than an enum: the server can add a status, and an unknown one must not break reading the purchase.</summary>
     public static class PurchaseResultStatuses
     {
@@ -134,19 +155,28 @@ namespace Flock.Models
         [JsonProperty("patch_id")]
         public string PatchId { get; set; }
 
+        /// <summary>The price in <see cref="Currency"/>; for a real-money item, in the currency's smallest unit (199 is USD 1.99).</summary>
         [JsonProperty("price")]
         public int Price { get; set; }
 
         [JsonProperty("currency")]
         public string Currency { get; set; }
 
-        // What kind of item this is — drives whether buying it grants rewards or lands in inventory.
+        /// <summary>True when <see cref="Currency"/> is one the game's currency config lists as real money: the item is paid for through a store or a web checkout, never from the wallet, and <c>PurchaseAsync</c> refuses it with <c>ShopRealCurrencyNeedsCheckout</c>. False when the server does not say.</summary>
+        [JsonProperty("is_real_money", NullValueHandling = NullValueHandling.Ignore)]
+        public bool IsRealMoney { get; set; }
+
+        /// <summary>What kind of item this is, one of <see cref="ShopItemTypes"/>: drives whether buying it grants rewards or lands in inventory.</summary>
         [JsonProperty("type")]
         public string Type { get; set; }
 
         // What this item grants when bought or consumed. Empty for plain inventory items.
         [JsonProperty("rewards")]
         public List<ShopItemReward> Rewards { get; set; } = new List<ShopItemReward>();
+
+        /// <summary>This item's product id in each store, keyed by <see cref="PaymentProviders"/> name, exactly as set in the Flock dashboard; empty when none is set. A phone shows the player the store's price for that product, not <see cref="Price"/>.</summary>
+        [JsonProperty("store_skus", NullValueHandling = NullValueHandling.Ignore)]
+        public Dictionary<string, string> StoreProductIds { get; set; } = new Dictionary<string, string>();
 
         [JsonProperty("data")]
         public Dictionary<string, object> Data { get; set; }

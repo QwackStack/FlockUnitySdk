@@ -81,6 +81,7 @@ Plain serializable DTOs mirroring backend wire shapes — auth, analytics, shop,
 - **TypedSchema** / **DataField** (+ extensions & JSON converters) — dynamic typed config/player-data values.
 - **GameConfigSchema** / **GamePatchSchema** / **GameSchema** / **GameVersionSchema** / **PlayerTemplateSchema** — core domain schemas.
 - **Leaderboard** / **Standings** / **StandingEntry** / **PlayerRank** + the `FlockLeaderboard*` enums and the `FlockLeaderboardWindow` key struct — board config (with `IsHigherBetter` / `FormatScore`) and its read shapes.
+- **ShopItem** (`ShopModels.cs`) — `IsRealMoney` is the server's own flag (false when a server does not send it, never guessed from the currency); `StoreProductIds` maps a store name to its product id, verbatim, never null, unknown stores kept. Open sets as string constants: `ShopItemTypes`, `PaymentProviders`, `ShopItemRewardTypes`, `PurchaseResultStatuses`.
 
 ## Runtime/ (support)
 - **Config/FlockConfigAsset** — the `FlockConfig.asset` ScriptableObject (api key, version, baked id). · **Config/FlockInitConfig** — runtime init params.

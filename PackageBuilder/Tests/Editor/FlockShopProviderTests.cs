@@ -1,10 +1,19 @@
 using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
+using Flock.Config;
 using Flock.Exceptions;
 using Flock.Http;
+using Flock.Logging;
 using Flock.Models;
 using Flock.Tests.Support;
+using Newtonsoft.Json.Linq;
 using NUnit.Framework;
+using UnityEngine;
+using UnityEngine.TestTools;
 
 namespace Flock.Tests.Editor
 {
@@ -13,19 +22,20 @@ namespace Flock.Tests.Editor
     // Failed transaction.
     public class FlockShopProviderTests
     {
-        // ---- SHOP-01 ----
+        // ---- SHOP-01: shop/{id} answers its shop at the root, no {"result":...} envelope ----
         [Test]
         public void GetById_Success_ReturnsShop()
         {
             FlockFakeTransport transport = new FlockFakeTransport();
-            transport.On(FlockEndpoints.ShopById("shop-1"), FlockFakeTransport.Ok("{\"result\":{\"id\":\"shop-1\"}}"));
+            transport.On(FlockEndpoints.ShopById("shop-1"), FlockFakeTransport.Ok("{\"id\":\"shop-1\",\"name\":\"main\",\"shop_items\":[]}"));
             using (FlockTestClient h = FlockTestClient.Create(transport))
             {
                 h.SetReachable(true);
 
                 Shop r = h.Run(() => h.Client.Shop.GetByIdAsync("shop-1"));
 
-                Assert.IsNotNull(r);
+                Assert.AreEqual("shop-1", r.Id);
+                Assert.AreEqual("main", r.Name);
             }
         }
 
@@ -46,7 +56,7 @@ namespace Flock.Tests.Editor
         public void GetByName_IncludesNameInUrl()
         {
             FlockFakeTransport transport = new FlockFakeTransport();
-            transport.Default(request => FlockFakeTransport.Ok("{\"result\":{\"id\":\"shop-x\"}}"));
+            transport.Default(request => FlockFakeTransport.Ok("{\"id\":\"shop-x\",\"name\":\"myshop\",\"shop_items\":[]}"));
             using (FlockTestClient h = FlockTestClient.Create(transport))
             {
                 h.SetReachable(true);
@@ -70,7 +80,7 @@ namespace Flock.Tests.Editor
         {
             FlockFakeTransport transport = new FlockFakeTransport();
             transport.On(FlockEndpoints.ShopItemById("item-1"),
-                FlockFakeTransport.Ok("{\"result\":{\"id\":\"item-1\",\"price\":100,\"currency\":\"USD\"}}"));
+                FlockFakeTransport.Ok("{\"id\":\"item-1\",\"price\":100,\"currency\":\"Gold\"}"));
             transport.On(FlockEndpoints.ShopTransaction, FlockFakeTransport.Status(500, "{}"));
             using (FlockTestClient h = FlockTestClient.Create(transport, config => config.RetryPolicy = RetriesEnabled()))
             {
@@ -89,7 +99,7 @@ namespace Flock.Tests.Editor
         {
             FlockFakeTransport transport = new FlockFakeTransport();
             transport.On(FlockEndpoints.ShopItemById("item-1"),
-                FlockFakeTransport.Ok("{\"result\":{\"id\":\"item-1\",\"price\":100,\"currency\":\"USD\"}}"));
+                FlockFakeTransport.Ok("{\"id\":\"item-1\",\"price\":100,\"currency\":\"Gold\"}"));
             transport.On(FlockEndpoints.ShopTransaction, FlockFakeTransport.Status(408, "{}"));
             using (FlockTestClient h = FlockTestClient.Create(transport, config => config.RetryPolicy = RetriesEnabled()))
             {
@@ -509,6 +519,370 @@ namespace Flock.Tests.Editor
                 h.Run(() => h.Client.Commands.FlushPendingWritesAsync());
                 Assert.AreEqual(1, transport.CountTo("consume"), "Coming back online sends no consume: it was never queued.");
             }
+        }
+
+        // ---- Real-money items: the server's flag and each store's product id, on every catalog read ----
+        // Bodies as the backend answered them on 2026-10-26 (main 644bf45) for the payment probe's shop: two items priced in
+        // USD, a real currency there, and two in Gold. shop/{id} and shop/by-name answer the shop at the root, the shop list
+        // pages it, and shop_item/shop/{id} wraps the items in {"result":...}.
+        private const string ProbeShopId = "01M5EM6PVCVP955VDV3FJ8N3BH";
+        private const string GemsPackId = "01M5EM6PVZN764Q4NWT3PRGM3T";
+
+        private const string SwordItem =
+            "{\"id\":\"01M5EM6PVZ7ZMR42VRKY3HPHYD\",\"name\":\"pv00 sword\",\"status\":\"active\",\"type\":\"standard\",\"shop_id\":\"01M5EM6PVCVP955VDV3FJ8N3BH\"," +
+            "\"patch_id\":null,\"price\":10,\"currency\":\"Gold\",\"is_real_money\":false,\"rewards\":[],\"store_skus\":{\"apple_app_store\":\"com.flock.pv00.sword\"}," +
+            "\"data\":{},\"created_at\":\"2026-10-21T07:00:57.855275Z\",\"updated_at\":\"2026-10-21T07:00:57.855276Z\"}";
+        private const string ShieldItem =
+            "{\"id\":\"01M5EM6PVZPG7EWSZ49TXARBYV\",\"name\":\"pv00 shield\",\"status\":\"active\",\"type\":\"standard\",\"shop_id\":\"01M5EM6PVCVP955VDV3FJ8N3BH\"," +
+            "\"patch_id\":null,\"price\":10,\"currency\":\"Gold\",\"is_real_money\":false,\"rewards\":[],\"store_skus\":{},\"data\":{}," +
+            "\"created_at\":\"2026-10-21T07:00:57.855309Z\",\"updated_at\":\"2026-10-21T07:00:57.855311Z\"}";
+        private const string GemsPackItem =
+            "{\"id\":\"01M5EM6PVZN764Q4NWT3PRGM3T\",\"name\":\"pv00 gems pack\",\"status\":\"active\",\"type\":\"currency_pack\",\"shop_id\":\"01M5EM6PVCVP955VDV3FJ8N3BH\"," +
+            "\"patch_id\":null,\"price\":199,\"currency\":\"USD\",\"is_real_money\":true,\"rewards\":[{\"type\":\"currency\",\"code\":\"Gold\",\"amount\":100}]," +
+            "\"store_skus\":{\"google_play\":\"com.flock.pv00.gems\",\"apple_app_store\":\"com.flock.pv00.gems\"},\"data\":{}," +
+            "\"created_at\":\"2026-10-21T07:00:57.855168Z\",\"updated_at\":\"2026-10-21T07:00:57.855173Z\"}";
+        private const string GemsPackWithoutProductIdsItem =
+            "{\"id\":\"01M5EM6PVZJT2C0K06M61RZFGB\",\"name\":\"pv00 gems pack without product ids\",\"status\":\"active\",\"type\":\"currency_pack\"," +
+            "\"shop_id\":\"01M5EM6PVCVP955VDV3FJ8N3BH\",\"patch_id\":null,\"price\":199,\"currency\":\"USD\",\"is_real_money\":true," +
+            "\"rewards\":[{\"type\":\"currency\",\"code\":\"Gold\",\"amount\":100}],\"store_skus\":{},\"data\":{}," +
+            "\"created_at\":\"2026-10-21T07:00:57.855245Z\",\"updated_at\":\"2026-10-21T07:00:57.855247Z\"}";
+        private const string ProbeShopItems = "[" + SwordItem + "," + ShieldItem + "," + GemsPackItem + "," + GemsPackWithoutProductIdsItem + "]";
+        private const string ProbeShop =
+            "{\"id\":\"01M5EM6PVCVP955VDV3FJ8N3BH\",\"name\":\"pv00-shop\",\"status\":\"active\",\"game_id\":\"01M5EM6PTHKSYB8ZFPSSRAJ7C2\"," +
+            "\"game_version_id\":\"01M5EM6PTY4M5PA1A93GQXQYDP\",\"data\":{\"stats\":null,\"web_shop_url\":null,\"pwa_shop_url\":null},\"shop_items\":" + ProbeShopItems + "," +
+            "\"created_at\":\"2026-10-21T07:00:57.836159Z\",\"updated_at\":\"2026-10-21T07:00:57.836163Z\"}";
+
+        // The same item from a server without the real-money flag (main aa402fc, the payment probe of 2026-10-21).
+        private const string GemsPackFromAServerWithoutTheFlag =
+            "{\"id\":\"01M5EM6PVZN764Q4NWT3PRGM3T\",\"name\":\"pv00 gems pack\",\"status\":\"active\",\"type\":\"currency_pack\",\"shop_id\":\"01M5EM6PVCVP955VDV3FJ8N3BH\"," +
+            "\"patch_id\":null,\"price\":199,\"currency\":\"USD\",\"rewards\":[{\"type\":\"currency\",\"code\":\"Gold\",\"amount\":100}]," +
+            "\"store_skus\":{\"google_play\":\"com.flock.pv00.gems\",\"apple_app_store\":\"com.flock.pv00.gems\"},\"data\":{}," +
+            "\"created_at\":\"2026-10-21T07:00:57.855168Z\",\"updated_at\":\"2026-10-21T07:00:57.855173Z\"}";
+
+        private static ShopItem Named(List<ShopItem> items, string name)
+        {
+            ShopItem found = items.Find(item => item.Name == name);
+            Assert.IsNotNull(found, $"No item named '{name}'.");
+            return found;
+        }
+
+        private static void AssertProbeShopItems(List<ShopItem> items)
+        {
+            Assert.AreEqual(4, items.Count);
+
+            ShopItem pack = Named(items, "pv00 gems pack");
+            Assert.IsTrue(pack.IsRealMoney, "Priced in USD, which the game's currency config lists as real money.");
+            Assert.AreEqual(199, pack.Price, "A real-money price is in the currency's smallest unit.");
+            Assert.AreEqual("com.flock.pv00.gems", pack.StoreProductIds[PaymentProviders.GooglePlay]);
+            Assert.AreEqual("com.flock.pv00.gems", pack.StoreProductIds[PaymentProviders.AppleAppStore]);
+
+            ShopItem packWithoutIds = Named(items, "pv00 gems pack without product ids");
+            Assert.IsTrue(packWithoutIds.IsRealMoney);
+            Assert.IsNotNull(packWithoutIds.StoreProductIds, "No product id reads as an empty map, never null.");
+            Assert.AreEqual(0, packWithoutIds.StoreProductIds.Count);
+
+            ShopItem sword = Named(items, "pv00 sword");
+            Assert.IsFalse(sword.IsRealMoney, "Priced in Gold, a game currency.");
+            CollectionAssert.AreEquivalent(new[] { PaymentProviders.AppleAppStore }, sword.StoreProductIds.Keys);
+
+            ShopItem shield = Named(items, "pv00 shield");
+            Assert.IsFalse(shield.IsRealMoney);
+            Assert.AreEqual(0, shield.StoreProductIds.Count);
+        }
+
+        [Test]
+        public void GetByName_ReadsEachItemsRealMoneyFlagAndStoreProductIds()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.ShopByName("pv00-shop"), FlockFakeTransport.Ok(ProbeShop));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.SetReachable(true);
+
+                Shop shop = h.Run(() => h.Client.Shop.GetByNameAsync("pv00-shop"));
+
+                AssertProbeShopItems(shop.ShopItems);
+            }
+        }
+
+        [Test]
+        public void GetById_ReadsEachItemsRealMoneyFlagAndStoreProductIds()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.ShopById(ProbeShopId), FlockFakeTransport.Ok(ProbeShop));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.SetReachable(true);
+
+                Shop shop = h.Run(() => h.Client.Shop.GetByIdAsync(ProbeShopId));
+
+                AssertProbeShopItems(shop.ShopItems);
+            }
+        }
+
+        [Test]
+        public void GetAll_ReadsEachItemsRealMoneyFlagAndStoreProductIds()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.Shop, FlockFakeTransport.Ok("{\"items\":[" + ProbeShop + "],\"total\":1,\"page\":1,\"limit\":100}"));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.SetReachable(true);
+
+                PaginatedResponse<Shop> shops = h.Run(() => h.Client.Shop.GetAllAsync());
+
+                AssertProbeShopItems(shops.Items[0].ShopItems);
+            }
+        }
+
+        [Test]
+        public void GetItemsByShop_ReadsEachItemsRealMoneyFlagAndStoreProductIds()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.ShopItemsByShop(ProbeShopId), FlockFakeTransport.Ok(
+                "{\"error\":{\"code\":null},\"response\":{\"message\":null,\"code\":null},\"result\":" + ProbeShopItems + "}"));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.SetReachable(true);
+
+                List<ShopItem> items = h.Run(() => h.Client.Shop.GetItemsByShopAsync(ProbeShopId));
+
+                AssertProbeShopItems(items);
+            }
+        }
+
+        [Test]
+        public void GetItem_RealMoneyItem_ReadsItsFlagAndStoreProductIds()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.ShopItemById(GemsPackId), FlockFakeTransport.Ok(GemsPackItem));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.SetReachable(true);
+
+                ShopItem item = h.Run(() => h.Client.Shop.GetItemAsync(GemsPackId));
+
+                Assert.IsTrue(item.IsRealMoney);
+                Assert.AreEqual(ShopItemTypes.CurrencyPack, item.Type);
+                Assert.AreEqual(2, item.StoreProductIds.Count);
+                Assert.AreEqual("com.flock.pv00.gems", item.StoreProductIds[PaymentProviders.GooglePlay]);
+            }
+        }
+
+        // The flag is the server's word: an older server leaves it out, and the SDK never guesses it from the currency.
+        [Test]
+        public void GetItem_FromAServerThatDoesNotSayRealMoney_ReadsFalse_AndKeepsItsProductIds()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.ShopItemById(GemsPackId), FlockFakeTransport.Ok(GemsPackFromAServerWithoutTheFlag));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.SetReachable(true);
+
+                ShopItem item = h.Run(() => h.Client.Shop.GetItemAsync(GemsPackId));
+
+                Assert.IsFalse(item.IsRealMoney, "No flag reads false, even for an item priced in USD.");
+                Assert.AreEqual("com.flock.pv00.gems", item.StoreProductIds[PaymentProviders.AppleAppStore]);
+            }
+        }
+
+        [Test]
+        public void GetItem_NullStoreProductIds_ReadsAnEmptyMap()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.ShopItemById("item-1"), FlockFakeTransport.Ok(
+                "{\"id\":\"item-1\",\"price\":10,\"currency\":\"Gold\",\"is_real_money\":false,\"store_skus\":null}"));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.SetReachable(true);
+
+                ShopItem item = h.Run(() => h.Client.Shop.GetItemAsync("item-1"));
+
+                Assert.IsNotNull(item.StoreProductIds, "A null map reads as empty, so callers never null-check it.");
+                Assert.AreEqual(0, item.StoreProductIds.Count);
+            }
+        }
+
+        [Test]
+        public void GetItem_NullRealMoneyFlag_ReadsFalse_WithoutFailingTheRead()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.ShopItemById("item-1"), FlockFakeTransport.Ok(
+                "{\"id\":\"item-1\",\"price\":10,\"currency\":\"Gold\",\"is_real_money\":null,\"store_skus\":{}}"));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.SetReachable(true);
+
+                ShopItem item = h.Run(() => h.Client.Shop.GetItemAsync("item-1"));
+
+                Assert.AreEqual("item-1", item.Id);
+                Assert.IsFalse(item.IsRealMoney);
+            }
+        }
+
+        // The server accepts only the stores it checks receipts against today; one it adds later must still read.
+        [Test]
+        public void GetItem_StoreProductIds_KeepAStoreThisSdkDoesNotKnow()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.ShopItemById("item-1"), FlockFakeTransport.Ok(
+                "{\"id\":\"item-1\",\"price\":199,\"currency\":\"USD\",\"is_real_money\":true,\"store_skus\":{\"google_play\":\"com.flock.gems\",\"steam\":\"480\"}}"));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.SetReachable(true);
+
+                ShopItem item = h.Run(() => h.Client.Shop.GetItemAsync("item-1"));
+
+                Assert.AreEqual("480", item.StoreProductIds["steam"]);
+                Assert.AreEqual("com.flock.gems", item.StoreProductIds[PaymentProviders.GooglePlay]);
+            }
+        }
+
+        // A store compares product ids exactly, so the SDK keeps each as the dashboard saved it.
+        [Test]
+        public void GetItem_StoreProductIds_KeepEachIdVerbatim()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.ShopItemById("item-1"), FlockFakeTransport.Ok(
+                "{\"id\":\"item-1\",\"price\":199,\"currency\":\"USD\",\"is_real_money\":true,\"store_skus\":{\"apple_app_store\":\"com.Flock.Gems_Pack.V2\"}}"));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.SetReachable(true);
+
+                ShopItem item = h.Run(() => h.Client.Shop.GetItemAsync("item-1"));
+
+                Assert.AreEqual("com.Flock.Gems_Pack.V2", item.StoreProductIds[PaymentProviders.AppleAppStore]);
+            }
+        }
+
+        // A relaunch with no network serves the catalog from the snapshot the last online read wrote, flag and ids included.
+        [Test]
+        public void RealMoneyItem_ReadOfflineFromItsSnapshot_KeepsItsFlagAndStoreProductIds()
+        {
+            string relaunchFolder = Path.Combine(Path.GetTempPath(), "flock_test_" + Guid.NewGuid().ToString("N"));
+            FlockFakeTransport online = new FlockFakeTransport();
+            online.On(FlockEndpoints.ShopItemById(GemsPackId), FlockFakeTransport.Ok(GemsPackItem));
+            using (FlockTestClient h = FlockTestClient.Create(online))
+            {
+                h.SetReachable(true);
+                h.Run(() => h.Client.Shop.GetItemAsync(GemsPackId));
+                CopyFolder(h.SnapshotDirectory, relaunchFolder);
+            }
+
+            FlockFakeTransport offline = new FlockFakeTransport();
+            offline.GoOffline();
+            using (FlockTestClient h = FlockTestClient.Create(offline, config => config.OfflineCacheDirectory = relaunchFolder))
+            {
+                h.SetReachable(false);
+
+                ShopItem item = h.Run(() => h.Client.Shop.GetItemAsync(GemsPackId));
+
+                Assert.AreEqual(0, offline.CountTo(FlockEndpoints.ShopItemById(GemsPackId)), "Served from the snapshot, not the network.");
+                Assert.IsTrue(item.IsRealMoney);
+                Assert.AreEqual("com.flock.pv00.gems", item.StoreProductIds[PaymentProviders.GooglePlay]);
+                Assert.AreEqual("com.flock.pv00.gems", item.StoreProductIds[PaymentProviders.AppleAppStore]);
+            }
+        }
+
+        private static void CopyFolder(string from, string to)
+        {
+            foreach (string folder in Directory.GetDirectories(from, "*", SearchOption.AllDirectories))
+                Directory.CreateDirectory(folder.Replace(from, to));
+            Directory.CreateDirectory(to);
+            foreach (string file in Directory.GetFiles(from, "*", SearchOption.AllDirectories))
+                File.Copy(file, file.Replace(from, to), true);
+        }
+
+        // The names the backend's ShopItemType and PaymentProvider use (read 2026-10-26); the body-read tests above prove
+        // the two stores and two kinds a live answer carried.
+        [Test]
+        public void ShopItemTypes_AndPaymentProviders_AreTheServersNames()
+        {
+            Assert.AreEqual("standard", ShopItemTypes.Standard);
+            Assert.AreEqual("currency_pack", ShopItemTypes.CurrencyPack);
+            Assert.AreEqual("consumable", ShopItemTypes.Consumable);
+            Assert.AreEqual("apple_app_store", PaymentProviders.AppleAppStore);
+            Assert.AreEqual("google_play", PaymentProviders.GooglePlay);
+            Assert.AreEqual("stripe", PaymentProviders.Stripe);
+            Assert.AreEqual("tap", PaymentProviders.Tap);
+            Assert.AreEqual("moyasar", PaymentProviders.Moyasar);
+        }
+    }
+
+    // Live: the catalog as the SDK reads it from the real backend, against the route's own answer. Manual only: needs FlockConfig.asset and the backend.
+    public class FlockShopLiveTests
+    {
+        private const string UnknownItemId = "01ZZZZZZZZZZZZZZZZZZZZZZZZ";
+        private bool _createdClient;
+
+        [TearDown]
+        public void TearDown()
+        {
+            if (_createdClient)
+            {
+                FlockClient.Shutdown();
+                _createdClient = false;
+            }
+        }
+
+        [UnityTest, Explicit("Hits the live Flock backend using FlockConfig.asset; run manually from the Test Runner.")]
+        public IEnumerator Live_ShopItems_ReadTheServersRealMoneyFlagAndStoreProductIds()
+        {
+            FlockConfigAsset asset = Resources.Load<FlockConfigAsset>("FlockConfig");
+            if (asset == null || !asset.IsValid(out string _) || string.IsNullOrEmpty(asset.gameVersionId))
+            {
+                Assert.Ignore("No usable FlockConfig.asset (missing fields or unresolved Game Version ID).");
+                yield break;
+            }
+            if (!FlockClient.IsInitialized)
+            {
+                FlockClient.Create(asset.ToInitConfig(), new NullFlockLogger());
+                _createdClient = true;
+            }
+
+            string url = $"{FlockClient.Instance.GetVersionedApiUrl()}/{FlockEndpoints.Shop}?page=1&limit=100";
+            Task<JObject> raw = FlockHttpClient.GetAsync<JObject>(url, FlockClient.Instance.GetGameHeaders(), CancellationToken.None);
+            Task<PaginatedResponse<Shop>> read = FlockClient.Instance.Shop.GetAllAsync();
+            while (!raw.IsCompleted || !read.IsCompleted)
+                yield return null;
+            if (raw.IsFaulted && (raw.Exception?.GetBaseException() as FlockException)?.StatusCode == null)
+            {
+                Assert.Ignore($"Live backend unreachable: {raw.Exception?.GetBaseException().Message}");
+                yield break;
+            }
+            Assert.IsFalse(read.IsFaulted, $"The SDK's shop read failed: {read.Exception?.GetBaseException().Message}");
+
+            Dictionary<string, ShopItem> readById = new Dictionary<string, ShopItem>();
+            foreach (Shop shop in read.Result.Items)
+                foreach (ShopItem item in shop.ShopItems)
+                    readById[item.Id] = item;
+
+            int compared = 0;
+            foreach (JToken shop in raw.Result["items"])
+            {
+                foreach (JToken rawItem in shop["shop_items"])
+                {
+                    ShopItem item = readById[(string)rawItem["id"]];
+                    Assert.AreEqual((bool)rawItem["is_real_money"], item.IsRealMoney, $"{item.Name}: the flag as the server sent it.");
+                    Dictionary<string, string> sent = rawItem["store_skus"].ToObject<Dictionary<string, string>>();
+                    CollectionAssert.AreEquivalent(sent, item.StoreProductIds, $"{item.Name}: each store's product id as the server sent it.");
+                    compared++;
+                }
+            }
+            if (compared == 0)
+            {
+                Assert.Ignore("This game's shops hold no items to compare.");
+                yield break;
+            }
+            Debug.Log($"[Flock] Live shop read: {compared} items match the route's answer.");
+
+            // Counter-case: an item that does not exist is refused on its own code.
+            Task<ShopItem> unknown = FlockClient.Instance.Shop.GetItemAsync(UnknownItemId);
+            while (!unknown.IsCompleted)
+                yield return null;
+            FlockException refusal = unknown.Exception?.GetBaseException() as FlockException;
+            Assert.IsNotNull(refusal, "An unknown item is refused.");
+            Assert.AreEqual(FlockErrorCode.ShopItemShopItemNotFound, refusal.ErrorCode);
         }
     }
 }

@@ -176,7 +176,8 @@ namespace Flock.Exceptions
             // Matchmaking, parties and sessions. A 404 here usually means "not yours, or no longer live", not "never existed".
             { FlockErrorCode.MatchmakingQueueNotFound, "No matchmaking queue by that id in this game. Create the queue in the Flock dashboard first." },
             { FlockErrorCode.MatchmakingNotPartyLeader, "Only the party leader can put the party in a queue. Start the search from the leader's game." },
-            { FlockErrorCode.MatchmakingPartyTooLarge, "The party has more players than the queue allows. Raise the queue's maximum players in the Flock dashboard, or search with a smaller party." },
+            { FlockErrorCode.MatchmakingPartyTooLarge, "The party has more players than the queue allows, or than one of the queue's teams holds. Raise the queue's maximum players, or its team size, in the Flock dashboard, or search with a smaller party." },
+            { FlockErrorCode.MatchmakingSearchInputRequired, "This queue matches players by region or skill, and this version of the SDK sends neither. Remove the queue's region and skill rules in the Flock dashboard, or search in a queue without them." },
             { FlockErrorCode.MatchmakingPlayerNotEligible, "A player in this search is outside the player segments the queue allows. Check the queue's allowed segments in the Flock dashboard." },
             { FlockErrorCode.MatchmakingAlreadyQueued, "A player in this search is already searching, and a player searches once at a time per game. FindMatchAsync replaces the player's own earlier search itself, so this is the party's search (wait for it with the party's FindMatchAsync), or a party member searching alone, whose game cancels that search first." },
             { FlockErrorCode.MatchmakingTicketNotFound, "No search by that id for the signed-in player. A player can only read or cancel their own search." },

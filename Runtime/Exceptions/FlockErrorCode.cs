@@ -65,6 +65,7 @@ namespace Flock.Exceptions
         MatchmakingPartyTooLarge,                   // matchmaking.party_too_large
         MatchmakingPlayerNotEligible,               // matchmaking.player_not_eligible
         MatchmakingQueueNotFound,                   // matchmaking.queue_not_found
+        MatchmakingSearchInputRequired,             // matchmaking.search_input_required
         MatchmakingTicketNotCancelable,             // matchmaking.ticket_not_cancelable
         MatchmakingTicketNotFound,                  // matchmaking.ticket_not_found
         MatchmakingVersionMismatch,                 // matchmaking.version_mismatch

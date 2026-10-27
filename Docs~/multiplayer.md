@@ -286,7 +286,9 @@ add outcomes, so treat any other as ended without a match. On a "Same game versi
 taken from their game's last read of the party: have every member's game call `GetMyPartyAsync` once it is running.
 
 Errors: `MatchmakingQueueNotFound`, `MatchmakingPlayerNotEligible` (not in the queue's allowed segments),
-`MatchmakingPartyTooLarge`, `MatchmakingNotPartyLeader`, `MatchmakingVersionMismatch`.
+`MatchmakingPartyTooLarge` (more players than the queue, or one of its teams, holds), `MatchmakingNotPartyLeader`,
+`MatchmakingVersionMismatch`, `MatchmakingSearchInputRequired` (the queue matches by region or skill, which this SDK does
+not send: search in a queue without those rules).
 
 ## Connecting players
 

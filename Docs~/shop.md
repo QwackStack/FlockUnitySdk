@@ -66,4 +66,29 @@ when the network comes back.
 > reads it fresh and there is no stale copy to fall back on when the network is down. Reading it offline
 > throws `FlockNetworkException`.
 
+## Real-money items
+
+Each item says whether it costs real money and what it is called in each store. The server sends both with the catalog,
+from the game's currency config and the product ids set in the Flock dashboard; like the rest of the catalog, they are kept
+for the session (and offline), so a change made in the dashboard shows after `Shop.ClearCache()` or on the next launch with
+a connection.
+
+```csharp
+ShopItem item = await FlockClient.Instance.Shop.GetItemAsync("shop-item-id");
+if (item.IsRealMoney)
+{
+    // Paid through a store or a web checkout, never from the wallet: PurchaseAsync refuses it.
+    if (item.StoreProductIds.TryGetValue(PaymentProviders.GooglePlay, out string productId))
+        Debug.Log($"Sold on Google Play as {productId}");
+}
+```
+
+`IsRealMoney` is true when the item's currency is one the currency config lists as real money; a server that does not
+send it reads false. For such an item `Price` is in the currency's smallest unit (199 is USD 1.99), but a phone shows the
+player the store's own price for the product, in their currency and with their taxes, so show that one there.
+`StoreProductIds` is keyed by store name (`PaymentProviders.AppleAppStore`, `PaymentProviders.GooglePlay`), holds each id
+exactly as set in the dashboard, and is never null: an item with no product id reads an empty map. `Type` is one of
+`ShopItemTypes`: in a store, a `CurrencyPack` or `Consumable` item is a consumable product and a `Standard` item a one-time
+product. Store names and item kinds are strings rather than enums, for the same reason as `reward.Type`.
+
 See also: [Codegen](codegen.md) for typed shop accessors and the `FlockShopItemId` / `FlockFundId` enums, and [Player Data & Game Commands](player-data.md) for `AddGameFundsAsync`.

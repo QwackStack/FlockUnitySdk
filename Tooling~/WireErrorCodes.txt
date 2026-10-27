@@ -32,7 +32,11 @@
 #   grep -rhoE '"[a-z_]+\.[a-z_]+"' <backend>/flock/packages/*/enums.py <backend>/common/helpers/error_codes.py \
 #     | tr -d '"' | sort -u
 #
-# Last refreshed 2026-10-23 for the payment hardening (backend fix/sdk-payment-hardening, not yet merged): four
+# Last refreshed 2026-10-26, when the payment hardening merged into backend main (644bf45), for the shop, payment_provider and
+# matchmaking codes, read in their code: shop.invalid_purchase_status and shop.idempotency_key_reused (waived, below) and
+# matchmaking.search_input_required, which the ticket the SDK opens meets once a queue has region or skill rules. The codes of
+# main's session backfill, live updates and session kicks (BACKLOG All-2, All-11) wait for the owner's scope call and are
+# not listed. Before that, on 2026-10-23 for the payment hardening (backend fix/sdk-payment-hardening, not yet merged): four
 # payment_provider codes and shop.player_mismatch and shop.player_required, read in its code. Before that, on
 # 2026-10-22, for the shop and payment_provider codes (the payment routes), read in those two packages'
 # code on the local backend (main aa402fc) and measured by the payment routes probe on 2026-10-21. Before that, on
@@ -77,6 +81,7 @@ matchmaking.not_party_leader
 matchmaking.party_too_large
 matchmaking.player_not_eligible
 matchmaking.queue_not_found
+matchmaking.search_input_required
 matchmaking.ticket_not_cancelable
 matchmaking.ticket_not_found
 matchmaking.version_mismatch
@@ -236,6 +241,9 @@ shop.webhook_provider_unknown
 # game_config.invalid_real_currency_code (saving a currency config in the dashboard). Its spec also lists
 # payment_provider.missing_credential_fields and encryption_unavailable on the receipt and checkout routes, but only the
 # dashboard's save of a provider's keys raises them; reading the stored keys raises credentials_unreadable alone.
+# The merge (backend main 644bf45, read 2026-10-26) adds two for calls no SDK makes yet: shop.invalid_purchase_status (an
+# unknown status filter on the player's purchase list, which web checkout will read) and shop.idempotency_key_reused (a
+# wallet purchase resent with a repeat key, which the SDK does not send: BACKLOG Owner-15).
 dashboard.ai_generation_failed
 dashboard.ai_limiter_unavailable
 dashboard.ai_provider_unavailable
@@ -253,6 +261,8 @@ payment_provider.refund_failed
 payment_provider.unknown_provider
 shop.game_version_game_mismatch
 shop.game_version_not_found
+shop.idempotency_key_reused
+shop.invalid_purchase_status
 shop.name_already_exists
 shop.not_a_currency_pack
 shop.production_version_immutable

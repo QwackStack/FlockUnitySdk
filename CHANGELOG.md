@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.91.0]
+
+Real-money shop items. A game can tell which shop items cost real money and read each one's product id in each store.
+
+### Added
+
+- **`ShopItem.IsRealMoney`**: true when the item's currency is one the game's currency config lists as real money, so the
+  item is paid for through a store or a web checkout, never from the wallet (`PurchaseAsync` refuses it with
+  `ShopRealCurrencyNeedsCheckout`). It is the server's own answer, sent with the catalog by every shop read; a server that
+  does not send it reads false.
+- **`ShopItem.StoreProductIds`**: the item's product id in each store, keyed by store name (`PaymentProviders.AppleAppStore`,
+  `PaymentProviders.GooglePlay`), exactly as set in the Flock dashboard. Never null: an item with none reads an empty map, and a
+  store the SDK does not know yet is kept.
+- **`PaymentProviders`** and **`ShopItemTypes`**: the server's names for its stores and payment gateways (`apple_app_store`,
+  `google_play`, `stripe`, `tap`, `moyasar`) and for its item kinds (`standard`, `currency_pack`, `consumable`), as string
+  constants, since the server can add to either.
+- **`FlockErrorCode.MatchmakingSearchInputRequired`** with its fix. Flock's matchmaking can now match by region or skill, and a
+  queue given those rules refuses every search that sends neither, as this SDK's do; it read as `Unknown` until now.
+
+### Changed
+
+- **`ShopItem.Price` says its unit**: for a real-money item it is the currency's smallest unit (199 is USD 1.99). A phone
+  shows the player the store's own price for the product.
+- **`MatchmakingPartyTooLarge`'s fix covers a queue's team size**, which Flock's matchmaking now also checks a party against.
+
+
 ## [1.90.0]
 
 Payment error codes. This version adds no payment call; it makes every code Flock's payment routes send readable.
