@@ -10,7 +10,9 @@
         "Flock.Multiplayer.Netcode",
         "Flock.Samples.Multiplayer",
         "Unity.Netcode.Runtime",
-        "Unity.Networking.Transport"
+        "Unity.Networking.Transport",
+        "Flock.Shop.UnityIap",
+        "GUID:60bfecf5cb232594891bc622f40d6bed"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
@@ -34,6 +36,11 @@
             "name": "com.unity.transport",
             "expression": "[1.0.0,2.0.0)",
             "define": "FLOCK_UNITY_TRANSPORT_1"
+        },
+        {
+            "name": "com.unity.purchasing",
+            "expression": "[5.0.0,6.0.0)",
+            "define": "FLOCK_UNITY_IAP_5"
         }
     ],
     "noEngineReferences": false

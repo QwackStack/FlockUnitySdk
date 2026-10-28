@@ -1086,6 +1086,59 @@ namespace Flock.Tests.Editor
             }
         }
 
+        // ---- The store account token (shop/account-token): read once a sign-in, never handed to the next player ----
+        private const string TokenAnswer = "{\"player_id\":\"player-a\",\"account_token\":\"c1601ba6-6805-5c7b-92d0-40ccdbedd6eb\"}";
+
+        [Test]
+        public void StoreAccountToken_IsReadOnceASignIn_AndAgainForTheNextPlayer()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.ShopAccountToken, FlockFakeTransport.Ok(TokenAnswer));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                Assert.AreEqual("c1601ba6-6805-5c7b-92d0-40ccdbedd6eb", h.Run(() => h.Client.Shop.GetStoreAccountTokenAsync()));
+                h.Run(() => h.Client.Shop.GetStoreAccountTokenAsync());
+                Assert.AreEqual(1, transport.CountTo(FlockEndpoints.ShopAccountToken), "Stable per player, so read once a sign-in.");
+                Assert.IsTrue(transport.AllTo(FlockEndpoints.ShopAccountToken)[0].Headers.ContainsKey("Authorization"));
+
+                h.LoginAs("player-b");
+                h.Run(() => h.Client.Shop.GetStoreAccountTokenAsync());
+                Assert.AreEqual(2, transport.CountTo(FlockEndpoints.ShopAccountToken), "The next player's is read for them.");
+            }
+        }
+
+        [Test]
+        public void StoreAccountToken_NotSignedIn_ThrowsBeforeSending()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.SetReachable(true);
+
+                FlockAuthException ex = Assert.Throws<FlockAuthException>(() => h.Run(() => h.Client.Shop.GetStoreAccountTokenAsync()));
+
+                Assert.AreEqual(FlockErrorHints.SignInFirst, ex.Hint);
+                Assert.AreEqual(0, transport.CountTo(FlockEndpoints.ShopAccountToken));
+            }
+        }
+
+        [Test]
+        public void StoreAccountToken_AnswerWithoutOne_Fails()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.ShopAccountToken, FlockFakeTransport.Ok("{\"player_id\":\"player-a\"}"));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                Assert.Throws<FlockSerializationException>(() => h.Run(() => h.Client.Shop.GetStoreAccountTokenAsync()));
+            }
+        }
+
         [Test]
         public void Purchase_AnswerNamingNoPurchase_Fails()
         {
@@ -1196,20 +1249,13 @@ namespace Flock.Tests.Editor
                 _createdClient = true;
             }
 
-            Task<PlayerLoginResponse> login = FlockClient.Instance.Authentication.LoginWithDeviceAsync(LiveDeviceId);
-            while (!login.IsCompleted)
+            Task<string> signIn = SignInTheLiveDeviceAsync();
+            while (!signIn.IsCompleted)
                 yield return null;
-            if (login.IsFaulted)
+            if (signIn.GetAwaiter().GetResult() != null)
             {
-                if ((login.Exception?.GetBaseException() as FlockException)?.StatusCode == null)
-                {
-                    Assert.Ignore($"Live backend unreachable: {login.Exception?.GetBaseException().Message}");
-                    yield break;
-                }
-                Task<PlayerLoginResponse> register = FlockClient.Instance.Authentication.RegisterWithDeviceAsync(LiveDeviceId);
-                while (!register.IsCompleted)
-                    yield return null;
-                Assert.IsFalse(register.IsFaulted, $"The live test device could not sign in or register: {register.Exception?.GetBaseException().Message}");
+                Assert.Ignore(signIn.Result);
+                yield break;
             }
 
             Task<PaginatedResponse<Shop>> shops = FlockClient.Instance.Shop.GetAllAsync();
@@ -1245,7 +1291,69 @@ namespace Flock.Tests.Editor
             Debug.Log($"[Flock] Live redemption: refused on its own codes for '{item.Name}' and for an unknown item.");
         }
 
+        // The token a store purchase is started with, as the route sends it for the signed-in player.
+        [UnityTest, Explicit("Hits the live Flock backend using FlockConfig.asset; run manually from the Test Runner.")]
+        public IEnumerator Live_StoreAccountToken_IsTheRoutesAnswerForTheSignedInPlayer()
+        {
+            FlockConfigAsset asset = Resources.Load<FlockConfigAsset>("FlockConfig");
+            if (asset == null || !asset.IsValid(out string _) || string.IsNullOrEmpty(asset.gameVersionId))
+            {
+                Assert.Ignore("No usable FlockConfig.asset (missing fields or unresolved Game Version ID).");
+                yield break;
+            }
+            if (!FlockClient.IsInitialized)
+            {
+                FlockClient.Create(asset.ToInitConfig(), new NullFlockLogger());
+                _createdClient = true;
+            }
+
+            Task<string> signIn = SignInTheLiveDeviceAsync();
+            while (!signIn.IsCompleted)
+                yield return null;
+            if (signIn.GetAwaiter().GetResult() != null)
+            {
+                Assert.Ignore(signIn.Result);
+                yield break;
+            }
+
+            string url = $"{FlockClient.Instance.GetVersionedApiUrl()}/{FlockEndpoints.ShopAccountToken}";
+            Task<JObject> raw = FlockHttpClient.GetAsync<JObject>(url, FlockClient.Instance.GetBaseHeaders(), CancellationToken.None);
+            Task<string> token = FlockClient.Instance.Shop.GetStoreAccountTokenAsync();
+            while (!raw.IsCompleted || !token.IsCompleted)
+                yield return null;
+            Assert.IsFalse(raw.IsFaulted, $"The route's own answer failed: {raw.Exception?.GetBaseException().Message}");
+            Assert.IsFalse(token.IsFaulted, $"The SDK's read failed: {token.Exception?.GetBaseException().Message}");
+            Assert.AreEqual((string)raw.Result["account_token"], token.Result);
+            Assert.IsTrue(Guid.TryParse(token.Result, out Guid _), "A UUID, as Apple's appAccountToken needs.");
+
+            // Counter-case: the route refuses a request that names no player.
+            Task<JObject> unsigned = FlockHttpClient.GetAsync<JObject>(url, FlockClient.Instance.GetGameHeaders(), CancellationToken.None);
+            while (!unsigned.IsCompleted)
+                yield return null;
+            AssertRefusedWith(unsigned, FlockErrorCode.PlayerMissingToken);
+            Debug.Log("[Flock] Live store account token: the route's answer, a UUID; refused with no player signed in.");
+        }
+
         private const string LiveDeviceId = "flock-sdk-live-shop";
+
+        // Signs the live test device in, registering it on its first run; answers why the test is skipped, or null once signed in.
+        private static async Task<string> SignInTheLiveDeviceAsync()
+        {
+            try
+            {
+                await FlockClient.Instance.Authentication.LoginWithDeviceAsync(LiveDeviceId);
+                return null;
+            }
+            catch (FlockException ex) when (ex.StatusCode == null)
+            {
+                return $"Live backend unreachable: {ex.Message}";
+            }
+            catch (FlockException)
+            {
+                await FlockClient.Instance.Authentication.RegisterWithDeviceAsync(LiveDeviceId);
+                return null;
+            }
+        }
 
         private static void AssertRefusedWith(Task task, FlockErrorCode expected)
         {

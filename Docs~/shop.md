@@ -129,4 +129,49 @@ catch (FlockException e)
 - **Revenue is recorded by the server**, once per store purchase, at the item's `Price` and `Currency`; this call records no
   analytics transaction of its own (unlike `PurchaseAsync`, whose wallet purchases are never counted as revenue).
 
+With Unity IAP 5 installed, `FlockStorePurchases` (below) makes this call for you.
+
+## Buying with Unity IAP 5
+
+With Unity IAP 5 in the project (`com.unity.purchasing` 5.x), `FlockStorePurchases` does a whole store purchase: the store
+charges the player, Flock checks it with the store and delivers the item, and only then is the store's purchase finished.
+It is compiled only when Unity IAP 5 is installed, so a game without it carries none of it.
+
+```csharp
+// Once, after FlockClient.Create. On a phone the store is found by itself.
+FlockStorePurchases store = await FlockStorePurchases.ConnectAsync();
+store.PurchaseDelivered += purchase => Debug.Log($"Delivered later: {purchase.Item.Name}");
+store.PurchaseNeedsAttention += problem => Debug.LogWarning($"{problem.ProductId}: {problem.Error.Message} Fix: {problem.Error.Hint}");
+
+FlockStorePurchase purchase = await store.BuyAsync(item.Id);
+switch (purchase.Outcome)
+{
+    case FlockStorePurchaseOutcome.Delivered: /* purchase.Delivery.Granted, .Wallet */ break;
+    case FlockStorePurchaseOutcome.Pending: /* waiting for the payment or a parent's approval */ break;
+    case FlockStorePurchaseOutcome.Cancelled: break;
+    case FlockStorePurchaseOutcome.Failed: Debug.Log(purchase.StoreFailure); break;
+}
+```
+
+- **`ConnectAsync`** reads the game's shops and registers each item that has a product id for this store: a currency pack or
+  consumable as a consumable product, a standard item as a one-time product (other kinds are not sold here). Connect once and
+  keep the result: a second `ConnectAsync` while it is connected is refused, so `Dispose` it before connecting again (an item
+  added in the Flock dashboard later is sold from the next connection). A connection made before the Flock client was created
+  again no longer acts; connect again under the new client.
+- **`BuyAsync`** needs a signed-in player. It sets that player's account token on the store first (`Shop.GetStoreAccountTokenAsync`),
+  so a purchase cannot be redeemed by anyone else, then buys. When Flock refuses a purchase the player paid for, it throws
+  `FlockException` (its `ErrorCode` and `Hint` say why) and the purchase stays unfinished.
+- **A pending purchase** (a slow way to pay, or "Ask to Buy") ends the call as `Pending`; once paid it is delivered through
+  `PurchaseDelivered`. If the call's cancellation token fires, the purchase carries on and is reported the same way.
+- **Purchases left unfinished** (a crash, a lost connection, a refusal) come back from the store at the next launch. Once a
+  player is signed in, each is sent to Flock once a launch: delivered ones raise `PurchaseDelivered`, refused ones
+  `PurchaseNeedsAttention` and stay unfinished for the next launch. Store purchases of products no Flock item sells are left to
+  the game. A product two items share is sold only through `BuyAsync`, which names the item.
+- **In the editor** Unity IAP's fake store answers (define `IAP_FAKE_STORE_DEFAULT` to buy without its dialog). Name the store to
+  test with, `ConnectAsync(PaymentProviders.GooglePlay)`; the account token is not set there, and Flock refuses the fake
+  store's purchases, so try a real purchase in the store's sandbox on a device.
+- The events are raised on the main thread; `Dispose` stops listening.
+- **Unity IAP 4.x:** copy `Docs~/recipes/FlockUnityIap4Store.cs` into the game. It holds each purchase until
+  `RedeemStoreReceiptAsync` has delivered it, then confirms it.
+
 See also: [Codegen](codegen.md) for typed shop accessors and the `FlockShopItemId` / `FlockFundId` enums, and [Player Data & Game Commands](player-data.md) for `AddGameFundsAsync`.

@@ -18,6 +18,9 @@ editmode_assemblies="Flock.Tests.Editor Protokite.Playtest.Tests.Editor"
 playmode_assemblies="Flock.Tests.PlayMode Protokite.Playtest.Tests.PlayMode"
 # The netcode tests: one partial class across the netcode PlayMode files, compiled only with Netcode for GameObjects installed.
 netcode_class="Flock.Tests.PlayMode.FlockNetcodeTests"
+# The store purchase tests: the rules (EditMode) and Unity IAP 5's own store (PlayMode), compiled only with Unity IAP 5 installed.
+store_rules_class="Flock.Tests.Editor.FlockStorePurchasesTests"
+store_unity_iap_class="Flock.Tests.PlayMode.FlockStorePurchasesUnityIapTests"
 
 bad=0
 readable=""
@@ -114,5 +117,20 @@ if [ -f "$playmode" ]; then
     echo "[$leg] $netcode netcode tests ran."
   fi
 fi
+
+# The store purchase tests compile only with Unity IAP 5 installed, so they too can pass by absence.
+for check in "editmode:$store_rules_class" "playmode:$store_unity_iap_class"; do
+  mode="${check%%:*}"
+  class="${check#*:}"
+  report="$results/${mode}-results.xml"
+  [ -f "$report" ] || continue
+  ran=$(grep -c "classname=\"$class\"" "$report" || true)
+  if [ "$ran" -eq 0 ]; then
+    echo "::error file=$report::[$leg] No store purchase test ran ($class). Unity IAP 5 is not installed in this leg, or its version define did not match, so the store purchase files compiled out and passed by absence."
+    bad=$((bad + 1))
+  else
+    echo "[$leg] $ran store purchase tests ran ($class)."
+  fi
+done
 
 [ "$bad" -eq 0 ]

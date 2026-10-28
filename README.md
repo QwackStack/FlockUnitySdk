@@ -31,7 +31,7 @@ The Flock Unity SDK provides access to Flock's game backend services from Unity 
 - Game configuration — typed accessors generated from your schemas (via codegen)
 - Game and game version metadata (lookup by ID or name)
 - Player data — read with pagination; typed player-data and template accessors via codegen
-- Shop (browse shops, items, purchase, inventory, redeem App Store and Google Play purchases)
+- Shop (browse shops, items, purchase, inventory, redeem App Store and Google Play purchases, buy with Unity IAP 5)
 - Leaderboards — standings, the player's own rank, and an around-me slice, by board name
 - Game commands (server-side operations: update player data, add funds)
 - Player ban lookup
@@ -171,7 +171,7 @@ Per-feature usage and examples live in their own guides:
 | [Authentication](Docs~/authentication.md) | Login/register for every provider, account linking/unlinking, logout, token refresh/revocation, password reset, email verification, session expiry |
 | [Game & Config](Docs~/game-config.md) | Typed game-config accessors, game/version metadata |
 | [Player Data & Game Commands](Docs~/player-data.md) | Reads, typed template accessors, update commands, funds, achievements, bans |
-| [Shop](Docs~/shop.md) | Shops, items, purchase (money-safety contract), real-money items, store purchases, player inventory |
+| [Shop](Docs~/shop.md) | Shops, items, purchase (money-safety contract), real-money items, store purchases, buying with Unity IAP 5, player inventory |
 | [Leaderboards](Docs~/leaderboards.md) | Standings, my-rank, around-me by board name; windows, board config, score formatting |
 | [Assets](Docs~/assets.md) | Listing/lookup, typed downloads, disk cache, preloading |
 | [Notifications](Docs~/notifications.md) | Player inbox, unread badge event, scheduling a template for later, pending-schedule tracking |

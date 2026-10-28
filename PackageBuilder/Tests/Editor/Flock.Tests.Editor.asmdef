@@ -7,7 +7,8 @@
         "Flock.Tests.Support",
         "UnityEngine.TestRunner",
         "UnityEditor.TestRunner",
-        "Unity.Newtonsoft.Json"
+        "Unity.Newtonsoft.Json",
+        "Flock.Shop.UnityIap"
     ],
     "includePlatforms": [
         "Editor"
@@ -23,6 +24,12 @@
     "defineConstraints": [
         "UNITY_INCLUDE_TESTS"
     ],
-    "versionDefines": [],
+    "versionDefines": [
+        {
+            "name": "com.unity.purchasing",
+            "expression": "[5.0.0,6.0.0)",
+            "define": "FLOCK_UNITY_IAP_5"
+        }
+    ],
     "noEngineReferences": false
 }

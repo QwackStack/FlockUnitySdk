@@ -70,6 +70,16 @@ namespace Flock.Models
         public Dictionary<string, string> Receipt { get; set; }
     }
 
+    // shop/account-token's answer, at the root.
+    internal class StoreAccountTokenAnswer
+    {
+        [JsonProperty("player_id")]
+        public string PlayerId { get; set; }
+
+        [JsonProperty("account_token")]
+        public string AccountToken { get; set; }
+    }
+
     public class PlayerInventory
     {
         [JsonProperty("id")]

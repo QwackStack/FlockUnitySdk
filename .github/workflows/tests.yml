@@ -39,12 +39,15 @@ jobs:
             editor: 6000.3.16f1
             netcode: 2.13.3
             transport: 2.7.3
+            purchasing: 5.4.4
             newtonsoft: 3.2.2
             testframework: 1.6.0
           - leg: unity-2021-netcode-1
             editor: 2021.3.45f2
             netcode: 1.14.1
             transport: 1.5.0
+            # The newest Unity IAP 5 the 2021.3 floor takes (5.4.0 needs 2022.3).
+            purchasing: 5.3.1
             newtonsoft: 3.2.1
             testframework: 1.1.33
     steps:
@@ -88,6 +91,7 @@ jobs:
               "com.protokite.playtest": "file:../protokite-playtest",
               "com.unity.netcode.gameobjects": "${{ matrix.netcode }}",
               "com.unity.transport": "${{ matrix.transport }}",
+              "com.unity.purchasing": "${{ matrix.purchasing }}",
               "com.unity.nuget.newtonsoft-json": "${{ matrix.newtonsoft }}",
               "com.unity.test-framework": "${{ matrix.testframework }}",
               "com.unity.modules.androidjni": "1.0.0",
@@ -112,6 +116,9 @@ jobs:
           cat > ProjectSettings/ProjectVersion.txt <<TXT
           m_EditorVersion: ${{ matrix.editor }}
           TXT
+
+          # Unity IAP 5's fake store buys without a dialog only with this define; without it no purchase arrives.
+          echo "-define:IAP_FAKE_STORE_DEFAULT" > Assets/csc.rsp
 
           echo "Generated a project at the workspace root for ${{ matrix.leg }}, consuming package/ and protokite-playtest/:"
           cat Packages/manifest.json

@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.93.0]
+
+Buying with Unity IAP 5. A game with Unity IAP 5 sells Flock shop items for real money in one call.
+
+### Added
+
+- **`FlockStorePurchases`**, compiled only when Unity IAP 5 (`com.unity.purchasing` 5.x) is installed and the shop is in the
+  package. `ConnectAsync()` connects Unity IAP's store, reads the game's shops and registers each item with a product id for
+  this store (a currency pack or consumable as a consumable product, a standard item as a one-time product). `BuyAsync(shopItemId)`
+  sets the signed-in player's account token on the store, buys, has Flock redeem the purchase, and finishes it in the store only
+  once Flock delivered; it ends `Delivered`, `Pending` (slow payment, "Ask to Buy"), `Cancelled` or `Failed` (the store's reason),
+  and throws `FlockException` when Flock refuses a paid purchase, which stays unfinished. Purchases left unfinished come back at
+  the next launch and are sent once a launch after sign-in (Google's asked for at each sign-in); `PurchaseDelivered` and
+  `PurchaseNeedsAttention` report those and pending ones paid later. Store purchases of products no Flock item sells are left to
+  the game. One connection a client: a second `ConnectAsync` while one is connected is refused (`Dispose` it first), and a
+  connection made before the Flock client was created again no longer acts. Built on Unity IAP 5's order API, tested with its
+  fake store on 5.3.1 and 5.4.4, and bought through Google Play on a phone: a currency pack, a standard item and a consumable.
+- **`Shop.GetStoreAccountTokenAsync()`**: the value to set on a store purchase for the signed-in player (Apple's
+  appAccountToken, Google Play's obfuscated account id), so the server refuses a receipt that is another player's. Read once a
+  sign-in.
+- **A Unity IAP 4.x recipe**, `Docs~/recipes/FlockUnityIap4Store.cs`, which holds each purchase until Flock delivered it; it
+  compiles against Unity IAP 4.15.1.
+
+
 ## [1.92.0]
 
 Store purchase validation. A game that has an App Store or Google Play purchase in hand can have Flock check it with the store

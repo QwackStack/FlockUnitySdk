@@ -34,6 +34,10 @@ namespace Flock.Providers
         private readonly Dictionary<string, string> _shopIdByName = new Dictionary<string, string>();
         private readonly Dictionary<string, List<string>> _itemIdsByShop = new Dictionary<string, List<string>>();
 
+        // The store account token and the sign-in it belongs to.
+        private string _accountToken;
+        private int? _accountTokenSignIn;
+
         public FlockShopProvider(FlockClient client) : base(client) { }
 
         public void ClearCache()
@@ -248,6 +252,31 @@ namespace Flock.Providers
             RequirePurchaseNamed(result, "Leave the store's purchase unfinished and send the same receipt again: it cannot be paid for twice.");
             ApplyWalletToPlayerCache(result.Wallet);
             return result;
+        }
+
+        /// <summary>The value to attach to a store purchase for the signed-in player: Apple's appAccountToken (a UUID) and Google Play's obfuscated account id. The receipt check then refuses a purchase the store says is another player's. Stable per player, so it is read once per sign-in.</summary>
+        public async Task<string> GetStoreAccountTokenAsync(CancellationToken cancellationToken = default)
+        {
+            int? reader = SignInToActFor;
+            if (!reader.HasValue)
+                throw new FlockAuthException("No player is signed in") { Hint = FlockErrorHints.SignInFirst };
+            if (_accountTokenSignIn == reader && !string.IsNullOrEmpty(_accountToken))
+                return _accountToken;
+
+            StoreAccountTokenAnswer answer = await ExecuteAsync(async () =>
+                await FlockHttpClient.GetAsync<StoreAccountTokenAnswer>(
+                    $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.ShopAccountToken}", Client.GetBaseHeaders(), cancellationToken),
+                "Get store account token", cancellationToken, actsForSignIn: reader);
+            if (answer == null || string.IsNullOrEmpty(answer.AccountToken))
+                throw new FlockSerializationException("The server's answer had no account token") { Hint = FlockErrorHints.NotFlocksAnswer };
+
+            // Kept only for the sign-in it was read for, so the next player never gets this one.
+            if (SignInToActFor == reader)
+            {
+                _accountToken = answer.AccountToken;
+                _accountTokenSignIn = reader;
+            }
+            return answer.AccountToken;
         }
 
         // The receipt's ids as the route takes them, each exactly as the store issued it.

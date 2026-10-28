@@ -77,6 +77,8 @@ namespace Flock.Tests
                     providerOf[Read(asmdef).name] = owner;
             }
             Assert.IsTrue(providerOf.ContainsKey("Flock.Multiplayer.Netcode"), "Control: the netcode adapter is found inside Multiplayer's folders");
+            Assert.AreEqual("SHOP", providerOf.TryGetValue("Flock.Shop.UnityIap", out FlockProviderManifest.Entry storeOwner) ? storeOwner.Id : null,
+                "The store purchase adapter leaves a release with the shop");
 
             int samplesBuiltOnAProvider = 0;
             foreach (string asmdef in Directory.GetFiles(root + "Samples", "*.asmdef", SearchOption.AllDirectories))
