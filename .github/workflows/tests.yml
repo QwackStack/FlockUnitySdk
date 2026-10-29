@@ -10,6 +10,8 @@ name: Tests
 # out and pass by absence; without the Protokite Playtest package its test assemblies never compile. Both are installed
 # in both legs, and the last step checks that every test assembly ran and that the netcode tests did.
 #
+# A third job, iap4-recipe, compiles the Unity IAP 4 recipe a 4.x game copies, on 2021.3 with Unity IAP 4.15.1 (no tests).
+#
 # Requires a Unity licence, so it cannot run on a pull request from a fork: GitHub withholds secrets
 # there. Those runs are skipped rather than failed, and reviewed by running the suite locally.
 
@@ -162,3 +164,77 @@ jobs:
           name: test-results-${{ matrix.leg }}
           path: test-results
           if-no-files-found: warn
+
+  iap4-recipe:
+    # A game on Unity IAP 4 copies Docs~/recipes/FlockUnityIap4Store.cs (the store connection needs Unity IAP 5), so the recipe is
+    # compiled here against Unity IAP 4.15.1 on the package's floor, 2021.3: a change to the SDK's shop calls that breaks it fails
+    # this job, not a studio's build. Compile only, one more editor start and no tests. Tooling~/FlockIap4RecipeCheck.cs is the
+    # method Unity runs once every script compiled; it names the recipe and exits 1 unless Unity IAP 4 resolved.
+    name: Unity IAP 4 recipe compiles (2021.3, Unity IAP 4.15.1)
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the package
+        uses: actions/checkout@v4
+        with:
+          path: package
+
+      - name: The licence secrets are present and well-formed
+        env:
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        run: bash "package/Tooling~/check-unity-licence-secrets.sh"
+
+      - name: Turn the workspace into a 4.x game holding the recipe
+        # The same layout as the tests job; the recipe goes in Assets as a game copies it, the check beside it in Assets/Editor.
+        run: |
+          set -euo pipefail
+
+          mkdir -p Packages ProjectSettings Assets/Editor
+
+          cat > Packages/manifest.json <<'JSON'
+          {
+            "dependencies": {
+              "com.flock.sdk": "file:../package",
+              "com.unity.purchasing": "4.15.1",
+              "com.unity.nuget.newtonsoft-json": "3.2.1",
+              "com.unity.modules.androidjni": "1.0.0",
+              "com.unity.modules.assetbundle": "1.0.0",
+              "com.unity.modules.audio": "1.0.0",
+              "com.unity.modules.imageconversion": "1.0.0",
+              "com.unity.modules.imgui": "1.0.0",
+              "com.unity.modules.jsonserialize": "1.0.0",
+              "com.unity.modules.screencapture": "1.0.0",
+              "com.unity.modules.ui": "1.0.0",
+              "com.unity.modules.uielements": "1.0.0",
+              "com.unity.modules.unitywebrequest": "1.0.0",
+              "com.unity.modules.unitywebrequestassetbundle": "1.0.0",
+              "com.unity.modules.unitywebrequesttexture": "1.0.0",
+              "com.unity.modules.unitywebrequestwww": "1.0.0"
+            }
+          }
+          JSON
+
+          cat > ProjectSettings/ProjectVersion.txt <<'TXT'
+          m_EditorVersion: 2021.3.45f2
+          TXT
+
+          cp "package/Docs~/recipes/FlockUnityIap4Store.cs" Assets/
+          cp "package/Tooling~/FlockIap4RecipeCheck.cs" Assets/Editor/
+
+          echo "Generated a 2021.3 project with Unity IAP 4.15.1, the SDK from package/ and the recipe:"
+          cat Packages/manifest.json
+
+      - name: Compile the recipe
+        # A compile error leaves Unity no method to run, so it exits 1; the method itself exits 1 unless Unity IAP 4 resolved.
+        uses: game-ci/unity-builder@v4.8.2
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          unityVersion: 2021.3.45f2
+          targetPlatform: StandaloneLinux64
+          versioning: None
+          buildMethod: FlockIap4RecipeCheck.Compiled

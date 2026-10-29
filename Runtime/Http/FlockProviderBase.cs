@@ -74,8 +74,8 @@ namespace Flock.Http
                 catch (FlockException ex)
                 {
                     StampOperation(ex, context);
-                    if (spendsOrGrants)
-                        ex.OutcomeUnknown = IsOutcomeUnknown(ex);
+                    if (spendsOrGrants && IsOutcomeUnknown(ex))
+                        MarkOutcomeUnknown(ex);
                     throw;
                 }
                 catch (Exception ex)
@@ -91,8 +91,8 @@ namespace Flock.Http
             catch (FlockException ex)
             {
                 StampOperation(ex, context);
-                if (spendsOrGrants)
-                    ex.OutcomeUnknown = IsOutcomeUnknown(ex);
+                if (spendsOrGrants && IsOutcomeUnknown(ex))
+                    MarkOutcomeUnknown(ex);
                 throw;
             }
             catch (Exception ex)
@@ -108,6 +108,21 @@ namespace Flock.Http
             if (signInNumber != Client.SignInNumber)
                 throw new OperationCanceledException("The player signed out or changed, so the request was not sent");
             return operation();
+        }
+
+        // A change that may have been made leaves the player's cached data unsure (the wallet above all), so it is dropped for the next read to ask the server.
+        protected void MarkOutcomeUnknown(FlockException failure)
+        {
+            failure.OutcomeUnknown = true;
+            ForgetThePlayersData();
+        }
+
+        // Drops the signed-in player's cached player data, so the next read asks the server; writes still queued are laid over it again.
+        protected void ForgetThePlayersData()
+        {
+#if !FLOCK_NO_PLAYER
+            Client.Player?.ForgetPlayerData(Client.CurrentPlayerId);
+#endif
         }
 
         // No answer, a server error that names no cause, or an answer that could not be read: the change may have been made.

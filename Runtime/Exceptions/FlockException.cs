@@ -29,7 +29,7 @@ namespace Flock.Exceptions
         /// <summary>Short label of the SDK call that failed (e.g. "Device login"), stamped by the provider that issued it.</summary>
         public string Operation { get; set; }
 
-        /// <summary>True when a purchase, fund grant, consume or store redemption failed with no answer saying whether it was done (no answer, a server error naming no cause, or an answer that could not be read): read the player's inventory and wallet before offering it again. A call cancelled through its token after it was sent may also have been done.</summary>
+        /// <summary>True when a purchase, fund grant, consume or store redemption failed with no answer saying whether it was done (no answer, a server error naming no cause, or an answer that could not be read): read the player's inventory and wallet before offering it again (the SDK drops its cached copy of the player's data, so the next read asks the server). A call cancelled through its token after it was sent may also have been done.</summary>
         public bool OutcomeUnknown { get; set; }
 
         /// <summary>Typed form of <see cref="Code"/> for readable checks/switches; <see cref="FlockErrorCode.Unknown"/> when there was no code or this SDK version doesn't recognize it.</summary>

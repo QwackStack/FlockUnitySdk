@@ -19,6 +19,8 @@ namespace Flock.Providers
 
         private readonly Dictionary<string, Dictionary<string, PlayerData>> _playerDataByPlayerCache = new Dictionary<string, Dictionary<string, PlayerData>>();
         private readonly Dictionary<string, Task<Dictionary<string, PlayerData>>> _playerDataFetchTasks = new Dictionary<string, Task<Dictionary<string, PlayerData>>>();
+        // Counts every time cached player data is dropped, so a read already on its way never puts back what was dropped.
+        private int _playerDataDrops;
 
         private const string SnapshotCategory = "player_template";
 
@@ -34,6 +36,7 @@ namespace Flock.Providers
             _templateIdByName.Clear();
             _allTemplatesFetched = false;
             _allTemplatesFetchTask = null;
+            _playerDataDrops++;
             _playerDataByPlayerCache.Clear();
             _playerDataFetchTasks.Clear();
             DeleteSnapshotCategory(SnapshotCategory);
@@ -80,8 +83,17 @@ namespace Flock.Providers
                 if (ownerPlayerId != null)
                     break;
             }
-            if (ownerPlayerId != null)
-                _playerDataByPlayerCache.Remove(ownerPlayerId);
+            ForgetPlayerData(ownerPlayerId);
+        }
+
+        // Drops the player's cached data and any read of it already on its way, so the next read asks the server.
+        internal void ForgetPlayerData(string playerId)
+        {
+            if (string.IsNullOrEmpty(playerId))
+                return;
+            _playerDataDrops++;
+            _playerDataByPlayerCache.Remove(playerId);
+            _playerDataFetchTasks.Remove(playerId);
         }
 
         public async Task<PlayerData> GetDataByIdAsync(string playerDataId, CancellationToken cancellationToken = default)
@@ -254,10 +266,17 @@ namespace Flock.Providers
 
         private async Task<Dictionary<string, PlayerData>> FetchAndCacheAsync(string playerId, CancellationToken cancellationToken)
         {
+            int dropsWhenSent = _playerDataDrops;
             try
             {
                 Dictionary<string, PlayerData> byTemplate = await FetchAllMyDataAsync(playerId, cancellationToken);
-                _playerDataByPlayerCache[playerId] = byTemplate;
+#if !FLOCK_NO_COMMANDS
+                // The server has not had the writes still queued for it, so they are laid over its answer as they were over the copy.
+                Client.Commands?.OverlayQueuedWrites(byTemplate.Values);
+#endif
+                // Dropped while on its way: the answer may be from before a change, so it is handed back but not kept.
+                if (_playerDataDrops == dropsWhenSent)
+                    _playerDataByPlayerCache[playerId] = byTemplate;
                 return byTemplate;
             }
             finally

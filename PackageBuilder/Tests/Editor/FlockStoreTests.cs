@@ -2,6 +2,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -86,10 +87,13 @@ namespace Flock.Tests.Editor
         private static string Item(string id, string type, string skus)
             => "{\"id\":\"" + id + "\",\"name\":\"" + id + "\",\"type\":\"" + type + "\",\"price\":199,\"currency\":\"USD\",\"is_real_money\":true,\"store_skus\":" + skus + "}";
 
+        private static readonly string GemsItem = Item("gems", "currency_pack", "{\"google_play\":\"" + Gems + "\",\"apple_app_store\":\"com.flock.gems.ios\"}");
+        private static readonly string SwordItem = Item("sword", "standard", "{\"google_play\":\"" + Sword + "\"}");
+
         private static readonly string Catalog =
             "{\"items\":[{\"id\":\"shop-1\",\"name\":\"main\",\"shop_items\":[" +
-            Item("gems", "currency_pack", "{\"google_play\":\"" + Gems + "\",\"apple_app_store\":\"com.flock.gems.ios\"}") + "," +
-            Item("sword", "standard", "{\"google_play\":\"" + Sword + "\"}") + "," +
+            GemsItem + "," +
+            SwordItem + "," +
             Item("shield", "standard", "{}") + "," +
             Item("pass", "subscription", "{\"google_play\":\"com.flock.pass\"}") + "," +
             Item("twin-a", "consumable", "{\"google_play\":\"" + Twin + "\"}") + "," +
@@ -109,10 +113,13 @@ namespace Flock.Tests.Editor
             return transport;
         }
 
-        // Each catalog item answers its own read, as the server does, for a purchase made with no store connected.
+        // Each catalog item answers its own read, as the server does, for a purchase made with no store connected; the shop answers its own
+        // read with what it sells, which the store checks before taking a payment.
         private static void ItemReads(FlockFakeTransport transport, string catalog)
         {
-            foreach (JToken item in JObject.Parse(catalog)["items"][0]["shop_items"])
+            JToken shop = JObject.Parse(catalog)["items"][0];
+            transport.On(FlockEndpoints.ShopById((string)shop["id"]), FlockFakeTransport.Ok(shop.ToString()));
+            foreach (JToken item in shop["shop_items"])
                 transport.On(FlockEndpoints.ShopItemById((string)item["id"]), FlockFakeTransport.Ok(item.ToString()));
         }
 
@@ -150,6 +157,7 @@ namespace Flock.Tests.Editor
             FlockFakeTransport transport = new FlockFakeTransport();
             transport.On(FlockEndpoints.Shop + "?", FlockFakeTransport.Ok(Catalog));
             transport.On(FlockEndpoints.ShopAccountToken, FlockFakeTransport.Ok("{\"player_id\":\"player-a\",\"account_token\":\"" + AccountToken + "\"}"));
+            ItemReads(transport, Catalog);
             bool finishedBeforeFlockAnswered = true;
             transport.Default(request =>
             {
@@ -853,6 +861,188 @@ namespace Flock.Tests.Editor
                 Assert.AreEqual(0, transport.CountTo(FlockEndpoints.ShopValidateReceipt));
                 CollectionAssert.Contains(store.Calls, "stop");
             }
+        }
+
+        // Switched off in the dashboard after the store connected: the shop no longer lists it for players, so the store is never asked to charge.
+        [TestCase(false)]
+        [TestCase(true)]
+        public void Buy_AnItemSwitchedOffSinceTheStoreConnected_IsRefusedBeforeTheStoreTakesPayment(bool theWholeShop)
+        {
+            FakeStore store = new FakeStore();
+            store.OnBuy = productId => store.Pay(productId, "token-1");
+            FlockFakeTransport transport = Backend(FlockFakeTransport.Ok(Delivered));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.SetReachable(true);
+                h.LoginAs("player-a");
+                Connect(h, store);
+                h.Run(() => h.Client.Shop.GetAllAsync());
+                transport.On(FlockEndpoints.ShopById("shop-1"), theWholeShop
+                    ? FlockFakeTransport.Coded(404, "shop.shop_not_found")
+                    : FlockFakeTransport.Ok(JObject.Parse(Catalog.Replace(GemsItem + ",", ""))["items"][0].ToString()));
+
+                FlockException refused = Assert.Catch<FlockException>(() => h.Run(() => h.Client.Shop.PurchaseAsync("gems")));
+
+                Assert.AreEqual(FlockErrorCode.ShopItemNotForSale, refused.ErrorCode);
+                Assert.IsFalse(refused.OutcomeUnknown, "Nothing was charged.");
+                Assert.IsFalse(store.Calls.Exists(call => call.StartsWith("buy:")), "The store was never asked to charge.");
+                Assert.AreEqual(0, transport.CountTo(FlockEndpoints.ShopValidateReceipt));
+                int shopReads = transport.CountTo(FlockEndpoints.Shop + "?");
+                h.Run(() => h.Client.Shop.GetAllAsync());
+                Assert.AreEqual(shopReads + 1, transport.CountTo(FlockEndpoints.Shop + "?"), "The next read of the shops asks the server, which leaves it out.");
+            }
+        }
+
+        [Test]
+        public void Buy_AnItemStillForSale_ReadsTheShop_AndKeepsTheCachedCatalog()
+        {
+            FakeStore store = new FakeStore();
+            store.OnBuy = productId => store.Pay(productId, "token-1");
+            FlockFakeTransport transport = Backend(FlockFakeTransport.Ok(Delivered));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.SetReachable(true);
+                h.LoginAs("player-a");
+                Connect(h, store);
+                int shopReads = transport.CountTo(FlockEndpoints.Shop + "?");
+
+                h.Run(() => h.Client.Shop.PurchaseAsync("gems"));
+                h.Run(() => h.Client.Shop.GetAllAsync());
+
+                Assert.AreEqual(1, transport.CountTo(FlockEndpoints.ShopById("shop-1")), "Checked with the server once, before the store charged.");
+                Assert.AreEqual(shopReads, transport.CountTo(FlockEndpoints.Shop + "?"), "Control: still for sale, so the cached shops are kept.");
+            }
+        }
+
+        // An earlier launch that read the whole catalog, on the same disk as the test's next launch.
+        private static void ALaunchThatSoldEverything(string sharedDir, string apiUrl = null)
+        {
+            FlockTestClient earlier = FlockTestClient.Create(Backend(FlockFakeTransport.Ok(Delivered)), config =>
+            {
+                config.OfflineCacheDirectory = sharedDir;
+                if (apiUrl != null)
+                    config.ApiUrl = apiUrl;
+            });
+            earlier.SetReachable(true);
+            Connect(earlier, new FakeStore()).Dispose();
+            FlockClient.Shutdown();
+        }
+
+        private static void InASharedFolder(Action<string> test)
+        {
+            string sharedDir = Path.Combine(Path.GetTempPath(), "flock_store_" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                test(sharedDir);
+            }
+            finally
+            {
+                if (Directory.Exists(sharedDir))
+                    Directory.Delete(sharedDir, true);
+            }
+        }
+
+        // Paid for and not delivered (the game closed first), then the item left the shops: the store still hands it back, and Flock delivers it.
+        [Test]
+        public void AnUnfinishedPurchase_OfAnItemTheShopsNoLongerList_IsDeliveredAtTheNextLaunch()
+        {
+            InASharedFolder(sharedDir =>
+            {
+                ALaunchThatSoldEverything(sharedDir);
+                FakeStore store = new FakeStore();
+                FlockFakeTransport transport = Backend(FlockFakeTransport.Ok(Delivered), Catalog.Replace(GemsItem + ",", ""));
+                transport.On(FlockEndpoints.ShopItemById("gems"), FlockFakeTransport.Ok(GemsItem.Replace("{\"id\"", "{\"status\":\"inactive\",\"id\"")));
+                using (FlockTestClient h = FlockTestClient.Create(transport, config => config.OfflineCacheDirectory = sharedDir))
+                {
+                    h.SetReachable(true);
+                    h.LoginAs("player-a");
+                    FlockStore purchases = Connect(h, store);
+                    List<string> completed = new List<string>();
+                    purchases.PurchaseCompleted += (item, result) => completed.Add(item.Id);
+
+                    store.Pay(Gems, "token-paid");
+
+                    CollectionAssert.Contains(store.Calls, "register:" + Gems + ":consumable", "Its product is still registered, so the store hands the purchase back.");
+                    Assert.AreEqual("{\"shop_item_id\":\"gems\",\"provider\":\"google_play\",\"receipt\":{\"product_id\":\"" + Gems + "\",\"purchase_token\":\"token-paid\"}}",
+                        transport.AllTo(FlockEndpoints.ShopValidateReceipt)[0].JsonBody);
+                    CollectionAssert.Contains(store.Calls, "finish:token-paid", "Finished once Flock delivered.");
+                    CollectionAssert.AreEqual(new[] { "gems" }, completed);
+                }
+            });
+        }
+
+        [Test]
+        public void AnUnfinishedPurchase_OfAnItemNoLongerFound_NeedsAttention_AndStaysUnfinished()
+        {
+            InASharedFolder(sharedDir =>
+            {
+                ALaunchThatSoldEverything(sharedDir);
+                FakeStore store = new FakeStore();
+                FlockFakeTransport transport = Backend(FlockFakeTransport.Ok(Delivered), Catalog.Replace(GemsItem + ",", ""));
+                transport.On(FlockEndpoints.ShopItemById("gems"), FlockFakeTransport.Coded(404, "shop_item.shop_item_not_found"));
+                using (FlockTestClient h = FlockTestClient.Create(transport, config => config.OfflineCacheDirectory = sharedDir))
+                {
+                    h.SetReachable(true);
+                    h.LoginAs("player-a");
+                    FlockStore purchases = Connect(h, store);
+                    List<FlockUndeliveredPurchase> problems = new List<FlockUndeliveredPurchase>();
+                    purchases.PurchaseNotDelivered += problems.Add;
+
+                    store.Pay(Gems, "token-paid");
+
+                    Assert.AreEqual(1, problems.Count, "Reported, not left silently.");
+                    Assert.AreEqual(Gems, problems[0].ProductId);
+                    Assert.AreEqual(FlockErrorCode.ShopItemShopItemNotFound, problems[0].Error.ErrorCode);
+                    Assert.AreEqual(0, transport.CountTo(FlockEndpoints.ShopValidateReceipt));
+                    Assert.IsFalse(store.Calls.Exists(call => call.StartsWith("finish:")), "It stays unfinished in the store.");
+                }
+            });
+        }
+
+        [Test]
+        public void Restore_DeliversAnOwnedPurchaseOfAnItemTheShopsNoLongerList()
+        {
+            InASharedFolder(sharedDir =>
+            {
+                ALaunchThatSoldEverything(sharedDir);
+                FakeStore store = new FakeStore();
+                store.Own(Sword, "token-owned");
+                FlockFakeTransport transport = Backend(FlockFakeTransport.Ok(Delivered), Catalog.Replace(SwordItem + ",", ""));
+                transport.On(FlockEndpoints.ShopItemById("sword"), FlockFakeTransport.Ok(SwordItem));
+                using (FlockTestClient h = FlockTestClient.Create(transport, config => config.OfflineCacheDirectory = sharedDir))
+                {
+                    h.SetReachable(true);
+                    h.LoginAs("player-a");
+                    FlockStore purchases = Connect(h, store);
+
+                    FlockStoreRestore restore = h.Run(() => purchases.RestoreAsync());
+
+                    Assert.AreEqual(1, restore.Restored.Count);
+                    Assert.AreEqual("sword", restore.Restored[0].Id);
+                    StringAssert.Contains("\"shop_item_id\":\"sword\"", transport.AllTo(FlockEndpoints.ShopValidateReceipt)[0].JsonBody);
+                }
+            });
+        }
+
+        // Kept for the game and backend that sold them: another game on the same device knows nothing of them.
+        [Test]
+        public void ProductsSoldBefore_AreKeptForTheirOwnGame()
+        {
+            InASharedFolder(sharedDir =>
+            {
+                ALaunchThatSoldEverything(sharedDir, "https://another-backend.invalid");
+                FakeStore store = new FakeStore();
+                using (FlockTestClient h = FlockTestClient.Create(Backend(FlockFakeTransport.Ok(Delivered), Catalog.Replace(GemsItem + ",", "")),
+                    config => config.OfflineCacheDirectory = sharedDir))
+                {
+                    h.SetReachable(true);
+
+                    Connect(h, store);
+
+                    CollectionAssert.DoesNotContain(store.Calls, "register:" + Gems + ":consumable");
+                    CollectionAssert.Contains(store.Calls, "register:" + Sword + ":one-time", "Control: this game's own catalog is registered.");
+                }
+            });
         }
     }
 }

@@ -6,6 +6,45 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.96.0]
+
+Documentation for buying, with an example for every situation, the fix it found, the fixes a search for its kind found, and
+items switched off in the dashboard, which the server now leaves out of players' shops.
+
+### Added
+
+- **`FlockErrorCode.ShopItemNotForSale`** (`shop.item_not_for_sale`): the item, or its shop, is set to Inactive in the Flock
+  dashboard, so it is not sold and nothing was bought. A newer server sends it for a wallet purchase; the store connection sends
+  it too, before the store takes any payment.
+
+### Fixed
+
+- **After a purchase, consume, fund grant or store redemption whose outcome is unknown, the next wallet read asks the server.**
+  Reading the wallet again is what such a failure tells a game to do, and it answered with the cached balance from before the
+  call. The SDK now drops its cached copy of the player's data whenever it sets `OutcomeUnknown`.
+- **A player-data read sent before that copy was dropped is no longer kept** when it answers late: it may hold data from before
+  the change. Its caller still gets its answer.
+- **A write waiting to be sent offline still shows after the cached copy is dropped.** A read made after an unknown outcome,
+  `ClearCache` or a new launch asked the server, which has not had the write yet, and showed the value from before it.
+  Writes still queued are now laid over every fresh read, on the row they were written to.
+- **An achievement unlocked offline shows as unlocked at once**, as the server marks it: the time now, and an achievement
+  unlocked earlier keeps its time. It used to read as locked until the unlock was sent.
+- **A purchase refused for not enough of the item's currency, or none of it, drops the cached wallet**, so the read its fix asks
+  for shows the server's balance (spent on another device, say) instead of the cached one.
+- **A real-money item switched off in the dashboard is no longer sold by a game that read the shop before.** `PurchaseAsync`
+  checks with the server just before the store's dialog and refuses with `ShopItemNotForSale`; the store never charges.
+  A not-for-sale refusal, wallet or store, drops the cached shops, so reading them again shows the item gone.
+- **A purchase paid for and not delivered is still delivered after its item is switched off** (set to Inactive in the
+  dashboard). The store connection keeps the products it sold (per game, with the offline cache on), so the store hands
+  such a purchase back at the next launch and Flock delivers it; restoring delivers it too. One whose item was deleted is
+  reported through `PurchaseNotDelivered` instead of being left silently.
+- **Not finding a shop names its other cause:** a shop set to Inactive also answers `ShopShopNotFound` (and `GetItemsByShopAsync`
+  `ShopItemShopNotFound`), and their fixes now say so.
+
+### Changed
+
+- The shop guide opens with a table of every situation and the call for it.
+
 ## [1.95.0]
 
 One purchase call for every item, and plain names for the store calls. Everything renamed or removed here was new in 1.93.0

@@ -1,9 +1,12 @@
+using System.Collections;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using Flock.Exceptions;
 using Flock.Http;
 using Flock.Models;
 using Flock.Tests.Support;
 using NUnit.Framework;
+using UnityEngine.TestTools;
 
 namespace Flock.Tests.Editor
 {
@@ -146,6 +149,37 @@ namespace Flock.Tests.Editor
                 Assert.AreEqual(0, wallet.BalanceOf("Shard"));
                 Assert.IsFalse(wallet.Holds("Shard"));
                 Assert.IsFalse(wallet.Holds("gold"), "Codes are matched exactly, as the server matches them.");
+            }
+        }
+
+        // A read sent before the player's data was dropped may answer with data from before a change: it is handed back but never kept.
+        [UnityTest]
+        public IEnumerator AReadOnItsWay_WhenThePlayersDataIsDropped_DoesNotPutTheOldDataBack()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.PlayerTemplate, FlockFakeTransport.Ok(TemplateList));
+            transport.Default(request =>
+            {
+                bool sentFirst = transport.AllTo("player_data?page=").IndexOf(request) == 0;
+                string row = WalletRow.Replace(Currency("Gold", "250"), Currency("Gold", sentFirst ? "250" : "80"));
+                return FlockFakeTransport.Ok("{\"items\":[" + row + "],\"total\":1,\"page\":1,\"limit\":100}");
+            });
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+                h.Run(() => h.Client.Player.GetTemplatesAsync());
+                transport.GateNext("player_data?page=");
+
+                Task<FlockWallet> before = h.Client.Player.GetWalletAsync();
+                yield return FlockTestWait.Until(() => transport.CountTo("player_data?page=") == 1, "The first read is on its way");
+                h.Client.Player.ForgetPlayerData("player-a");
+                transport.ReleaseGate();
+                yield return FlockTestWait.Until(() => before.IsCompleted, "The read from before the drop answered");
+
+                Assert.AreEqual(250, before.Result.BalanceOf("Gold"), "Control: the earlier read answered with the earlier balance, to its caller.");
+                Assert.AreEqual(80, h.Run(() => h.Client.Player.GetWalletAsync()).BalanceOf("Gold"), "The earlier answer was not kept: the next read asked the server.");
+                Assert.AreEqual(2, transport.CountTo("player_data?page="));
             }
         }
 

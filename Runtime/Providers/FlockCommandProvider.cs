@@ -203,7 +203,7 @@ namespace Flock.Providers
                 Data = data.ToFlatObject()
             };
             return await SendOrQueueAsync(FlockEndpoints.CommandUpdatePlayerData, request, "Update player data",
-                () => ApplyToCachedRow(playerDataId, data), cancellationToken);
+                data, () => ApplyToCachedRow(playerDataId, data), cancellationToken);
         }
 
         /// <summary>Writes one field of a player-data row.</summary>
@@ -221,8 +221,9 @@ namespace Flock.Providers
                 Value = value
             };
 
+            List<DataField> change = new List<DataField> { new DataField { FieldName = key, Value = value } };
             return await SendOrQueueAsync(FlockEndpoints.CommandUpdatePlayerDataKey, request, "Update player data field",
-                () => ApplyToCachedRow(playerDataId, new List<DataField> { new DataField { FieldName = key, Value = value } }), cancellationToken);
+                change, () => ApplyToCachedRow(playerDataId, change), cancellationToken);
         }
 
 #if !FLOCK_NO_PLAYER
@@ -297,21 +298,23 @@ namespace Flock.Providers
                 AchievementName = achievementName
             };
 
+            // Shown unlocked at once, as the server marks it: the time now, only when it was not unlocked already.
+            List<DataField> unlock = new List<DataField> { new DataField { FieldName = achievementName, Value = DateTime.UtcNow.ToString("o") } };
             return await SendOrQueueAsync(FlockEndpoints.CommandUnlockAchievement, request, "Unlock achievement",
-                () => row, cancellationToken);
+                unlock, () => ApplyToCachedRow(row.Id, unlock, onlyWhereEmpty: true) ?? row, cancellationToken);
         }
 #endif
 
         // A write sent while older ones of this player wait would reach the server first, and their replay would then
         // undo it; so it queues behind them, as it does offline, and returns the cached row with the change applied.
         private async Task<PlayerData> SendOrQueueAsync(string path, object request, string context,
-            Func<PlayerData> applyToCachedRow, CancellationToken cancellationToken)
+            List<DataField> overlay, Func<PlayerData> applyToCachedRow, CancellationToken cancellationToken)
         {
             EnsureQueueLoaded();
             bool reachable = IsServerReachable();
             if (!reachable || _pendingWrites.Count > 0)
             {
-                PlayerData queued = EnqueueWrite(path, request, context, applyToCachedRow(), reachable);
+                PlayerData queued = EnqueueWrite(path, request, context, overlay, applyToCachedRow(), reachable);
                 if (reachable)
                     TriggerFlush();
                 return queued;
@@ -327,14 +330,15 @@ namespace Flock.Providers
         }
 
         // queued path for every queueable write: persist, enqueue for replay, return the (optimistically updated) cached row.
-        private PlayerData EnqueueWrite(string path, object payload, string context, PlayerData data, bool reachable)
+        private PlayerData EnqueueWrite(string path, object payload, string context, List<DataField> overlay, PlayerData data, bool reachable)
         {
             int waitingBefore = _pendingWrites.Count;
             _pendingWrites.Enqueue(new PendingDataWrite
             {
                 Path = path,
                 PayloadJson = JsonConvert.SerializeObject(payload),
-                Context = context
+                Context = context,
+                Overlay = overlay
             });
             // The overlay is already applied, so claiming "queued" when it never reached disk leaves a read
             // returning a value the server will never hold.
@@ -349,22 +353,46 @@ namespace Flock.Providers
         }
 
         // overlays a queued change onto the cached row in place so reads-after-write see it; null if not cached, reconciled on flush.
-        private PlayerData ApplyToCachedRow(string playerDataId, List<DataField> changes)
+        private PlayerData ApplyToCachedRow(string playerDataId, List<DataField> changes, bool onlyWhereEmpty = false)
         {
 #if !FLOCK_NO_PLAYER
             PlayerData cached = Client.Player?.TryGetCachedRow(playerDataId);
             if (cached == null)
                 return null;
             cached.Data = cached.Data ?? new List<DataField>();
-            OverlayFields(cached.Data, changes);
+            OverlayFields(cached.Data, changes, onlyWhereEmpty);
             return cached;
 #else
             return null;
 #endif
         }
 
-        // replace fields by name (change wins, keeps existing type when the change omits it), append new ones.
-        private static void OverlayFields(List<DataField> target, List<DataField> changes)
+#if !FLOCK_NO_PLAYER
+        // Lays the writes still waiting to be sent over rows just read from the server, oldest first, so a read after the cached
+        // copy was dropped (an unknown outcome, a rejected write, ClearCache, a new launch) still sees them.
+        internal void OverlayQueuedWrites(IEnumerable<PlayerData> rows)
+        {
+            EnsureQueueLoaded();
+            if (_pendingWrites.Count == 0)
+                return;
+            foreach (PlayerData row in rows)
+            {
+                if (row == null || string.IsNullOrEmpty(row.Id))
+                    continue;
+                foreach (PendingDataWrite pending in _pendingWrites)
+                {
+                    if (pending.Overlay == null || ExtractPlayerDataId(pending.PayloadJson) != row.Id)
+                        continue;
+                    row.Data = row.Data ?? new List<DataField>();
+                    // An unlock keeps the time of an earlier one, as the server does.
+                    OverlayFields(row.Data, pending.Overlay, pending.Path == FlockEndpoints.CommandUnlockAchievement);
+                }
+            }
+        }
+#endif
+
+        // replace fields by name (change wins, keeps existing type when the change omits it), append new ones; onlyWhereEmpty leaves a field that has a value.
+        private static void OverlayFields(List<DataField> target, List<DataField> changes, bool onlyWhereEmpty = false)
         {
             if (changes == null)
                 return;
@@ -378,6 +406,8 @@ namespace Flock.Providers
                     target.Add(change);
                     continue;
                 }
+                if (onlyWhereEmpty && target[idx].Value != null)
+                    continue;
                 if (string.IsNullOrEmpty(change.Type)) 
                     change.Type = target[idx].Type;
                 if (string.IsNullOrEmpty(change.TypeName)) 

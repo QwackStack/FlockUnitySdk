@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Flock.Config;
 using Flock.Exceptions;
 using Flock.Models;
 using UnityEngine;
@@ -146,6 +147,10 @@ namespace Flock.Providers
         private readonly Dictionary<string, ShopItem> _itemsById = new Dictionary<string, ShopItem>();
         private readonly Dictionary<string, ShopItem> _itemByProduct = new Dictionary<string, ShopItem>();
         private readonly HashSet<string> _productsSoldTwice = new HashSet<string>();
+        private readonly Dictionary<string, string> _shopOfItem = new Dictionary<string, string>();
+        // Products this store sold at an earlier launch for items the shops no longer list (switched off or removed in the dashboard), by product id:
+        // a purchase of one paid for and not yet delivered is still sent to Flock, which delivers what was paid for.
+        private readonly Dictionary<string, string> _soldBefore = new Dictionary<string, string>();
         private readonly Dictionary<string, Buying> _buying = new Dictionary<string, Buying>();
         // A store's unfinished purchase is sent once a launch (payment plan D-P3); the next launch sends it again.
         private readonly HashSet<string> _sentThisLaunch = new HashSet<string>();
@@ -185,8 +190,10 @@ namespace Flock.Providers
                 // Listening first: a store hands back unfinished purchases as it connects, and those are held until the shops are read.
                 connected.ListenToTheStore();
                 await DoneOrCancelled(connection.ConnectAsync(), cancellationToken);
-                List<ShopItem> catalog = await ReadCatalogAsync(cancellationToken);
-                await connection.RegisterProductsAsync(connected.LearnProducts(catalog), cancellationToken);
+                List<ShopItem> catalog = await connected.ReadCatalogAsync(cancellationToken);
+                List<FlockStoreProduct> products = connected.LearnProducts(catalog);
+                products.AddRange(connected.RememberProducts());
+                await connection.RegisterProductsAsync(products, cancellationToken);
             }
             catch
             {
@@ -216,6 +223,9 @@ namespace Flock.Providers
             _buying[productId] = buying;
             try
             {
+                // Switched off in the dashboard since the store connected: refused before the store takes the payment, as a wallet purchase is.
+                if (!await FlockClient.Instance.Shop.IsForSaleAsync(_shopOfItem[item.Id], item.Id, cancellationToken))
+                    throw new FlockValidationException($"'{item.Name}' is not for sale right now") { Code = NotForSaleCode, Hint = FlockErrorHints.For(FlockErrorCode.ShopItemNotForSale) };
                 string accountToken = await FlockClient.Instance.Shop.GetStoreAccountTokenAsync(cancellationToken);
                 _connection.SetAccountToken(accountToken);
                 // A cancelled wait leaves the store's purchase going: once paid it is delivered through PurchaseCompleted.
@@ -258,10 +268,11 @@ namespace Flock.Providers
                     continue;
                 }
                 // Not a Flock item's product: the game restores its own purchases.
-                if (!_itemByProduct.TryGetValue(order.ProductId, out ShopItem item))
+                if (!_itemByProduct.TryGetValue(order.ProductId, out ShopItem item) && !_soldBefore.ContainsKey(order.ProductId))
                     continue;
                 try
                 {
+                    item = item ?? await FlockClient.Instance.Shop.GetItemAsync(_soldBefore[order.ProductId], cancellationToken);
                     await FlockClient.Instance.Shop.RedeemStoreReceiptAsync(item.Id, ReceiptOf(order), cancellationToken);
                     restored.Add(item);
                 }
@@ -344,7 +355,7 @@ namespace Flock.Providers
             if (string.IsNullOrEmpty(shopItemId))
                 throw new FlockValidationException("Shop Item ID is empty") { Hint = "Pass the shop item's Id (ShopItem.Id)." };
             if (!_itemsById.TryGetValue(shopItemId, out item))
-                throw new FlockValidationException("That shop item was not in the game's shops when the store connected") { Hint = "Pass a ShopItem.Id from this game's shops. An item added in the Flock dashboard since then is sold once this connection is disposed and ConnectAsync runs again." };
+                throw new FlockValidationException("That shop item was not in the game's shops when the store connected") { Hint = "Pass a ShopItem.Id from this game's shops. An item added in the Flock dashboard since then is sold once this connection is disposed and ConnectAsync runs again; an item or shop switched off (Inactive) there is not sold." };
             if (!item.StoreProductIds.TryGetValue(PaymentProvider, out string productId) || !IsSoldHere(item))
                 throw new FlockValidationException($"This shop item has no {PaymentProvider} product id") { Hint = $"Enter the item's {PaymentProvider} product id under Store product IDs on the shop item in the Flock dashboard, exactly as the store has it, then connect again." };
             return productId;
@@ -392,7 +403,7 @@ namespace Flock.Providers
             }
         }
 
-        private static async Task<List<ShopItem>> ReadCatalogAsync(CancellationToken cancellationToken)
+        private async Task<List<ShopItem>> ReadCatalogAsync(CancellationToken cancellationToken)
         {
             List<ShopItem> catalog = new List<ShopItem>();
             int page = 1;
@@ -402,8 +413,14 @@ namespace Flock.Providers
                 if (shops?.Items == null || shops.Items.Length == 0)
                     return catalog;
                 foreach (Shop shop in shops.Items)
-                    if (shop?.ShopItems != null)
-                        catalog.AddRange(shop.ShopItems);
+                {
+                    if (shop?.ShopItems == null)
+                        continue;
+                    catalog.AddRange(shop.ShopItems);
+                    foreach (ShopItem item in shop.ShopItems)
+                        if (item?.Id != null)
+                            _shopOfItem[item.Id] = shop.Id;
+                }
                 if (page * 100 >= shops.Total)
                     return catalog;
                 page++;
@@ -447,6 +464,39 @@ namespace Flock.Providers
             return products;
         }
 
+        // A product as kept between launches: the item it was sold for, and its kind of store product.
+        internal sealed class SoldProduct
+        {
+            public string ShopItemId { get; set; }
+            public bool Consumable { get; set; }
+        }
+
+        private const string SoldProductsScope = FlockSnapshotStore.StateScope + "/store";
+        private const string NotForSaleCode = "shop.item_not_for_sale";
+
+        // Keeps this launch's products with those sold before (per game and store), and hands back the ones no item sells now, so the store hands their purchases back.
+        private List<FlockStoreProduct> RememberProducts()
+        {
+            List<FlockStoreProduct> soldBefore = new List<FlockStoreProduct>();
+            FlockSnapshotStore disk = _client.SnapshotStore;
+            if (disk == null)
+                return soldBefore;
+            string key = FlockGameKey.Named("products-" + PaymentProvider, _client.InitConfig.GameKey);
+            if (!disk.TryRead(SoldProductsScope, key, out Dictionary<string, SoldProduct> sold) || sold == null)
+                sold = new Dictionary<string, SoldProduct>();
+            foreach (KeyValuePair<string, SoldProduct> product in sold)
+            {
+                if (_itemByProduct.ContainsKey(product.Key) || _productsSoldTwice.Contains(product.Key) || string.IsNullOrEmpty(product.Value?.ShopItemId))
+                    continue;
+                _soldBefore[product.Key] = product.Value.ShopItemId;
+                soldBefore.Add(new FlockStoreProduct(product.Key, product.Value.Consumable));
+            }
+            foreach (KeyValuePair<string, ShopItem> product in _itemByProduct)
+                sold[product.Key] = new SoldProduct { ShopItemId = product.Value.Id, Consumable = product.Value.Type != ShopItemTypes.Standard };
+            disk.Write(SoldProductsScope, key, sold);
+            return soldBefore;
+        }
+
         private void ListenToTheStore()
         {
             _connection.OrderPaid += HandlePaid;
@@ -487,7 +537,7 @@ namespace Flock.Providers
             }
             _buying.TryGetValue(order.ProductId, out Buying buying);
             ShopItem item = buying?.Item;
-            if (item == null && !_itemByProduct.TryGetValue(order.ProductId, out item) && !_productsSoldTwice.Contains(order.ProductId))
+            if (item == null && !_itemByProduct.TryGetValue(order.ProductId, out item) && !_productsSoldTwice.Contains(order.ProductId) && !_soldBefore.ContainsKey(order.ProductId))
                 return; // Not a Flock item's product: the game finishes its own purchases.
             if (!FlockClient.Instance.IsAuthenticated)
             {
@@ -496,6 +546,11 @@ namespace Flock.Providers
             }
             if (!_sentThisLaunch.Add(order.TransactionId))
                 return;
+            if (item == null && _soldBefore.TryGetValue(order.ProductId, out string soldItemId))
+            {
+                SendForAnItemNoLongerSold(order, soldItemId);
+                return;
+            }
             if (item == null)
             {
                 RaiseNotDelivered(null, order.ProductId, SoldTwice(order.ProductId, " The purchase stays unfinished in the store and is matched at the next launch."));
@@ -535,6 +590,22 @@ namespace Flock.Providers
             }
             buying?.Done.TrySetResult(delivery);
             FlockEvents.InvokeEach(PurchaseCompleted, item, delivery, $"{nameof(FlockStore)}.{nameof(PurchaseCompleted)}");
+        }
+
+        // Paid for an item the shops no longer list: its own read still finds a switched-off item, and Flock delivers what was paid for or says why not.
+        private async void SendForAnItemNoLongerSold(FlockStoreOrder order, string shopItemId)
+        {
+            ShopItem item;
+            try
+            {
+                item = await FlockClient.Instance.Shop.GetItemAsync(shopItemId);
+            }
+            catch (FlockException notRead)
+            {
+                RaiseNotDelivered(null, order.ProductId, notRead);
+                return;
+            }
+            Send(order, item, null);
         }
 
         private void Hold(FlockStoreOrder order)

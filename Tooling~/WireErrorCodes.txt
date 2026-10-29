@@ -32,7 +32,11 @@
 #   grep -rhoE '"[a-z_]+\.[a-z_]+"' <backend>/flock/packages/*/enums.py <backend>/common/helpers/error_codes.py \
 #     | tr -d '"' | sort -u
 #
-# Last refreshed 2026-10-26, when the payment hardening merged into backend main (644bf45), for the shop, payment_provider and
+# Last refreshed 2026-10-29 against backend main 204473a6, for the codes its enums gained since 644bf45, read in their code:
+# shop.item_not_for_sale (409, a wallet purchase or a checkout of an item or shop switched off in the dashboard). The other five
+# (game_config.config_has_patches, config_owned_elsewhere, delete_on_production, game_patch.patch_in_use, player_data.already_exists)
+# come only from dashboard routes and are not listed. Before that, on
+# 2026-10-26, when the payment hardening merged into backend main (644bf45), for the shop, payment_provider and
 # matchmaking codes, read in their code: shop.invalid_purchase_status (waived, below), shop.idempotency_key_reused (waived until 2026-10-28, when the SDK began sending keys) and
 # matchmaking.search_input_required, which the ticket the SDK opens meets once a queue has region or skill rules. The codes of
 # main's session backfill, live updates and session kicks (BACKLOG All-2, All-11) wait for the owner's scope call and are
@@ -145,6 +149,7 @@ shop.currency_template_not_found
 shop.idempotency_key_reused
 shop.insufficient_funds
 shop.item_not_found
+shop.item_not_for_sale
 shop.malformed_reward
 shop.pack_grants_nothing
 shop.player_mismatch

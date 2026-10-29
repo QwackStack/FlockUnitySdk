@@ -54,12 +54,39 @@ namespace Flock.Providers
 
         public void ClearCache()
         {
+            ForgetTheCatalog();
+            DeleteSnapshotCategory(SnapshotCategory);
+        }
+
+        // The next read of a shop or item asks the server; the copy on disk stays for reading offline.
+        private void ForgetTheCatalog()
+        {
             _shopPages.Clear();
             _shopsById.Clear();
             _shopIdByName.Clear();
             _itemsById.Clear();
             _itemIdsByShop.Clear();
-            DeleteSnapshotCategory(SnapshotCategory);
+        }
+
+        // Read from the server, never a cache: whether the shop still sells the item to players (a switched-off shop or item is not shown to them).
+        // A shop no longer found drops the cached catalog, so the read the refusal's fix asks for shows it gone.
+        internal async Task<bool> IsForSaleAsync(string shopId, string shopItemId, CancellationToken cancellationToken)
+        {
+            Shop shop;
+            try
+            {
+                shop = await ExecuteAsync(async () => await FlockHttpClient.GetAsync<Shop>(
+                    $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.ShopById(shopId)}", Client.GetBaseHeaders(), cancellationToken),
+                    "Check the item is for sale", cancellationToken);
+            }
+            catch (FlockException gone) when (gone.ErrorCode == FlockErrorCode.ShopShopNotFound)
+            {
+                shop = null;
+            }
+            bool forSale = shop?.ShopItems != null && shop.ShopItems.Exists(item => item?.Id == shopItemId);
+            if (!forSale)
+                ForgetTheCatalog();
+            return forSale;
         }
 
         public async Task<PaginatedResponse<Shop>> GetAllAsync(
@@ -253,6 +280,20 @@ namespace Flock.Providers
                 RecordPurchaseInTheBackground(shopItem, shopItemId, nameof(PurchaseStatus.Failed), purchaser);
                 throw;
             }
+            // The server's balance is not the cached one (another device spent from it, say), so the read the fix asks for asks the server.
+            catch (FlockException refused) when (refused.ErrorCode == FlockErrorCode.ShopInsufficientFunds || refused.ErrorCode == FlockErrorCode.ShopCurrencyNotHeld)
+            {
+                ForgetThePlayersData();
+                RecordPurchaseInTheBackground(shopItem, shopItemId, nameof(PurchaseStatus.Failed), purchaser);
+                throw;
+            }
+            // Switched off in the dashboard since the shop was read: the read the fix asks for asks the server, which leaves it out.
+            catch (FlockException refused) when (refused.ErrorCode == FlockErrorCode.ShopItemNotForSale)
+            {
+                ForgetTheCatalog();
+                RecordPurchaseInTheBackground(shopItem, shopItemId, nameof(PurchaseStatus.Failed), purchaser);
+                throw;
+            }
             catch
             {
                 RecordPurchaseInTheBackground(shopItem, shopItemId, nameof(PurchaseStatus.Failed), purchaser);
@@ -343,10 +384,13 @@ namespace Flock.Providers
         }
 
         // A 2xx that names no purchase is not Flock's answer about one: without this, PurchaseResult's default status would read it as paid.
-        private static void RequirePurchaseNamed(PurchaseResult result, string fix)
+        private void RequirePurchaseNamed(PurchaseResult result, string fix)
         {
-            if (result == null || string.IsNullOrEmpty(result.PurchaseId))
-                throw new FlockSerializationException("The server's answer named no purchase, so whether it went through is unknown") { Hint = fix, OutcomeUnknown = true };
+            if (result != null && !string.IsNullOrEmpty(result.PurchaseId))
+                return;
+            FlockSerializationException unsure = new FlockSerializationException("The server's answer named no purchase, so whether it went through is unknown") { Hint = fix };
+            MarkOutcomeUnknown(unsure);
+            throw unsure;
         }
 
         // The purchase never waits on its records: they are analytics, and their sending and retries must not hold up or fail
@@ -429,11 +473,11 @@ namespace Flock.Providers
             }, "Consume inventory item", cancellationToken, idempotent: false, actsForSignIn: consumer, spendsOrGrants: true);
             // A 2xx that names no entry is not Flock's answer about one, so whether it was used is unknown.
             if (result?.Inventory == null || string.IsNullOrEmpty(result.Inventory.Id))
-                throw new FlockSerializationException("The server's answer named no inventory entry, so whether it was used is unknown")
-                {
-                    Hint = "Read the player's inventory to see whether it was used before offering to use it again.",
-                    OutcomeUnknown = true
-                };
+            {
+                FlockSerializationException unsure = new FlockSerializationException("The server's answer named no inventory entry, so whether it was used is unknown") { Hint = "Read the player's inventory to see whether it was used before offering to use it again." };
+                MarkOutcomeUnknown(unsure);
+                throw unsure;
+            }
             ApplyWalletToPlayerCache(result.Wallet);
             return result;
         }

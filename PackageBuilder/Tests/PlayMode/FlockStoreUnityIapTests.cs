@@ -21,9 +21,11 @@ namespace Flock.Tests.PlayMode
     // the store's real order reaches Flock, and only then does the store hear the purchase is finished.
     public class FlockStoreUnityIapTests
     {
-        private const string Catalog =
-            "{\"items\":[{\"id\":\"shop-1\",\"name\":\"main\",\"shop_items\":[{\"id\":\"gems\",\"name\":\"gems\",\"type\":\"currency_pack\",\"price\":199," +
-            "\"currency\":\"USD\",\"is_real_money\":true,\"store_skus\":{\"google_play\":\"com.flock.gems\"}}]}],\"total\":1,\"page\":1,\"limit\":100}";
+        private const string MainShop =
+            "{\"id\":\"shop-1\",\"name\":\"main\",\"shop_items\":[{\"id\":\"gems\",\"name\":\"gems\",\"type\":\"currency_pack\",\"price\":199," +
+            "\"currency\":\"USD\",\"is_real_money\":true,\"store_skus\":{\"google_play\":\"com.flock.gems\"}}]}";
+
+        private const string Catalog = "{\"items\":[" + MainShop + "],\"total\":1,\"page\":1,\"limit\":100}";
 
         private FlockTestClient _h;
         private FlockFakeTransport _transport;
@@ -36,6 +38,7 @@ namespace Flock.Tests.PlayMode
                 FlockClient.Shutdown();
             _transport = new FlockFakeTransport();
             _transport.On(FlockEndpoints.Shop + "?", FlockFakeTransport.Ok(Catalog));
+            _transport.On(FlockEndpoints.ShopById("shop-1"), FlockFakeTransport.Ok(MainShop));
             _transport.On(FlockEndpoints.ShopAccountToken, FlockFakeTransport.Ok("{\"player_id\":\"player-a\",\"account_token\":\"c1601ba6-6805-5c7b-92d0-40ccdbedd6eb\"}"));
             _transport.On(FlockEndpoints.ShopValidateReceipt, FlockFakeTransport.Ok(
                 "{\"purchase_id\":\"pur-1\",\"item_type\":\"currency_pack\",\"status\":\"paid\",\"granted\":[{\"type\":\"currency\",\"code\":\"gold\",\"amount\":100}]}"));

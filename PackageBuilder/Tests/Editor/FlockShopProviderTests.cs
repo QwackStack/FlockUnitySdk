@@ -1620,6 +1620,107 @@ namespace Flock.Tests.Editor
             }
         }
 
+        // The wallet as the player-data route answers it, with this much Gold.
+        private const string WalletTemplates =
+            "{\"error\":{\"code\":null},\"response\":{\"message\":null,\"code\":null},\"result\":[{\"id\":\"tpl-wallet\",\"name\":\"currencies\",\"schema\":[],\"data\":[],\"tag\":\"currency\"}]}";
+
+        private static FlockHttpResponse WalletPage(int gold)
+            => FlockFakeTransport.Ok("{\"items\":[{\"id\":\"pd-wallet\",\"player_template_id\":\"tpl-wallet\",\"player_id\":\"player-a\",\"data\":[{\"type\":\"object\",\"value\":[" +
+                "{\"type\":\"integer\",\"value\":" + gold + ",\"type_name\":\"currency\",\"field_name\":\"Gold\"}],\"type_name\":\"wallet\",\"field_name\":\"game_currencies\"}]}],\"total\":1,\"page\":1,\"limit\":100}");
+
+        // Reading the wallet again is what a game does after an unknown outcome, so that read must not be the copy from before.
+        [Test]
+        public void Purchase_WhoseOutcomeIsUnknown_DropsTheCachedWallet_SoTheNextReadAsksTheServer()
+        {
+            FlockFakeTransport transport = WithItem();
+            transport.On(FlockEndpoints.PlayerTemplate, FlockFakeTransport.Ok(WalletTemplates));
+            transport.OnSequence("player_data?page=", WalletPage(100), WalletPage(80));
+            transport.On(FlockEndpoints.ShopTransaction, FlockFakeTransport.Status(502, "<html>Bad Gateway</html>"));
+            using (FlockTestClient h = FlockTestClient.Create(transport, config => config.RetryPolicy = RetriesEnabled()))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+                Assert.AreEqual(100, h.Run(() => h.Client.Player.GetWalletAsync()).BalanceOf("Gold"));
+
+                FlockException failed = Assert.Catch<FlockException>(() => h.Run(() => h.Client.Shop.PurchaseAsync("item-1")));
+
+                Assert.IsTrue(failed.OutcomeUnknown);
+                Assert.AreEqual(80, h.Run(() => h.Client.Player.GetWalletAsync()).BalanceOf("Gold"), "Read from the server, not the copy from before the purchase.");
+            }
+        }
+
+        // Not enough funds (or none of the currency) says the server's balance is not the cached one, so the read its fix asks for asks the server.
+        [TestCase("shop.insufficient_funds", FlockErrorCode.ShopInsufficientFunds)]
+        [TestCase("shop.currency_not_held", FlockErrorCode.ShopCurrencyNotHeld)]
+        public void Purchase_NotEnoughFunds_DropsTheCachedWallet(string code, FlockErrorCode expected)
+        {
+            FlockFakeTransport transport = WithItem();
+            transport.On(FlockEndpoints.PlayerTemplate, FlockFakeTransport.Ok(WalletTemplates));
+            transport.OnSequence("player_data?page=", WalletPage(100), WalletPage(10));
+            transport.On(FlockEndpoints.ShopTransaction, FlockFakeTransport.Coded(400, code));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+                h.Run(() => h.Client.Player.GetWalletAsync());
+
+                FlockException refused = Assert.Catch<FlockException>(() => h.Run(() => h.Client.Shop.PurchaseAsync("item-1")));
+
+                Assert.AreEqual(expected, refused.ErrorCode);
+                Assert.IsFalse(refused.OutcomeUnknown, "Nothing was bought.");
+                Assert.AreEqual(10, h.Run(() => h.Client.Player.GetWalletAsync()).BalanceOf("Gold"), "The server's balance, not the cached 100.");
+            }
+        }
+
+        [Test]
+        public void Purchase_Refused_KeepsTheCachedWallet()
+        {
+            FlockFakeTransport transport = WithItem();
+            transport.On(FlockEndpoints.PlayerTemplate, FlockFakeTransport.Ok(WalletTemplates));
+            transport.OnSequence("player_data?page=", WalletPage(100), WalletPage(80));
+            transport.On(FlockEndpoints.ShopTransaction, FlockFakeTransport.Coded(404, "shop_item.shop_item_not_found"));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+                h.Run(() => h.Client.Player.GetWalletAsync());
+
+                Assert.Catch<FlockException>(() => h.Run(() => h.Client.Shop.PurchaseAsync("item-1")));
+
+                Assert.AreEqual(100, h.Run(() => h.Client.Player.GetWalletAsync()).BalanceOf("Gold"), "Nothing was bought, so the copy still holds.");
+                Assert.AreEqual(1, transport.CountTo("player_data?page="));
+            }
+        }
+
+        // Switched off in the dashboard after the shop was read: the read its fix asks for asks the server, which leaves the item out.
+        [Test]
+        public void Purchase_NotForSale_DropsTheCachedCatalog_AndAnotherRefusalKeepsIt()
+        {
+            FlockFakeTransport transport = WithItem();
+            transport.On(FlockEndpoints.ShopByName("main"), FlockFakeTransport.Ok("{\"id\":\"shop-1\",\"name\":\"main\",\"shop_items\":[" + ItemBody + "]}"));
+            transport.OnSequence(FlockEndpoints.ShopTransaction,
+                FlockFakeTransport.Coded(400, "shop.insufficient_funds"),
+                FlockFakeTransport.Coded(409, "shop.item_not_for_sale"));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+                h.Run(() => h.Client.Shop.GetByNameAsync("main"));
+
+                Assert.Catch<FlockException>(() => h.Run(() => h.Client.Shop.PurchaseAsync("item-1")));
+                h.Run(() => h.Client.Shop.GetByNameAsync("main"));
+                Assert.AreEqual(1, transport.CountTo(FlockEndpoints.ShopByName("main")), "Control: another refusal keeps the cached shop.");
+
+                FlockException refused = Assert.Catch<FlockException>(() => h.Run(() => h.Client.Shop.PurchaseAsync("item-1")));
+                h.Run(() => h.Client.Shop.GetByNameAsync("main"));
+
+                Assert.AreEqual(FlockErrorCode.ShopItemNotForSale, refused.ErrorCode);
+                Assert.IsFalse(refused.OutcomeUnknown, "Nothing was bought.");
+                StringAssert.Contains("switched off", refused.Hint);
+                Assert.AreEqual(2, transport.CountTo(FlockEndpoints.ShopByName("main")), "The next read of the shop asks the server.");
+            }
+        }
+
         [Test]
         public void OwnedItemCounts_NotSignedIn_ThrowsBeforeSending()
         {

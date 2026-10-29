@@ -2,6 +2,28 @@
 
 [← Back to README](../README.md)
 
+## Every situation, in short
+
+| You want to | Call |
+|---|---|
+| List the shops and their items | `Shop.GetAllAsync()`, `Shop.GetByNameAsync(name)`, then `shop.ShopItems` |
+| Show the player's balances | `Player.GetWalletAsync()`, then `wallet.BalanceOf("Gold")` |
+| Grey out what they cannot pay for | `wallet.CanAfford(item)` (false for a real-money item) |
+| Show what they own | `Shop.GetOwnedItemCountsAsync()`, or `Shop.OwnsAsync(item.Id)` |
+| Show a real-money item's price | `store.GetPrice(item.Id).Text`, the store's price in the player's currency |
+| Buy any item | `Shop.PurchaseAsync(item.Id)`: the wallet pays for a game currency, the store for real money |
+| Tell "not enough currency" | catch `FlockException` with `ErrorCode == FlockErrorCode.ShopInsufficientFunds` |
+| Tell "no longer for sale" (switched off in the dashboard) | catch `FlockException` with `ErrorCode == FlockErrorCode.ShopItemNotForSale`, then read the shop again |
+| Tell "the store did not take the payment" | catch `FlockStoreException`, and read its `Reason` (`Cancelled`, `PaymentDeclined`, `AlreadyOwned`...) |
+| Handle "no answer came" | catch `FlockException` with `OutcomeUnknown`, then read the wallet and inventory again |
+| Handle "waiting for the payment" | `bought.IsPaid` is false; `store.PurchaseCompleted` reports it once paid |
+| Use a consumable the player holds | `Shop.ConsumeOneAsync(item.Id)` |
+| Give back one-time items on a new phone | `store.RestoreAsync()` |
+| Check the store setup while you build | `store.CheckSetupAsync()` |
+| Redeem a purchase from your own store code | `Shop.RedeemStoreReceiptAsync(item.Id, receipt)` |
+
+Each is shown below; the `Samples/Shop` folder has all of them on one screen (`FlockShopSample`).
+
 ```csharp
 var shops = await FlockClient.Instance.Shop.GetAllAsync(page: 1, limit: 10);
 var shop = await FlockClient.Instance.Shop.GetByIdAsync("shop-id");
@@ -77,7 +99,8 @@ catch (FlockException e) when (e.OutcomeUnknown)
 
 `OutcomeUnknown` is set on a purchase, a consume, a fund grant and a store redemption that failed with no answer, a server error
 naming no cause, or an answer that could not be read. It is false for a refusal (such as not enough currency) and for every
-read. A call cancelled through its own token after it was sent may also have been made.
+read. A call cancelled through its own token after it was sent may also have been made. When it is set, the SDK drops its cached copy of the player's data,
+so the next wallet read asks the server rather than answering with the balance from before the call.
 
 > Inventory is deliberately **never offline-cached** — it changes on every purchase, so the SDK always
 > reads it fresh and there is no stale copy to fall back on when the network is down. Reading it offline
@@ -234,6 +257,13 @@ FlockStoreSetupCheck check = await store.CheckSetupAsync();      // what is miss
   `NotSignedInToTheStore`, `Unknown`; a string, for the same reason as `reward.Type`), with the store's own words in its message.
   When Flock refuses a purchase the player paid for, it throws `FlockException` (its `ErrorCode` and `Hint` say why), the purchase
   stays unfinished, and `PurchaseNotDelivered` reports it.
+- **An item switched off in the dashboard** (Inactive, the item or its shop) is not shown to players and not sold. Players'
+  shop reads leave it out; a wallet purchase of it is refused with `ShopItemNotForSale`, and so is a real-money one, checked with
+  the server just before the store's dialog, so a game still showing an older copy of the shop never takes the payment. Either
+  refusal drops the SDK's cached shops, so reading them again shows it gone. A purchase the player already paid for is still
+  delivered: the store connection keeps the products it sold (with the offline cache on, per game), so an unfinished purchase of
+  an item the shops no longer list comes back and is sent to Flock at the next launch, and restoring still delivers it. One whose
+  item was deleted is reported through `PurchaseNotDelivered`.
 - **A pending purchase** (a slow way to pay, or "Ask to Buy") answers with `Status` `pending` (`IsPaid` false); once paid it is
   reported by `PurchaseCompleted`. If the call's cancellation token fires, the purchase carries on and is reported the same way.
 - **Purchases left unfinished** (a crash, a lost connection, a refusal) come back from the store at the next launch. Once a

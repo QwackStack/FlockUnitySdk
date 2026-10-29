@@ -255,7 +255,8 @@ namespace Flock.Tests.PlayMode
             yield return Opened(A, FlockRelayTransport.Tcp, opened);
             Stopwatch clock = Stopwatch.StartNew();
             _relay.CloseEveryStream();
-            yield return FlockTestWait.Until(() => opened[0].HasStopped, "the relay was told lost", 10f);
+            // The relay's thread marks it stopped, then warns: wait for both.
+            yield return FlockTestWait.Until(() => opened[0].HasStopped && _logger.Warnings.Any(line => line.Contains("closed the connection")), "the relay was told lost", 10f);
 
             Assert.AreEqual(FlockRelayFailure.Lost, opened[0].FailureReason);
             Assert.Less(clock.Elapsed.TotalSeconds, 5.0, "Told at once, not after the relay's 45 s of silence");
@@ -268,7 +269,8 @@ namespace Flock.Tests.PlayMode
             List<FlockRelayConnection> opened = new List<FlockRelayConnection>();
             yield return Opened(A, FlockRelayTransport.Tcp, opened);
             _relay.ResetEveryStream();
-            yield return FlockTestWait.Until(() => opened[0].HasStopped, "the relay was told lost", 10f);
+            // The relay's thread marks it stopped, then warns: wait for both.
+            yield return FlockTestWait.Until(() => opened[0].HasStopped && _logger.Warnings.Any(line => line.Contains("was lost")), "the relay was told lost", 10f);
 
             Assert.AreEqual(FlockRelayFailure.Lost, opened[0].FailureReason);
             string warning = _logger.Warnings.Single(line => line.Contains("was lost"));

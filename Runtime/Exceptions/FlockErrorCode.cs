@@ -170,6 +170,7 @@ namespace Flock.Exceptions
         ShopIdempotencyKeyReused,                   // shop.idempotency_key_reused
         ShopInsufficientFunds,                      // shop.insufficient_funds
         ShopItemNotFound,                           // shop.item_not_found
+        ShopItemNotForSale,                         // shop.item_not_for_sale
         ShopMalformedReward,                        // shop.malformed_reward
         ShopNotARealCurrencyItem,                   // shop.not_a_real_currency_item
         ShopPackGrantsNothing,                      // shop.pack_grants_nothing

@@ -74,6 +74,127 @@ namespace Flock.Tests.Editor
             }
         }
 
+        // A write waiting to be sent is the player's newest change, so a read made after the cached copy was dropped shows it too.
+        private static void PrimeTwoRows(FlockTestClient h)
+        {
+            string page = "{\"items\":[" + RowJson("player-a", "tpl-1", "pd-1", new List<DataField> { Field("score", "10") }) + "," +
+                RowJson("player-a", "tpl-2", "pd-2", new List<DataField> { Field("score", "10") }) + "],\"total\":2,\"page\":1,\"limit\":100}";
+            h.Transport.On("player_data?page=", FlockFakeTransport.Ok(page));
+            h.SetReachable(true);
+            h.Run(() => h.Client.Player.GetMyDataByTemplateAsync("tpl-1"));
+        }
+
+        [Test]
+        public void AQueuedWrite_IsLaidOverAFreshRead_AfterTheCachedCopyIsDropped()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                PrimeTwoRows(h);
+                h.SetReachable(false);
+                h.Run(() => h.Client.Commands.UpdatePlayerDataAsync("pd-1", new List<DataField> { Field("score", "42") }));
+
+                // As an unknown outcome does: the copy goes, and the server, which has not had the write, still holds 10.
+                h.Client.Player.ForgetPlayerData("player-a");
+                PlayerData mine = h.Run(() => h.Client.Player.GetMyDataByTemplateAsync("tpl-1"));
+                PlayerData other = h.Run(() => h.Client.Player.GetMyDataByTemplateAsync("tpl-2"));
+
+                Assert.AreEqual(2, transport.CountTo("player_data?page="), "Control: read from the server again.");
+                Assert.AreEqual("42", mine.Data.Find(f => f.FieldName == "score").Value, "The queued change is laid over the server's answer.");
+                Assert.AreEqual("10", other.Data.Find(f => f.FieldName == "score").Value, "Only on the row it was written to.");
+                Assert.AreEqual(0, transport.CountTo(FlockEndpoints.CommandUpdatePlayerData), "Still waiting to be sent.");
+            }
+        }
+
+        [Test]
+        public void AQueuedWrite_IsLaidOverAFreshRead_AfterClearCache()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                PrimeCachedRow(h, "player-a", "tpl-1", "pd-1", new List<DataField> { Field("score", "10") });
+                h.SetReachable(false);
+                h.Run(() => h.Client.Commands.UpdatePlayerDataFieldAsync("pd-1", "score", "42"));
+
+                h.Client.Player.ClearCache();
+                PlayerData mine = h.Run(() => h.Client.Player.GetMyDataByTemplateAsync("tpl-1"));
+
+                Assert.AreEqual("42", mine.Data.Find(f => f.FieldName == "score").Value);
+            }
+        }
+
+        [Test]
+        public void AQueuedWrite_IsLaidOverAFreshRead_AfterARelaunch()
+        {
+            string sharedDir = Path.Combine(Path.GetTempPath(), "flock_relaunch_" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                FlockTestClient h1 = FlockTestClient.Create(new FlockFakeTransport(), config => config.OfflineCacheDirectory = sharedDir);
+                h1.LoginAs("player-a");
+                h1.SetReachable(false);
+                h1.Run(() => h1.Client.Commands.UpdatePlayerDataFieldAsync("pd-1", "score", "42"));
+                FlockClient.Shutdown();
+
+                // The next launch reads before the write gets through (it keeps failing to send, so it stays queued).
+                FlockFakeTransport transport2 = new FlockFakeTransport();
+                transport2.On(FlockEndpoints.CommandUpdatePlayerData, FlockFakeTransport.Offline());
+                transport2.On("player_data?page=", FlockFakeTransport.Ok("{\"items\":[" +
+                    RowJson("player-a", "tpl-1", "pd-1", new List<DataField> { Field("score", "10") }) + "],\"total\":1,\"page\":1,\"limit\":100}"));
+                using (FlockTestClient h2 = FlockTestClient.Create(transport2, config => config.OfflineCacheDirectory = sharedDir))
+                {
+                    h2.LoginAs("player-a");
+                    h2.SetReachable(true);
+                    PlayerData mine = h2.Run(() => h2.Client.Player.GetMyDataByTemplateAsync("tpl-1"));
+
+                    Assert.AreEqual(1, transport2.CountTo("player_data?page="), "Control: read from the server.");
+                    Assert.AreEqual("42", mine.Data.Find(f => f.FieldName == "score").Value?.ToString(), "The saved write is laid over the server's answer.");
+                }
+            }
+            finally
+            {
+                if (Directory.Exists(sharedDir))
+                    Directory.Delete(sharedDir, true);
+            }
+        }
+
+        // An unlock queued offline shows at once and on every fresh read until it is sent; one unlocked already keeps its time, as the server does.
+        private const string AchievementTemplates =
+            "{\"error\":{\"code\":null},\"response\":{\"message\":null,\"code\":null},\"result\":[{\"id\":\"tpl-ach\",\"name\":\"achievements\",\"schema\":[],\"data\":[],\"tag\":\"achievement\"}]}";
+
+        private const string AchievementsPage =
+            "{\"items\":[{\"id\":\"pd-ach\",\"player_template_id\":\"tpl-ach\",\"player_id\":\"player-a\",\"data\":[" +
+            "{\"type\":\"datetime?\",\"value\":null,\"type_name\":\"achievement\",\"field_name\":\"FirstWin\"}," +
+            "{\"type\":\"datetime?\",\"value\":\"2026-01-01T00:00:00\",\"type_name\":\"achievement\",\"field_name\":\"OldWin\"}]}],\"total\":1,\"page\":1,\"limit\":100}";
+
+        [Test]
+        public void AnUnlockQueuedOffline_ShowsAtOnce_AndOnAFreshRead_KeepingAnEarlierUnlocksTime()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.PlayerTemplate, FlockFakeTransport.Ok(AchievementTemplates));
+            transport.On("player_data?page=", FlockFakeTransport.Ok(AchievementsPage));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+                PlayerData primed = h.Run(() => h.Client.Player.GetMyDataByTagAsync("achievement"));
+                string oldWinBefore = primed.Data.Find(f => f.FieldName == "OldWin").Value.ToString();
+                h.SetReachable(false);
+
+                PlayerData returned = h.Run(() => h.Client.Commands.UnlockAchievementAsync("FirstWin"));
+                PlayerData again = h.Run(() => h.Client.Commands.UnlockAchievementAsync("OldWin"));
+
+                Assert.IsNotNull(returned.Data.Find(f => f.FieldName == "FirstWin").Value, "Shown unlocked while it waits to be sent.");
+                Assert.AreEqual(oldWinBefore, again.Data.Find(f => f.FieldName == "OldWin").Value.ToString(), "Unlocked again, it keeps its time at once too.");
+                h.Client.Player.ForgetPlayerData("player-a");
+                PlayerData read = h.Run(() => h.Client.Player.GetMyDataByTagAsync("achievement"));
+                Assert.IsNotNull(read.Data.Find(f => f.FieldName == "FirstWin").Value, "Still shown after a fresh read: the server has not had it yet.");
+                Assert.AreEqual(oldWinBefore, read.Data.Find(f => f.FieldName == "OldWin").Value.ToString(), "An earlier unlock keeps its time.");
+                Assert.AreEqual(0, transport.CountTo(FlockEndpoints.CommandUnlockAchievement), "Still waiting to be sent.");
+            }
+        }
+
         // ---- CMD-02: offline update with no cached row still enqueues, returns null ----
         [Test]
         public void UpdatePlayerData_Offline_NoCachedRow_ReturnsNull_ButStillEnqueues()
@@ -156,6 +277,7 @@ namespace Flock.Tests.Editor
                 Assert.AreEqual(1, transport.CountTo(FlockEndpoints.CommandAddGameFunds),
                     "A 5xx is ambiguous — the grant may already have committed, so re-sending risks a double credit.");
                 Assert.IsTrue(failed.OutcomeUnknown, "The grant may have been made.");
+                Assert.IsNull(h.Client.Player.TryGetCachedRow("pd-1"), "The cached wallet is dropped, so the next read asks the server.");
             }
         }
 
