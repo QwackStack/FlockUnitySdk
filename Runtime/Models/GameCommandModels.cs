@@ -54,6 +54,10 @@ namespace Flock.Models
 
         [JsonProperty("player_id")]
         public string PlayerId { get; set; }
+
+        // One per purchase call: the server answers a resend carrying it with the first purchase instead of charging again.
+        [JsonProperty("idempotency_key")]
+        public string IdempotencyKey { get; set; }
     }
 
     // No player_id: the server redeems for the player the sign-in names.
@@ -78,6 +82,17 @@ namespace Flock.Models
 
         [JsonProperty("account_token")]
         public string AccountToken { get; set; }
+    }
+
+    /// <summary>What <see cref="PlayerInventory.Status"/> reads. A string rather than an enum, so a status the server adds later still reads.</summary>
+    public static class PlayerInventoryStatuses
+    {
+        /// <summary>Owned and not used up yet.</summary>
+        public const string Unused = "unused";
+        /// <summary>Used up (consumed).</summary>
+        public const string Used = "used";
+        /// <summary>Taken back because its purchase was refunded.</summary>
+        public const string Revoked = "revoked";
     }
 
     public class PlayerInventory

@@ -113,8 +113,8 @@ namespace Flock.Editor
                 {
                     "Runtime/Providers/FlockShopProvider.cs",
                 },
-                // The Unity IAP store adapter sells shop items, so it goes with the shop.
-                Folders = new[] { "Runtime/Providers/StorePurchases/" },
+                // The Unity IAP store adapter sells shop items, so it goes with the shop, and so does the shop sample.
+                Folders = new[] { "Runtime/Providers/StorePurchases/", "Samples/Shop/" },
                 // Shop's purchase flow records analytics transactions unconditionally.
                 DependsOn = new[] { "ANALYTICS" },
             },

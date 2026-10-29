@@ -7,8 +7,8 @@ var shops = await FlockClient.Instance.Shop.GetAllAsync(page: 1, limit: 10);
 var shop = await FlockClient.Instance.Shop.GetByIdAsync("shop-id");
 var item = await FlockClient.Instance.Shop.GetItemAsync("shop-item-id");
 var items = await FlockClient.Instance.Shop.GetItemsByShopAsync("shop-id");
-// Same retry contract as AddGameFunds (money mutation) — ambiguous failures throw; catch them.
-// Started, Purchased and Failed transactions are recorded as it goes, never waited on. Catch FlockException and check
+// Sent again, with the key every attempt carries, after an answer that never came: the server answers a repeat with the first
+// purchase. Started, Purchased and Failed transactions are recorded as it goes, never waited on. Catch FlockException and check
 // e.ErrorCode for specific reasons (e.g. FlockErrorCode.ShopInsufficientFunds, ShopWalletNotFound); e.Message says what
 // went wrong and, on a "Fix:" line, how to fix it.
 // It takes the shop item's Id (ShopItem.Id, from the shop's ShopItems): not the item's name, and not the shop's id.
@@ -57,11 +57,14 @@ string for the same reason as `reward.Type`, and reads `paid` when the server le
 reports a wallet also writes it into the cached player data, so the next `GetMyDataByTemplateAsync` reads the new balance
 rather than the one from before.
 
-`ConsumeAsync` moves currency, so it carries the same money safety as a purchase — an ambiguous failure
-throws rather than being re-sent, and only provably-unprocessed failures (408/429) retry. Catch
-`FlockException` around it. Neither call is queued while the network is down: each is sent at most once (a
-purchase of an item not read yet fails on reading it first), throws `FlockNetworkException`, and is not sent again
-when the network comes back.
+Every attempt of a `PurchaseAsync` call carries the same key (`idempotency_key`), so after an answer that never came (a
+dropped connection, a timeout, a server error) the purchase is sent again under the client's retry settings, and the server
+answers the repeat with the first purchase: the player pays once. A new call is a new purchase. When no attempt is answered the
+call throws, and the purchase may have been made: read the wallet and inventory before offering it again. The server must read
+the key (Flock's servers from 2026-10-26 on); an older one ignores it. `ConsumeAsync` carries no key, so an ambiguous failure
+throws rather than being re-sent, and only provably unprocessed failures (408/429) retry. Catch `FlockException` around both.
+Neither call is queued while the network is down: each throws `FlockNetworkException` (a purchase of an item not read yet
+fails on reading it first) and is not sent again when the network comes back.
 
 > Inventory is deliberately **never offline-cached** — it changes on every purchase, so the SDK always
 > reads it fresh and there is no stale copy to fall back on when the network is down. Reading it offline
@@ -92,6 +95,49 @@ exactly as set in the dashboard, and is never null: an item with no product id r
 `ShopItemTypes`: in a store, a `CurrencyPack` or `Consumable` item is a consumable product and a `Standard` item a one-time
 product. Store names and item kinds are strings rather than enums, for the same reason as `reward.Type`.
 
+## A shop screen
+
+Three reads give a shop screen what it shows next to each item: the player's balances, what they own, and whether they can pay.
+
+```csharp
+FlockWallet wallet = await FlockClient.Instance.Player.GetWalletAsync();
+IReadOnlyDictionary<string, int> owned = await FlockClient.Instance.Shop.GetOwnedItemCountsAsync();
+
+foreach (ShopItem item in shop.ShopItems)
+{
+    owned.TryGetValue(item.Id, out int count);
+    bool alreadyHeld = item.Type == ShopItemTypes.Standard && count > 0;  // a one-time item bought and not used up
+    bool payable = item.IsRealMoney || wallet.CanAfford(item);              // grey out a wallet item the player cannot pay for
+}
+
+try
+{
+    PurchaseResult bought = await FlockClient.Instance.Shop.PurchaseAsync(item.Id);
+}
+catch (FlockException e) when (e.ErrorCode == FlockErrorCode.ShopInsufficientFunds)
+{
+    // Not enough of the item's currency: nothing was bought.
+}
+catch (FlockNetworkException e)
+{
+    // No answer came: read the wallet and inventory again to see whether it went through.
+}
+```
+
+- **`GetWalletAsync`** reads the player data of the template tagged `currency`: `GameCurrencies` and `RealCurrencies` by code,
+  `BalanceOf(code)` (0 when not held) and `Holds(code)`. It is read through the player-data cache, which purchases, store
+  redemptions and fund grants keep current. A player with no wallet row (registered before the currency template existed, or
+  under another Game Version) throws `FlockValidationException` saying so. `FlockWallet.From(purchase.Wallet)` reads the wallet
+  a purchase returned.
+- **`CanAfford(item)`** is true for an item paid from the wallet whose currency the wallet holds at least `Price` of. It reads
+  false for a real-money item, which is bought through a store. Codes match exactly, as the server matches them.
+- **`GetOwnedItemCountsAsync`** counts the unused inventory entries of each item, from every page; used and refunded entries
+  do not count. `OwnsAsync(shopItemId)` is the same read for one item. The inventory is never cached, so read it once for a
+  screen, and again after a purchase.
+
+The `Samples/Shop` folder has a one-screen shop built on these calls (`FlockShopSample`), with store items when Unity IAP 5 is
+installed.
+
 ## Store purchases
 
 When the App Store or Google Play has charged the player, hand Flock the store's purchase and it delivers the item: the
@@ -118,7 +164,7 @@ catch (FlockException e)
 - **It is safe to send again.** One store purchase makes one Flock purchase, so a repeat (a lost answer, a second launch)
   returns what the first delivered, `Granted` included, and grants nothing more. The SDK sends it again by itself after an
   answer that never came or a store that could not be asked, under the client's retry settings; keys the server cannot read
-  are not sent again. A wallet purchase is never sent twice; this one may be.
+  are not sent again. A wallet purchase is sent again too, with its key; a consume never is.
 - **It acts for the signed-in player** and throws `FlockAuthException` when nobody is signed in. If the player signs out or
   changes while it is being sent again, the next attempt is not sent and the call ends with `OperationCanceledException`.
 - **It is never queued offline.** The store's unfinished purchase is the queue: send it again when the store hands it back.
@@ -141,7 +187,7 @@ It is compiled only when Unity IAP 5 is installed, so a game without it carries 
 // Once, after FlockClient.Create. On a phone the store is found by itself.
 FlockStorePurchases store = await FlockStorePurchases.ConnectAsync();
 store.PurchaseDelivered += purchase => Debug.Log($"Delivered later: {purchase.Item.Name}");
-store.PurchaseNeedsAttention += problem => Debug.LogWarning($"{problem.ProductId}: {problem.Error.Message} Fix: {problem.Error.Hint}");
+store.PurchaseNeedsAttention += problem => Debug.LogWarning($"{problem.ProductId}: {problem.Error.Message}");  // a message ends with its fix
 
 FlockStorePurchase purchase = await store.BuyAsync(item.Id);
 switch (purchase.Outcome)
@@ -149,8 +195,16 @@ switch (purchase.Outcome)
     case FlockStorePurchaseOutcome.Delivered: /* purchase.Delivery.Granted, .Wallet */ break;
     case FlockStorePurchaseOutcome.Pending: /* waiting for the payment or a parent's approval */ break;
     case FlockStorePurchaseOutcome.Cancelled: break;
-    case FlockStorePurchaseOutcome.Failed: Debug.Log(purchase.StoreFailure); break;
+    case FlockStorePurchaseOutcome.Failed:
+        // StoreFailureReason is one of FlockStoreFailureReasons; StoreFailure is the store's own words, for the log.
+        if (purchase.StoreFailureReason == FlockStoreFailureReasons.AlreadyOwned) { /* offer Restore */ }
+        break;
 }
+
+// The price the store shows this player, in their currency with their taxes; null when the store did not find the product.
+FlockStorePrice price = store.GetStorePrice(item.Id);
+FlockStoreRestore restore = await store.RestoreAsync();          // one-time items this store account already owns
+FlockStoreSetupCheck check = await store.CheckSetupAsync();      // what is missing from the setup, without buying anything
 ```
 
 - **`ConnectAsync`** reads the game's shops and registers each item that has a product id for this store: a currency pack or
@@ -170,8 +224,22 @@ switch (purchase.Outcome)
 - **In the editor** Unity IAP's fake store answers (define `IAP_FAKE_STORE_DEFAULT` to buy without its dialog). Name the store to
   test with, `ConnectAsync(PaymentProviders.GooglePlay)`; the account token is not set there, and Flock refuses the fake
   store's purchases, so try a real purchase in the store's sandbox on a device.
+- **`StoreFailureReason`** says why the store did not take the payment: `Cancelled` is its own outcome, and a `Failed`
+  purchase reads `PaymentDeclined`, `AlreadyOwned`, `AlreadyPending`, `ProductUnavailable`, `StoreUnavailable`,
+  `NotSignedInToTheStore` or `Unknown`. It is a string, for the same reason as `reward.Type`.
+- **`GetStorePrice`** reads the store's product: `Text` to show, `Amount` and `CurrencyCode`. Show it rather than the item's
+  Flock `Price`. It throws for an item with no product id for this store, as `BuyAsync` does.
+- **`RestoreAsync`** asks the store for the one-time purchases this store account owns (on a new phone, or after a reinstall)
+  and has Flock deliver each to the signed-in player. A purchase Flock delivered before is answered with what it granted then,
+  and grants nothing more; one Flock refuses (bought for another player) is listed in `Problems`, and the store's purchases are
+  not finished again. Apple asks the player to sign in to the store for it, so start it from a button. It throws
+  `FlockException` when the store cannot list the purchases, and on Apple when the player does not sign in to the store.
+- **`CheckSetupAsync`** is for the developer: `ProductsTheStoreDidNotFind`, `ItemsWithoutAProductId`, and
+  `FlockCanAskTheStore`, measured by asking the server to redeem a made-up purchase, which the store answers as unknown when
+  the game's keys work (`StoreProblem` holds the refusal when they do not). Nothing is bought and nothing is recorded. In the
+  editor the fake store finds every product, so only the keys are checked there.
 - The events are raised on the main thread; `Dispose` stops listening.
 - **Unity IAP 4.x:** copy `Docs~/recipes/FlockUnityIap4Store.cs` into the game. It holds each purchase until
   `RedeemStoreReceiptAsync` has delivered it, then confirms it.
 
-See also: [Codegen](codegen.md) for typed shop accessors and the `FlockShopItemId` / `FlockFundId` enums, and [Player Data & Game Commands](player-data.md) for `AddGameFundsAsync`.
+See also: [Codegen](codegen.md) for typed shop accessors and the `FlockShopItemId` / `FlockStoreItemId` / `FlockFundId` enums, and [Player Data & Game Commands](player-data.md) for `AddGameFundsAsync`.

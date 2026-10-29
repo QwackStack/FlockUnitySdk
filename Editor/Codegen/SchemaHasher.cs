@@ -69,6 +69,9 @@ namespace Flock.Editor.Codegen
                     AppendString(sb, item.Id);
                     AppendString(sb, item.Name);
                     AppendString(sb, item.Currency);
+                    // Real money moves the item to FlockStoreItemId; marked only then, so catalogs without it keep their hash.
+                    if (item.IsRealMoney)
+                        sb.Append('R');
                 }
                 sb.Append(']');
             }

@@ -33,7 +33,7 @@
 #     | tr -d '"' | sort -u
 #
 # Last refreshed 2026-10-26, when the payment hardening merged into backend main (644bf45), for the shop, payment_provider and
-# matchmaking codes, read in their code: shop.invalid_purchase_status and shop.idempotency_key_reused (waived, below) and
+# matchmaking codes, read in their code: shop.invalid_purchase_status (waived, below), shop.idempotency_key_reused (waived until 2026-10-28, when the SDK began sending keys) and
 # matchmaking.search_input_required, which the ticket the SDK opens meets once a queue has region or skill rules. The codes of
 # main's session backfill, live updates and session kicks (BACKLOG All-2, All-11) wait for the owner's scope call and are
 # not listed. Before that, on 2026-10-23 for the payment hardening (backend fix/sdk-payment-hardening, not yet merged): four
@@ -142,6 +142,7 @@ player_template.not_found_by_name
 request.rate_limited
 shop.currency_not_held
 shop.currency_template_not_found
+shop.idempotency_key_reused
 shop.insufficient_funds
 shop.item_not_found
 shop.malformed_reward
@@ -242,8 +243,8 @@ shop.webhook_provider_unknown
 # payment_provider.missing_credential_fields and encryption_unavailable on the receipt and checkout routes, but only the
 # dashboard's save of a provider's keys raises them; reading the stored keys raises credentials_unreadable alone.
 # The merge (backend main 644bf45, read 2026-10-26) adds two for calls no SDK makes yet: shop.invalid_purchase_status (an
-# unknown status filter on the player's purchase list, which web checkout will read) and shop.idempotency_key_reused (a
-# wallet purchase resent with a repeat key, which the SDK does not send: BACKLOG Owner-15).
+# unknown status filter on the player's purchase list, which web checkout will read). shop.idempotency_key_reused moved to
+# [documented] on 2026-10-28, when wallet purchases began carrying a key.
 dashboard.ai_generation_failed
 dashboard.ai_limiter_unavailable
 dashboard.ai_provider_unavailable
@@ -261,7 +262,6 @@ payment_provider.refund_failed
 payment_provider.unknown_provider
 shop.game_version_game_mismatch
 shop.game_version_not_found
-shop.idempotency_key_reused
 shop.invalid_purchase_status
 shop.name_already_exists
 shop.not_a_currency_pack

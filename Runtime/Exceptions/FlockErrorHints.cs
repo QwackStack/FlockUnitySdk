@@ -138,6 +138,7 @@ namespace Flock.Exceptions
 
             // Runtime state the caller can act on rather than misconfiguration.
             { FlockErrorCode.ShopInsufficientFunds, "The player cannot afford this item. Read the wallet balance before offering the purchase." },
+            { FlockErrorCode.ShopIdempotencyKeyReused, "Nothing was bought: this purchase's key was already used for another shop item. Every PurchaseAsync call makes a key of its own, so call PurchaseAsync again; if it keeps happening, two purchases are sharing a key, which is a fault to report." },
             { FlockErrorCode.ShopCurrencyNotHeld, "The player's wallet has no balance in the item's currency. " + WalletHoldsTemplateCurrencies + " Price the item in one of those, or add the currency to the currency template in the Flock dashboard." },
             { FlockErrorCode.ShopWalletNotFound, "This player has no wallet in this Game Version. The server makes a player's wallet when the player registers, from the version's currency template, so a player who registered before that template existed, or under another Game Version, has none. Create the currency template first, then register the player under this build's Game Version." + PaidInTheStoreAlready },
             { FlockErrorCode.GameCommandPlayerDataNotFound, "The player has no record for that template yet. Reads do not create it — write it first with Commands.UpdatePlayerDataAsync." },

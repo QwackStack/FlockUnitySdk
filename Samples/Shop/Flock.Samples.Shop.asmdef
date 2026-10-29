@@ -1,0 +1,25 @@
+{
+    "name": "Flock.Samples.Shop",
+    "rootNamespace": "Flock.Samples",
+    "references": [
+        "Flock.Runtime",
+        "Flock.Shop.UnityIap"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "!FLOCK_NO_SHOP"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.purchasing",
+            "expression": "[5.0.0,6.0.0)",
+            "define": "FLOCK_UNITY_IAP_5"
+        }
+    ],
+    "noEngineReferences": false
+}

@@ -32,15 +32,103 @@ namespace Flock.Providers
         /// <summary>What Flock delivered; null unless the outcome is Delivered.</summary>
         public PurchaseResult Delivery { get; }
 
-        /// <summary>The store's own reason when the outcome is Failed; null otherwise.</summary>
+        /// <summary>The store's own words when the outcome is Failed; null otherwise.</summary>
         public string StoreFailure { get; }
 
-        internal FlockStorePurchase(FlockStorePurchaseOutcome outcome, ShopItem item, PurchaseResult delivery, string storeFailure)
+        /// <summary>Why the store did not take the payment, one of <see cref="FlockStoreFailureReasons"/>, when the outcome is Failed; null otherwise.</summary>
+        public string StoreFailureReason { get; }
+
+        internal FlockStorePurchase(FlockStorePurchaseOutcome outcome, ShopItem item, PurchaseResult delivery, string storeFailure, string storeFailureReason = null)
         {
             Outcome = outcome;
             Item = item;
             Delivery = delivery;
             StoreFailure = storeFailure;
+            StoreFailureReason = storeFailureReason;
+        }
+    }
+
+    /// <summary>Why a store did not take a payment. Strings rather than an enum, so a reason added later still reads.</summary>
+    public static class FlockStoreFailureReasons
+    {
+        /// <summary>The player cancelled in the store's dialog.</summary>
+        public const string Cancelled = "cancelled";
+        /// <summary>The player already owns this one-time product: show it as owned rather than for sale.</summary>
+        public const string AlreadyOwned = "already_owned";
+        /// <summary>An earlier purchase of this product is still waiting for its payment.</summary>
+        public const string AlreadyPending = "already_pending";
+        /// <summary>The store declined the payment.</summary>
+        public const string PaymentDeclined = "payment_declined";
+        /// <summary>The store does not sell this product here, or it is not set up in the store.</summary>
+        public const string ProductUnavailable = "product_unavailable";
+        /// <summary>The store could not be reached, or purchases are switched off on this device.</summary>
+        public const string StoreUnavailable = "store_unavailable";
+        /// <summary>Nobody is signed in to the store on this device.</summary>
+        public const string NotSignedInToTheStore = "not_signed_in_to_the_store";
+        /// <summary>Any other reason; <see cref="FlockStorePurchase.StoreFailure"/> has the store's words.</summary>
+        public const string Unknown = "unknown";
+    }
+
+    /// <summary>A product's price as the store shows it to this player: in their currency, with their taxes.</summary>
+    public sealed class FlockStorePrice
+    {
+        /// <summary>The price as the store writes it, such as "SAR 4.59" or "$1.09": show this one.</summary>
+        public string Text { get; }
+
+        /// <summary>The price as a number, in <see cref="CurrencyCode"/>.</summary>
+        public decimal Amount { get; }
+
+        /// <summary>The currency's ISO 4217 code, such as SAR or USD.</summary>
+        public string CurrencyCode { get; }
+
+        internal FlockStorePrice(string text, decimal amount, string currencyCode)
+        {
+            Text = text;
+            Amount = amount;
+            CurrencyCode = currencyCode;
+        }
+    }
+
+    /// <summary>What <see cref="FlockStorePurchases.RestoreAsync"/> found: the one-time items Flock holds for the signed-in player from the store's purchases, and the purchases it could not deliver.</summary>
+    public sealed class FlockStoreRestore
+    {
+        /// <summary>Each restored purchase, delivered by Flock (a repeat answers with what the first delivery granted).</summary>
+        public IReadOnlyList<FlockStorePurchase> Restored { get; }
+
+        /// <summary>Purchases Flock did not deliver, such as one bought on another Flock account.</summary>
+        public IReadOnlyList<FlockStorePurchaseProblem> Problems { get; }
+
+        internal FlockStoreRestore(IReadOnlyList<FlockStorePurchase> restored, IReadOnlyList<FlockStorePurchaseProblem> problems)
+        {
+            Restored = restored;
+            Problems = problems;
+        }
+    }
+
+    /// <summary>What <see cref="FlockStorePurchases.CheckSetupAsync"/> found, without buying anything.</summary>
+    public sealed class FlockStoreSetupCheck
+    {
+        /// <summary>Real-money items with a product id for this store that the store did not find: check the id and that the product is active in the store.</summary>
+        public IReadOnlyList<ShopItem> ProductsTheStoreDidNotFind { get; }
+
+        /// <summary>Real-money items with no product id for this store: they cannot be bought here.</summary>
+        public IReadOnlyList<ShopItem> ItemsWithoutAProductId { get; }
+
+        /// <summary>Whether Flock's server could ask the store about a purchase with the game's keys. False with <see cref="StoreProblem"/> set when it could not; false with no problem when there was no item to ask about.</summary>
+        public bool FlockCanAskTheStore { get; }
+
+        /// <summary>Why Flock's server could not ask the store (its ErrorCode and Hint say what to fix), or null.</summary>
+        public FlockException StoreProblem { get; }
+
+        /// <summary>True when nothing above needs fixing.</summary>
+        public bool AllGood => FlockCanAskTheStore && ProductsTheStoreDidNotFind.Count == 0 && ItemsWithoutAProductId.Count == 0;
+
+        internal FlockStoreSetupCheck(IReadOnlyList<ShopItem> notFound, IReadOnlyList<ShopItem> withoutProductId, bool flockCanAsk, FlockException storeProblem)
+        {
+            ProductsTheStoreDidNotFind = notFound;
+            ItemsWithoutAProductId = withoutProductId;
+            FlockCanAskTheStore = flockCanAsk;
+            StoreProblem = storeProblem;
         }
     }
 
@@ -124,7 +212,7 @@ namespace Flock.Providers
                 _connected = purchases;
                 // Listening first: a store hands back unfinished purchases as it connects, and those are held until the shops are read.
                 purchases.ListenToTheStore();
-                await connection.ConnectAsync();
+                await DoneOrCancelled(connection.ConnectAsync(), cancellationToken);
                 List<ShopItem> catalog = await ReadCatalogAsync(cancellationToken);
                 await connection.RegisterProductsAsync(purchases.LearnProducts(catalog), cancellationToken);
             }
@@ -140,16 +228,8 @@ namespace Flock.Providers
         /// <summary>Buys a shop item with real money: sets the signed-in player's account token on the store, starts the store's purchase and, once the store has charged, has Flock deliver it before the store's purchase is finished. Throws <see cref="FlockException"/> when Flock refuses a purchase the player paid for (it stays unfinished and comes back at the next launch); a store that does not take the payment ends as <see cref="FlockStorePurchaseOutcome.Failed"/>.</summary>
         public async Task<FlockStorePurchase> BuyAsync(string shopItemId, CancellationToken cancellationToken = default)
         {
-            if (_disposed)
-                throw new ObjectDisposedException(nameof(FlockStorePurchases));
-            if (FlockClient.Instance != _client)
-                throw new FlockValidationException("This store connection was made before the Flock client was created again") { Hint = "Dispose it and call FlockStorePurchases.ConnectAsync again once the new client is created." };
-            if (string.IsNullOrEmpty(shopItemId))
-                throw new FlockValidationException("Shop Item ID is empty") { Hint = "Pass the shop item's Id (ShopItem.Id)." };
-            if (!_itemsById.TryGetValue(shopItemId, out ShopItem item))
-                throw new FlockValidationException("That shop item was not in the game's shops when the store connected") { Hint = "Pass a ShopItem.Id from this game's shops. An item added in the Flock dashboard since then is sold once this connection is disposed and ConnectAsync runs again." };
-            if (!item.StoreProductIds.TryGetValue(Store, out string productId) || !IsSoldHere(item))
-                throw new FlockValidationException($"This shop item has no {Store} product id") { Hint = $"Enter the item's {Store} product id under Store product IDs on the shop item in the Flock dashboard, exactly as the store has it, then connect again." };
+            ThrowIfUnusable();
+            string productId = ProductOf(shopItemId, out ShopItem item);
             if (_buying.ContainsKey(productId))
                 throw new FlockValidationException("This product is already being bought") { Hint = "Wait for the first BuyAsync of it to end before starting another." };
             if (!FlockClient.Instance.IsAuthenticated)
@@ -175,6 +255,130 @@ namespace Flock.Providers
                     _buying.Remove(productId);
             }
         }
+
+        /// <summary>The item's price as the store shows it to this player, in their currency and with their taxes: show this rather than the item's Flock price. Null when the store did not find the item's product.</summary>
+        public FlockStorePrice GetStorePrice(string shopItemId)
+        {
+            ThrowIfUnusable();
+            return _connection.PriceOf(ProductOf(shopItemId, out ShopItem _));
+        }
+
+        /// <summary>Asks the store for the one-time purchases this store account already owns and has Flock deliver each to the signed-in player; a purchase Flock delivered before answers with what it granted then, and grants nothing more. Purchases still unfinished go through <see cref="PurchaseDelivered"/> as usual. One made for another Flock account is refused and listed in <see cref="FlockStoreRestore.Problems"/>. Throws <see cref="FlockException"/> when the store cannot list the purchases (on Apple, also when the player does not sign in to the store); a store that never answers is waited for until <paramref name="cancellationToken"/> is cancelled.</summary>
+        public async Task<FlockStoreRestore> RestoreAsync(CancellationToken cancellationToken = default)
+        {
+            ThrowIfUnusable();
+            if (!FlockClient.Instance.IsAuthenticated)
+                throw new FlockAuthException("No player is signed in") { Hint = FlockErrorHints.SignInFirst };
+            IReadOnlyList<FlockStoreOrder> owned = await _connection.FetchOwnedPurchasesAsync(cancellationToken);
+            List<FlockStorePurchase> restored = new List<FlockStorePurchase>();
+            List<FlockStorePurchaseProblem> problems = new List<FlockStorePurchaseProblem>();
+            foreach (FlockStoreOrder order in owned)
+            {
+                if (string.IsNullOrEmpty(order.ProductId))
+                    continue;
+                if (_productsSoldTwice.Contains(order.ProductId))
+                {
+                    problems.Add(new FlockStorePurchaseProblem(null, order.ProductId, SoldTwice(order.ProductId, " Then restore again.")));
+                    continue;
+                }
+                // Not a Flock item's product: the game restores its own purchases.
+                if (!_itemByProduct.TryGetValue(order.ProductId, out ShopItem item))
+                    continue;
+                try
+                {
+                    PurchaseResult delivery = await FlockClient.Instance.Shop.RedeemStoreReceiptAsync(item.Id, ReceiptOf(order), cancellationToken);
+                    restored.Add(new FlockStorePurchase(FlockStorePurchaseOutcome.Delivered, item, delivery, null));
+                }
+                catch (FlockException refused)
+                {
+                    problems.Add(new FlockStorePurchaseProblem(item, order.ProductId, refused));
+                }
+            }
+            return new FlockStoreRestore(restored, problems);
+        }
+
+        /// <summary>Checks the store setup without buying anything: which real-money items the store did not find or have no product id for this store, and whether Flock's server can ask the store about a purchase with the game's keys (it is asked about a made-up purchase, which the store answers as unknown when the keys work). Needs a signed-in player.</summary>
+        public async Task<FlockStoreSetupCheck> CheckSetupAsync(CancellationToken cancellationToken = default)
+        {
+            ThrowIfUnusable();
+            if (!FlockClient.Instance.IsAuthenticated)
+                throw new FlockAuthException("No player is signed in") { Hint = FlockErrorHints.SignInFirst };
+            List<ShopItem> notFound = new List<ShopItem>();
+            List<ShopItem> withoutProductId = new List<ShopItem>();
+            ShopItem askAbout = null;
+            string askedProduct = null;
+            foreach (ShopItem item in _itemsById.Values)
+            {
+                if (!item.IsRealMoney || !IsSoldHere(item))
+                    continue;
+                if (!item.StoreProductIds.TryGetValue(Store, out string productId) || string.IsNullOrEmpty(productId))
+                {
+                    withoutProductId.Add(item);
+                    continue;
+                }
+                if (_connection.PriceOf(productId) == null)
+                    notFound.Add(item);
+                if (askAbout == null)
+                {
+                    askAbout = item;
+                    askedProduct = productId;
+                }
+            }
+
+            bool flockCanAsk = false;
+            FlockException storeProblem = null;
+            if (askAbout != null)
+            {
+                try
+                {
+                    await FlockClient.Instance.Shop.RedeemStoreReceiptAsync(askAbout.Id, MadeUpReceipt(askedProduct), cancellationToken);
+                    flockCanAsk = true;
+                }
+                catch (FlockException refused) when (refused.ErrorCode == FlockErrorCode.PaymentProviderReceiptInvalid)
+                {
+                    flockCanAsk = true;
+                }
+                catch (FlockException refused)
+                {
+                    storeProblem = refused;
+                }
+            }
+            return new FlockStoreSetupCheck(notFound, withoutProductId, flockCanAsk, storeProblem);
+        }
+
+        // Unity IAP's connect takes no token, so the caller's ends the wait; the connection it leaves is stopped by the caller's Dispose.
+        private static async Task DoneOrCancelled(Task task, CancellationToken cancellationToken)
+        {
+            TaskCompletionSource<bool> cancelled = new TaskCompletionSource<bool>();
+            using (cancellationToken.Register(() => cancelled.TrySetCanceled()))
+                await await Task.WhenAny(task, cancelled.Task);
+        }
+
+        private void ThrowIfUnusable()
+        {
+            if (_disposed)
+                throw new ObjectDisposedException(nameof(FlockStorePurchases));
+            if (FlockClient.Instance != _client)
+                throw new FlockValidationException("This store connection was made before the Flock client was created again") { Hint = "Dispose it and call FlockStorePurchases.ConnectAsync again once the new client is created." };
+        }
+
+        // The store's product for a shop item this connection sells, or a refusal saying why there is none.
+        private string ProductOf(string shopItemId, out ShopItem item)
+        {
+            if (string.IsNullOrEmpty(shopItemId))
+                throw new FlockValidationException("Shop Item ID is empty") { Hint = "Pass the shop item's Id (ShopItem.Id)." };
+            if (!_itemsById.TryGetValue(shopItemId, out item))
+                throw new FlockValidationException("That shop item was not in the game's shops when the store connected") { Hint = "Pass a ShopItem.Id from this game's shops. An item added in the Flock dashboard since then is sold once this connection is disposed and ConnectAsync runs again." };
+            if (!item.StoreProductIds.TryGetValue(Store, out string productId) || !IsSoldHere(item))
+                throw new FlockValidationException($"This shop item has no {Store} product id") { Hint = $"Enter the item's {Store} product id under Store product IDs on the shop item in the Flock dashboard, exactly as the store has it, then connect again." };
+            return productId;
+        }
+
+        // A purchase no store issued: the store answers it as unknown when Flock's keys work, and refuses the keys otherwise.
+        private StoreReceipt MadeUpReceipt(string productId)
+            => Store == PaymentProviders.AppleAppStore
+                ? StoreReceipt.FromAppleAppStore("0")
+                : StoreReceipt.FromGooglePlay(productId, "flock-setup-check");
 
         /// <summary>Stops listening to the store and to sign-ins; a <see cref="BuyAsync"/> still waiting ends as cancelled.</summary>
         public void Dispose()
@@ -315,10 +519,7 @@ namespace Flock.Providers
                 return;
             if (item == null)
             {
-                RaiseNeedsAttention(null, order.ProductId, new FlockValidationException($"Two shop items sell the {Store} product '{order.ProductId}', so this purchase cannot be matched to one")
-                {
-                    Hint = "Give each shop item its own store product id in the Flock dashboard. The purchase stays unfinished in the store and is matched at the next launch."
-                });
+                RaiseNeedsAttention(null, order.ProductId, SoldTwice(order.ProductId, " The purchase stays unfinished in the store and is matched at the next launch."));
                 return;
             }
             Send(order, item, buying);
@@ -370,14 +571,20 @@ namespace Flock.Providers
                 buying.Done.TrySetResult(new FlockStorePurchase(FlockStorePurchaseOutcome.Pending, buying.Item, null, null));
         }
 
-        private void HandleFailed(string productId, string reason, bool cancelled)
+        private void HandleFailed(FlockStoreFailure failure)
         {
-            if (productId == null || !_buying.TryGetValue(productId, out Buying buying))
+            if (failure.ProductId == null || !_buying.TryGetValue(failure.ProductId, out Buying buying))
                 return;
-            buying.Done.TrySetResult(cancelled
+            buying.Done.TrySetResult(failure.Cancelled
                 ? new FlockStorePurchase(FlockStorePurchaseOutcome.Cancelled, buying.Item, null, null)
-                : new FlockStorePurchase(FlockStorePurchaseOutcome.Failed, buying.Item, null, reason));
+                : new FlockStorePurchase(FlockStorePurchaseOutcome.Failed, buying.Item, null, failure.Text, failure.Reason ?? FlockStoreFailureReasons.Unknown));
         }
+
+        private FlockValidationException SoldTwice(string productId, string then)
+            => new FlockValidationException($"Two shop items sell the {Store} product '{productId}', so this purchase cannot be matched to one")
+            {
+                Hint = "Give each shop item its own store product id in the Flock dashboard." + then
+            };
 
         private StoreReceipt ReceiptOf(FlockStoreOrder order)
             => Store == PaymentProviders.AppleAppStore

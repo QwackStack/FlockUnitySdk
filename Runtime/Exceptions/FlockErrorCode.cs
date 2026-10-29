@@ -167,6 +167,7 @@ namespace Flock.Exceptions
         // shop.* (PlayerMismatch and PlayerRequired come from the purchase routes' check of which player a call acts for)
         ShopCurrencyNotHeld,                        // shop.currency_not_held
         ShopCurrencyTemplateNotFound,               // shop.currency_template_not_found
+        ShopIdempotencyKeyReused,                   // shop.idempotency_key_reused
         ShopInsufficientFunds,                      // shop.insufficient_funds
         ShopItemNotFound,                           // shop.item_not_found
         ShopMalformedReward,                        // shop.malformed_reward

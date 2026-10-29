@@ -181,7 +181,7 @@ namespace Flock.Providers
             return result;
         }
 
-        /// <summary>Buys a shop item. Returns the inventory row plus anything the purchase granted immediately (Granted/Wallet); the wallet is also written into the cached player data.</summary>
+        /// <summary>Buys a shop item with the wallet. Returns the inventory row plus anything the purchase granted immediately (Granted/Wallet); the wallet is also written into the cached player data. Each call carries a key of its own, so an attempt whose answer never came is sent again and the server answers with the first purchase rather than charging twice.</summary>
         public async Task<PurchaseResult> PurchaseAsync(
             string shopItemId, string playerId = null,
             CancellationToken cancellationToken = default)
@@ -197,7 +197,8 @@ namespace Flock.Providers
             ShopItem shopItem = await GetItemAsync(shopItemId, cancellationToken);
             RecordPurchaseInTheBackground(shopItem, shopItemId, nameof(PurchaseStatus.Started), purchaser);
 
-            // Purchase is non-idempotent: an ambiguous failure may mean the charge already cleared, so surface it rather than re-send (double-charge). Only 408/429 (not processed) retry.
+            // One key for every attempt of this call: the server answers a resend with the first purchase, so an answer that never came is sent again.
+            string purchaseKey = Guid.NewGuid().ToString("N");
             PurchaseResult result;
             try
             {
@@ -206,12 +207,20 @@ namespace Flock.Providers
                     ShopTransactionRequest request = new ShopTransactionRequest
                     {
                         ShopItemId = shopItemId,
-                        PlayerId = playerId
+                        PlayerId = playerId,
+                        IdempotencyKey = purchaseKey
                     };
 
                     return await FlockHttpClient.PostAsync<PurchaseResult>(
                         $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.ShopTransaction}", request, Client.GetBaseHeaders(), cancellationToken);
-                }, "Purchase shop item", cancellationToken, idempotent: false, actsForSignIn: purchaser);
+                }, "Purchase shop item", cancellationToken, idempotent: true, actsForSignIn: purchaser);
+            }
+            catch (FlockNetworkException noAnswer) when ((noAnswer.StatusCode == null || noAnswer.StatusCode >= 500) && string.IsNullOrEmpty(FlockErrorHints.For(noAnswer.ErrorCode)))
+            {
+                // Neither delivered nor refused: the usual "make the call again" would be a second purchase.
+                noAnswer.Hint = "No attempt was answered, so the purchase may have been made. " + ReadBeforeBuyingAgain;
+                RecordPurchaseInTheBackground(shopItem, shopItemId, nameof(PurchaseStatus.Failed), purchaser);
+                throw;
             }
             catch
             {
@@ -219,7 +228,7 @@ namespace Flock.Providers
                 throw;
             }
 
-            RequirePurchaseNamed(result, "Read the player's inventory and wallet to see whether it went through before offering it again; the SDK never sends a wallet purchase twice.");
+            RequirePurchaseNamed(result, ReadBeforeBuyingAgain);
             RecordPurchaseInTheBackground(shopItem, shopItemId, nameof(PurchaseStatus.Purchased), purchaser);
             ApplyWalletToPlayerCache(result.Wallet);
             return result;
@@ -376,5 +385,35 @@ namespace Flock.Providers
                     Client.GetBaseHeaders(), cancellationToken);
             }, "Get player inventory", cancellationToken);
         }
+
+        /// <summary>How many unused entries of each shop item the signed-in player holds, by shop item id, from every page of the inventory; used and refunded entries do not count. The inventory is never cached, so each call reads it afresh: for a screen of items, read this once.</summary>
+        public async Task<IReadOnlyDictionary<string, int>> GetOwnedItemCountsAsync(CancellationToken cancellationToken = default)
+        {
+            Dictionary<string, int> counts = new Dictionary<string, int>(StringComparer.Ordinal);
+            int page = 1;
+            while (true)
+            {
+                PaginatedResponse<PlayerInventory> entries = await GetPlayerInventoryAsync(page: page, limit: InventoryPageSize, cancellationToken: cancellationToken);
+                if (entries?.Items == null || entries.Items.Length == 0)
+                    return counts;
+                foreach (PlayerInventory entry in entries.Items)
+                    if (entry != null && !string.IsNullOrEmpty(entry.ShopItemId) && entry.Status == PlayerInventoryStatuses.Unused)
+                        counts[entry.ShopItemId] = counts.TryGetValue(entry.ShopItemId, out int held) ? held + 1 : 1;
+                if (page * InventoryPageSize >= entries.Total)
+                    return counts;
+                page++;
+            }
+        }
+
+        /// <summary>Whether the signed-in player holds an unused entry of this shop item, such as a standard item bought and not used up. Reads the whole inventory.</summary>
+        public async Task<bool> OwnsAsync(string shopItemId, CancellationToken cancellationToken = default)
+        {
+            RequireNotEmpty(shopItemId, "Shop Item ID");
+            IReadOnlyDictionary<string, int> counts = await GetOwnedItemCountsAsync(cancellationToken);
+            return counts.ContainsKey(shopItemId);
+        }
+
+        private const int InventoryPageSize = 100;
+        private const string ReadBeforeBuyingAgain = "Read the player's inventory and wallet to see whether it went through before offering it again; a new PurchaseAsync call is a new purchase.";
     }
 }

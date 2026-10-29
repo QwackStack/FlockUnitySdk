@@ -38,7 +38,8 @@ namespace Flock.Editor
         private const string StagingRoot = "Assets/FlockSDK/";
         private const string StagingRuntimeRsp = StagingRoot + "Runtime/csc.rsp";
         private const string StagingEditorRsp = StagingRoot + "Editor/csc.rsp";
-        private const string StagingSamplesRsp = StagingRoot + "Samples/QuickStart/csc.rsp";
+        // The samples whose code reads the FLOCK_NO_<ID> defines.
+        private static readonly string[] StagingSampleRsps = { StagingRoot + "Samples/QuickStart/csc.rsp", StagingRoot + "Samples/Shop/csc.rsp" };
         private const string PackageName = "com.flock.sdk";
 
         // SDK-maintainer-only files. Excluded from every build regardless of provider
@@ -435,7 +436,7 @@ namespace Flock.Editor
                 WriteOrDeleteRsp(StagingRuntimeRsp, defines);
                 WriteOrDeleteRsp(StagingEditorRsp, defines);
                 if (contents.IncludeSamples)
-                    WriteOrDeleteRsp(StagingSamplesRsp, defines);
+                    WriteSampleRsps(defines);
                 AssetDatabase.Refresh();
                 return ExportFromStaging(contents, excludedRelpaths, excludedFolders, out problem);
             }
@@ -457,7 +458,7 @@ namespace Flock.Editor
                 if (contents.IncludeEditor)
                     WriteOrDeleteRsp(StagingEditorRsp, defines);
                 if (contents.IncludeSamples)
-                    WriteOrDeleteRsp(StagingSamplesRsp, defines);
+                    WriteSampleRsps(defines);
                 AssetDatabase.Refresh();
                 return ExportFromStaging(contents, excludedRelpaths, excludedFolders, out problem);
             }
@@ -686,6 +687,14 @@ namespace Flock.Editor
         // an asmdef, applying its flags only to that assembly. When all providers are selected
         // we delete the rsp entirely so the default state is byte-for-byte identical to having
         // no Package Builder feature at all.
+        // A sample left out with its provider has no folder, and is not given one.
+        private static void WriteSampleRsps(List<string> defines)
+        {
+            foreach (string rsp in StagingSampleRsps)
+                if (Directory.Exists(Path.GetDirectoryName(rsp)))
+                    WriteOrDeleteRsp(rsp, defines);
+        }
+
         private static void WriteOrDeleteRsp(string rspPath, List<string> defines)
         {
             if (defines.Count == 0)

@@ -6,6 +6,44 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.94.0]
+
+Samples and testing. A shop sample, and the calls a shop screen needs: the store's price, the wallet, what the player owns, a
+restore, a setup check, the store's reason as a value, and wallet purchases that are safe to send again.
+
+### Added
+
+- **The shop sample**, `Samples/Shop` (`FlockShopSample`): every shop item with its price (the store's own for a real-money
+  item), what the player owns, wallet items the player cannot pay for greyed out, every outcome in plain words, and Restore
+  purchases and Check store setup. Real-money items need Unity IAP 5; without it the sample sells the game-currency items. It
+  leaves a package with the shop.
+- **`Player.GetWalletAsync()`** and **`FlockWallet`**: the signed-in player's balances by currency code (`GameCurrencies`,
+  `RealCurrencies`, `BalanceOf`, `Holds`), and `CanAfford(item)` for an item paid from the wallet. `FlockWallet.From(wallet)`
+  reads a purchase's `Wallet`.
+- **`Shop.GetOwnedItemCountsAsync()`** and **`Shop.OwnsAsync(shopItemId)`**: how many unused inventory entries of each item the
+  player holds, from every page; used and refunded entries do not count. `PlayerInventoryStatuses` names the statuses.
+- **`FlockStorePurchases.GetStorePrice(shopItemId)`**: the price the store shows this player (text, amount, currency code), or
+  null when the store did not find the product.
+- **`FlockStorePurchases.RestoreAsync()`**: has Flock deliver the one-time purchases this store account owns; a purchase Flock
+  delivered before is answered with what it granted then, and grants nothing more.
+- **`FlockStorePurchases.CheckSetupAsync()`**: which real-money items the store did not find or have no product id for this
+  store, and whether Flock's server can ask the store about purchases with the game's keys. It buys nothing.
+- **`FlockStorePurchase.StoreFailureReason`**, one of `FlockStoreFailureReasons`, so a game tells a declined payment from an
+  item already owned or a store that is down without reading the store's words.
+- **`FlockStoreItemId`** in the generated code: real-money items get an enum of their own, with `BuyAsync` and
+  `GetStorePrice` taking it, in an assembly compiled only with Unity IAP 5.
+- **`FlockErrorCode.ShopIdempotencyKeyReused`**, with its fix.
+
+### Changed
+
+- **`Shop.PurchaseAsync` is sent again after an answer that never came** (a dropped connection, a timeout, a server error),
+  with the key every attempt of the call carries (`idempotency_key`): the server answers a repeat with the first purchase, so
+  the player pays once. A new call is a new purchase, and a purchase is still never queued offline. This needs a Flock server
+  that reads the key: an older one ignores it, and there a purchase sent again can be charged twice.
+- **`FlockShopItemId` lists only the items paid from the wallet**; real-money items moved to `FlockStoreItemId`. Sync the
+  codegen again after upgrading.
+
+
 ## [1.93.0]
 
 Buying with Unity IAP 5. A game with Unity IAP 5 sells Flock shop items for real money in one call.

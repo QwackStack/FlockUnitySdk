@@ -228,6 +228,18 @@ namespace Flock.Providers
             return await GetMyDataByTemplateAsync(template.Id, cancellationToken);
         }
 
+        /// <summary>The signed-in player's wallet: balances by currency code, from the player template tagged "currency". Read through the same cache as <see cref="GetMyDataByTemplateAsync"/>, which purchases, store redemptions and fund grants keep current; <see cref="ClearCache"/> reads it afresh.</summary>
+        public async Task<FlockWallet> GetWalletAsync(CancellationToken cancellationToken = default)
+        {
+            PlayerData wallet = await GetMyDataByTagAsync("currency", cancellationToken);
+            if (wallet == null)
+                throw new FlockValidationException("The signed-in player has no wallet in this Game Version")
+                {
+                    Hint = "The server makes a player's wallet when the player registers, from the Game Version's currency template, so a player who registered before that template existed, or under another Game Version, has none. Create the currency template first, then register the player under this build's Game Version."
+                };
+            return FlockWallet.From(wallet);
+        }
+
         private Task<Dictionary<string, PlayerData>> GetOrFetchByTemplateAsync(string playerId, CancellationToken cancellationToken)
         {
             if (_playerDataByPlayerCache.TryGetValue(playerId, out Dictionary<string, PlayerData> cached))

@@ -152,5 +152,102 @@ namespace Flock.Tests.Editor
                     Assert.IsTrue(File.Exists(legacy + "/Notes.txt"));
             }
         }
+
+        private static List<Shop> ShopWith(params ShopItem[] items)
+            => new List<Shop> { new Shop { Id = "shop-1", Name = "Main", ShopItems = new List<ShopItem>(items) } };
+
+        private static readonly ShopItem Potion = new ShopItem { Id = "item-potion", Name = "Potion", Type = "consumable", Price = 10, Currency = "Gold" };
+        private static readonly ShopItem GemPack = new ShopItem { Id = "item-gems", Name = "Gem Pack", Type = "currency_pack", Price = 399, Currency = "SAR", IsRealMoney = true };
+
+        // A real-money item is bought through the store, so it is kept out of the wallet's FlockShopItemId and given an enum
+        // in an assembly compiled only with Unity IAP 5, where FlockStorePurchases exists.
+        [Test]
+        public void ARealMoneyItem_GoesToTheStoreItemsAssembly_AndAWalletItemStaysWithTheShop()
+        {
+            string shops = Path.Combine(_root, "Shops");
+
+            ShopEmitter.Emit(ShopWith(Potion, GemPack), new List<PlayerTemplateSchema>(), shops);
+
+            string wallet = File.ReadAllText(Path.Combine(shops, "FlockShopCatalog.g.cs"));
+            StringAssert.Contains("Potion", wallet);
+            StringAssert.DoesNotContain("GemPack", wallet, "A wallet purchase of a real-money item is refused, so the wallet enum does not offer it.");
+            string store = File.ReadAllText(Path.Combine(shops, ShopEmitter.StoreItemsSubdir, "FlockStoreCatalog.g.cs"));
+            StringAssert.Contains("GemPack", store);
+            StringAssert.Contains("case FlockStoreItemId.GemPack: return \"item-gems\";", store);
+            StringAssert.DoesNotContain("Potion", store);
+            string assembly = File.ReadAllText(Path.Combine(shops, ShopEmitter.StoreItemsSubdir, ShopEmitter.StoreItemsAssembly + ".asmdef"));
+            StringAssert.Contains("\"Flock.Shop.UnityIap\"", assembly);
+            StringAssert.Contains("\"FLOCK_UNITY_IAP_5\"", assembly);
+            StringAssert.Contains("\"!FLOCK_NO_SHOP\"", assembly);
+        }
+
+        [Test]
+        public void ASyncWithoutRealMoneyItems_RemovesTheStoreItemsFolder()
+        {
+            string shops = Path.Combine(_root, "Shops");
+            ShopEmitter.Emit(ShopWith(Potion, GemPack), new List<PlayerTemplateSchema>(), shops);
+            string storeDir = Path.Combine(shops, ShopEmitter.StoreItemsSubdir);
+            File.WriteAllText(storeDir + ".meta", "meta");
+            File.WriteAllText(Path.Combine(storeDir, ShopEmitter.StoreItemsAssembly + ".asmdef.meta"), "meta");
+
+            ShopEmitter.Emit(ShopWith(Potion), new List<PlayerTemplateSchema>(), shops);
+
+            Assert.IsFalse(Directory.Exists(storeDir), "An assembly left behind would still compile the old enum.");
+            Assert.IsFalse(File.Exists(storeDir + ".meta"));
+            Assert.IsTrue(File.Exists(Path.Combine(shops, "FlockShopCatalog.g.cs")));
+        }
+
+        [Test]
+        public void ASyncWithoutRealMoneyItems_KeepsAFileTheGamePutInTheStoreItemsFolder()
+        {
+            string shops = Path.Combine(_root, "Shops");
+            ShopEmitter.Emit(ShopWith(GemPack), new List<PlayerTemplateSchema>(), shops);
+            string game = Plant("Shops/" + ShopEmitter.StoreItemsSubdir + "/StoreScreen.cs", "public class StoreScreen {}");
+
+            ShopEmitter.Emit(ShopWith(Potion), new List<PlayerTemplateSchema>(), shops);
+
+            Assert.IsTrue(File.Exists(game));
+            Assert.IsFalse(File.Exists(Path.Combine(shops, ShopEmitter.StoreItemsSubdir, ShopEmitter.StoreItemsAssembly + ".asmdef")));
+        }
+
+        [Test]
+        public void TheStoreItemsAssemblyIsKnownByItsName()
+        {
+            Assert.IsTrue(GeneratedFiles.IsGenerated(Plant(ShopEmitter.StoreItemsAssembly + ".asmdef", "{}")));
+            Assert.IsFalse(GeneratedFiles.IsGenerated(Plant("Game.Shop.asmdef", "{}")), "A game's own assembly");
+            Assert.IsFalse(GeneratedFiles.IsGenerated(Plant("Flock.Generated.Notes.txt", "")), "Only an assembly definition is known by its name");
+            Assert.IsFalse(GeneratedFiles.IsGenerated(Plant("Flock.Generated.asmdef", "{}")), "A game's own assembly for the generated code, named like Flock's");
+        }
+
+        // A name typed in the dashboard over two lines would otherwise end its comment early and break the generated code.
+        [Test]
+        public void AShopNameOverTwoLines_StaysInsideItsComments()
+        {
+            string shops = Path.Combine(_root, "Shops");
+            List<Shop> twoLines = new List<Shop> { new Shop { Id = "shop-1", Name = "Main\nShop", ShopItems = new List<ShopItem> { Potion, GemPack } } };
+
+            ShopEmitter.Emit(twoLines, new List<PlayerTemplateSchema>(), shops);
+
+            foreach (string file in new[] { Path.Combine(shops, "FlockShopCatalog.g.cs"), Path.Combine(shops, ShopEmitter.StoreItemsSubdir, "FlockStoreCatalog.g.cs") })
+                foreach (string line in File.ReadAllLines(file))
+                    if (line.Contains("</summary>"))
+                        StringAssert.Contains("/// <summary>", line, Path.GetFileName(file) + ": a comment split over two lines");
+        }
+
+        // Another assembly may reference the store items assembly by its GUID, which lives in its .meta.
+        [Test]
+        public void ASyncWithStoreItems_RewritesTheirAssemblyInPlace_KeepingItsMeta()
+        {
+            string shops = Path.Combine(_root, "Shops");
+            ShopEmitter.Emit(ShopWith(GemPack), new List<PlayerTemplateSchema>(), shops);
+            string assembly = Path.Combine(shops, ShopEmitter.StoreItemsSubdir, ShopEmitter.StoreItemsAssembly + ".asmdef");
+            File.WriteAllText(assembly + ".meta", "guid: kept");
+            File.WriteAllText(assembly, "{}");
+
+            ShopEmitter.Emit(ShopWith(GemPack), new List<PlayerTemplateSchema>(), shops);
+
+            Assert.AreEqual("guid: kept", File.ReadAllText(assembly + ".meta"));
+            StringAssert.Contains(ShopEmitter.StoreItemsAssembly, File.ReadAllText(assembly), "Written again");
+        }
     }
 }

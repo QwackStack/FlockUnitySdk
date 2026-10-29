@@ -238,6 +238,7 @@ game's own keys); the receipt goes through once the keys are fixed.
 | `RequestValidationFailed` | `request.validation_failed` |
 | `ShopCurrencyNotHeld` | `shop.currency_not_held` |
 | `ShopCurrencyTemplateNotFound` | `shop.currency_template_not_found` |
+| `ShopIdempotencyKeyReused` | `shop.idempotency_key_reused` |
 | `ShopInsufficientFunds` | `shop.insufficient_funds` |
 | `ShopItemNotFound` | `shop.item_not_found` |
 | `ShopMalformedReward` | `shop.malformed_reward` |

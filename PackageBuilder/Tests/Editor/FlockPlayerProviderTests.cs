@@ -100,5 +100,109 @@ namespace Flock.Tests.Editor
                 Assert.Throws<FlockValidationException>(() => h.Run(() => h.Client.Player.GetBanAsync("")));
             }
         }
+
+        // ---- The wallet: balances by currency code, from the template tagged "currency" ----
+        // Both answers as the local backend sent them: the template list enveloped, each wallet category an object of integer fields.
+        private const string TemplateList =
+            "{\"error\":{\"code\":null},\"response\":{\"message\":null,\"code\":null},\"result\":[" +
+            "{\"id\":\"tpl-progress\",\"name\":\"progress\",\"game_version_id\":\"gv-1\",\"schema\":[],\"data\":[],\"tag\":\"progress\"}," +
+            "{\"id\":\"tpl-wallet\",\"name\":\"currencies\",\"game_version_id\":\"gv-1\",\"schema\":[],\"data\":[],\"tag\":\"currency\"}]}";
+
+        private static string Currency(string code, string value)
+            => "{\"type\":\"integer\",\"value\":" + value + ",\"type_name\":\"currency\",\"field_name\":\"" + code + "\"}";
+
+        private static readonly string WalletRow =
+            "{\"id\":\"pd-wallet\",\"player_template_id\":\"tpl-wallet\",\"game_id\":\"game-1\",\"player_id\":\"player-a\",\"data\":[" +
+            "{\"type\":\"object\",\"value\":[" + Currency("Gold", "250") + "," + Currency("Gems", "0") + "],\"type_name\":\"wallet\",\"field_name\":\"game_currencies\"}," +
+            "{\"type\":\"object\",\"value\":[" + Currency("SAR", "1200") + "],\"type_name\":\"wallet\",\"field_name\":\"real_currencies\"}]}";
+
+        private const string ProgressRow = "{\"id\":\"pd-progress\",\"player_template_id\":\"tpl-progress\",\"player_id\":\"player-a\",\"data\":[]}";
+
+        private static FlockFakeTransport WithRows(params string[] rows)
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On("player_data?page=", FlockFakeTransport.Ok("{\"items\":[" + string.Join(",", rows) + "],\"total\":" + rows.Length + ",\"page\":1,\"limit\":100}"));
+            transport.On(FlockEndpoints.PlayerTemplate, FlockFakeTransport.Ok(TemplateList));
+            return transport;
+        }
+
+        private static ShopItem WalletItem(string currency, int price) => new ShopItem { Id = "item", Currency = currency, Price = price };
+
+        [Test]
+        public void GetWallet_ReadsEachCurrencysBalance_FromTheCurrencyTemplatesRow()
+        {
+            using (FlockTestClient h = FlockTestClient.Create(WithRows(ProgressRow, WalletRow)))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                FlockWallet wallet = h.Run(() => h.Client.Player.GetWalletAsync());
+
+                Assert.AreEqual(250, wallet.BalanceOf("Gold"));
+                Assert.AreEqual(0, wallet.BalanceOf("Gems"));
+                Assert.IsTrue(wallet.Holds("Gems"), "A zero balance is still held.");
+                Assert.AreEqual(1200, wallet.RealCurrencies["SAR"]);
+                Assert.IsFalse(wallet.GameCurrencies.ContainsKey("SAR"), "Real currencies are kept apart from the game's own.");
+                Assert.AreEqual(0, wallet.BalanceOf("Shard"));
+                Assert.IsFalse(wallet.Holds("Shard"));
+                Assert.IsFalse(wallet.Holds("gold"), "Codes are matched exactly, as the server matches them.");
+            }
+        }
+
+        [Test]
+        public void Wallet_CanAfford_OnlyAGameCurrencyItemItsBalanceCovers()
+        {
+            using (FlockTestClient h = FlockTestClient.Create(WithRows(WalletRow)))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+                FlockWallet wallet = h.Run(() => h.Client.Player.GetWalletAsync());
+
+                Assert.IsTrue(wallet.CanAfford(WalletItem("Gold", 250)), "Exactly the balance is enough.");
+                Assert.IsFalse(wallet.CanAfford(WalletItem("Gold", 251)));
+                Assert.IsFalse(wallet.CanAfford(WalletItem("Shard", 0)), "A currency the wallet does not hold buys nothing, even at no cost.");
+                Assert.IsFalse(wallet.CanAfford(new ShopItem { Id = "pack", Currency = "Gold", Price = 1, IsRealMoney = true }), "A real-money item is bought through the store, never the wallet, whatever the wallet holds.");
+                Assert.IsFalse(wallet.CanAfford(WalletItem("SAR", 1)), "A real currency is never spent from the wallet.");
+                Assert.IsFalse(wallet.CanAfford(null));
+            }
+        }
+
+        [Test]
+        public void GetWallet_PlayerWithoutAWalletRow_ThrowsWithAHint()
+        {
+            using (FlockTestClient h = FlockTestClient.Create(WithRows(ProgressRow)))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                FlockValidationException ex = Assert.Throws<FlockValidationException>(() => h.Run(() => h.Client.Player.GetWalletAsync()));
+
+                StringAssert.Contains("currency template", ex.Hint);
+            }
+        }
+
+        [Test]
+        public void GetWallet_NotSignedIn_ThrowsBeforeReadingPlayerData()
+        {
+            FlockFakeTransport transport = WithRows(WalletRow);
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.SetReachable(true);
+
+                Assert.Catch<FlockException>(() => h.Run(() => h.Client.Player.GetWalletAsync()));
+                Assert.AreEqual(0, transport.CountTo("player_data?page="));
+            }
+        }
+
+        [Test]
+        public void Wallet_FromAPurchasesWallet_ReadsTheSameShape()
+        {
+            PlayerData row = Newtonsoft.Json.JsonConvert.DeserializeObject<PlayerData>(WalletRow);
+
+            FlockWallet wallet = FlockWallet.From(row);
+
+            Assert.AreEqual(250, wallet.BalanceOf("Gold"));
+            Assert.AreEqual(0, FlockWallet.From(null).GameCurrencies.Count, "A purchase that returned no wallet reads as an empty one.");
+        }
     }
 }
