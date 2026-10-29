@@ -228,7 +228,8 @@ catch (FlockException e)
 With Unity IAP 5 in the project (`com.unity.purchasing` 5.x), connect `FlockStore` once at start; from then on
 `Shop.PurchaseAsync` buys real-money items through it: the store charges the player, Flock checks it with the store and delivers
 the item, and only then is the store's purchase finished. It is compiled only when Unity IAP 5 is installed, so a game without
-it carries none of it.
+it carries none of it. On Android, set **Minimum API Level** to 23 or higher (Player Settings > Other Settings): Unity IAP 5's
+Google Play Billing library needs it, and a Unity 2021.3 project starts at 22, so its build stops at Gradle's manifest merge.
 
 ```csharp
 // Once, after FlockClient.Create. On a phone the store is found by itself.

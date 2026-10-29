@@ -111,14 +111,14 @@ namespace Flock.Http
         }
 
         // A change that may have been made leaves the player's cached data unsure (the wallet above all), so it is dropped for the next read to ask the server.
-        protected void MarkOutcomeUnknown(FlockException failure)
+        private protected void MarkOutcomeUnknown(FlockException failure)
         {
             failure.OutcomeUnknown = true;
             ForgetThePlayersData();
         }
 
         // Drops the signed-in player's cached player data, so the next read asks the server; writes still queued are laid over it again.
-        protected void ForgetThePlayersData()
+        private protected void ForgetThePlayersData()
         {
 #if !FLOCK_NO_PLAYER
             Client.Player?.ForgetPlayerData(Client.CurrentPlayerId);

@@ -625,6 +625,60 @@ namespace Flock.Tests.Editor
             }
         }
 
+        // A game updating from 1.89.2 finds its queue saved without the overlay: the write still sends, and reads before it show the server's value.
+        [Test]
+        public void AWriteQueuedByAnEarlierVersion_WithNoOverlay_StillSends()
+        {
+            string sharedDir = Path.Combine(Path.GetTempPath(), "flock_relaunch_" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                FlockTestClient h1 = FlockTestClient.Create(new FlockFakeTransport(), config => config.OfflineCacheDirectory = sharedDir);
+                h1.LoginAs("player-a");
+                h1.SetReachable(false);
+                h1.Run(() => h1.Client.Commands.UpdatePlayerDataFieldAsync("pd-1", "score", "42"));
+                FlockClient.Shutdown();
+                int rewritten = 0;
+                foreach (string file in Directory.GetFiles(sharedDir, "*", SearchOption.AllDirectories))
+                {
+                    string text = File.ReadAllText(file);
+                    if (!text.Contains("PayloadJson"))
+                        continue;
+                    JObject saved = JObject.Parse(text);
+                    foreach (JToken write in saved["data"])
+                        ((JObject)write).Remove("Overlay");
+                    File.WriteAllText(file, saved.ToString());
+                    rewritten++;
+                }
+                Assert.AreEqual(1, rewritten, "Control: the saved queue was found and written in the earlier shape.");
+
+                // The send keeps failing while the game reads, so the read finds the queue as the earlier version left it.
+                FlockFakeTransport transport2 = new FlockFakeTransport();
+                transport2.On(FlockEndpoints.CommandUpdatePlayerData, FlockFakeTransport.Offline());
+                transport2.On("player_data?page=", FlockFakeTransport.Ok("{\"items\":[" +
+                    RowJson("player-a", "tpl-1", "pd-1", new List<DataField> { Field("score", "10") }) + "],\"total\":1,\"page\":1,\"limit\":100}"));
+                using (FlockTestClient h2 = FlockTestClient.Create(transport2, config => config.OfflineCacheDirectory = sharedDir))
+                {
+                    h2.LoginAs("player-a");
+                    h2.SetReachable(true);
+                    PlayerData mine = h2.Run(() => h2.Client.Player.GetMyDataByTemplateAsync("tpl-1"));
+                    Assert.AreEqual("10", mine.Data.Find(f => f.FieldName == "score").Value?.ToString(), "No overlay to lay: the server's value.");
+
+                    transport2.On(FlockEndpoints.CommandUpdatePlayerData, FlockFakeTransport.Ok("{\"id\":\"pd-1\"}"));
+                    h2.Run(() => h2.Client.Commands.FlushPendingWritesAsync());
+                    int sent = transport2.CountTo(FlockEndpoints.CommandUpdatePlayerData);
+                    h2.Run(() => h2.Client.Commands.FlushPendingWritesAsync());
+
+                    StringAssert.Contains("42", transport2.LastTo(FlockEndpoints.CommandUpdatePlayerData).JsonBody, "The earlier version's write is sent.");
+                    Assert.AreEqual(sent, transport2.CountTo(FlockEndpoints.CommandUpdatePlayerData), "Sent once it got through, then gone from the queue.");
+                }
+            }
+            finally
+            {
+                if (Directory.Exists(sharedDir))
+                    Directory.Delete(sharedDir, true);
+            }
+        }
+
         // ---- CMD-15 + CMD-17: player A's offline queue never replays under player B ----
         [Test]
         public void Queue_IsPlayerScoped_DoesNotReplayUnderAnotherPlayer()

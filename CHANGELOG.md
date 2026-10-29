@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.97.0]
+
+The store release check: every player build, both install paths, codegen and the upgrade from 1.89.2, measured, with what it found.
+
+### Changed
+
+- **`FlockProviderBase`'s two helpers from 1.96.0 are no longer public API.** `MarkOutcomeUnknown` and `ForgetThePlayersData` were
+  `protected` on a public base class, so a game could see and call them; they are now for the SDK's own providers only. No call
+  a game makes changed.
+
+### Documentation
+
+- The shop guide says Android needs **Minimum API Level** 23 or higher with Unity IAP 5: its Google Play Billing library needs it,
+  and a Unity 2021.3 project starts at 22, so its build stops at Gradle's manifest merge.
+
+### Notes
+
+- Measured for this release, the SDK installed from its GitHub address: Windows (Mono and IL2CPP), Android (IL2CPP) and WebGL
+  players build on Unity 6000.3 and Windows and Android on 2021.3, and each Windows player and the WebGL page passes a 16-step run
+  of the shop's purchase paths against a Flock backend; both `.unitypackage`s import and compile on both versions.
+- A write a 1.89.2 game queued offline, saved without the overlay 1.96.0 added, still sends after the update, and reads before it
+  show the server's value.
+
 ## [1.96.0]
 
 Documentation for buying, with an example for every situation, the fix it found, the fixes a search for its kind found, and
