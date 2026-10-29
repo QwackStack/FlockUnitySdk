@@ -32,6 +32,7 @@ namespace Flock.Tests.Editor
             public bool RegisterWaitsForCancel;
             public readonly Dictionary<string, FlockStorePrice> Prices = new Dictionary<string, FlockStorePrice>();
             public readonly List<FlockStoreOrder> Owned = new List<FlockStoreOrder>();
+            public readonly List<FlockStoreOrder> Unfinished = new List<FlockStoreOrder>();
 
             public event Action<FlockStoreOrder> OrderPaid;
             public event Action<FlockStoreOrder> OrderDeferred;
@@ -70,6 +71,9 @@ namespace Flock.Tests.Editor
             public Task<IReadOnlyList<FlockStoreOrder>> FetchOwnedPurchasesAsync(CancellationToken cancellationToken)
             {
                 Calls.Add("restore");
+                // As Unity IAP's fetch does: every unfinished purchase is handed over as paid before the owned ones come back.
+                foreach (FlockStoreOrder order in Unfinished)
+                    OrderPaid?.Invoke(order);
                 return Task.FromResult<IReadOnlyList<FlockStoreOrder>>(new List<FlockStoreOrder>(Owned));
             }
 
@@ -264,6 +268,29 @@ namespace Flock.Tests.Editor
                 Assert.AreEqual(FlockStoreFailureReasons.PaymentDeclined, declined.Reason, "The reason a game branches on, apart from the store's own words.");
                 StringAssert.Contains("PaymentDeclined: card refused", declined.Message);
                 Assert.IsNotEmpty(declined.Hint);
+            }
+        }
+
+        // Google Play answers a declined card with BILLING_UNAVAILABLE, as for purchases switched off (measured with its declining test card).
+        [Test]
+        public void Buy_GooglePlayCannotTakeThePayment_ReadsStoreUnavailable_AndTheFixNamesBothCauses()
+        {
+            FakeStore store = new FakeStore();
+            FlockFakeTransport transport = Backend(FlockFakeTransport.Ok(Delivered));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.SetReachable(true);
+                h.LoginAs("player-a");
+                FlockStore purchases = Connect(h, store);
+                store.OnBuy = productId => store.Fail(productId, FlockStoreFailureReasons.StoreUnavailable, "PurchasingUnavailable:  - Google BillingResponseCode = 3");
+
+                FlockStoreException unavailable = Assert.Throws<FlockStoreException>(() => h.Run(() => h.Client.Shop.PurchaseAsync("gems")));
+
+                Assert.AreEqual(FlockStoreFailureReasons.StoreUnavailable, unavailable.Reason);
+                StringAssert.Contains("Nothing was charged", unavailable.Hint);
+                StringAssert.Contains("online", unavailable.Hint);
+                StringAssert.Contains("payment method", unavailable.Hint, "A declined card arrives this way on Google Play, so the fix names it.");
+                Assert.AreEqual(0, transport.CountTo(FlockEndpoints.ShopValidateReceipt));
             }
         }
 
@@ -729,6 +756,60 @@ namespace Flock.Tests.Editor
                 Assert.IsNull(restore.NotDelivered[1].Item, "A product two items sell cannot be matched to one.");
                 Assert.AreEqual(Twin, restore.NotDelivered[1].ProductId);
                 Assert.AreEqual(2, transport.CountTo(FlockEndpoints.ShopValidateReceipt), "The product two items sell is not sent.");
+            }
+        }
+
+        // Measured on a phone: Flock unreachable while paying, Google then answering "already owned", whose fix is to restore.
+        [Test]
+        public void Restore_SendsAgainAnUnfinishedPurchaseWhoseSendFailedThisLaunch_AndFinishesItOnceDelivered()
+        {
+            FakeStore store = new FakeStore();
+            store.OnBuy = productId => store.Pay(productId, "token-1");
+            FlockFakeTransport transport = Backend(FlockFakeTransport.Ok(Delivered));
+            transport.OnSequence(FlockEndpoints.ShopValidateReceipt,
+                FlockFakeTransport.Status(422, "{\"detail\":{\"code\":\"payment_provider.store_credentials_rejected\",\"message\":\"Google rejected this game's store credentials\"}}"),
+                FlockFakeTransport.Ok(Delivered));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.SetReachable(true);
+                h.LoginAs("player-a");
+                FlockStore purchases = Connect(h, store);
+                List<ShopItem> completed = new List<ShopItem>();
+                purchases.PurchaseCompleted += (item, result) => completed.Add(item);
+                Assert.Catch<FlockException>(() => h.Run(() => h.Client.Shop.PurchaseAsync("sword")));
+                store.Unfinished.Add(new FlockStoreOrder(Sword, "token-1", null));
+
+                FlockStoreRestore restore = h.Run(() => purchases.RestoreAsync());
+
+                Assert.AreEqual(2, transport.CountTo(FlockEndpoints.ShopValidateReceipt), "The player asked, so the purchase is sent again this launch.");
+                Assert.AreEqual(1, store.Calls.FindAll(call => call == "finish:token-1").Count, "Finished once Flock delivered it.");
+                Assert.AreEqual(1, completed.Count, "An unfinished purchase goes through PurchaseCompleted, as the restore promises.");
+                Assert.AreEqual("sword", completed[0].Id);
+                Assert.AreEqual(0, restore.Restored.Count, "The restore's own list is the store's finished purchases.");
+            }
+        }
+
+        // Frames go by as in a game, since the held send resumes on the main thread.
+        [UnityTest]
+        public IEnumerator Restore_LeavesAPurchaseStillBeingSentToItsSend_AndItIsSentOnce()
+        {
+            FakeStore store = new FakeStore();
+            FlockFakeTransport transport = Backend(FlockFakeTransport.Ok(Delivered));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.SetReachable(true);
+                h.LoginAs("player-a");
+                FlockStore purchases = Connect(h, store);
+                transport.GateNext(FlockEndpoints.ShopValidateReceipt);
+                store.Pay(Sword, "token-1");
+                store.Unfinished.Add(new FlockStoreOrder(Sword, "token-1", null));
+
+                h.Run(() => purchases.RestoreAsync());
+                transport.ReleaseGate();
+                yield return FlockTestWait.Until(() => store.Calls.Contains("finish:token-1"), "The send under way finished the purchase");
+
+                Assert.AreEqual(1, transport.CountTo(FlockEndpoints.ShopValidateReceipt), "A send under way is not started a second time.");
+                Assert.AreEqual(1, store.Calls.FindAll(call => call == "finish:token-1").Count);
             }
         }
 

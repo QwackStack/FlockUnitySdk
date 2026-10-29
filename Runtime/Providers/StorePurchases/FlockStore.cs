@@ -18,11 +18,11 @@ namespace Flock.Providers
         public const string AlreadyOwned = "already_owned";
         /// <summary>An earlier purchase of this product is still waiting for its payment.</summary>
         public const string AlreadyPending = "already_pending";
-        /// <summary>The store declined the payment.</summary>
+        /// <summary>The store declined the payment (the App Store; Google Play reports a declined payment as <see cref="StoreUnavailable"/>).</summary>
         public const string PaymentDeclined = "payment_declined";
         /// <summary>The store does not sell this product here, or it is not set up in the store.</summary>
         public const string ProductUnavailable = "product_unavailable";
-        /// <summary>The store could not be reached, or purchases are switched off on this device.</summary>
+        /// <summary>The store could not be reached or purchases are switched off on this device; on Google Play, which reports both the same way, also a payment method it could not charge.</summary>
         public const string StoreUnavailable = "store_unavailable";
         /// <summary>Nobody is signed in to the store on this device.</summary>
         public const string NotSignedInToTheStore = "not_signed_in_to_the_store";
@@ -128,7 +128,7 @@ namespace Flock.Providers
     /// <summary>The game's connection to Google Play or the App Store through Unity IAP 5. Connect it once at start; then <c>Shop.PurchaseAsync</c> buys real-money items through it: the store charges the player, Flock checks the purchase with the store and delivers the item, and the store's purchase is finished only once Flock delivered. A purchase Flock refused stays unfinished, so the store hands it back at the next launch, where it is sent again once the player is signed in.</summary>
     public sealed class FlockStore : IDisposable, IFlockStoreCheckout
     {
-        /// <summary>Raised for every real-money purchase Flock delivers: one bought just now, one the store was waiting to be paid for, and one left unfinished at an earlier launch (not for <see cref="RestoreAsync"/>, which returns its own list). Refresh the wallet and inventory here. Raised on the main thread.</summary>
+        /// <summary>Raised for every real-money purchase Flock delivers: one bought just now, one the store was waiting to be paid for, and one left unfinished at an earlier launch, and one a restore sent again (not the finished purchases <see cref="RestoreAsync"/> lists). Refresh the wallet and inventory here. Raised on the main thread.</summary>
         public event Action<ShopItem, PurchaseResult> PurchaseCompleted;
 
         /// <summary>Raised for every purchase the player paid for that Flock did not deliver; it stays unfinished in the store and is sent again at the next launch. Raised on the main thread.</summary>
@@ -152,8 +152,10 @@ namespace Flock.Providers
         // a purchase of one paid for and not yet delivered is still sent to Flock, which delivers what was paid for.
         private readonly Dictionary<string, string> _soldBefore = new Dictionary<string, string>();
         private readonly Dictionary<string, Buying> _buying = new Dictionary<string, Buying>();
-        // A store's unfinished purchase is sent once a launch (payment plan D-P3); the next launch sends it again.
+        // A store's unfinished purchase is sent once a launch (payment plan D-P3); the next launch, or the player's restore, sends it again.
         private readonly HashSet<string> _sentThisLaunch = new HashSet<string>();
+        // Purchases being sent to Flock now, which a restore leaves to their send.
+        private readonly HashSet<string> _sendingNow = new HashSet<string>();
         // Purchases the store handed over before the shops were read or anyone signed in; sent once both are true.
         private readonly List<FlockStoreOrder> _waiting = new List<FlockStoreOrder>();
         private bool _ready;
@@ -249,12 +251,14 @@ namespace Flock.Providers
             return _connection.PriceOf(ProductOf(shopItemId, out ShopItem _));
         }
 
-        /// <summary>Asks the store for the one-time purchases this store account already owns and has Flock deliver each to the signed-in player; a purchase Flock delivered before grants nothing more. Purchases still unfinished go through <see cref="PurchaseCompleted"/> as usual. One made for another Flock account is refused and listed in <see cref="FlockStoreRestore.NotDelivered"/>. Throws <see cref="FlockException"/> when the store cannot list the purchases (on Apple, also when the player does not sign in to the store); a store that never answers is waited for until <paramref name="cancellationToken"/> is cancelled.</summary>
+        /// <summary>Asks the store for the one-time purchases this store account already owns and has Flock deliver each to the signed-in player; a purchase Flock delivered before grants nothing more. Purchases still unfinished, one Flock could not be reached for earlier in this launch included, are sent again and go through <see cref="PurchaseCompleted"/> or <see cref="PurchaseNotDelivered"/> as usual. One made for another Flock account is refused and listed in <see cref="FlockStoreRestore.NotDelivered"/>. Throws <see cref="FlockException"/> when the store cannot list the purchases (on Apple, also when the player does not sign in to the store); a store that never answers is waited for until <paramref name="cancellationToken"/> is cancelled.</summary>
         public async Task<FlockStoreRestore> RestoreAsync(CancellationToken cancellationToken = default)
         {
             ThrowIfUnusable();
             if (!FlockClient.Instance.IsAuthenticated)
                 throw new FlockAuthException("No player is signed in") { Hint = FlockErrorHints.SignInFirst };
+            // The player asked: an unfinished purchase whose send this launch has ended goes again when the fetch hands it over.
+            _sentThisLaunch.RemoveWhere(transaction => !_sendingNow.Contains(transaction));
             IReadOnlyList<FlockStoreOrder> owned = await _connection.FetchOwnedPurchasesAsync(cancellationToken);
             List<ShopItem> restored = new List<ShopItem>();
             List<FlockUndeliveredPurchase> notDelivered = new List<FlockUndeliveredPurchase>();
@@ -561,6 +565,7 @@ namespace Flock.Providers
 
         private async void Send(FlockStoreOrder order, ShopItem item, Buying buying)
         {
+            _sendingNow.Add(order.TransactionId);
             PurchaseResult delivery;
             try
             {
@@ -568,6 +573,7 @@ namespace Flock.Providers
             }
             catch (FlockException refused)
             {
+                _sendingNow.Remove(order.TransactionId);
                 buying?.Done.TrySetException(refused);
                 RaiseNotDelivered(item, order.ProductId, refused);
                 return;
@@ -575,6 +581,7 @@ namespace Flock.Providers
             catch (OperationCanceledException)
             {
                 // The player signed out or changed while it was sent: it stays unfinished for the next launch.
+                _sendingNow.Remove(order.TransactionId);
                 buying?.Done.TrySetCanceled();
                 return;
             }
@@ -588,6 +595,7 @@ namespace Flock.Providers
                 // Delivered all the same: the store hands it back, and Flock answers the repeat with this delivery.
                 FlockClient.Instance.Logger.LogWarning($"Flock delivered the purchase of '{item.Name}', but the store could not finish it: {notFinished.Message}");
             }
+            _sendingNow.Remove(order.TransactionId);
             buying?.Done.TrySetResult(delivery);
             FlockEvents.InvokeEach(PurchaseCompleted, item, delivery, $"{nameof(FlockStore)}.{nameof(PurchaseCompleted)}");
         }
@@ -595,6 +603,7 @@ namespace Flock.Providers
         // Paid for an item the shops no longer list: its own read still finds a switched-off item, and Flock delivers what was paid for or says why not.
         private async void SendForAnItemNoLongerSold(FlockStoreOrder order, string shopItemId)
         {
+            _sendingNow.Add(order.TransactionId);
             ShopItem item;
             try
             {
@@ -602,6 +611,7 @@ namespace Flock.Providers
             }
             catch (FlockException notRead)
             {
+                _sendingNow.Remove(order.TransactionId);
                 RaiseNotDelivered(null, order.ProductId, notRead);
                 return;
             }
@@ -639,7 +649,7 @@ namespace Flock.Providers
                 case FlockStoreFailureReasons.AlreadyPending: return "An earlier purchase of it is waiting for its payment; PurchaseCompleted reports it once paid.";
                 case FlockStoreFailureReasons.PaymentDeclined: return "Nothing was charged. The player can choose another payment method in the store and try again.";
                 case FlockStoreFailureReasons.ProductUnavailable: return "Check the item's product id under Store product IDs in the Flock dashboard matches an active product in the store; CheckSetupAsync lists the ones the store did not find.";
-                case FlockStoreFailureReasons.StoreUnavailable: return "Check the device is online and that purchases are allowed on it, then try again.";
+                case FlockStoreFailureReasons.StoreUnavailable: return "Nothing was charged. Check the device is online and that purchases are allowed on it; on Google Play the payment method may also have been declined, so the player can choose another in the store. Then try again.";
                 case FlockStoreFailureReasons.NotSignedInToTheStore: return "Ask the player to sign in to the store on this device, then try again.";
                 default: return "Nothing was charged. Try again; if it keeps failing, CheckSetupAsync checks the store's setup.";
             }

@@ -369,7 +369,7 @@ namespace Flock.Samples
                 case FlockStoreFailureReasons.PaymentDeclined:
                     return "The payment was declined: nothing was charged.";
                 case FlockStoreFailureReasons.StoreUnavailable:
-                    return "The store could not be reached: try again later.";
+                    return "The store could not take the payment, so nothing was charged: check the connection and the way to pay, then try again.";
                 case FlockStoreFailureReasons.NotSignedInToTheStore:
                     return "Sign in to the store on this device, then buy again.";
                 default:

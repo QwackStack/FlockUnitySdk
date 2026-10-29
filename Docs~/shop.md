@@ -256,6 +256,8 @@ FlockStoreSetupCheck check = await store.CheckSetupAsync();      // what is miss
   payment throws **`FlockStoreException`**: nothing was charged, and its `Reason` says why, one of `FlockStoreFailureReasons`
   (`Cancelled`, `PaymentDeclined`, `AlreadyOwned`, `AlreadyPending`, `ProductUnavailable`, `StoreUnavailable`,
   `NotSignedInToTheStore`, `Unknown`; a string, for the same reason as `reward.Type`), with the store's own words in its message.
+  Google Play reports a payment method it could not charge the same way as purchases being unavailable, so a declined card
+  there reads `StoreUnavailable`; `PaymentDeclined` comes from the App Store.
   When Flock refuses a purchase the player paid for, it throws `FlockException` (its `ErrorCode` and `Hint` say why), the purchase
   stays unfinished, and `PurchaseNotDelivered` reports it.
 - **An item switched off in the dashboard** (Inactive, the item or its shop) is not shown to players and not sold. Players'
@@ -279,7 +281,9 @@ FlockStoreSetupCheck check = await store.CheckSetupAsync();      // what is miss
 - **`RestoreAsync`** asks the store for the one-time purchases this store account owns (on a new phone, or after a reinstall)
   and has Flock deliver each to the signed-in player; `Restored` lists their items. A purchase Flock delivered before grants
   nothing more; one Flock refuses (bought for another player) is listed in `NotDelivered`, and the store's purchases are not
-  finished again. Apple asks the player to sign in to the store for it, so start it from a button. It throws `FlockException`
+  finished again. A purchase still unfinished, one Flock could not be reached for earlier in this launch included, is sent
+  again and arrives through `PurchaseCompleted` (or `PurchaseNotDelivered`), not in `Restored`. Apple asks the player to sign
+  in to the store for it, so start it from a button. It throws `FlockException`
   when the store cannot list the purchases, and on Apple when the player does not sign in to the store.
 - **`CheckSetupAsync`** is for the developer: `NotFoundInTheStore`, `MissingProductId`, and `ServerCanCheckPurchases`, measured
   by asking the server to redeem a made-up purchase, which the store answers as unknown when the game's keys work (`ServerProblem`

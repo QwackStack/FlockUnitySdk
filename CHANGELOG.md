@@ -15,6 +15,15 @@ The store release check: every player build, both install paths, codegen and the
 - **`FlockProviderBase`'s two helpers from 1.96.0 are no longer public API.** `MarkOutcomeUnknown` and `ForgetThePlayersData` were
   `protected` on a public base class, so a game could see and call them; they are now for the SDK's own providers only. No call
   a game makes changed.
+- **A declined card on Google Play now gets the right fix.** Google Play answers a payment it could not charge the same way as
+  purchases being unavailable, so it reaches the game as `FlockStoreFailureReasons.StoreUnavailable`, whose fix said only to
+  check the device is online. The fix now also names the payment method, and the reason's description says so;
+  `PaymentDeclined` comes from the App Store. The shop sample's line says the same. Measured with Google's declining test card.
+- **Restore delivers a purchase Flock could not be reached for earlier in the same launch.** A store's unfinished purchase is
+  sent to Flock once a launch, so after a failed send `RestoreAsync` skipped it until the next launch, though a one-time
+  item's `AlreadyOwned` fix tells the game to restore. Restore now sends each such purchase again (one still being sent is
+  left to its send, so it is never sent twice); it is finished once delivered and reported through `PurchaseCompleted`.
+  Measured on a phone: paid while Flock was unreachable, Google's "already owned", then Restore.
 
 ### Documentation
 
@@ -28,6 +37,10 @@ The store release check: every player build, both install paths, codegen and the
   of the shop's purchase paths against a Flock backend; both `.unitypackage`s import and compile on both versions.
 - A write a 1.89.2 game queued offline, saved without the overlay 1.96.0 added, still sends after the update, and reads before it
   show the server's value.
+- Google Play sandbox purchases on an Android phone, from Play's internal testing: a currency pack, a consumable bought and used,
+  a cancel, a declined card, a slow card approved minutes later, a payment Flock could not be reached for (delivered once at the
+  next launch), an item switched off after the store connected (refused before Google's sheet) and an unfinished purchase of it
+  (still delivered), and restore after the app's data was cleared.
 
 ## [1.96.0]
 
