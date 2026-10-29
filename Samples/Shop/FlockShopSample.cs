@@ -28,7 +28,7 @@ namespace Flock.Samples
         private bool _busy;
         private Vector2 _scroll;
 #if FLOCK_UNITY_IAP_5
-        private FlockStorePurchases _store;
+        private FlockStore _store;
         private readonly Dictionary<string, FlockStorePrice> _storePrices = new Dictionary<string, FlockStorePrice>();
 #endif
 
@@ -188,12 +188,16 @@ namespace Flock.Samples
             if (GUILayout.Button(notBuyable ?? "Buy", GUILayout.Height(40f)))
                 Run(() => BuyAsync(item));
             GUI.enabled = !_busy;
+            // A consumable the player holds is used here; using it grants what it holds.
+            if (item.Type == ShopItemTypes.Consumable && owned > 0 && GUILayout.Button("Use", GUILayout.Width(70f), GUILayout.Height(40f)))
+                Run(() => UseAsync(item));
             GUILayout.EndHorizontal();
         }
 
         // Null when the item can be bought now, else what the button says instead.
         private string WhyNotBuyable(ShopItem item, int owned)
         {
+            // A store sells a standard item once; the wallet would sell it again, so the game checks.
             if (item.Type == ShopItemTypes.Standard && owned > 0)
                 return "Owned";
             if (item.IsRealMoney)
@@ -234,38 +238,47 @@ namespace Flock.Samples
             return balances.Count > 0 ? string.Join(", ", balances) : "empty";
         }
 
+        // One call for every item: the wallet pays for a game-currency one, the store for a real-money one.
         private async Task BuyAsync(ShopItem item)
         {
-#if FLOCK_UNITY_IAP_5
-            if (item.IsRealMoney)
-            {
-                await BuyFromTheStoreAsync(item);
-                return;
-            }
-#endif
-            await BuyWithTheWalletAsync(item);
-        }
-
-        private async Task BuyWithTheWalletAsync(ShopItem item)
-        {
-            Say($"Buying {item.Name} for {item.Price} {item.Currency}...");
+            Say($"Buying {item.Name}...");
             try
             {
                 PurchaseResult bought = await FlockClient.Instance.Shop.PurchaseAsync(item.Id);
-                Say($"Bought {item.Name}{Granted(bought)}.");
+                Say(bought.IsPaid ? $"Bought {item.Name}{Granted(bought.Granted)}." : $"{item.Name} waits for its payment to clear, and is delivered then.");
             }
             catch (FlockException refused) when (refused.ErrorCode == FlockErrorCode.ShopInsufficientFunds)
             {
                 Say($"Not enough {item.Currency} for {item.Name}: nothing was bought.");
             }
-            catch (FlockNetworkException noAnswer) when (noAnswer.StatusCode == null || noAnswer.StatusCode >= 500)
+#if FLOCK_UNITY_IAP_5
+            catch (FlockStoreException notTaken)
             {
-                // The answer never came, so the purchase may have gone through: what the player holds, read below, says which.
+                Say(StoreAnswer(item, notTaken));
+            }
+#endif
+            catch (FlockException unknown) when (unknown.OutcomeUnknown)
+            {
+                // No answer said whether it went through: what the player holds, read below, says which.
                 Say($"Flock did not answer, so {item.Name} may have been bought: reading the wallet and inventory again.");
             }
             catch (FlockException refused)
             {
                 Say(refused.Message);
+            }
+            await RefreshSafelyAsync();
+        }
+
+        private async Task UseAsync(ShopItem item)
+        {
+            try
+            {
+                ConsumeResult used = await FlockClient.Instance.Shop.ConsumeOneAsync(item.Id);
+                Say($"Used {item.Name}{Granted(used.Granted)}.");
+            }
+            catch (FlockException unknown) when (unknown.OutcomeUnknown)
+            {
+                Say($"Flock did not answer, so {item.Name} may have been used: reading the inventory again.");
             }
             await RefreshSafelyAsync();
         }
@@ -284,12 +297,12 @@ namespace Flock.Samples
 #endif
         }
 
-        private static string Granted(PurchaseResult result)
+        private static string Granted(List<ShopItemReward> granted)
         {
-            if (result?.Granted == null || result.Granted.Count == 0)
+            if (granted == null || granted.Count == 0)
                 return string.Empty;
             List<string> parts = new List<string>();
-            foreach (ShopItemReward reward in result.Granted)
+            foreach (ShopItemReward reward in granted)
                 parts.Add($"{reward.Amount} {reward.Code}");
             return ", got " + string.Join(", ", parts);
         }
@@ -307,7 +320,7 @@ namespace Flock.Samples
             try
             {
                 using (CancellationTokenSource wait = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
-                    _store = await FlockStorePurchases.ConnectAsync(Application.isEditor ? editorStore : null, wait.Token);
+                    _store = await FlockStore.ConnectAsync(Application.isEditor ? editorStore : null, wait.Token);
             }
             catch (FlockException failed)
             {
@@ -319,23 +332,20 @@ namespace Flock.Samples
                 Say("The store did not answer in 30 seconds, so real-money items cannot be bought now.");
                 return;
             }
-            _store.PurchaseDelivered += purchase =>
-            {
-                Say($"Delivered {purchase.Item.Name}, paid for earlier{Granted(purchase.Delivery)}.");
-                RefreshInTheBackgroundAsync();
-            };
-            _store.PurchaseNeedsAttention += problem => Say($"A purchase of {problem.ProductId} was not delivered: {problem.Error.Message}");
+            // Every delivered store purchase, this screen's own included: the place to refresh what the player holds.
+            _store.PurchaseCompleted += (item, result) => RefreshInTheBackgroundAsync();
+            _store.PurchaseNotDelivered += purchase => Say($"A purchase of {purchase.ProductId} was paid for but not delivered: {purchase.Error.Message}");
             foreach (ShopItem item in _items)
                 if (item.IsRealMoney)
                     _storePrices[item.Id] = StorePriceOf(item);
-            Say($"Connected to {_store.Store}.");
+            Say($"Connected to {_store.PaymentProvider}.");
         }
 
         private FlockStorePrice StorePriceOf(ShopItem item)
         {
             try
             {
-                return _store.GetStorePrice(item.Id);
+                return _store.GetPrice(item.Id);
             }
             catch (FlockValidationException notSoldHere)
             {
@@ -346,39 +356,16 @@ namespace Flock.Samples
 
         private async void RefreshInTheBackgroundAsync() => await RefreshSafelyAsync();
 
-        private async Task BuyFromTheStoreAsync(ShopItem item)
+        private static string StoreAnswer(ShopItem item, FlockStoreException notTaken)
         {
-            Say($"Buying {item.Name} from the store...");
-            try
+            switch (notTaken.Reason)
             {
-                FlockStorePurchase purchase = await _store.BuyAsync(item.Id);
-                Say(Outcome(purchase));
-            }
-            catch (FlockException refused)
-            {
-                // The player paid and Flock refused: the store keeps the purchase and hands it back at the next launch.
-                Say(refused.Message);
-            }
-            await RefreshSafelyAsync();
-        }
-
-        private static string Outcome(FlockStorePurchase purchase)
-        {
-            switch (purchase.Outcome)
-            {
-                case FlockStorePurchaseOutcome.Delivered:
-                    return $"Bought {purchase.Item.Name}{Granted(purchase.Delivery)}.";
-                case FlockStorePurchaseOutcome.Pending:
-                    return $"{purchase.Item.Name} waits for its payment to clear, and is delivered then.";
-                case FlockStorePurchaseOutcome.Cancelled:
+                case FlockStoreFailureReasons.Cancelled:
                     return "Cancelled: nothing was bought.";
-            }
-            switch (purchase.StoreFailureReason)
-            {
                 case FlockStoreFailureReasons.AlreadyOwned:
-                    return $"This store account already owns {purchase.Item.Name}: tap Restore purchases.";
+                    return $"This store account already owns {item.Name}: tap Restore purchases.";
                 case FlockStoreFailureReasons.AlreadyPending:
-                    return $"A purchase of {purchase.Item.Name} is already waiting for its payment.";
+                    return $"A purchase of {item.Name} is already waiting for its payment.";
                 case FlockStoreFailureReasons.PaymentDeclined:
                     return "The payment was declined: nothing was charged.";
                 case FlockStoreFailureReasons.StoreUnavailable:
@@ -386,7 +373,7 @@ namespace Flock.Samples
                 case FlockStoreFailureReasons.NotSignedInToTheStore:
                     return "Sign in to the store on this device, then buy again.";
                 default:
-                    return "The store did not take the payment: " + purchase.StoreFailure;
+                    return notTaken.Message;
             }
         }
 
@@ -395,8 +382,8 @@ namespace Flock.Samples
             Say("Restoring purchases...");
             FlockStoreRestore restore = await _store.RestoreAsync();
             Say($"Restored {restore.Restored.Count} purchase(s).");
-            foreach (FlockStorePurchaseProblem problem in restore.Problems)
-                Say($"Not restored, {problem.ProductId}: {problem.Error.Message}");
+            foreach (FlockUndeliveredPurchase notDelivered in restore.NotDelivered)
+                Say($"Not restored, {notDelivered.ProductId}: {notDelivered.Error.Message}");
             await RefreshSafelyAsync();
         }
 
@@ -404,14 +391,14 @@ namespace Flock.Samples
         private async Task CheckSetupAsync()
         {
             FlockStoreSetupCheck check = await _store.CheckSetupAsync();
-            if (check.AllGood)
+            if (check.IsReady)
                 Say("The store setup is complete: the store has every real-money item, and Flock's server can ask it about purchases.");
-            foreach (ShopItem missing in check.ProductsTheStoreDidNotFind)
-                Say($"The store has no product '{missing.StoreProductIds[_store.Store]}' for {missing.Name}: create it in the store, or correct the id on the item in the Flock dashboard.");
-            foreach (ShopItem noId in check.ItemsWithoutAProductId)
-                Say($"{noId.Name} has no {_store.Store} product id: enter it on the item in the Flock dashboard.");
-            if (check.StoreProblem != null)
-                Say("Flock's server cannot ask the store about purchases: " + check.StoreProblem.Message);
+            foreach (ShopItem missing in check.NotFoundInTheStore)
+                Say($"The store has no product '{missing.StoreProductIds[_store.PaymentProvider]}' for {missing.Name}: create it in the store, or correct the id on the item in the Flock dashboard.");
+            foreach (ShopItem noId in check.MissingProductId)
+                Say($"{noId.Name} has no {_store.PaymentProvider} product id: enter it on the item in the Flock dashboard.");
+            if (check.ServerProblem != null)
+                Say("Flock's server cannot ask the store about purchases: " + check.ServerProblem.Message);
         }
 #endif
     }

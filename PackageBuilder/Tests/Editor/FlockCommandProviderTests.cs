@@ -152,9 +152,10 @@ namespace Flock.Tests.Editor
                 PrimeCachedRow(h, "player-a", "curr-tpl-1", "pd-1", new List<DataField> { Field("gold", "0") });
                 transport.On(FlockEndpoints.CommandAddGameFunds, FlockFakeTransport.Status(500, "{}"));
 
-                Assert.Catch<FlockException>(() => h.Run(() => h.Client.Commands.AddGameFundsAsync("gold", 100, "curr-tpl-1")));
+                FlockException failed = Assert.Catch<FlockException>(() => h.Run(() => h.Client.Commands.AddGameFundsAsync("gold", 100, "curr-tpl-1")));
                 Assert.AreEqual(1, transport.CountTo(FlockEndpoints.CommandAddGameFunds),
                     "A 5xx is ambiguous — the grant may already have committed, so re-sending risks a double credit.");
+                Assert.IsTrue(failed.OutcomeUnknown, "The grant may have been made.");
             }
         }
 

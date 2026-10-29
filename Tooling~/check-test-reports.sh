@@ -19,8 +19,8 @@ playmode_assemblies="Flock.Tests.PlayMode Protokite.Playtest.Tests.PlayMode"
 # The netcode tests: one partial class across the netcode PlayMode files, compiled only with Netcode for GameObjects installed.
 netcode_class="Flock.Tests.PlayMode.FlockNetcodeTests"
 # The store purchase tests: the rules (EditMode) and Unity IAP 5's own store (PlayMode), compiled only with Unity IAP 5 installed.
-store_rules_class="Flock.Tests.Editor.FlockStorePurchasesTests"
-store_unity_iap_class="Flock.Tests.PlayMode.FlockStorePurchasesUnityIapTests"
+store_rules_class="Flock.Tests.Editor.FlockStoreTests"
+store_unity_iap_class="Flock.Tests.PlayMode.FlockStoreUnityIapTests"
 
 bad=0
 readable=""

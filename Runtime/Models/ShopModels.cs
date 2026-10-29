@@ -13,7 +13,7 @@ namespace Flock.Models
     /// <summary>What kind of item a shop item is (<see cref="ShopItem.Type"/>). Strings rather than an enum: the server can add a kind, and an unknown one must not break reading the item.</summary>
     public static class ShopItemTypes
     {
-        /// <summary>Lands in the player's inventory. In a store, set it up as a one-time (non-consumable) product.</summary>
+        /// <summary>Lands in the player's inventory. In a store, set it up as a one-time (non-consumable) product: the store sells it once. The wallet sells it again on every purchase, so check <c>GetOwnedItemCountsAsync</c> before offering a wallet one.</summary>
         public const string Standard = "standard";
         /// <summary>Pays its rewards straight into the wallet. In a store, set it up as a consumable product.</summary>
         public const string CurrencyPack = "currency_pack";
@@ -113,6 +113,10 @@ namespace Flock.Models
         // Wallet after the grant, when the purchase moved currency.
         [JsonProperty("wallet")]
         public PlayerData Wallet { get; set; }
+
+        /// <summary>The wallet's balances after the purchase, by currency code; null when no currency moved.</summary>
+        [JsonIgnore]
+        public FlockWallet Balances => Wallet == null ? null : FlockWallet.From(Wallet);
     }
 
     // Result of consuming an inventory item — the updated row plus whatever consuming it granted.
@@ -126,6 +130,10 @@ namespace Flock.Models
 
         [JsonProperty("wallet")]
         public PlayerData Wallet { get; set; }
+
+        /// <summary>The wallet's balances after consuming, by currency code; null when nothing was granted.</summary>
+        [JsonIgnore]
+        public FlockWallet Balances => Wallet == null ? null : FlockWallet.From(Wallet);
     }
 
     public class ShopData

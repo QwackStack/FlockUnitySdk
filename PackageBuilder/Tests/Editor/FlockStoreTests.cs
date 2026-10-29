@@ -10,15 +10,16 @@ using Flock.Http;
 using Flock.Models;
 using Flock.Providers;
 using Flock.Tests.Support;
+using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEngine.TestTools;
 
 namespace Flock.Tests.Editor
 {
-    // The store purchase rules, driven through a store of the test's own: Flock delivers before the store's purchase is
-    // finished, a refused one stays unfinished, unfinished ones wait for a sign-in and go once a launch, and orders for
-    // products no Flock item sells are the game's.
-    public class FlockStorePurchasesTests
+    // The store purchase rules, driven through Shop.PurchaseAsync and a store of the test's own: Flock delivers before the
+    // store's purchase is finished, a refused one stays unfinished, unfinished ones wait for a sign-in and go once a launch,
+    // and orders for products no Flock item sells are the game's.
+    public class FlockStoreTests
     {
         private sealed class FakeStore : IFlockStoreConnection
         {
@@ -73,7 +74,7 @@ namespace Flock.Tests.Editor
 
             public void Pay(string productId, string transactionId) => OrderPaid?.Invoke(new FlockStoreOrder(productId, transactionId, null));
             public void Defer(string productId) => OrderDeferred?.Invoke(new FlockStoreOrder(productId, null, null));
-            public void Fail(string productId, string reason, string text, bool cancelled) => OrderFailed?.Invoke(new FlockStoreFailure(productId, reason, text, cancelled));
+            public void Fail(string productId, string reason, string text) => OrderFailed?.Invoke(new FlockStoreFailure(productId, reason, text));
             public void Own(string productId, string transactionId) => Owned.Add(new FlockStoreOrder(productId, transactionId, null));
         }
 
@@ -104,11 +105,19 @@ namespace Flock.Tests.Editor
             transport.On(FlockEndpoints.Shop + "?", FlockFakeTransport.Ok(catalog ?? Catalog));
             transport.On(FlockEndpoints.ShopAccountToken, FlockFakeTransport.Ok("{\"player_id\":\"player-a\",\"account_token\":\"" + AccountToken + "\"}"));
             transport.On(FlockEndpoints.ShopValidateReceipt, redemption);
+            ItemReads(transport, catalog ?? Catalog);
             return transport;
         }
 
-        private static FlockStorePurchases Connect(FlockTestClient h, FakeStore store)
-            => h.Run(() => FlockStorePurchases.ConnectAsync(store, PaymentProviders.GooglePlay, CancellationToken.None));
+        // Each catalog item answers its own read, as the server does, for a purchase made with no store connected.
+        private static void ItemReads(FlockFakeTransport transport, string catalog)
+        {
+            foreach (JToken item in JObject.Parse(catalog)["items"][0]["shop_items"])
+                transport.On(FlockEndpoints.ShopItemById((string)item["id"]), FlockFakeTransport.Ok(item.ToString()));
+        }
+
+        private static FlockStore Connect(FlockTestClient h, FakeStore store)
+            => h.Run(() => FlockStore.ConnectAsync(store, PaymentProviders.GooglePlay, CancellationToken.None));
 
         private static void SignIn(FlockTestClient h, string playerId)
         {
@@ -151,12 +160,15 @@ namespace Flock.Tests.Editor
             {
                 h.SetReachable(true);
                 h.LoginAs("player-a");
-                FlockStorePurchases purchases = Connect(h, store);
+                FlockStore purchases = Connect(h, store);
+                List<string> completed = new List<string>();
+                purchases.PurchaseCompleted += (item, result) => completed.Add(item.Id + ":" + result.PurchaseId);
 
-                FlockStorePurchase purchase = h.Run(() => purchases.BuyAsync("gems"));
+                PurchaseResult purchase = h.Run(() => h.Client.Shop.PurchaseAsync("gems"));
 
-                Assert.AreEqual(FlockStorePurchaseOutcome.Delivered, purchase.Outcome);
-                Assert.AreEqual("pur-1", purchase.Delivery.PurchaseId);
+                Assert.IsTrue(purchase.IsPaid);
+                Assert.AreEqual("pur-1", purchase.PurchaseId);
+                CollectionAssert.AreEqual(new[] { "gems:pur-1" }, completed, "Every delivery is reported, the one the call answers included.");
                 Assert.IsFalse(finishedBeforeFlockAnswered, "When Flock answered, the store's purchase was still unfinished.");
                 Assert.AreEqual(1, store.Calls.FindAll(call => call == "finish:token-1").Count, "Finished once Flock delivered.");
                 Assert.AreEqual("{\"shop_item_id\":\"gems\",\"provider\":\"google_play\",\"receipt\":{\"product_id\":\"" + Gems + "\",\"purchase_token\":\"token-1\"}}",
@@ -169,17 +181,19 @@ namespace Flock.Tests.Editor
         {
             FakeStore store = new FakeStore();
             store.OnBuy = productId => store.Pay(productId, "token-1");
-            using (FlockTestClient h = FlockTestClient.Create(Backend(FlockFakeTransport.Ok(Delivered))))
+            FlockFakeTransport transport = Backend(FlockFakeTransport.Ok(Delivered));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
             {
                 h.SetReachable(true);
                 h.LoginAs("player-a");
-                FlockStorePurchases purchases = Connect(h, store);
+                FlockStore purchases = Connect(h, store);
 
-                h.Run(() => purchases.BuyAsync("gems"));
+                h.Run(() => h.Client.Shop.PurchaseAsync("gems"));
 
                 int token = store.Calls.IndexOf("token:" + AccountToken);
                 Assert.GreaterOrEqual(token, 0, "The account token is set on the store.");
                 Assert.Less(token, store.Calls.IndexOf("buy:" + Gems), "Set before the store's purchase starts, so the store keeps it with the purchase.");
+                Assert.AreEqual(0, transport.CountTo(FlockEndpoints.ShopItemById("gems")), "The connected store's catalog names the item, so it is not read again.");
             }
         }
 
@@ -193,17 +207,21 @@ namespace Flock.Tests.Editor
             {
                 h.SetReachable(true);
                 h.LoginAs("player-a");
-                FlockStorePurchases purchases = Connect(h, store);
+                FlockStore purchases = Connect(h, store);
+                List<FlockUndeliveredPurchase> notDelivered = new List<FlockUndeliveredPurchase>();
+                purchases.PurchaseNotDelivered += notDelivered.Add;
 
-                FlockException refused = Assert.Catch<FlockException>(() => h.Run(() => purchases.BuyAsync("gems")));
+                FlockException refused = Assert.Catch<FlockException>(() => h.Run(() => h.Client.Shop.PurchaseAsync("gems")));
 
                 Assert.AreEqual(FlockErrorCode.PaymentProviderStoreCredentialsRejected, refused.ErrorCode);
+                Assert.AreEqual(1, notDelivered.Count, "Every paid purchase Flock did not deliver is reported, the one the call throws for included.");
+                Assert.AreEqual(FlockErrorCode.PaymentProviderStoreCredentialsRejected, notDelivered[0].Error.ErrorCode);
                 Assert.IsFalse(store.Calls.Exists(call => call.StartsWith("finish:")), "A refused purchase is never finished: the store hands it back.");
             }
         }
 
         [Test]
-        public void Buy_PlayerCancels_EndsCancelled_AndFlockIsNotAsked()
+        public void Buy_PlayerCancels_ThrowsCancelled_AndFlockIsNotAsked()
         {
             FakeStore store = new FakeStore();
             FlockFakeTransport transport = Backend(FlockFakeTransport.Ok(Delivered));
@@ -211,54 +229,57 @@ namespace Flock.Tests.Editor
             {
                 h.SetReachable(true);
                 h.LoginAs("player-a");
-                FlockStorePurchases purchases = Connect(h, store);
-                store.OnBuy = productId => store.Fail(productId, FlockStoreFailureReasons.Cancelled, "UserCancelled: closed the dialog", true);
+                FlockStore purchases = Connect(h, store);
+                store.OnBuy = productId => store.Fail(productId, FlockStoreFailureReasons.Cancelled, "UserCancelled: closed the dialog");
 
-                FlockStorePurchase purchase = h.Run(() => purchases.BuyAsync("gems"));
+                FlockStoreException cancelled = Assert.Throws<FlockStoreException>(() => h.Run(() => h.Client.Shop.PurchaseAsync("gems")));
 
-                Assert.AreEqual(FlockStorePurchaseOutcome.Cancelled, purchase.Outcome);
+                Assert.AreEqual(FlockStoreFailureReasons.Cancelled, cancelled.Reason);
+                StringAssert.Contains("Nothing was charged", cancelled.Hint);
                 Assert.AreEqual(0, transport.CountTo(FlockEndpoints.ShopValidateReceipt));
             }
         }
 
         [Test]
-        public void Buy_StoreDeclines_EndsFailed_WithTheStoresReason()
+        public void Buy_StoreDeclines_ThrowsTheStoresReason_AndItsWords()
         {
             FakeStore store = new FakeStore();
             using (FlockTestClient h = FlockTestClient.Create(Backend(FlockFakeTransport.Ok(Delivered))))
             {
                 h.SetReachable(true);
                 h.LoginAs("player-a");
-                FlockStorePurchases purchases = Connect(h, store);
-                store.OnBuy = productId => store.Fail(productId, FlockStoreFailureReasons.PaymentDeclined, "PaymentDeclined: card refused", false);
+                FlockStore purchases = Connect(h, store);
+                store.OnBuy = productId => store.Fail(productId, FlockStoreFailureReasons.PaymentDeclined, "PaymentDeclined: card refused");
 
-                FlockStorePurchase purchase = h.Run(() => purchases.BuyAsync("gems"));
+                FlockStoreException declined = Assert.Throws<FlockStoreException>(() => h.Run(() => h.Client.Shop.PurchaseAsync("gems")));
 
-                Assert.AreEqual(FlockStorePurchaseOutcome.Failed, purchase.Outcome);
-                Assert.AreEqual("PaymentDeclined: card refused", purchase.StoreFailure);
-                Assert.AreEqual(FlockStoreFailureReasons.PaymentDeclined, purchase.StoreFailureReason, "The reason a game branches on, apart from the store's own words.");
+                Assert.AreEqual(FlockStoreFailureReasons.PaymentDeclined, declined.Reason, "The reason a game branches on, apart from the store's own words.");
+                StringAssert.Contains("PaymentDeclined: card refused", declined.Message);
+                Assert.IsNotEmpty(declined.Hint);
             }
         }
 
         [Test]
-        public void Buy_WaitingForPayment_EndsPending_ThenIsDeliveredThroughTheEvent()
+        public void Buy_WaitingForPayment_AnswersPending_ThenIsReportedCompleted()
         {
             FakeStore store = new FakeStore();
             using (FlockTestClient h = FlockTestClient.Create(Backend(FlockFakeTransport.Ok(Delivered))))
             {
                 h.SetReachable(true);
                 h.LoginAs("player-a");
-                FlockStorePurchases purchases = Connect(h, store);
+                FlockStore purchases = Connect(h, store);
                 store.OnBuy = productId => store.Defer(productId);
-                List<FlockStorePurchase> deliveredLater = new List<FlockStorePurchase>();
-                purchases.PurchaseDelivered += deliveredLater.Add;
+                List<ShopItem> completed = new List<ShopItem>();
+                purchases.PurchaseCompleted += (item, result) => completed.Add(item);
 
-                FlockStorePurchase purchase = h.Run(() => purchases.BuyAsync("gems"));
+                PurchaseResult purchase = h.Run(() => h.Client.Shop.PurchaseAsync("gems"));
+                Assert.AreEqual(0, completed.Count, "Nothing is delivered while the store waits for the payment.");
                 store.Pay(Gems, "token-2");
 
-                Assert.AreEqual(FlockStorePurchaseOutcome.Pending, purchase.Outcome);
-                Assert.AreEqual(1, deliveredLater.Count, "Paid later, it is delivered through PurchaseDelivered.");
-                Assert.AreEqual("gems", deliveredLater[0].Item.Id);
+                Assert.AreEqual(PurchaseResultStatuses.Pending, purchase.Status);
+                Assert.IsFalse(purchase.IsPaid);
+                Assert.AreEqual(1, completed.Count, "Paid later, it is reported through PurchaseCompleted.");
+                Assert.AreEqual("gems", completed[0].Id);
                 CollectionAssert.Contains(store.Calls, "finish:token-2");
             }
         }
@@ -270,26 +291,28 @@ namespace Flock.Tests.Editor
             using (FlockTestClient h = FlockTestClient.Create(Backend(FlockFakeTransport.Ok(Delivered))))
             {
                 h.SetReachable(true);
-                FlockStorePurchases purchases = Connect(h, store);
+                Connect(h, store);
 
-                Assert.Throws<FlockAuthException>(() => h.Run(() => purchases.BuyAsync("gems")));
+                Assert.Throws<FlockValidationException>(() => h.Run(() => h.Client.Shop.PurchaseAsync("gems")));
                 Assert.IsFalse(store.Calls.Exists(call => call.StartsWith("buy:")));
             }
         }
 
         [TestCase("shield", Description = "No product id for this store")]
         [TestCase("pass", Description = "A kind not sold through the store")]
-        [TestCase("no-such-item", Description = "Not in the game's shops")]
+        [TestCase("late", Description = "Added to the shops since the store connected")]
         public void Buy_AnItemThisStoreDoesNotSell_Throws_AndTheStoreIsNotAsked(string shopItemId)
         {
             FakeStore store = new FakeStore();
-            using (FlockTestClient h = FlockTestClient.Create(Backend(FlockFakeTransport.Ok(Delivered))))
+            FlockFakeTransport transport = Backend(FlockFakeTransport.Ok(Delivered));
+            transport.On(FlockEndpoints.ShopItemById("late"), FlockFakeTransport.Ok(Item("late", "consumable", "{\"google_play\":\"com.flock.late\"}")));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
             {
                 h.SetReachable(true);
                 h.LoginAs("player-a");
-                FlockStorePurchases purchases = Connect(h, store);
+                Connect(h, store);
 
-                FlockValidationException ex = Assert.Throws<FlockValidationException>(() => h.Run(() => purchases.BuyAsync(shopItemId)));
+                FlockValidationException ex = Assert.Throws<FlockValidationException>(() => h.Run(() => h.Client.Shop.PurchaseAsync(shopItemId)));
 
                 Assert.IsNotEmpty(ex.Hint);
                 Assert.IsFalse(store.Calls.Exists(call => call.StartsWith("buy:")));
@@ -304,9 +327,9 @@ namespace Flock.Tests.Editor
             using (FlockTestClient h = FlockTestClient.Create(transport))
             {
                 h.SetReachable(true);
-                FlockStorePurchases purchases = Connect(h, store);
-                List<FlockStorePurchase> delivered = new List<FlockStorePurchase>();
-                purchases.PurchaseDelivered += delivered.Add;
+                FlockStore purchases = Connect(h, store);
+                List<ShopItem> delivered = new List<ShopItem>();
+                purchases.PurchaseCompleted += (item, result) => delivered.Add(item);
 
                 store.Pay(Sword, "token-old");
                 Assert.AreEqual(0, transport.CountTo(FlockEndpoints.ShopValidateReceipt), "Nobody is signed in to redeem it for.");
@@ -315,7 +338,7 @@ namespace Flock.Tests.Editor
 
                 Assert.AreEqual(1, transport.CountTo(FlockEndpoints.ShopValidateReceipt));
                 Assert.AreEqual(1, delivered.Count);
-                Assert.AreEqual("sword", delivered[0].Item.Id);
+                Assert.AreEqual("sword", delivered[0].Id);
                 CollectionAssert.Contains(store.Calls, "finish:token-old");
             }
         }
@@ -348,9 +371,9 @@ namespace Flock.Tests.Editor
             {
                 h.SetReachable(true);
                 h.LoginAs("player-a");
-                FlockStorePurchases purchases = Connect(h, store);
-                List<FlockStorePurchaseProblem> problems = new List<FlockStorePurchaseProblem>();
-                purchases.PurchaseNeedsAttention += problems.Add;
+                FlockStore purchases = Connect(h, store);
+                List<FlockUndeliveredPurchase> problems = new List<FlockUndeliveredPurchase>();
+                purchases.PurchaseNotDelivered += problems.Add;
 
                 store.Pay(Sword, "token-old");
                 store.Pay(Sword, "token-old");
@@ -372,10 +395,10 @@ namespace Flock.Tests.Editor
             {
                 h.SetReachable(true);
                 h.LoginAs("player-a");
-                FlockStorePurchases purchases = Connect(h, store);
+                FlockStore purchases = Connect(h, store);
                 int events = 0;
-                purchases.PurchaseDelivered += purchase => events++;
-                purchases.PurchaseNeedsAttention += problem => events++;
+                purchases.PurchaseCompleted += (item, result) => events++;
+                purchases.PurchaseNotDelivered += problem => events++;
 
                 store.Pay("com.game.own.thing", "token-game");
 
@@ -394,9 +417,9 @@ namespace Flock.Tests.Editor
             {
                 h.SetReachable(true);
                 h.LoginAs("player-a");
-                FlockStorePurchases purchases = Connect(h, store);
-                List<FlockStorePurchaseProblem> problems = new List<FlockStorePurchaseProblem>();
-                purchases.PurchaseNeedsAttention += problems.Add;
+                FlockStore purchases = Connect(h, store);
+                List<FlockUndeliveredPurchase> problems = new List<FlockUndeliveredPurchase>();
+                purchases.PurchaseNotDelivered += problems.Add;
 
                 store.Pay(Twin, "token-twin");
 
@@ -417,11 +440,11 @@ namespace Flock.Tests.Editor
             {
                 h.SetReachable(true);
                 h.LoginAs("player-a");
-                FlockStorePurchases purchases = Connect(h, store);
+                FlockStore purchases = Connect(h, store);
 
-                FlockStorePurchase purchase = h.Run(() => purchases.BuyAsync("twin-b"));
+                PurchaseResult purchase = h.Run(() => h.Client.Shop.PurchaseAsync("twin-b"));
 
-                Assert.AreEqual(FlockStorePurchaseOutcome.Delivered, purchase.Outcome);
+                Assert.IsTrue(purchase.IsPaid);
                 StringAssert.Contains("\"shop_item_id\":\"twin-b\"", transport.AllTo(FlockEndpoints.ShopValidateReceipt)[0].JsonBody);
             }
         }
@@ -456,12 +479,12 @@ namespace Flock.Tests.Editor
             {
                 h.SetReachable(true);
                 h.LoginAs("player-a");
-                FlockStorePurchases purchases = Connect(h, store);
+                Connect(h, store);
                 transport.GateNext(FlockEndpoints.ShopAccountToken);
 
                 // Neither call is waited on: both resume on the main thread, and a second call let through would wait on the gate.
-                Task<FlockStorePurchase> first = purchases.BuyAsync("gems");
-                Task<FlockStorePurchase> second = purchases.BuyAsync("gems");
+                Task<PurchaseResult> first = h.Client.Shop.PurchaseAsync("gems");
+                Task<PurchaseResult> second = h.Client.Shop.PurchaseAsync("gems");
                 try
                 {
                     Assert.IsTrue(second.IsFaulted, "Refused while the first call reads its token, not let through to take the first one's place.");
@@ -501,7 +524,7 @@ namespace Flock.Tests.Editor
                 h.SetReachable(true);
                 CancellationTokenSource cancel = new CancellationTokenSource();
 
-                Task<FlockStorePurchases> connecting = FlockStorePurchases.ConnectAsync(store, PaymentProviders.GooglePlay, cancel.Token);
+                Task<FlockStore> connecting = FlockStore.ConnectAsync(store, PaymentProviders.GooglePlay, cancel.Token);
                 cancel.Cancel();
 
                 // A bounded wait: a connect that ignored the token would never end.
@@ -522,7 +545,7 @@ namespace Flock.Tests.Editor
                 h.SetReachable(true);
                 CancellationTokenSource cancel = new CancellationTokenSource();
 
-                Task<FlockStorePurchases> connecting = FlockStorePurchases.ConnectAsync(store, PaymentProviders.GooglePlay, cancel.Token);
+                Task<FlockStore> connecting = FlockStore.ConnectAsync(store, PaymentProviders.GooglePlay, cancel.Token);
                 cancel.Cancel();
 
                 // A bounded wait: a fetch that ignored the token would never end.
@@ -556,7 +579,7 @@ namespace Flock.Tests.Editor
             using (FlockTestClient h = FlockTestClient.Create(Backend(FlockFakeTransport.Ok(Delivered))))
             {
                 h.SetReachable(true);
-                FlockStorePurchases first = Connect(h, store);
+                FlockStore first = Connect(h, store);
 
                 Assert.Throws<FlockValidationException>(() => Connect(h, second));
                 CollectionAssert.Contains(second.Calls, "stop", "The refused connection stopped listening to its store.");
@@ -568,10 +591,10 @@ namespace Flock.Tests.Editor
         }
 
         [Test]
-        public void AConnectionMadeUnderAnEarlierClient_NoLongerActs()
+        public void AConnectionMadeUnderAnEarlierClient_NoLongerActs_AndIsNotTheNewClientsStore()
         {
             FakeStore store = new FakeStore();
-            FlockStorePurchases old;
+            FlockStore old;
             using (FlockTestClient h = FlockTestClient.Create(Backend(FlockFakeTransport.Ok(Delivered))))
             {
                 h.SetReachable(true);
@@ -586,11 +609,37 @@ namespace Flock.Tests.Editor
                 store.Pay(Sword, "token-old-client");
 
                 Assert.AreEqual(0, transport.CountTo(FlockEndpoints.ShopValidateReceipt), "The new client's own connection sends it, not this one.");
-                // Not waited on: a buy let through would wait for a store purchase that never comes.
-                Task<FlockStorePurchase> buy = old.BuyAsync("gems");
-                Assert.IsTrue(buy.IsFaulted, "A buy on the earlier client's connection is refused.");
-                Assert.IsInstanceOf<FlockValidationException>(buy.Exception.InnerException);
+                FlockValidationException noStore = Assert.Throws<FlockValidationException>(() => h.Run(() => h.Client.Shop.PurchaseAsync("gems")));
+                StringAssert.Contains("FlockStore.ConnectAsync", noStore.Hint, "The new client has no store connected until it connects one.");
+                Assert.Throws<FlockValidationException>(() => old.GetPrice("gems"), "The earlier client's connection refuses every call.");
+                Assert.IsFalse(store.Calls.Exists(call => call.StartsWith("buy:")));
                 Assert.DoesNotThrow(() => Connect(h, new FakeStore()), "A connection under the new client is not refused.");
+            }
+        }
+
+        // One call for every item: an item priced in a game currency goes to the wallet even with a store connected.
+        [Test]
+        public void AWalletItem_WithTheStoreConnected_IsBoughtFromTheWallet_AndTheStoreIsNotAsked()
+        {
+            FakeStore store = new FakeStore();
+            string withWalletItem = "{\"items\":[{\"id\":\"shop-1\",\"name\":\"main\",\"shop_items\":[" +
+                Item("gems", "currency_pack", "{\"google_play\":\"" + Gems + "\"}") + "," +
+                "{\"id\":\"potion\",\"name\":\"potion\",\"type\":\"consumable\",\"price\":20,\"currency\":\"Gold\",\"is_real_money\":false,\"store_skus\":{}}" +
+                "]}],\"total\":1,\"page\":1,\"limit\":100}";
+            FlockFakeTransport transport = Backend(FlockFakeTransport.Ok(Delivered), withWalletItem);
+            transport.On(FlockEndpoints.ShopTransaction, FlockFakeTransport.Ok("{\"purchase_id\":\"pur-wallet\",\"item_type\":\"consumable\"}"));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.SetReachable(true);
+                h.LoginAs("player-a");
+                Connect(h, store);
+
+                PurchaseResult bought = h.Run(() => h.Client.Shop.PurchaseAsync("potion"));
+
+                Assert.AreEqual("pur-wallet", bought.PurchaseId);
+                Assert.AreEqual(1, transport.CountTo(FlockEndpoints.ShopTransaction), "Bought from the wallet.");
+                Assert.IsFalse(store.Calls.Exists(call => call.StartsWith("buy:")), "The store is never asked about a wallet item.");
+                Assert.AreEqual(0, transport.CountTo(FlockEndpoints.ShopValidateReceipt));
             }
         }
 
@@ -608,15 +657,15 @@ namespace Flock.Tests.Editor
             using (FlockTestClient h = FlockTestClient.Create(Backend(FlockFakeTransport.Ok(Delivered))))
             {
                 h.SetReachable(true);
-                FlockStorePurchases purchases = Connect(h, store);
+                FlockStore purchases = Connect(h, store);
 
-                FlockStorePrice price = purchases.GetStorePrice("gems");
+                FlockStorePrice price = purchases.GetPrice("gems");
 
                 Assert.AreEqual("SAR 3.99", price.Text);
                 Assert.AreEqual(3.99m, price.Amount);
                 Assert.AreEqual("SAR", price.CurrencyCode);
-                Assert.IsNull(purchases.GetStorePrice("sword"), "The store did not find the sword's product.");
-                Assert.Throws<FlockValidationException>(() => purchases.GetStorePrice("shield"), "An item with no product id for this store has no store price to show.");
+                Assert.IsNull(purchases.GetPrice("sword"), "The store did not find the sword's product.");
+                Assert.Throws<FlockValidationException>(() => purchases.GetPrice("shield"), "An item with no product id for this store has no store price to show.");
             }
         }
 
@@ -631,14 +680,13 @@ namespace Flock.Tests.Editor
             {
                 h.SetReachable(true);
                 h.LoginAs("player-a");
-                FlockStorePurchases purchases = Connect(h, store);
+                FlockStore purchases = Connect(h, store);
 
                 FlockStoreRestore restore = h.Run(() => purchases.RestoreAsync());
 
                 Assert.AreEqual(1, restore.Restored.Count);
-                Assert.AreEqual("sword", restore.Restored[0].Item.Id);
-                Assert.AreEqual(FlockStorePurchaseOutcome.Delivered, restore.Restored[0].Outcome);
-                Assert.AreEqual(0, restore.Problems.Count);
+                Assert.AreEqual("sword", restore.Restored[0].Id);
+                Assert.AreEqual(0, restore.NotDelivered.Count);
                 Assert.AreEqual(1, transport.CountTo(FlockEndpoints.ShopValidateReceipt), "The game's own product is left to the game.");
                 Assert.AreEqual("{\"shop_item_id\":\"sword\",\"provider\":\"google_play\",\"receipt\":{\"product_id\":\"" + Sword + "\",\"purchase_token\":\"token-owned\"}}",
                     transport.AllTo(FlockEndpoints.ShopValidateReceipt)[0].JsonBody);
@@ -661,17 +709,17 @@ namespace Flock.Tests.Editor
             {
                 h.SetReachable(true);
                 h.LoginAs("player-a");
-                FlockStorePurchases purchases = Connect(h, store);
+                FlockStore purchases = Connect(h, store);
 
                 FlockStoreRestore restore = h.Run(() => purchases.RestoreAsync());
 
                 Assert.AreEqual(1, restore.Restored.Count);
-                Assert.AreEqual("gems", restore.Restored[0].Item.Id);
-                Assert.AreEqual(2, restore.Problems.Count);
-                Assert.AreEqual(FlockErrorCode.PaymentProviderReceiptBelongsToAnotherPlayer, restore.Problems[0].Error.ErrorCode);
-                Assert.AreEqual("sword", restore.Problems[0].Item.Id);
-                Assert.IsNull(restore.Problems[1].Item, "A product two items sell cannot be matched to one.");
-                Assert.AreEqual(Twin, restore.Problems[1].ProductId);
+                Assert.AreEqual("gems", restore.Restored[0].Id);
+                Assert.AreEqual(2, restore.NotDelivered.Count);
+                Assert.AreEqual(FlockErrorCode.PaymentProviderReceiptBelongsToAnotherPlayer, restore.NotDelivered[0].Error.ErrorCode);
+                Assert.AreEqual("sword", restore.NotDelivered[0].Item.Id);
+                Assert.IsNull(restore.NotDelivered[1].Item, "A product two items sell cannot be matched to one.");
+                Assert.AreEqual(Twin, restore.NotDelivered[1].ProductId);
                 Assert.AreEqual(2, transport.CountTo(FlockEndpoints.ShopValidateReceipt), "The product two items sell is not sent.");
             }
         }
@@ -684,7 +732,7 @@ namespace Flock.Tests.Editor
             using (FlockTestClient h = FlockTestClient.Create(Backend(FlockFakeTransport.Ok(Delivered))))
             {
                 h.SetReachable(true);
-                FlockStorePurchases purchases = Connect(h, store);
+                FlockStore purchases = Connect(h, store);
 
                 Assert.Throws<FlockAuthException>(() => h.Run(() => purchases.RestoreAsync()));
                 CollectionAssert.DoesNotContain(store.Calls, "restore");
@@ -702,41 +750,41 @@ namespace Flock.Tests.Editor
             {
                 h.SetReachable(true);
                 h.LoginAs("player-a");
-                FlockStorePurchases purchases = Connect(h, store);
+                FlockStore purchases = Connect(h, store);
 
                 FlockStoreSetupCheck check = h.Run(() => purchases.CheckSetupAsync());
 
-                CollectionAssert.AreEqual(new[] { "sword" }, check.ProductsTheStoreDidNotFind.Select(item => item.Id).ToArray());
-                CollectionAssert.AreEqual(new[] { "shield" }, check.ItemsWithoutAProductId.Select(item => item.Id).ToArray(), "A kind not sold through the store (the pass) is not listed.");
-                Assert.IsTrue(check.FlockCanAskTheStore, "The store answered the made-up purchase as unknown, so Flock's keys work.");
-                Assert.IsNull(check.StoreProblem);
-                Assert.IsFalse(check.AllGood);
+                CollectionAssert.AreEqual(new[] { "sword" }, check.NotFoundInTheStore.Select(item => item.Id).ToArray());
+                CollectionAssert.AreEqual(new[] { "shield" }, check.MissingProductId.Select(item => item.Id).ToArray(), "A kind not sold through the store (the pass) is not listed.");
+                Assert.IsTrue(check.ServerCanCheckPurchases, "The store answered the made-up purchase as unknown, so Flock's keys work.");
+                Assert.IsNull(check.ServerProblem);
+                Assert.IsFalse(check.IsReady);
                 StringAssert.Contains("\"purchase_token\":\"flock-setup-check\"", transport.AllTo(FlockEndpoints.ShopValidateReceipt)[0].JsonBody, "Only a made-up purchase is sent.");
                 Assert.IsFalse(store.Calls.Exists(call => call.StartsWith("buy:")), "Nothing is bought.");
             }
         }
 
         [Test]
-        public void SetupCheck_TheStoreRefusingFlocksKeys_IsTheStoreProblem()
+        public void SetupCheck_TheStoreRefusingFlocksKeys_IsTheServerProblem()
         {
             FakeStore store = new FakeStore();
             using (FlockTestClient h = FlockTestClient.Create(Backend(FlockFakeTransport.Status(422, CredentialsRejected))))
             {
                 h.SetReachable(true);
                 h.LoginAs("player-a");
-                FlockStorePurchases purchases = Connect(h, store);
+                FlockStore purchases = Connect(h, store);
 
                 FlockStoreSetupCheck check = h.Run(() => purchases.CheckSetupAsync());
 
-                Assert.IsFalse(check.FlockCanAskTheStore);
-                Assert.AreEqual(FlockErrorCode.PaymentProviderStoreCredentialsRejected, check.StoreProblem.ErrorCode);
-                Assert.IsNotEmpty(check.StoreProblem.Hint);
-                Assert.IsFalse(check.AllGood);
+                Assert.IsFalse(check.ServerCanCheckPurchases);
+                Assert.AreEqual(FlockErrorCode.PaymentProviderStoreCredentialsRejected, check.ServerProblem.ErrorCode);
+                Assert.IsNotEmpty(check.ServerProblem.Hint);
+                Assert.IsFalse(check.IsReady);
             }
         }
 
         [Test]
-        public void SetupCheck_EveryProductFound_AndFlockCanAsk_IsAllGood()
+        public void SetupCheck_EveryProductFound_AndTheServerCanCheck_IsReady()
         {
             FakeStore store = new FakeStore();
             store.Prices[Gems] = new FlockStorePrice("$1.99", 1.99m, "USD");
@@ -746,9 +794,9 @@ namespace Flock.Tests.Editor
             {
                 h.SetReachable(true);
                 h.LoginAs("player-a");
-                FlockStorePurchases purchases = Connect(h, store);
+                FlockStore purchases = Connect(h, store);
 
-                Assert.IsTrue(h.Run(() => purchases.CheckSetupAsync()).AllGood);
+                Assert.IsTrue(h.Run(() => purchases.CheckSetupAsync()).IsReady);
             }
         }
 
@@ -760,7 +808,7 @@ namespace Flock.Tests.Editor
             using (FlockTestClient h = FlockTestClient.Create(transport))
             {
                 h.SetReachable(true);
-                FlockStorePurchases purchases = Connect(h, store);
+                FlockStore purchases = Connect(h, store);
 
                 Assert.Throws<FlockAuthException>(() => h.Run(() => purchases.CheckSetupAsync()));
                 Assert.AreEqual(0, transport.CountTo(FlockEndpoints.ShopValidateReceipt));
@@ -776,13 +824,13 @@ namespace Flock.Tests.Editor
             {
                 h.SetReachable(true);
                 h.LoginAs("player-a");
-                FlockStorePurchases purchases = Connect(h, store);
+                FlockStore purchases = Connect(h, store);
                 purchases.Dispose();
 
-                Assert.Throws<ObjectDisposedException>(() => purchases.GetStorePrice("gems"));
+                Assert.Throws<ObjectDisposedException>(() => purchases.GetPrice("gems"));
                 Assert.Throws<ObjectDisposedException>(() => h.Run(() => purchases.RestoreAsync()));
                 Assert.Throws<ObjectDisposedException>(() => h.Run(() => purchases.CheckSetupAsync()));
-                Assert.Throws<ObjectDisposedException>(() => h.Run(() => purchases.BuyAsync("gems")));
+                Assert.Throws<FlockValidationException>(() => h.Run(() => h.Client.Shop.PurchaseAsync("gems")), "A disposed store is no longer the shop's, so a real-money purchase says to connect one.");
                 CollectionAssert.DoesNotContain(store.Calls, "restore");
                 Assert.IsFalse(store.Calls.Exists(call => call.StartsWith("buy:")));
             }
@@ -797,7 +845,7 @@ namespace Flock.Tests.Editor
             {
                 h.SetReachable(true);
                 h.LoginAs("player-a");
-                FlockStorePurchases purchases = Connect(h, store);
+                FlockStore purchases = Connect(h, store);
 
                 purchases.Dispose();
                 store.Pay(Sword, "token-late");

@@ -1,5 +1,5 @@
 // Unity IAP 4.x with Flock: every purchase is held unfinished until Flock has delivered it, then confirmed.
-// Copy this file into a game that uses Unity IAP 4.x; Unity IAP 5 games use FlockStorePurchases instead.
+// Copy this file into a game that uses Unity IAP 4.x; Unity IAP 5 games use FlockStore instead.
 // Compiled against Unity IAP 4.15.1 by Qwacks/Libraries/Unity/payment-store-spike/check_iap4_recipe.py.
 using System;
 using System.Collections.Generic;

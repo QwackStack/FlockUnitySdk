@@ -38,13 +38,15 @@ namespace Flock.Http
 
         /// <summary>Runs <paramref name="operation"/> via the retry handler. Pass idempotent=false for non-idempotent mutations (e.g. currency grants): ambiguous failures surface instead of being re-sent, and only provably-not-processed failures (408/429) are retried.</summary>
         /// <param name="actsForSignIn">For a call that acts as the signed-in player through its token (<see cref="SignInToActFor"/>): each attempt, retries included, is cancelled once that sign-in has ended.</param>
+        /// <param name="spendsOrGrants">For a call that moves money or items (a purchase, a fund grant, a consume, a redemption): a failure that leaves it unknown whether it was done sets <see cref="FlockException.OutcomeUnknown"/>.</param>
         protected async Task<T> ExecuteAsync<T>(
             Func<Task<T>> operation,
             string context,
             CancellationToken cancellationToken,
             bool idempotent = true,
             int? maxRetriesOverride = null,
-            int? actsForSignIn = null)
+            int? actsForSignIn = null,
+            bool spendsOrGrants = false)
         {
             // The sign-in this request goes out under; once it ends, the request is never re-sent as whoever signed in next.
             int signInNumber = Client.SignInNumber;
@@ -72,6 +74,8 @@ namespace Flock.Http
                 catch (FlockException ex)
                 {
                     StampOperation(ex, context);
+                    if (spendsOrGrants)
+                        ex.OutcomeUnknown = IsOutcomeUnknown(ex);
                     throw;
                 }
                 catch (Exception ex)
@@ -87,6 +91,8 @@ namespace Flock.Http
             catch (FlockException ex)
             {
                 StampOperation(ex, context);
+                if (spendsOrGrants)
+                    ex.OutcomeUnknown = IsOutcomeUnknown(ex);
                 throw;
             }
             catch (Exception ex)
@@ -103,6 +109,12 @@ namespace Flock.Http
                 throw new OperationCanceledException("The player signed out or changed, so the request was not sent");
             return operation();
         }
+
+        // No answer, a server error that names no cause, or an answer that could not be read: the change may have been made.
+        private static bool IsOutcomeUnknown(FlockException failure)
+            => failure is FlockSerializationException
+               || (failure is FlockNetworkException && (failure.StatusCode == null || failure.StatusCode >= 500)
+                   && string.IsNullOrEmpty(FlockErrorHints.For(failure.ErrorCode)));
 
         // Names the failing SDK call on the exception; first writer wins so the innermost, most specific context survives.
         private static void StampOperation(FlockException ex, string context)

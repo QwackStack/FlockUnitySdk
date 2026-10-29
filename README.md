@@ -31,7 +31,7 @@ The Flock Unity SDK provides access to Flock's game backend services from Unity 
 - Game configuration — typed accessors generated from your schemas (via codegen)
 - Game and game version metadata (lookup by ID or name)
 - Player data — read with pagination; typed player-data and template accessors via codegen
-- Shop (browse shops, items, purchase, inventory, the player's wallet, redeem App Store and Google Play purchases, buy and restore with Unity IAP 5, a shop sample)
+- Shop (browse shops, items, one purchase call for every item: from the wallet, or for real money through the App Store or Google Play with Unity IAP 5; inventory and using items, the player's wallet, restore, redeem store purchases from your own store code, a shop sample)
 - Leaderboards — standings, the player's own rank, and an around-me slice, by board name
 - Game commands (server-side operations: update player data, add funds)
 - Player ban lookup
@@ -218,7 +218,7 @@ from installing it to a first playtest session, with screenshots; every setting 
 
 ## Error handling
 
-Every SDK call throws on failure — there are no result/error return types. Server errors surface as a `FlockException` (or a subtype: `FlockAuthException`, `FlockValidationException`, `FlockNetworkException`, `FlockSerializationException`) carrying a typed `ErrorCode` you can branch on:
+Every SDK call throws on failure — there are no result/error return types. Server errors surface as a `FlockException` (or a subtype: `FlockAuthException`, `FlockValidationException`, `FlockNetworkException`, `FlockSerializationException`, and `FlockStoreException` for a store that did not take a payment) carrying a typed `ErrorCode` you can branch on:
 
 ```csharp
 try

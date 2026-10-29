@@ -8,15 +8,14 @@ using UnityEngine;
 
 namespace Flock.Editor.Codegen
 {
-    // Emits typed shop accessors plus enum-keyed Purchase / AddGameFunds / GetMyInventory extensions.
-    // FlockShopItemId maps each wallet item to its string id; FlockFundId maps each currency name to itself
+    // Emits typed shop accessors plus enum-keyed Purchase / ConsumeOne / AddGameFunds / GetMyInventory extensions.
+    // FlockShopItemId maps each item, wallet or real money, to its string id; FlockFundId maps each currency name to itself
     // (name-based, not id-based — ShopItem.Currency is the name string). AddGameFunds resolves the
-    // player's wallet by the currency-tagged template id baked at sync time. Real-money items go to
-    // FlockStoreItemId instead, in an assembly of their own compiled only with Unity IAP 5.
+    // player's wallet by the currency-tagged template id baked at sync time.
     internal static class ShopEmitter
     {
-        internal const string StoreItemsSubdir = "StoreItems";
-        internal const string StoreItemsAssembly = "Flock.Generated.StoreItems";
+        // 1.94.0 wrote real-money items into an assembly of their own here; a sync removes what it left.
+        internal const string RetiredStoreItemsSubdir = "StoreItems";
 
         internal sealed class ShopItemEntry
         {
@@ -25,7 +24,6 @@ namespace Flock.Editor.Codegen
             public int Price;
             public string Currency;
             public string ShopName;
-            public bool IsRealMoney;
         }
 
         public static int Emit(IList<Shop> shops, IList<PlayerTemplateSchema> playerTemplates, string outputDir)
@@ -44,9 +42,8 @@ namespace Flock.Editor.Codegen
                 shopByName.Add(new KeyValuePair<string, Shop>(
                     CodeGenNamingHelpers.UnDuplicate(CodeGenNamingHelpers.ToPascalCase(shop.Name), shopNames), shop));
 
-            // Item enum member -> item (distinct items across all shops), wallet and store items each in an enum of their own.
+            // Item enum member -> item (distinct items across all shops).
             HashSet<string> itemMembers = new HashSet<string>();
-            HashSet<string> storeItemMembers = new HashSet<string>();
             HashSet<string> seenItemIds = new HashSet<string>(StringComparer.Ordinal);
             List<ShopItemEntry> itemEntries = new List<ShopItemEntry>();
             foreach (Shop shop in ordered)
@@ -59,12 +56,11 @@ namespace Flock.Editor.Codegen
                     if (!seenItemIds.Add(item.Id)) continue;
                     itemEntries.Add(new ShopItemEntry
                     {
-                        Member = CodeGenNamingHelpers.UnDuplicate(CodeGenNamingHelpers.ToPascalCase(item.Name), item.IsRealMoney ? storeItemMembers : itemMembers),
+                        Member = CodeGenNamingHelpers.UnDuplicate(CodeGenNamingHelpers.ToPascalCase(item.Name), itemMembers),
                         Id = item.Id,
                         Price = item.Price,
                         Currency = item.Currency ?? "",
-                        ShopName = shop.Name ?? "",
-                        IsRealMoney = item.IsRealMoney
+                        ShopName = shop.Name ?? ""
                     });
                 }
             }
@@ -96,93 +92,12 @@ namespace Flock.Editor.Codegen
             if (fundByMember.Count > 0 && string.IsNullOrEmpty(currencyTemplateId))
                 Debug.LogWarning("[Flock Codegen] Shop currencies exist but no player template is tagged \"currency\" — generated AddGameFunds(FlockFundId) will throw at runtime. Tag your wallet/currency template \"currency\".");
 
-            List<ShopItemEntry> walletItems = itemEntries.Where(e => !e.IsRealMoney).ToList();
-            List<ShopItemEntry> storeItems = itemEntries.Where(e => e.IsRealMoney).ToList();
-            File.WriteAllText(Path.Combine(outputDir, "FlockShopCatalog.g.cs"), BuildSource(shopByName, walletItems, fundByMember, currencyTemplateId));
-            EmitStoreItems(storeItems, Path.Combine(outputDir, StoreItemsSubdir));
-            Debug.Log($"[Flock Codegen] Shops: emitted {shopByName.Count} accessor(s), {walletItems.Count} wallet item id(s), {storeItems.Count} store item id(s), {fundByMember.Count} fund(s).");
+            File.WriteAllText(Path.Combine(outputDir, "FlockShopCatalog.g.cs"), BuildSource(shopByName, itemEntries, fundByMember, currencyTemplateId));
+            string retired = Path.Combine(outputDir, RetiredStoreItemsSubdir);
+            GeneratedFiles.DeleteUnder(retired);
+            GeneratedFiles.DeleteFolderIfEmpty(retired);
+            Debug.Log($"[Flock Codegen] Shops: emitted {shopByName.Count} accessor(s), {itemEntries.Count} item id(s), {fundByMember.Count} fund(s).");
             return shopByName.Count;
-        }
-
-        // Real-money items are bought through FlockStorePurchases, which exists only with Unity IAP 5, so their enum and calls
-        // live in an assembly of their own with that condition; a catalog with none leaves no folder behind.
-        internal static void EmitStoreItems(List<ShopItemEntry> storeItems, string storeDir)
-        {
-            if (storeItems.Count == 0)
-            {
-                GeneratedFiles.DeleteUnder(storeDir);
-                GeneratedFiles.DeleteFolderIfEmpty(storeDir);
-                return;
-            }
-            GeneratedFiles.ClearFolder(storeDir);
-            File.WriteAllText(Path.Combine(storeDir, StoreItemsAssembly + ".asmdef"), BuildStoreItemsAssembly());
-            File.WriteAllText(Path.Combine(storeDir, "FlockStoreCatalog.g.cs"), BuildStoreItemsSource(storeItems));
-        }
-
-        internal static string BuildStoreItemsAssembly()
-        {
-            StringBuilder sb = new StringBuilder();
-            sb.AppendLine("{");
-            sb.AppendLine($"    \"name\": \"{StoreItemsAssembly}\",");
-            sb.AppendLine("    \"rootNamespace\": \"\",");
-            sb.AppendLine("    \"references\": [\"Flock.Runtime\", \"Flock.Shop.UnityIap\"],");
-            sb.AppendLine("    \"includePlatforms\": [],");
-            sb.AppendLine("    \"excludePlatforms\": [],");
-            sb.AppendLine("    \"allowUnsafeCode\": false,");
-            sb.AppendLine("    \"overrideReferences\": false,");
-            sb.AppendLine("    \"precompiledReferences\": [],");
-            sb.AppendLine("    \"autoReferenced\": true,");
-            sb.AppendLine("    \"defineConstraints\": [\"FLOCK_UNITY_IAP_5\", \"!FLOCK_NO_SHOP\"],");
-            sb.AppendLine("    \"versionDefines\": [{ \"name\": \"com.unity.purchasing\", \"expression\": \"[5.0.0,6.0.0)\", \"define\": \"FLOCK_UNITY_IAP_5\" }],");
-            sb.AppendLine("    \"noEngineReferences\": false");
-            sb.AppendLine("}");
-            return sb.ToString();
-        }
-
-        internal static string BuildStoreItemsSource(List<ShopItemEntry> storeItems)
-        {
-            StringBuilder sb = new StringBuilder();
-            sb.AppendLine("// <auto-generated>");
-            sb.AppendLine("//   Generated by Flock Codegen. Do not edit by hand.");
-            sb.AppendLine("// </auto-generated>");
-            sb.AppendLine("using System;");
-            sb.AppendLine("using System.Threading;");
-            sb.AppendLine("using System.Threading.Tasks;");
-            sb.AppendLine("using Flock.Providers;");
-            sb.AppendLine();
-            sb.AppendLine("namespace Flock.Generated.Shops");
-            sb.AppendLine("{");
-            sb.AppendLine("    /// <summary>The game's real-money shop items, bought through FlockStorePurchases.</summary>");
-            sb.AppendLine("    public enum FlockStoreItemId");
-            sb.AppendLine("    {");
-            foreach (ShopItemEntry entry in storeItems)
-            {
-                sb.AppendLine($"        /// <summary>Sold in {CodeGenNamingHelpers.SanitizeForLineComment(entry.ShopName)} for real money.</summary>");
-                sb.AppendLine($"        {entry.Member},");
-            }
-            sb.AppendLine("    }");
-            sb.AppendLine();
-            sb.AppendLine("    public static class FlockStoreItemExtensions");
-            sb.AppendLine("    {");
-            sb.AppendLine("        public static Task<FlockStorePurchase> BuyAsync(this FlockStorePurchases store, FlockStoreItemId item, CancellationToken cancellationToken = default)");
-            sb.AppendLine("            => store.BuyAsync(item.ShopItemId(), cancellationToken);");
-            sb.AppendLine();
-            sb.AppendLine("        public static FlockStorePrice GetStorePrice(this FlockStorePurchases store, FlockStoreItemId item)");
-            sb.AppendLine("            => store.GetStorePrice(item.ShopItemId());");
-            sb.AppendLine();
-            sb.AppendLine("        /// <summary>The shop item's id, for calls that take one.</summary>");
-            sb.AppendLine("        public static string ShopItemId(this FlockStoreItemId item)");
-            sb.AppendLine("        {");
-            sb.AppendLine("            switch (item)");
-            sb.AppendLine("            {");
-            foreach (ShopItemEntry entry in storeItems)
-                sb.AppendLine($"                case FlockStoreItemId.{entry.Member}: return \"{CodeGenNamingHelpers.EscapeStringLiteral(entry.Id)}\";");
-            sb.AppendLine("                default: throw new ArgumentOutOfRangeException(nameof(item));");
-            sb.AppendLine("            }");
-            sb.AppendLine("        }");
-            sb.AppendLine("    }");
-            sb.AppendLine("}");
-            return sb.ToString();
         }
 
         // Turns an arbitrary string into a valid C# identifier: non-alphanumeric -> underscore, leading
@@ -253,9 +168,13 @@ namespace Flock.Editor.Codegen
             if (items.Count > 0)
             {
                 sb.AppendLine("        public static Task<PurchaseResult> PurchaseAsync(this FlockShopProvider provider, FlockShopItemId item, CancellationToken cancellationToken = default)");
-                sb.AppendLine("            => provider.PurchaseAsync(ShopItemUuid(item), cancellationToken: cancellationToken);");
+                sb.AppendLine("            => provider.PurchaseAsync(item.ShopItemId(), cancellationToken);");
                 sb.AppendLine();
-                sb.AppendLine("        private static string ShopItemUuid(FlockShopItemId item)");
+                sb.AppendLine("        public static Task<ConsumeResult> ConsumeOneAsync(this FlockShopProvider provider, FlockShopItemId item, CancellationToken cancellationToken = default)");
+                sb.AppendLine("            => provider.ConsumeOneAsync(item.ShopItemId(), cancellationToken);");
+                sb.AppendLine();
+                sb.AppendLine("        /// <summary>The shop item's id, for calls that take one.</summary>");
+                sb.AppendLine("        public static string ShopItemId(this FlockShopItemId item)");
                 sb.AppendLine("        {");
                 sb.AppendLine("            switch (item)");
                 sb.AppendLine("            {");

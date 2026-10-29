@@ -125,19 +125,5 @@ namespace Flock.Tests
             FlockSchemaSnapshot b = Snapshot("v1", new[] { Template("t1", "P", null, Field("integer", "a"), Field("integer", "bc")) });
             Assert.AreNotEqual(SchemaHasher.ComputeContentHash(a), SchemaHasher.ComputeContentHash(b));
         }
-
-        private static FlockSchemaSnapshot WithShopItem(bool realMoney)
-            => new FlockSchemaSnapshot
-            {
-                GameVersionId = "v1",
-                Shops = new List<Shop> { new Shop { Id = "s1", Name = "Main", ShopItems = new List<ShopItem> { new ShopItem { Id = "i1", Name = "Gems", Currency = "SAR", IsRealMoney = realMoney } } } }
-            };
-
-        [Test]
-        public void AnItemBecomingRealMoney_ChangesHash()
-        {
-            // It moves from FlockShopItemId to FlockStoreItemId, so a sync made before reads as out of date.
-            Assert.AreNotEqual(SchemaHasher.ComputeContentHash(WithShopItem(false)), SchemaHasher.ComputeContentHash(WithShopItem(true)));
-        }
     }
 }

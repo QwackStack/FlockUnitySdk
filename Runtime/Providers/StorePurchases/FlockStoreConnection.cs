@@ -35,24 +35,22 @@ namespace Flock.Providers
         }
     }
 
-    // A purchase the store did not take: the product, why (FlockStoreFailureReasons), the store's own words, and whether the player cancelled.
+    // A purchase the store did not take: the product, why (FlockStoreFailureReasons, Cancelled when the player cancelled), and the store's own words.
     internal readonly struct FlockStoreFailure
     {
         public readonly string ProductId;
         public readonly string Reason;
         public readonly string Text;
-        public readonly bool Cancelled;
 
-        public FlockStoreFailure(string productId, string reason, string text, bool cancelled)
+        public FlockStoreFailure(string productId, string reason, string text)
         {
             ProductId = productId;
             Reason = reason;
             Text = text;
-            Cancelled = cancelled;
         }
     }
 
-    // What FlockStorePurchases needs of a store library; Unity IAP 5 is the one a game uses.
+    // What FlockStore needs of a store library; Unity IAP 5 is the one a game uses.
     internal interface IFlockStoreConnection
     {
         event Action<FlockStoreOrder> OrderPaid;
@@ -229,8 +227,7 @@ namespace Flock.Providers
         private void HandleDeferred(DeferredOrder order) => OrderDeferred?.Invoke(new FlockStoreOrder(ProductIdOf(order), order.Info?.TransactionID, order));
 
         private void HandleFailed(FailedOrder order)
-            => OrderFailed?.Invoke(new FlockStoreFailure(ProductIdOf(order), ReasonOf(order.FailureReason), $"{order.FailureReason}: {order.Details}",
-                order.FailureReason == PurchaseFailureReason.UserCancelled));
+            => OrderFailed?.Invoke(new FlockStoreFailure(ProductIdOf(order), ReasonOf(order.FailureReason), $"{order.FailureReason}: {order.Details}"));
 
         internal static string ReasonOf(PurchaseFailureReason reason)
         {

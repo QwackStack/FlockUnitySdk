@@ -143,7 +143,7 @@ namespace Flock.Tests.Editor
         }
 
         [Test]
-        public void Purchase_ServerErrorOnEveryAttempt_SaysItMayHaveGoneThrough()
+        public void Purchase_ServerErrorOnEveryAttempt_SaysItMayHaveBeenMade_AndItsOutcomeIsUnknown()
         {
             FlockFakeTransport transport = WithItem();
             transport.On(FlockEndpoints.ShopTransaction, FlockFakeTransport.Status(502, "<html>Bad Gateway</html>"));
@@ -156,6 +156,7 @@ namespace Flock.Tests.Editor
 
                 StringAssert.Contains("may have been made", ex.Hint, "A server error may come after the purchase was made.");
                 StringAssert.Contains("a new PurchaseAsync call is a new purchase", ex.Hint);
+                Assert.IsTrue(ex.OutcomeUnknown, "The flag a game checks before offering it again.");
             }
         }
 
@@ -335,8 +336,9 @@ namespace Flock.Tests.Editor
                 h.LoginAs("player-a");
                 h.SetReachable(true);
 
-                Assert.Catch<FlockException>(() => h.Run(() => h.Client.Shop.ConsumeAsync("inv-1")));
+                FlockException failed = Assert.Catch<FlockException>(() => h.Run(() => h.Client.Shop.ConsumeAsync("inv-1")));
                 Assert.AreEqual(1, transport.CountTo("consume"), "Consuming grants currency — an ambiguous 5xx must not be retried.");
+                Assert.IsTrue(failed.OutcomeUnknown, "A server error may come after the entry was used.");
             }
         }
 
@@ -1221,6 +1223,7 @@ namespace Flock.Tests.Editor
                 FlockSerializationException ex = Assert.Throws<FlockSerializationException>(() => h.Run(() => h.Client.Shop.PurchaseAsync("item-1")));
 
                 StringAssert.Contains("inventory and wallet", ex.Hint);
+                Assert.IsTrue(ex.OutcomeUnknown, "A 2xx naming no purchase may still have bought it.");
             }
         }
 
@@ -1290,6 +1293,330 @@ namespace Flock.Tests.Editor
 
                 Assert.AreEqual(0, h.Run(() => h.Client.Shop.GetOwnedItemCountsAsync()).Count);
                 Assert.AreEqual(1, transport.CountTo(FlockEndpoints.PlayerInventoryByPlayer("player-a")));
+            }
+        }
+
+        private const string WalletAfter =
+            "\"wallet\":{\"id\":\"pd-w\",\"player_id\":\"player-a\",\"data\":[{\"type\":\"object\",\"field_name\":\"game_currencies\",\"type_name\":\"wallet\"," +
+            "\"value\":[{\"type\":\"integer\",\"field_name\":\"Gold\",\"type_name\":\"currency\",\"value\":480}]}]}";
+
+        [Test]
+        public void Purchase_NotEnoughFunds_IsARefusal_WhoseOutcomeIsKnown()
+        {
+            FlockFakeTransport transport = WithItem();
+            transport.On(FlockEndpoints.ShopTransaction, FlockFakeTransport.Coded(400, "shop.insufficient_funds"));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                FlockException refused = Assert.Catch<FlockException>(() => h.Run(() => h.Client.Shop.PurchaseAsync("item-1")));
+
+                Assert.AreEqual(FlockErrorCode.ShopInsufficientFunds, refused.ErrorCode);
+                Assert.IsFalse(refused.OutcomeUnknown, "The server said no: nothing was bought.");
+            }
+        }
+
+        // A 4xx is the server's answer even with no code: nothing was bought. A 409, which the client reads as a network failure, not a 400's validation one.
+        [Test]
+        public void Purchase_ARefusalNamingNoCode_ItsOutcomeIsKnown()
+        {
+            FlockFakeTransport transport = WithItem();
+            transport.On(FlockEndpoints.ShopTransaction, FlockFakeTransport.Status(409, "{}"));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                FlockException refused = Assert.Catch<FlockException>(() => h.Run(() => h.Client.Shop.PurchaseAsync("item-1")));
+
+                Assert.IsInstanceOf<FlockNetworkException>(refused, "Control: the status rule is what decides.");
+                Assert.AreEqual(409, refused.StatusCode);
+                Assert.IsFalse(refused.OutcomeUnknown);
+            }
+        }
+
+        [Test]
+        public void Purchase_AServerErrorNamingAGameSetting_IsARefusal_WhoseOutcomeIsKnown()
+        {
+            FlockFakeTransport transport = WithItem();
+            transport.On(FlockEndpoints.ShopTransaction, FlockFakeTransport.Coded(503, "shop.real_currency_settlement_unavailable"));
+            using (FlockTestClient h = FlockTestClient.Create(transport, config => config.RetryPolicy = RetriesEnabled()))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                FlockException refused = Assert.Catch<FlockException>(() => h.Run(() => h.Client.Shop.PurchaseAsync("item-1")));
+
+                Assert.AreEqual(FlockErrorCode.ShopRealCurrencySettlementUnavailable, refused.ErrorCode);
+                Assert.IsFalse(refused.OutcomeUnknown, "A server error that names its cause refused before buying anything.");
+            }
+        }
+
+        // The second of the two places the shared request runner hands a failure back: after a token refresh.
+        [Test]
+        public void Purchase_ServerErrorAfterATokenRefresh_ItsOutcomeIsUnknown()
+        {
+            FlockFakeTransport transport = WithItem();
+            transport.OnSequence(FlockEndpoints.ShopTransaction, FlockFakeTransport.Coded(401, "player.expired_token"), FlockFakeTransport.Status(502, "<html>Bad Gateway</html>"));
+            string refreshOk = "{\"player_id\":\"player-a\",\"access_token\":\"" + FlockTestClient.MakeJwt("player-a", 3600, "refreshed") + "\",\"refresh_token\":\"refresh-2\"}";
+            transport.On(FlockEndpoints.PlayerTokenRefresh, FlockFakeTransport.Ok(refreshOk));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                FlockException failed = Assert.Catch<FlockException>(() => h.Run(() => h.Client.Shop.PurchaseAsync("item-1")));
+
+                Assert.IsTrue(transport.Sent(FlockEndpoints.PlayerTokenRefresh), "Control: the token was refreshed before the purchase was sent again.");
+                Assert.IsTrue(failed.OutcomeUnknown);
+            }
+        }
+
+        // Only calls that spend or grant carry the flag; a read that fails changed nothing.
+        [Test]
+        public void ARead_WithNoAnswer_ItsOutcomeIsNotUnknown()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.ShopItemById("item-1"), FlockFakeTransport.Timeout());
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                FlockException failed = Assert.Catch<FlockException>(() => h.Run(() => h.Client.Shop.GetItemAsync("item-1")));
+
+                Assert.IsFalse(failed.OutcomeUnknown);
+            }
+        }
+
+        [Test]
+        public void Consume_AnswerNamingNoEntry_IsRefused_AndItsOutcomeIsUnknown()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.PlayerInventoryConsume("inv-1"), FlockFakeTransport.Ok("{}"));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                FlockSerializationException ex = Assert.Throws<FlockSerializationException>(() => h.Run(() => h.Client.Shop.ConsumeAsync("inv-1")));
+
+                Assert.IsTrue(ex.OutcomeUnknown, "A 2xx naming no entry may still have used it.");
+                StringAssert.Contains("inventory", ex.Hint);
+            }
+        }
+
+        [Test]
+        public void Redeem_ServerErrorOnEveryAttempt_ItsOutcomeIsUnknown()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.ShopValidateReceipt, FlockFakeTransport.Status(502, "<html>Bad Gateway</html>"));
+            using (FlockTestClient h = FlockTestClient.Create(transport, config => config.RetryPolicy = RetriesEnabled()))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                FlockException failed = Assert.Catch<FlockException>(() => h.Run(() => h.Client.Shop.RedeemStoreReceiptAsync("item-1", StoreReceipt.FromGooglePlay("com.flock.gems", "token-1"))));
+
+                Assert.IsTrue(failed.OutcomeUnknown);
+            }
+        }
+
+        [Test]
+        public void Purchase_TheRealMoneyItem_WithNoStoreConnected_IsRefused_AndNothingIsSent()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.ShopItemById("gems"), FlockFakeTransport.Ok("{\"id\":\"gems\",\"name\":\"Gems\",\"type\":\"currency_pack\",\"price\":399,\"currency\":\"SAR\",\"is_real_money\":true,\"store_skus\":{\"google_play\":\"gems_100\"}}"));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                FlockValidationException refused = Assert.Throws<FlockValidationException>(() => h.Run(() => h.Client.Shop.PurchaseAsync("gems")));
+
+                StringAssert.Contains("FlockStore.ConnectAsync", refused.Hint);
+                Assert.AreEqual(0, transport.CountTo(FlockEndpoints.ShopTransaction), "Never sent to the wallet, which would refuse it.");
+                Assert.AreEqual(0, transport.CountTo(FlockEndpoints.ShopValidateReceipt));
+            }
+        }
+
+        // Kept for games that pass a player: it still sends the one named, and the server refuses any but the signed-in one.
+        [Test]
+        public void ObsoletePurchase_NamingAPlayer_SendsThatPlayer()
+        {
+            FlockFakeTransport transport = WithItem();
+            transport.On(FlockEndpoints.ShopTransaction, FlockFakeTransport.Ok("{\"purchase_id\":\"pur-1\",\"item_type\":\"currency_pack\"}"));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+#pragma warning disable CS0618
+                h.Run(() => h.Client.Shop.PurchaseAsync("item-1", "player-named"));
+#pragma warning restore CS0618
+                h.Run(() => h.Client.Shop.PurchaseAsync("item-1"));
+
+                List<FlockHttpRequest> sent = transport.AllTo(FlockEndpoints.ShopTransaction);
+                Assert.AreEqual("player-named", (string)JObject.Parse(sent[0].JsonBody)["player_id"]);
+                Assert.AreEqual("player-a", (string)JObject.Parse(sent[1].JsonBody)["player_id"], "The call without a player buys for the signed-in one.");
+            }
+        }
+
+        [Test]
+        public void PurchaseAndConsume_GiveTheWalletAfter_AsBalances_OrNullWhenNoCurrencyMoved()
+        {
+            FlockFakeTransport transport = WithItem();
+            transport.OnSequence(FlockEndpoints.ShopTransaction,
+                FlockFakeTransport.Ok("{\"purchase_id\":\"pur-1\",\"item_type\":\"currency_pack\"," + WalletAfter + "}"),
+                FlockFakeTransport.Ok("{\"purchase_id\":\"pur-2\",\"item_type\":\"standard\"}"));
+            transport.On(FlockEndpoints.PlayerInventoryConsume("inv-1"), FlockFakeTransport.Ok(
+                "{\"inventory\":{\"id\":\"inv-1\",\"player_id\":\"player-a\",\"shop_item_id\":\"item-1\",\"status\":\"used\"},\"granted\":[]," + WalletAfter + "}"));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                PurchaseResult withWallet = h.Run(() => h.Client.Shop.PurchaseAsync("item-1"));
+                PurchaseResult withoutWallet = h.Run(() => h.Client.Shop.PurchaseAsync("item-1"));
+                ConsumeResult consumed = h.Run(() => h.Client.Shop.ConsumeAsync("inv-1"));
+
+                Assert.AreEqual(480, withWallet.Balances.BalanceOf("Gold"));
+                Assert.IsNull(withoutWallet.Balances, "No currency moved, so there is no wallet to read.");
+                Assert.AreEqual(480, consumed.Balances.BalanceOf("Gold"));
+            }
+        }
+
+        private static string ConsumedAnswer(string entryId)
+            => "{\"inventory\":{\"id\":\"" + entryId + "\",\"player_id\":\"player-a\",\"shop_item_id\":\"potion\",\"status\":\"used\"},\"granted\":[{\"type\":\"currency\",\"code\":\"Gold\",\"amount\":10}]}";
+
+        private static FlockFakeTransport InventoryOf(params string[] entries)
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.PlayerInventoryByPlayer("player-a"), FlockFakeTransport.Ok(InventoryPage(1, entries.Length, new List<string>(entries))));
+            return transport;
+        }
+
+        [Test]
+        public void ConsumeOne_UsesTheFirstUnusedEntryOfThatItem()
+        {
+            FlockFakeTransport transport = InventoryOf(
+                InventoryEntry("inv-used", "potion", "used"),
+                InventoryEntry("inv-sword", "sword", "unused"),
+                InventoryEntry("inv-p1", "potion", "unused"),
+                InventoryEntry("inv-p2", "potion", "unused"));
+            transport.On(FlockEndpoints.PlayerInventoryConsume("inv-p1"), FlockFakeTransport.Ok(ConsumedAnswer("inv-p1")));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                ConsumeResult result = h.Run(() => h.Client.Shop.ConsumeOneAsync("potion"));
+
+                Assert.AreEqual("inv-p1", result.Inventory.Id);
+                Assert.AreEqual(10, result.Granted[0].Amount);
+                Assert.AreEqual(1, transport.CountTo("/consume"), "One entry used, not a used one, not another item's.");
+            }
+        }
+
+        [Test]
+        public void ConsumeOne_AnEntryUsedMeanwhile_IsPassedOverForTheNext()
+        {
+            FlockFakeTransport transport = InventoryOf(InventoryEntry("inv-p1", "potion", "unused"), InventoryEntry("inv-p2", "potion", "unused"));
+            transport.On(FlockEndpoints.PlayerInventoryConsume("inv-p1"), FlockFakeTransport.Coded(409, "player_inventory.already_used"));
+            transport.On(FlockEndpoints.PlayerInventoryConsume("inv-p2"), FlockFakeTransport.Ok(ConsumedAnswer("inv-p2")));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                ConsumeResult result = h.Run(() => h.Client.Shop.ConsumeOneAsync("potion"));
+
+                Assert.AreEqual("inv-p2", result.Inventory.Id, "Another device used the first since the read; the second is still the player's.");
+            }
+        }
+
+        // An entry whose use was not answered may have been used: trying the next could use two.
+        [Test]
+        public void ConsumeOne_NoAnswer_Stops_WithoutTryingAnotherEntry()
+        {
+            FlockFakeTransport transport = InventoryOf(InventoryEntry("inv-p1", "potion", "unused"), InventoryEntry("inv-p2", "potion", "unused"));
+            transport.On(FlockEndpoints.PlayerInventoryConsume("inv-p1"), FlockFakeTransport.Status(502, "<html>Bad Gateway</html>"));
+            transport.On(FlockEndpoints.PlayerInventoryConsume("inv-p2"), FlockFakeTransport.Ok(ConsumedAnswer("inv-p2")));
+            using (FlockTestClient h = FlockTestClient.Create(transport, config => config.RetryPolicy = RetriesEnabled()))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                FlockException failed = Assert.Catch<FlockException>(() => h.Run(() => h.Client.Shop.ConsumeOneAsync("potion")));
+
+                Assert.IsTrue(failed.OutcomeUnknown);
+                Assert.AreEqual(1, transport.CountTo("/consume"), "Sent once, and no other entry tried.");
+            }
+        }
+
+        [Test]
+        public void ConsumeOne_ReadsEveryPage()
+        {
+            FlockFakeTransport transport = WithTwoInventoryPages();
+            transport.On(FlockEndpoints.PlayerInventoryConsume("inv-s2"), FlockFakeTransport.Ok(ConsumedAnswer("inv-s2")));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                ConsumeResult result = h.Run(() => h.Client.Shop.ConsumeOneAsync("sword"));
+
+                Assert.AreEqual("inv-s2", result.Inventory.Id, "The only unused sword is on the second page.");
+            }
+        }
+
+        [Test]
+        public void ConsumeOne_NoneHeld_IsRefused_AndNothingIsUsed()
+        {
+            FlockFakeTransport transport = InventoryOf(InventoryEntry("inv-used", "potion", "used"), InventoryEntry("inv-sword", "sword", "unused"));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                FlockValidationException refused = Assert.Throws<FlockValidationException>(() => h.Run(() => h.Client.Shop.ConsumeOneAsync("potion")));
+
+                StringAssert.Contains("GetOwnedItemCountsAsync", refused.Hint);
+                Assert.AreEqual(0, transport.CountTo("/consume"));
+            }
+        }
+
+        [Test]
+        public void ConsumeOne_NotSignedIn_IsRefused_BeforeSending()
+        {
+            FlockFakeTransport transport = InventoryOf(InventoryEntry("inv-p1", "potion", "unused"));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                Assert.Throws<FlockAuthException>(() => h.Run(() => h.Client.Shop.ConsumeOneAsync("potion")));
+                Assert.AreEqual(0, transport.Requests.Count);
+            }
+        }
+
+        // The entry was read for one player; it is never used as the player who signed in while it was read.
+        [UnityTest]
+        public IEnumerator ConsumeOne_PlayerChangesWhileTheInventoryIsRead_NothingIsUsed()
+        {
+            FlockFakeTransport transport = InventoryOf(InventoryEntry("inv-p1", "potion", "unused"));
+            transport.On(FlockEndpoints.PlayerInventoryConsume("inv-p1"), FlockFakeTransport.Ok(ConsumedAnswer("inv-p1")));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+                transport.GateNext(FlockEndpoints.PlayerInventoryByPlayer("player-a"));
+
+                Task<ConsumeResult> consuming = h.Client.Shop.ConsumeOneAsync("potion");
+                h.LoginAs("player-b");
+                transport.ReleaseGate();
+
+                yield return FlockTestWait.Until(() => consuming.IsCompleted, "The use ended");
+                Assert.IsFalse(consuming.Status == TaskStatus.RanToCompletion, "Not used for the player who signed in next.");
+                Assert.AreEqual(0, transport.CountTo("/consume"));
             }
         }
 
@@ -1555,10 +1882,10 @@ namespace Flock.Tests.Editor
             yield return Wait(funded);
             Assert.IsFalse(funded.IsFaulted, $"Adding {item.Price} {item.Currency} failed: {funded.Exception?.GetBaseException().Message}");
 
-            FlockClient.Instance.Player.ClearCache();
-            Task<FlockWallet> before = FlockClient.Instance.Player.GetWalletAsync();
+            // The balance as the grant answered it: a read made at once can miss a write the server has answered (BACKLOG BE-P32).
+            long fundedBalance = FlockWallet.From(funded.Result).BalanceOf(item.Currency);
             Task<IReadOnlyDictionary<string, int>> ownedBefore = FlockClient.Instance.Shop.GetOwnedItemCountsAsync();
-            yield return Wait(Task.WhenAll(before, ownedBefore));
+            yield return Wait(ownedBefore);
             ownedBefore.Result.TryGetValue(item.Id, out int heldBefore);
 
             LosesTheFirstPurchaseAnswer lossy = new LosesTheFirstPurchaseAnswer();
@@ -1579,12 +1906,23 @@ namespace Flock.Tests.Editor
             Assert.IsNotEmpty(key);
             Assert.AreEqual(key, (string)JObject.Parse(lossy.PurchaseBodies[1])["idempotency_key"]);
 
-            FlockClient.Instance.Player.ClearCache();
-            Task<FlockWallet> after = FlockClient.Instance.Player.GetWalletAsync();
-            Task<IReadOnlyDictionary<string, int>> ownedAfter = FlockClient.Instance.Shop.GetOwnedItemCountsAsync();
-            yield return Wait(Task.WhenAll(after, ownedAfter));
-            ownedAfter.Result.TryGetValue(item.Id, out int heldAfter);
-            Assert.AreEqual(before.Result.BalanceOf(item.Currency) - item.Price, after.Result.BalanceOf(item.Currency), "Charged once for two sends.");
+            long charged = fundedBalance - item.Price;
+            Assert.AreEqual(charged, purchase.Result.Balances.BalanceOf(item.Currency), "Charged once for two sends, as the purchase answered.");
+
+            // The routes, read until they show the purchase or for 5 s: they must then hold one charge and one entry, never two.
+            long readBalance = long.MinValue;
+            int heldAfter = -1;
+            System.Diagnostics.Stopwatch settling = System.Diagnostics.Stopwatch.StartNew();
+            while (settling.Elapsed < TimeSpan.FromSeconds(5) && (readBalance != charged || heldAfter != heldBefore + 1))
+            {
+                FlockClient.Instance.Player.ClearCache();
+                Task<FlockWallet> after = FlockClient.Instance.Player.GetWalletAsync();
+                Task<IReadOnlyDictionary<string, int>> ownedAfter = FlockClient.Instance.Shop.GetOwnedItemCountsAsync();
+                yield return Wait(Task.WhenAll(after, ownedAfter));
+                readBalance = after.Result.BalanceOf(item.Currency);
+                ownedAfter.Result.TryGetValue(item.Id, out heldAfter);
+            }
+            Assert.AreEqual(charged, readBalance, "Charged once for two sends, as the wallet route reads.");
             Assert.AreEqual(heldBefore + 1, heldAfter, "One inventory entry for two sends.");
 
             // Counter-case: the key sent again for another item is refused on its own code, and nothing more is bought.
@@ -1656,6 +1994,81 @@ namespace Flock.Tests.Editor
             yield return Wait(nobody);
             AssertRefusedWith(nobody, FlockErrorCode.PlayerInventoryPlayerNotFound);
             Debug.Log($"[Flock] Live wallet: {sent.Count} game currencies match the route; {unused.Count} owned items match the inventory.");
+        }
+
+        // Uses one of the items the keyed-purchase test buys on its own device: a standard entry grants nothing and becomes used.
+        [UnityTest, Explicit("Hits the live Flock backend using FlockConfig.asset; uses up one item of the live wallet test player; run manually.")]
+        public IEnumerator Live_ConsumeOne_UsesOneEntry_AsTheInventoryRouteSays()
+        {
+            FlockConfigAsset asset = Resources.Load<FlockConfigAsset>("FlockConfig");
+            if (asset == null || !asset.IsValid(out string _) || string.IsNullOrEmpty(asset.gameVersionId))
+            {
+                Assert.Ignore("No usable FlockConfig.asset (missing fields or unresolved Game Version ID).");
+                yield break;
+            }
+            if (!FlockClient.IsInitialized)
+            {
+                FlockClient.Create(asset.ToInitConfig(), new NullFlockLogger());
+                _createdClient = true;
+            }
+            Task<string> signIn = SignInTheLiveDeviceAsync(LiveWalletDeviceId);
+            yield return Wait(signIn);
+            if (signIn.GetAwaiter().GetResult() != null)
+            {
+                Assert.Ignore(signIn.Result);
+                yield break;
+            }
+
+            Task<PaginatedResponse<Shop>> shops = FlockClient.Instance.Shop.GetAllAsync();
+            Task<IReadOnlyDictionary<string, int>> ownedBefore = FlockClient.Instance.Shop.GetOwnedItemCountsAsync();
+            yield return Wait(Task.WhenAll(shops, ownedBefore));
+            string held = null;
+            string neverHeld = null;
+            foreach (ShopItem item in WalletItems(shops.Result))
+            {
+                if (held == null && ownedBefore.Result.ContainsKey(item.Id))
+                    held = item.Id;
+                else if (neverHeld == null && !ownedBefore.Result.ContainsKey(item.Id))
+                    neverHeld = item.Id;
+            }
+            if (held == null || neverHeld == null)
+            {
+                Assert.Ignore("Run Live_WalletPurchase_WhoseAnswerWasLost_IsSentAgain_AndChargedOnce first: it buys the item used here.");
+                yield break;
+            }
+
+            Task<ConsumeResult> used = FlockClient.Instance.Shop.ConsumeOneAsync(held);
+            yield return Wait(used);
+            Assert.IsFalse(used.IsFaulted, $"Using one failed: {used.Exception?.GetBaseException().Message}");
+            Assert.AreEqual(held, used.Result.Inventory.ShopItemId);
+            Assert.AreEqual(PlayerInventoryStatuses.Used, used.Result.Inventory.Status);
+
+            // Read until the route shows the use or for 5 s: a read made at once can miss a write the server has answered (BACKLOG BE-P32).
+            string me = FlockClient.Instance.CurrentPlayerId;
+            string routeStatus = null;
+            int heldAfter = -1;
+            System.Diagnostics.Stopwatch settling = System.Diagnostics.Stopwatch.StartNew();
+            while (settling.Elapsed < TimeSpan.FromSeconds(5) && (routeStatus != PlayerInventoryStatuses.Used || heldAfter != ownedBefore.Result[held] - 1))
+            {
+                Task<JObject> inventory = FlockHttpClient.GetAsync<JObject>($"{FlockClient.Instance.GetVersionedApiUrl()}/{FlockEndpoints.PlayerInventoryByPlayer(me)}?page=1&limit=100", FlockClient.Instance.GetBaseHeaders(), CancellationToken.None);
+                Task<IReadOnlyDictionary<string, int>> ownedAfter = FlockClient.Instance.Shop.GetOwnedItemCountsAsync();
+                yield return Wait(Task.WhenAll(inventory, ownedAfter));
+                foreach (JToken entry in inventory.Result["items"])
+                    if ((string)entry["id"] == used.Result.Inventory.Id)
+                        routeStatus = (string)entry["status"];
+                ownedAfter.Result.TryGetValue(held, out heldAfter);
+            }
+            Assert.AreEqual(PlayerInventoryStatuses.Used, routeStatus, "The route lists the entry as used.");
+            Assert.AreEqual(ownedBefore.Result[held] - 1, heldAfter, "One entry used.");
+
+            // Counter-cases: the same entry used again is refused on its own code; an item the player holds none of is refused before any use is sent.
+            Task<ConsumeResult> again = FlockClient.Instance.Shop.ConsumeAsync(used.Result.Inventory.Id);
+            yield return Wait(again);
+            AssertRefusedWith(again, FlockErrorCode.PlayerInventoryAlreadyUsed);
+            Task<ConsumeResult> none = FlockClient.Instance.Shop.ConsumeOneAsync(neverHeld);
+            yield return Wait(none);
+            Assert.IsInstanceOf<FlockValidationException>(none.Exception?.GetBaseException(), "Refused: the player holds none.");
+            Debug.Log($"[Flock] Live use: one '{held}' entry used ({heldAfter} left); a second use refused on already_used; '{neverHeld}' refused as not held.");
         }
 
         private const string LiveDeviceId = "flock-sdk-live-shop";

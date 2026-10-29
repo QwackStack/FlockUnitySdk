@@ -285,6 +285,27 @@ namespace Flock
             }
         }
 
+        /// <summary>Hands an event and its two values to each of its handlers in turn; one that throws is logged and the rest still run.</summary>
+        internal static void InvokeEach<T1, T2>(Action<T1, T2> handlers, T1 first, T2 second, string eventName)
+        {
+            if (handlers == null)
+                return;
+
+            Delegate[] invocationList = handlers.GetInvocationList();
+            Logger?.LogDebug($"{eventName} fired -> {invocationList.Length} subscriber(s)");
+            for (int i = 0; i < invocationList.Length; i++)
+            {
+                try
+                {
+                    ((Action<T1, T2>)invocationList[i])(first, second);
+                }
+                catch (Exception ex)
+                {
+                    LogSubscriberException(eventName, ex);
+                }
+            }
+        }
+
         // Always Debug, not IFlockLogger — subscriber bugs must surface even with SDK logging off.
         // Read through FlockExceptionText: a ToString that throws here would escape the catch into the SDK code raising the event.
         private static void LogSubscriberException(string eventName, Exception exception)

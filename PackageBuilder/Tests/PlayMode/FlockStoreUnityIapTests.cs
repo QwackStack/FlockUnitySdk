@@ -19,7 +19,7 @@ namespace Flock.Tests.PlayMode
 {
     // The adapter on Unity IAP 5's own StoreController and its fake store (the test project builds with IAP_FAKE_STORE_DEFAULT):
     // the store's real order reaches Flock, and only then does the store hear the purchase is finished.
-    public class FlockStorePurchasesUnityIapTests
+    public class FlockStoreUnityIapTests
     {
         private const string Catalog =
             "{\"items\":[{\"id\":\"shop-1\",\"name\":\"main\",\"shop_items\":[{\"id\":\"gems\",\"name\":\"gems\",\"type\":\"currency_pack\",\"price\":199," +
@@ -27,7 +27,7 @@ namespace Flock.Tests.PlayMode
 
         private FlockTestClient _h;
         private FlockFakeTransport _transport;
-        private FlockStorePurchases _purchases;
+        private FlockStore _purchases;
 
         [SetUp]
         public void SetUp()
@@ -64,16 +64,16 @@ namespace Flock.Tests.PlayMode
             watcher.OnPurchaseConfirmed += heardFinished;
             try
             {
-                Task<FlockStorePurchases> connecting = FlockStorePurchases.ConnectAsync(PaymentProviders.GooglePlay);
+                Task<FlockStore> connecting = FlockStore.ConnectAsync(PaymentProviders.GooglePlay);
                 yield return FlockTestWait.Until(() => connecting.IsCompleted, "Unity IAP connected and Flock's products registered");
                 Assert.IsFalse(connecting.IsFaulted, connecting.Exception?.GetBaseException().Message);
                 _purchases = connecting.Result;
 
-                Task<FlockStorePurchase> buying = _purchases.BuyAsync("gems");
+                Task<PurchaseResult> buying = FlockClient.Instance.Shop.PurchaseAsync("gems");
                 yield return FlockTestWait.Until(() => buying.IsCompleted, "The fake store's purchase was redeemed");
                 Assert.IsFalse(buying.IsFaulted, buying.Exception?.GetBaseException().Message);
 
-                Assert.AreEqual(FlockStorePurchaseOutcome.Delivered, buying.Result.Outcome);
+                Assert.IsTrue(buying.Result.IsPaid);
                 string sent = _transport.AllTo(FlockEndpoints.ShopValidateReceipt)[0].JsonBody;
                 StringAssert.Contains("\"provider\":\"google_play\"", sent);
                 StringAssert.Contains("\"product_id\":\"com.flock.gems\"", sent, "The store's own order names the item's product.");
@@ -87,7 +87,7 @@ namespace Flock.Tests.PlayMode
 
         private IEnumerator ConnectToTheFakeStore()
         {
-            Task<FlockStorePurchases> connecting = FlockStorePurchases.ConnectAsync(PaymentProviders.GooglePlay);
+            Task<FlockStore> connecting = FlockStore.ConnectAsync(PaymentProviders.GooglePlay);
             yield return FlockTestWait.Until(() => connecting.IsCompleted, "Unity IAP connected and Flock's products registered");
             Assert.IsFalse(connecting.IsFaulted, connecting.Exception?.GetBaseException().Message);
             _purchases = connecting.Result;
@@ -124,7 +124,7 @@ namespace Flock.Tests.PlayMode
         {
             yield return ConnectToTheFakeStore();
 
-            FlockStorePrice price = _purchases.GetStorePrice("gems");
+            FlockStorePrice price = _purchases.GetPrice("gems");
 
             Assert.IsNotNull(price, "The fake store found the product.");
             Assert.IsNotEmpty(price.Text);
@@ -140,7 +140,7 @@ namespace Flock.Tests.PlayMode
             yield return FlockTestWait.Until(() => restoring.IsCompleted, "The store answered the restore and listed its purchases");
 
             Assert.IsFalse(restoring.IsFaulted, restoring.Exception?.GetBaseException().Message);
-            Assert.AreEqual(0, restoring.Result.Problems.Count);
+            Assert.AreEqual(0, restoring.Result.NotDelivered.Count);
         }
 
         // Named as text: Unity IAP 5.3 has no UserNotAuthenticated, and a reason the installed version lacks is skipped.
@@ -164,10 +164,10 @@ namespace Flock.Tests.PlayMode
 
     // Live: the setup check against the real backend, whose Google Play keys for this game are asked about a made-up purchase.
     // Manual only: needs FlockConfig.asset, the backend, and the game's Google Play settings saved in the Flock dashboard.
-    public class FlockStorePurchasesLiveTests
+    public class FlockStoreLiveTests
     {
         private const string LiveDeviceId = "flock-sdk-live-shop";
-        private FlockStorePurchases _store;
+        private FlockStore _store;
 
         [TearDown]
         public void TearDown()
@@ -194,7 +194,7 @@ namespace Flock.Tests.PlayMode
             yield return FlockTestWait.Until(() => signIn.IsCompleted, "The live test device signed in");
             Assert.IsFalse(signIn.IsFaulted, signIn.Exception?.GetBaseException().Message);
 
-            Task<FlockStorePurchases> connecting = FlockStorePurchases.ConnectAsync(PaymentProviders.GooglePlay);
+            Task<FlockStore> connecting = FlockStore.ConnectAsync(PaymentProviders.GooglePlay);
             yield return FlockTestWait.Until(() => connecting.IsCompleted, "Unity IAP's fake store connected and Flock's products registered");
             Assert.IsFalse(connecting.IsFaulted, connecting.Exception?.GetBaseException().Message);
             _store = connecting.Result;
@@ -203,9 +203,9 @@ namespace Flock.Tests.PlayMode
             yield return FlockTestWait.Until(() => checking.IsCompleted, "The server asked Google Play about a made-up purchase", 30f);
             Assert.IsFalse(checking.IsFaulted, checking.Exception?.GetBaseException().Message);
             FlockStoreSetupCheck check = checking.Result;
-            Assert.IsTrue(check.FlockCanAskTheStore, check.StoreProblem?.Message);
-            Assert.IsNull(check.StoreProblem);
-            Assert.AreEqual(0, check.ItemsWithoutAProductId.Count, "Every real-money item of this game has a Google Play product id.");
+            Assert.IsTrue(check.ServerCanCheckPurchases, check.ServerProblem?.Message);
+            Assert.IsNull(check.ServerProblem);
+            Assert.AreEqual(0, check.MissingProductId.Count, "Every real-money item of this game has a Google Play product id.");
 
             // Counter-case: the same made-up purchase for an item with no Google Play product id is refused before Google is asked.
             ShopItem walletItem = null;
@@ -221,7 +221,7 @@ namespace Flock.Tests.PlayMode
             FlockException refusal = refused.Exception?.GetBaseException() as FlockException;
             Assert.IsNotNull(refusal, "Refused.");
             Assert.AreEqual(FlockErrorCode.PaymentProviderReceiptProductMismatch, refusal.ErrorCode, refusal.Message);
-            Debug.Log($"[Flock] Live setup check: Google Play answered the made-up purchase as unknown with this game's keys; {check.ProductsTheStoreDidNotFind.Count} products the fake store did not find.");
+            Debug.Log($"[Flock] Live setup check: Google Play answered the made-up purchase as unknown with this game's keys; {check.NotFoundInTheStore.Count} products the fake store did not find.");
         }
 
         private static async Task SignInAsync()

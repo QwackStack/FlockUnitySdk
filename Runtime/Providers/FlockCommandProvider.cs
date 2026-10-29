@@ -271,7 +271,7 @@ namespace Flock.Providers
                 return await FlockHttpClient.PostAsync<PlayerData>(
                     $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.CommandAddGameFunds}",
                     request, Client.GetBaseHeaders(), cancellationToken);
-            }, "Add game funds", cancellationToken, idempotent: false);
+            }, "Add game funds", cancellationToken, idempotent: false, spendsOrGrants: true);
 
             return ApplyToPlayerCache(result);
         }

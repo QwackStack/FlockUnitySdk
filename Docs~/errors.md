@@ -116,7 +116,7 @@ game's own keys); the receipt goes through once the keys are fixed.
 
 ## Money safety
 
-`AddGameFundsAsync` and shop `PurchaseAsync` never auto-retry ambiguous failures (a client timeout may have already committed on the server). They throw, and the caller decides. Only provably-unprocessed failures (HTTP 408/429) are retried automatically. See the [Shop guide](shop.md).
+A wallet `PurchaseAsync` carries one key for every attempt, so after an answer that never came it is sent again and the server answers the repeat with the first purchase. `AddGameFundsAsync`, `ConsumeAsync` and `ConsumeOneAsync` never auto-retry ambiguous failures (a timeout may have already committed on the server): only provably-unprocessed failures (HTTP 408/429) are retried. When any of these, or a store redemption, fails without an answer that says whether it was done, the exception's `OutcomeUnknown` is true: read the wallet and inventory before offering it again. A store that did not take a real-money payment throws `FlockStoreException`, whose `Reason` says why; nothing was charged. See the [Shop guide](shop.md).
 
 ## Coded-error reference
 

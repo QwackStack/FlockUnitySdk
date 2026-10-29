@@ -6,6 +6,49 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.95.0]
+
+One purchase call for every item, and plain names for the store calls. Everything renamed or removed here was new in 1.93.0
+or 1.94.0, neither of which shipped.
+
+### Added
+
+- **`Shop.PurchaseAsync(shopItemId)` buys any item**: from the wallet when it costs a game currency, through the store when it
+  costs real money, once `FlockStore.ConnectAsync` has connected it. With no store connected a real-money item is refused
+  before anything is sent, saying to connect one. A store purchase still waiting for its payment answers with `Status`
+  `pending`.
+- **`FlockException.OutcomeUnknown`**: true when a purchase, consume, fund grant or store redemption failed with no answer
+  saying whether it was done (no answer, a server error naming no cause, an answer that could not be read). Read the wallet and
+  inventory before offering it again. False for a refusal and for every read.
+- **`Shop.ConsumeOneAsync(shopItemId)`**: uses the first unused entry of a shop item the player holds; one used meanwhile on
+  another device is passed over, any other failure stops, and a player holding none is refused before anything is used.
+- **`PurchaseResult.Balances`** and **`ConsumeResult.Balances`**: the wallet after the call as a `FlockWallet`, or null when no
+  currency moved.
+- **`FlockStoreException`**, thrown when the store did not take the payment (nothing was charged); its `Reason` is one of
+  `FlockStoreFailureReasons`, `Cancelled` included.
+- In the generated code, **`ConsumeOneAsync(FlockShopItemId)`** and a public **`ShopItemId()`** for the calls that take an id.
+
+### Changed
+
+- **`FlockStorePurchases` is `FlockStore`**, and its purchase goes through `Shop.PurchaseAsync`: `BuyAsync` and
+  `FlockStorePurchase` / `FlockStorePurchaseOutcome` are gone. `Store` is `PaymentProvider`, `GetStorePrice` is `GetPrice`,
+  `PurchaseDelivered` is `PurchaseCompleted` (now raised for every real-money purchase Flock delivers, the ones the call answers
+  included, with the item and the result), `PurchaseNeedsAttention` is `PurchaseNotDelivered` (raised for every paid purchase
+  Flock did not deliver) with `FlockUndeliveredPurchase`, `FlockStoreRestore.Restored` lists the items and `Problems` is
+  `NotDelivered`, and `FlockStoreSetupCheck` reads `NotFoundInTheStore`, `MissingProductId`, `ServerCanCheckPurchases`,
+  `ServerProblem` and `IsReady`.
+- **Codegen puts every item back in `FlockShopItemId`**: `FlockStoreItemId` and its assembly are gone, and a sync removes the
+  `Shops/StoreItems/` folder 1.94.0 wrote. Sync again after upgrading.
+- **`Shop.PurchaseAsync(shopItemId, playerId)` is obsolete**: a purchase is for the signed-in player, and the server refuses any
+  other id. It still sends the player it names, from the wallet only.
+- **`ConsumeAsync` refuses a 2xx that names no inventory entry** (`FlockSerializationException`, with `OutcomeUnknown` set), as a
+  purchase does.
+- The shop sample buys through the one call and uses a consumable it holds ("Use").
+- `ShopItemTypes.Standard` and the shop guide say that only a store sells a standard item once: the wallet sells it again, so
+  check `GetOwnedItemCountsAsync` before offering a wallet one.
+- The errors guide's money section says which calls are sent again, which never are, and what `OutcomeUnknown` means.
+
+
 ## [1.94.0]
 
 Samples and testing. A shop sample, and the calls a shop screen needs: the store's price, the wallet, what the player owns, a
