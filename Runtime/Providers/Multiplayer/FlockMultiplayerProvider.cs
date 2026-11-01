@@ -19,14 +19,13 @@ namespace Flock.Providers
 
         public FlockMultiplayerProvider(FlockClient client) : base(client)
         {
-            _repeatingCalls = new FlockRepeatingCalls(client);
+            _repeatingCalls = client.RepeatingCalls;
             _queueNames = new FlockMatchmakingQueueNames(ReadQueuesAsync, client.Logger);
             _sessions = new FlockMultiplayerSessions(client, _repeatingCalls);
             _matchmaking = new FlockMatchmaking(client, _repeatingCalls, _sessions, FindQueueIdAsync, _queueNames.ForgetQueue);
             _parties = new FlockParties(client, _repeatingCalls, _matchmaking, client.InitConfig.PartyRefreshInterval);
         }
 
-        internal FlockRepeatingCalls RepeatingCalls => _repeatingCalls;
         internal FlockParties Parties => _parties;
         internal FlockMultiplayerSessions Sessions => _sessions;
         internal FlockMatchmaking Matchmaking => _matchmaking;
@@ -75,7 +74,7 @@ namespace Flock.Providers
             return _queueNames.FindIdAsync(queueName, cancellationToken);
         }
 
-        // Repeating calls run on the game's frames, so a web player needs no timers. Called once from FlockClient init.
+        // Its sessions' checks run on the game's frames, before the client sends the repeating calls due. Called once from FlockClient init.
         internal void StartFrameUpdates()
         {
             if (_frames != null || !Application.isPlaying)
@@ -89,7 +88,7 @@ namespace Flock.Providers
             _frames.OnQuit += HandleQuit;
         }
 
-        /// <summary>Stops every repeating call and lets go of the game's frames; runs when Flock shuts down.</summary>
+        /// <summary>Stops multiplayer's own work and lets go of the game's frames; runs when Flock shuts down, before the client stops every repeating call.</summary>
         internal void StopForShutdown()
         {
             if (_frames != null)
@@ -101,7 +100,6 @@ namespace Flock.Providers
             _parties.StopForShutdown();
             _matchmaking.StopForShutdown();
             _sessions.StopForShutdown();
-            _repeatingCalls.StopAll();
         }
 
         private void HandleFrame()
@@ -111,12 +109,11 @@ namespace Flock.Providers
             _sessions.EndIfSignInEnded();
             _sessions.TellIfTheRelayWasLost();
             _sessions.KeepReadingForRelayedPlayers();
-            _repeatingCalls.SendThoseDue();
         }
 
+        // The client stops the repeating calls on quitting; a search is cancelled and a seat left here.
         private void HandleQuit()
         {
-            _repeatingCalls.StopAll();
             _matchmaking.CancelForQuit();
             _sessions.LeaveForQuit();
         }

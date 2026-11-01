@@ -119,6 +119,104 @@ namespace Flock.Models
         public FlockWallet Balances => Wallet == null ? null : FlockWallet.From(Wallet);
     }
 
+    /// <summary>A web checkout the server opened for a real-money item: send the player to <see cref="PaymentUrl"/>. Nothing is paid or delivered until the gateway confirms; read how it ended with <c>Shop.GetPurchaseAsync(PurchaseId)</c>.</summary>
+    public class FlockCheckout
+    {
+        /// <summary>The purchase this checkout pays for, pending until the gateway confirms.</summary>
+        [JsonProperty("purchase_id")]
+        public string PurchaseId { get; set; }
+
+        /// <summary>The gateway it opened at, one of <see cref="PaymentProviders"/>.</summary>
+        [JsonProperty("provider")]
+        public string Provider { get; set; }
+
+        /// <summary>The gateway's payment page, to open in the player's browser.</summary>
+        [JsonProperty("payment_url")]
+        public string PaymentUrl { get; set; }
+
+        /// <summary>When the server closes it unpaid as expired (UTC); null when the server gave no time.</summary>
+        [JsonProperty("expires_at")]
+        public DateTime? ExpiresAt { get; set; }
+    }
+
+    /// <summary>One of the signed-in player's purchases as the server holds it now: where it has got to, what it was for and what it granted.</summary>
+    public class PlayerPurchase
+    {
+        [JsonProperty("id")]
+        public string Id { get; set; }
+
+        [JsonProperty("shop_item_id")]
+        public string ShopItemId { get; set; }
+
+        /// <summary>One of <see cref="ShopItemTypes"/>.</summary>
+        [JsonProperty("item_type")]
+        public string ItemType { get; set; }
+
+        /// <summary>Where it has got to, one of <see cref="PurchaseResultStatuses"/>: a web checkout is pending until it is paid, failed or expired.</summary>
+        [JsonProperty("status")]
+        public string Status { get; set; }
+
+        /// <summary>The price in the currency's smallest unit (cents, halalas) for a real currency.</summary>
+        [JsonProperty("price_amount")]
+        public long PriceAmount { get; set; }
+
+        [JsonProperty("price_currency")]
+        public string PriceCurrency { get; set; }
+
+        /// <summary>"wallet" for a game currency, "external" for a store or a web gateway.</summary>
+        [JsonProperty("settlement_method")]
+        public string SettlementMethod { get; set; }
+
+        /// <summary>The store or web gateway it was paid through, one of <see cref="PaymentProviders"/>; null for a wallet purchase.</summary>
+        [JsonProperty("payment_provider")]
+        public string PaymentProvider { get; set; }
+
+        /// <summary>What it granted at once, filled once paid.</summary>
+        [JsonProperty("granted")]
+        public List<ShopItemReward> Granted { get; set; } = new List<ShopItemReward>();
+
+        /// <summary>The inventory entry it left, filled once paid for an item that is kept; null for a currency pack.</summary>
+        [JsonProperty("player_inventory_id")]
+        public string PlayerInventoryId { get; set; }
+
+        [JsonProperty("created_at")]
+        public DateTime CreatedAt { get; set; }
+
+        [JsonProperty("settled_at")]
+        public DateTime? SettledAt { get; set; }
+
+        [JsonProperty("refunded_at")]
+        public DateTime? RefundedAt { get; set; }
+
+        /// <summary>When a pending web checkout is closed as expired (UTC).</summary>
+        [JsonProperty("expires_at")]
+        public DateTime? ExpiresAt { get; set; }
+
+        /// <summary>True once paid, so what it grants is the player's.</summary>
+        [JsonIgnore]
+        public bool IsPaid => string.Equals(Status, PurchaseResultStatuses.Paid, StringComparison.Ordinal);
+
+        /// <summary>True while the server still waits for the gateway to say how it ended.</summary>
+        [JsonIgnore]
+        public bool IsPending => string.Equals(Status, PurchaseResultStatuses.Pending, StringComparison.Ordinal);
+    }
+
+    // POST shop/checkout's body; the player is the one the token names, and what is left out is the server's default.
+    internal class CheckoutRequest
+    {
+        [JsonProperty("shop_item_id")]
+        public string ShopItemId { get; set; }
+
+        [JsonProperty("provider", NullValueHandling = NullValueHandling.Ignore)]
+        public string Provider { get; set; }
+
+        [JsonProperty("return_url", NullValueHandling = NullValueHandling.Ignore)]
+        public string ReturnUrl { get; set; }
+
+        [JsonProperty("cancel_url", NullValueHandling = NullValueHandling.Ignore)]
+        public string CancelUrl { get; set; }
+    }
+
     // Result of consuming an inventory item — the updated row plus whatever consuming it granted.
     public class ConsumeResult
     {

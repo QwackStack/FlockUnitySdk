@@ -1,4 +1,3 @@
-#if FLOCK_UNITY_IAP_5
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -545,6 +544,149 @@ namespace Flock.Tests.Editor
                 Assert.Catch<InvalidOperationException>(() => Connect(h, store));
 
                 CollectionAssert.Contains(store.Calls, "stop");
+            }
+        }
+
+        // One way to pay real money a client: a store connecting over a web checkout would take its place in Shop.PurchaseAsync.
+        [Test]
+        public void Connect_BesideAWebCheckout_IsRefused_AndTheWebCheckoutStays()
+        {
+            FakeStore store = new FakeStore();
+            using (FlockTestClient h = FlockTestClient.Create(Backend(FlockFakeTransport.Ok(Delivered))))
+            {
+                h.SetReachable(true);
+                FlockStore checkout = h.Run(() => FlockStore.ConnectAsync(null, null, new FlockStoreOptions(), CancellationToken.None));
+
+                FlockValidationException refused = Assert.Throws<FlockValidationException>(() => Connect(h, store));
+
+                StringAssert.Contains("Dispose it before connecting again", refused.Hint);
+                Assert.AreSame(checkout, h.Client.Shop.ConnectedStore, "The web checkout stays the way to pay.");
+                CollectionAssert.DoesNotContain(store.Calls, "connect", "The refused store was never connected.");
+                checkout.Dispose();
+            }
+        }
+
+        // The place is taken as the connect starts, so a second connect made while the store connects is refused at once and the store stays.
+        [Test]
+        public void AWebCheckoutConnect_WhileTheStoreConnects_IsRefused_AndTheStoreStays()
+        {
+            FakeStore store = new FakeStore();
+            Task<FlockStore> second = null;
+            store.OnConnect = () => second = FlockStore.ConnectAsync(null, null, new FlockStoreOptions(), CancellationToken.None);
+            using (FlockTestClient h = FlockTestClient.Create(Backend(FlockFakeTransport.Ok(Delivered))))
+            {
+                h.SetReachable(true);
+
+                FlockStore connected = Connect(h, store);
+
+                Assert.IsNotNull(second);
+                Assert.IsInstanceOf<FlockValidationException>(second.Exception?.GetBaseException(), "The second connect was refused at once.");
+                Assert.AreSame(connected, h.Client.Shop.ConnectedStore, "The store that connected first stays the way to pay.");
+                connected.Dispose();
+            }
+        }
+
+        // The public connect: a store is reached through the store library Unity IAP's assembly registers, and this build target's own way
+        // to pay is taken when nothing is named.
+        [TestCase(null)]
+        [TestCase("")]
+        [TestCase(PaymentProviders.GooglePlay)]
+        public void Connect_ThroughThePublicCall_ReachesAStoreThroughTheStoreLibrary(string named)
+        {
+            FakeStore store = new FakeStore();
+            Func<IFlockStoreConnection> library = FlockStore.StoreLibrary;
+            FlockStore.StoreLibrary = () => store;
+            try
+            {
+                using (FlockTestClient h = FlockTestClient.Create(Backend(FlockFakeTransport.Ok(Delivered))))
+                {
+                    h.SetReachable(true);
+
+                    FlockStore connected = h.Run(() => FlockStore.ConnectAsync(new FlockStoreOptions { PaymentProvider = named }));
+
+                    string expected = string.IsNullOrEmpty(named) ? FlockStore.PaymentProviderOfThisPlatform() : named;
+                    Assert.AreEqual(expected, connected.PaymentProvider);
+                    Assert.AreEqual(expected == null, connected.IsWebCheckout);
+                    Assert.AreEqual(expected != null, store.Calls.Contains("connect"), "A store is reached through the store library, a web checkout never.");
+                    if (expected != null)
+                        CollectionAssert.Contains(store.Calls, "register:" + Gems + ":consumable");
+                    connected.Dispose();
+                }
+            }
+            finally
+            {
+                FlockStore.StoreLibrary = library;
+            }
+        }
+
+        // Android and iOS builds pay through their store; every other build target through a web checkout with the game's one active gateway.
+        [Test]
+        public void ThisBuildTargetsWayToPay_IsItsStoreOnAPhone_AndAWebCheckoutElsewhere()
+        {
+#if UNITY_ANDROID
+            Assert.AreEqual(PaymentProviders.GooglePlay, FlockStore.PaymentProviderOfThisPlatform());
+#elif UNITY_IOS || UNITY_TVOS || UNITY_VISIONOS
+            Assert.AreEqual(PaymentProviders.AppleAppStore, FlockStore.PaymentProviderOfThisPlatform());
+#else
+            Assert.IsNull(FlockStore.PaymentProviderOfThisPlatform());
+#endif
+        }
+
+        // A phone's store rules forbid paying for digital goods elsewhere: without Unity IAP 5 a store is refused with the package to install,
+        // nothing is read or connected, and a real-money purchase opens no web checkout.
+        [TestCase(PaymentProviders.GooglePlay)]
+        [TestCase(PaymentProviders.AppleAppStore)]
+        public void Connect_AStore_WithoutUnityIap5_IsRefused_AndNoWebCheckoutOpens(string store)
+        {
+            Func<IFlockStoreConnection> library = FlockStore.StoreLibrary;
+            FlockStore.StoreLibrary = null;
+            FlockFakeTransport transport = Backend(FlockFakeTransport.Ok(Delivered));
+            try
+            {
+                using (FlockTestClient h = FlockTestClient.Create(transport))
+                {
+                    h.SetReachable(true);
+                    h.LoginAs("player-a");
+
+                    FlockValidationException refused = Assert.Throws<FlockValidationException>(() => h.Run(() => FlockStore.ConnectAsync(new FlockStoreOptions { PaymentProvider = store })));
+
+                    StringAssert.Contains("Unity IAP 5", refused.Message);
+#if FLOCK_UNITY_IAP_5
+                    // Unity IAP 5 is in this project, so its Flock connection was left out of the build.
+                    StringAssert.Contains("Flock.Shop.UnityIap", refused.Hint);
+#else
+                    StringAssert.Contains("com.unity.purchasing", refused.Hint);
+#endif
+                    Assert.IsNull(h.Client.Shop.ConnectedStore);
+                    Assert.AreEqual(0, transport.CountTo(FlockEndpoints.Shop + "?"), "Nothing was read for a connect that was refused.");
+                    Assert.Throws<FlockValidationException>(() => h.Run(() => h.Client.Shop.PurchaseAsync("gems")));
+                    Assert.AreEqual(0, transport.CountTo(FlockEndpoints.ShopCheckout), "No web checkout was opened instead.");
+                    Assert.DoesNotThrow(() => Connect(h, new FakeStore()).Dispose(), "The refused connect took no place.");
+                }
+            }
+            finally
+            {
+                FlockStore.StoreLibrary = library;
+            }
+        }
+
+        // A name Flock does not pay through, or a store library handed a gateway's name, is refused before anything is connected.
+        [TestCase("steam", false)]
+        [TestCase("", false)]
+        [TestCase(PaymentProviders.Stripe, true)]
+        public void Connect_ToWhatFlockDoesNotPayThrough_IsRefused(string paymentProvider, bool withAStoreLibrary)
+        {
+            FakeStore store = new FakeStore();
+            using (FlockTestClient h = FlockTestClient.Create(Backend(FlockFakeTransport.Ok(Delivered))))
+            {
+                h.SetReachable(true);
+
+                FlockValidationException refused = Assert.Throws<FlockValidationException>(() =>
+                    h.Run(() => FlockStore.ConnectAsync(withAStoreLibrary ? store : null, paymentProvider, new FlockStoreOptions(), CancellationToken.None)));
+
+                StringAssert.Contains("PaymentProviders", refused.Hint);
+                Assert.IsNull(h.Client.Shop.ConnectedStore);
+                CollectionAssert.DoesNotContain(store.Calls, "connect");
             }
         }
 
@@ -1127,4 +1269,3 @@ namespace Flock.Tests.Editor
         }
     }
 }
-#endif

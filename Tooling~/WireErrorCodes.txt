@@ -148,6 +148,7 @@ shop.currency_not_held
 shop.currency_template_not_found
 shop.idempotency_key_reused
 shop.insufficient_funds
+shop.invalid_purchase_status
 shop.item_not_found
 shop.item_not_for_sale
 shop.malformed_reward
@@ -249,7 +250,8 @@ shop.webhook_provider_unknown
 # dashboard's save of a provider's keys raises them; reading the stored keys raises credentials_unreadable alone.
 # The merge (backend main 644bf45, read 2026-10-26) adds two for calls no SDK makes yet: shop.invalid_purchase_status (an
 # unknown status filter on the player's purchase list, which web checkout will read). shop.idempotency_key_reused moved to
-# [documented] on 2026-10-28, when wallet purchases began carrying a key.
+# [documented] on 2026-10-28, when wallet purchases began carrying a key, and shop.invalid_purchase_status on 2026-10-31, when
+# web checkout began listing the player's pending purchases (1.98.0).
 dashboard.ai_generation_failed
 dashboard.ai_limiter_unavailable
 dashboard.ai_provider_unavailable
@@ -267,7 +269,6 @@ payment_provider.refund_failed
 payment_provider.unknown_provider
 shop.game_version_game_mismatch
 shop.game_version_not_found
-shop.invalid_purchase_status
 shop.name_already_exists
 shop.not_a_currency_pack
 shop.production_version_immutable

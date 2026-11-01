@@ -15,8 +15,9 @@ using UnityEngine.TestTools;
 
 namespace Flock.Tests.PlayMode
 {
-    // The calls multiplayer repeats (search checks, heartbeats, party refreshes), driven by the game's real frames: one request
-    // at a time, a late answer dropped by sign-in, and every call stopped by sign-out, a switch, Flock shutting down and quitting.
+    // The calls the SDK repeats (a web checkout's outcome, search checks, heartbeats, party refreshes), held by the client and driven by
+    // the game's real frames: one request at a time, a late answer dropped by sign-in, and every call stopped by sign-out, a switch, Flock
+    // shutting down and quitting.
     public class FlockRepeatingCallsTests
     {
         private const string Route = "probe/repeat";
@@ -40,7 +41,7 @@ namespace Flock.Tests.PlayMode
                 FlockClient.Shutdown();
         }
 
-        private FlockRepeatingCalls Calls => _h.Client.Multiplayer.RepeatingCalls;
+        private FlockRepeatingCalls Calls => _h.Client.RepeatingCalls;
 
         private FlockFakeTransport SignedIn(FlockHttpResponse answer)
         {
@@ -69,14 +70,14 @@ namespace Flock.Tests.PlayMode
                 yield return null;
         }
 
-        // Raises quitting for the provider's own handlers only, so the analytics' quit work does not run inside a test.
+        // Raises quitting for one object's own handlers only, so the analytics' quit work does not run inside a test.
         private static void RaiseQuitFor(object target)
         {
             FieldInfo field = typeof(FlockBehaviour).GetField("OnQuit", BindingFlags.Instance | BindingFlags.NonPublic);
             Assert.IsNotNull(field, "FlockBehaviour's quit event is where the test expects it");
             Action quit = (Action)field.GetValue(FlockBehaviour.Instance);
             Delegate[] handlers = quit == null ? new Delegate[0] : quit.GetInvocationList().Where(handler => handler.Target == target).ToArray();
-            Assert.AreEqual(1, handlers.Length, "The provider listens for quitting");
+            Assert.AreEqual(1, handlers.Length, "It listens for quitting");
             handlers[0].DynamicInvoke();
         }
 
@@ -311,14 +312,14 @@ namespace Flock.Tests.PlayMode
             int answers = 0;
             FlockRepeatingCall call = Calls.Start("poll", TimeSpan.FromSeconds(0.1), Send(tokens), _ => answers++, null);
             yield return FlockTestWait.Until(() => transport.CountTo(Route) == 1, "The request went");
-            FlockMultiplayerProvider provider = _h.Client.Multiplayer;
-            Assert.AreEqual(1, FrameHandlersOf(provider), "Precondition: the provider runs on the game's frames");
+            FlockRepeatingCalls calls = Calls;
+            Assert.AreEqual(1, FrameHandlersOf(calls), "Precondition: the repeating calls run on the game's frames");
 
             FlockClient.Shutdown();
 
             Assert.IsTrue(tokens[0].IsCancellationRequested, "The request on its way is called off");
             Assert.IsFalse(call.IsRunning);
-            Assert.AreEqual(0, FrameHandlersOf(provider), "The provider let go of the game's frames");
+            Assert.AreEqual(0, FrameHandlersOf(calls), "The repeating calls let go of the game's frames");
             transport.ReleaseGate();
             yield return RealSeconds(0.4f);
             Assert.AreEqual(0, answers);
@@ -335,7 +336,7 @@ namespace Flock.Tests.PlayMode
             yield return FlockTestWait.Until(() => transport.CountTo(Route) == 1, "The request went");
 
             // Raised through the event, not OnApplicationQuit, which would end FlockBehaviour for the rest of the run.
-            RaiseQuitFor(_h.Client.Multiplayer);
+            RaiseQuitFor(Calls);
 
             Assert.IsTrue(tokens[0].IsCancellationRequested, "The request on its way is called off");
             Assert.IsFalse(call.IsRunning);

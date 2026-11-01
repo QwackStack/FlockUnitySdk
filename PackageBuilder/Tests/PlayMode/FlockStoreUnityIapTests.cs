@@ -67,7 +67,7 @@ namespace Flock.Tests.PlayMode
             watcher.OnPurchaseConfirmed += heardFinished;
             try
             {
-                Task<FlockStore> connecting = FlockStore.ConnectAsync(PaymentProviders.GooglePlay);
+                Task<FlockStore> connecting = FlockStore.ConnectAsync(new FlockStoreOptions { PaymentProvider = PaymentProviders.GooglePlay });
                 yield return FlockTestWait.Until(() => connecting.IsCompleted, "Unity IAP connected and Flock's products registered");
                 Assert.IsFalse(connecting.IsFaulted, connecting.Exception?.GetBaseException().Message);
                 _purchases = connecting.Result;
@@ -90,7 +90,7 @@ namespace Flock.Tests.PlayMode
 
         private IEnumerator ConnectToTheFakeStore()
         {
-            Task<FlockStore> connecting = FlockStore.ConnectAsync(PaymentProviders.GooglePlay);
+            Task<FlockStore> connecting = FlockStore.ConnectAsync(new FlockStoreOptions { PaymentProvider = PaymentProviders.GooglePlay });
             yield return FlockTestWait.Until(() => connecting.IsCompleted, "Unity IAP connected and Flock's products registered");
             Assert.IsFalse(connecting.IsFaulted, connecting.Exception?.GetBaseException().Message);
             _purchases = connecting.Result;
@@ -197,7 +197,7 @@ namespace Flock.Tests.PlayMode
             yield return FlockTestWait.Until(() => signIn.IsCompleted, "The live test device signed in");
             Assert.IsFalse(signIn.IsFaulted, signIn.Exception?.GetBaseException().Message);
 
-            Task<FlockStore> connecting = FlockStore.ConnectAsync(PaymentProviders.GooglePlay);
+            Task<FlockStore> connecting = FlockStore.ConnectAsync(new FlockStoreOptions { PaymentProvider = PaymentProviders.GooglePlay });
             yield return FlockTestWait.Until(() => connecting.IsCompleted, "Unity IAP's fake store connected and Flock's products registered");
             Assert.IsFalse(connecting.IsFaulted, connecting.Exception?.GetBaseException().Message);
             _store = connecting.Result;

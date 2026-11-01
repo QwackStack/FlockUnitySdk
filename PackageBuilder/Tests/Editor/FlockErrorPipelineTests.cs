@@ -156,6 +156,8 @@ namespace Flock.Tests
             new object[] { 422, typeof(FlockValidationException), "{\"detail\":{\"code\":\"payment_provider.receipt_invalid\",\"message\":\"Receipt rejected: purchase state is 2, not purchased\"}}", FlockErrorCode.PaymentProviderReceiptInvalid },
             new object[] { 422, typeof(FlockValidationException), "{\"detail\":{\"code\":\"payment_provider.receipt_product_mismatch\",\"message\":\"Receipt is for 'gems_10', but this item sells 'gems_100'\"}}", FlockErrorCode.PaymentProviderReceiptProductMismatch },
             new object[] { 502, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"payment_provider.checkout_failed\",\"message\":\"Could not open a tap checkout: gateway timeout\"}}", FlockErrorCode.PaymentProviderCheckoutFailed },
+            // Read live on 2026-10-31: Stripe refusing a 1.99 SAR item for an account that settles in dirhams.
+            new object[] { 502, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"payment_provider.checkout_failed\",\"message\":\"Could not open a stripe checkout: {\\n  \\\"error\\\": {\\n    \\\"code\\\": \\\"amount_too_small\\\",\\n    \\\"message\\\": \\\"The Checkout Session's total amount must convert to at least 200 fils.\\\"\"}}", FlockErrorCode.PaymentProviderCheckoutFailed },
             new object[] { 404, typeof(FlockNetworkException), "{\"detail\":{\"code\":\"shop.purchase_not_found\",\"message\":\"Purchase not found\"}}", FlockErrorCode.ShopPurchaseNotFound },
             // The payment hardening's codes (backend fix/sdk-payment-hardening): the server's own messages, read in its code.
             new object[] { 422, typeof(FlockValidationException), "{\"detail\":{\"code\":\"payment_provider.receipt_invalid\",\"message\":\"Receipt rejected: could not read the transaction Apple returned\"}}", FlockErrorCode.PaymentProviderReceiptInvalid },
@@ -208,6 +210,8 @@ namespace Flock.Tests
             new object[] { FlockErrorCode.ShopRealCurrencySettlementUnavailable, "PAYMENT_WEBHOOK_BASE_URL is not configured", true },
             new object[] { FlockErrorCode.ShopWebhookProviderUnknown, "does not open web checkouts", true },
             new object[] { FlockErrorCode.ShopWebhookProviderUnknown, "Several payment providers are active", true },
+            new object[] { FlockErrorCode.PaymentProviderCheckoutFailed, "amount_too_small", true },
+            new object[] { FlockErrorCode.PaymentProviderCheckoutFailed, "raising the item's price", false },
             new object[] { FlockErrorCode.PaymentProviderReceiptInvalid, "could not read", true },
             new object[] { FlockErrorCode.PaymentProviderReceiptInvalid, "An older Flock server", false },
             new object[] { FlockErrorCode.PaymentProviderStoreUnavailable, "send the same receipt again later", false },

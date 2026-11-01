@@ -1,51 +1,37 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Threading;
 using System.Threading.Tasks;
 using Flock.Config;
 using Flock.Exceptions;
 using Flock.Models;
-using UnityEngine;
 
 namespace Flock.Providers
 {
-    /// <summary>Why a store did not take a payment (<see cref="FlockStoreException.Reason"/>). Strings rather than an enum, so a reason added later still reads.</summary>
-    public static class FlockStoreFailureReasons
+    /// <summary>How <see cref="FlockStore.ConnectAsync(FlockStoreOptions, CancellationToken)"/> pays real money; every setting can be left at its default.</summary>
+    public sealed class FlockStoreOptions
     {
-        /// <summary>The player cancelled in the store's dialog.</summary>
-        public const string Cancelled = "cancelled";
-        /// <summary>The player already owns this one-time product: show it as owned rather than for sale.</summary>
-        public const string AlreadyOwned = "already_owned";
-        /// <summary>An earlier purchase of this product is still waiting for its payment.</summary>
-        public const string AlreadyPending = "already_pending";
-        /// <summary>The store declined the payment (the App Store; Google Play reports a declined payment as <see cref="StoreUnavailable"/>).</summary>
-        public const string PaymentDeclined = "payment_declined";
-        /// <summary>The store does not sell this product here, or it is not set up in the store.</summary>
-        public const string ProductUnavailable = "product_unavailable";
-        /// <summary>The store could not be reached or purchases are switched off on this device; on Google Play, which reports both the same way, also a payment method it could not charge.</summary>
-        public const string StoreUnavailable = "store_unavailable";
-        /// <summary>Nobody is signed in to the store on this device.</summary>
-        public const string NotSignedInToTheStore = "not_signed_in_to_the_store";
-        /// <summary>Any other reason; the exception's message has the store's words.</summary>
-        public const string Unknown = "unknown";
+        /// <summary>What to pay through: null or empty for this platform's own (Google Play on Android, the App Store on iOS, tvOS and visionOS, a web checkout through the game's one active gateway everywhere else), or one of <see cref="PaymentProviders"/>: a store (a Mac App Store build names <see cref="PaymentProviders.AppleAppStore"/>; in the editor Unity IAP's fake store answers for it), or a web gateway (Stripe, Tap or Moyasar) when the game has several active.</summary>
+        public string PaymentProvider { get; set; }
+
+        /// <summary>On a web checkout, where the player's browser lands after paying; null leaves it to the server.</summary>
+        public string ReturnUrl { get; set; }
+
+        /// <summary>On a web checkout, where the player's browser lands after giving up; null uses <see cref="ReturnUrl"/>.</summary>
+        public string CancelUrl { get; set; }
+
+        /// <summary>On a web checkout, opens the gateway's payment page; null opens it with <c>Application.OpenURL</c>. On WebGL a browser may block a tab opened after an answer from the network, so a web game can show a button here whose click opens the page.</summary>
+        public Action<string> OpenPaymentPage { get; set; }
+
+        /// <summary>On a web checkout, how often a checkout waiting for its payment is read; 3 seconds when left at zero.</summary>
+        public TimeSpan CheckEvery { get; set; }
     }
 
-    /// <summary>The store did not take the payment for a real-money purchase, so nothing was charged. <see cref="Reason"/> says why; the message has the store's own words.</summary>
-    public sealed class FlockStoreException : FlockException
-    {
-        /// <summary>Why the store did not take the payment, one of <see cref="FlockStoreFailureReasons"/>.</summary>
-        public string Reason { get; }
-
-        internal FlockStoreException(string reason, string message) : base(message)
-        {
-            Reason = reason;
-        }
-    }
-
-    /// <summary>A product's price as the store shows it to this player: in their currency, with their taxes.</summary>
+    /// <summary>A real-money item's price to show this player: on a phone as the store shows it, in their currency and with their taxes; on a web checkout the item's own price.</summary>
     public sealed class FlockStorePrice
     {
-        /// <summary>The price as the store writes it, such as "SAR 4.59" or "$1.09": show this one.</summary>
+        /// <summary>The price written out, such as "SAR 4.59" or "$1.09": show this one.</summary>
         public string Text { get; }
 
         /// <summary>The price as a number, in <see cref="CurrencyCode"/>.</summary>
@@ -62,7 +48,7 @@ namespace Flock.Providers
         }
     }
 
-    /// <summary>What <see cref="FlockStore.RestoreAsync"/> found: the one-time items Flock holds for the signed-in player from the store's purchases, and the purchases it could not deliver.</summary>
+    /// <summary>What <see cref="FlockStore.RestoreAsync"/> found: the one-time items Flock holds for the signed-in player from the store's purchases, and the purchases it could not deliver; both empty on a web checkout.</summary>
     public sealed class FlockStoreRestore
     {
         /// <summary>The shop items Flock holds for the signed-in player from this store account's purchases; one delivered before grants nothing more.</summary>
@@ -87,25 +73,29 @@ namespace Flock.Providers
         /// <summary>Real-money items with no product id for this store: they cannot be bought here.</summary>
         public IReadOnlyList<ShopItem> MissingProductId { get; }
 
-        /// <summary>Whether Flock's server could ask the store about a purchase with the game's keys. False with <see cref="ServerProblem"/> set when it could not; false with no problem when there was no item to ask about.</summary>
+        /// <summary>Whether Flock's server could ask the store about a purchase with the game's keys. False with <see cref="ServerProblem"/> set when it could not; false with no problem when there was no item to ask about, or on a web checkout (see <see cref="NotChecked"/>).</summary>
         public bool ServerCanCheckPurchases { get; }
 
         /// <summary>Why Flock's server could not ask the store (its ErrorCode and Hint say what to fix), or null.</summary>
         public FlockException ServerProblem { get; }
 
-        /// <summary>True when nothing above needs fixing.</summary>
-        public bool IsReady => ServerCanCheckPurchases && NotFoundInTheStore.Count == 0 && MissingProductId.Count == 0;
+        /// <summary>What this check could not look at, and how to check it instead, or null: on a web checkout, the gateway.</summary>
+        public string NotChecked { get; }
 
-        internal FlockStoreSetupCheck(IReadOnlyList<ShopItem> notFound, IReadOnlyList<ShopItem> missingProductId, bool serverCanCheck, FlockException serverProblem)
+        /// <summary>True when nothing above needs fixing; never on a web checkout, where <see cref="NotChecked"/> says how to check it.</summary>
+        public bool IsReady => NotChecked == null && ServerCanCheckPurchases && NotFoundInTheStore.Count == 0 && MissingProductId.Count == 0;
+
+        internal FlockStoreSetupCheck(IReadOnlyList<ShopItem> notFound, IReadOnlyList<ShopItem> missingProductId, bool serverCanCheck, FlockException serverProblem, string notChecked = null)
         {
             NotFoundInTheStore = notFound;
             MissingProductId = missingProductId;
             ServerCanCheckPurchases = serverCanCheck;
             ServerProblem = serverProblem;
+            NotChecked = notChecked;
         }
     }
 
-    /// <summary>A store purchase the player paid for that Flock did not deliver. It stays unfinished in the store, which hands it back at the next launch to be sent again.</summary>
+    /// <summary>A store purchase the player paid for that Flock did not deliver. It stays unfinished in the store, which hands it back at the next launch to be sent again. A web checkout has none: Flock's server delivers it.</summary>
     public sealed class FlockUndeliveredPurchase
     {
         /// <summary>The shop item, or null when two shop items sell the store's product.</summary>
@@ -125,17 +115,89 @@ namespace Flock.Providers
         }
     }
 
-    /// <summary>The game's connection to Google Play or the App Store through Unity IAP 5. Connect it once at start; then <c>Shop.PurchaseAsync</c> buys real-money items through it: the store charges the player, Flock checks the purchase with the store and delivers the item, and the store's purchase is finished only once Flock delivered. A purchase Flock refused stays unfinished, so the store hands it back at the next launch, where it is sent again once the player is signed in.</summary>
+    // A store's product as Flock sells it: consumable, or one-time.
+    internal readonly struct FlockStoreProduct
+    {
+        public readonly string ProductId;
+        public readonly bool Consumable;
+
+        public FlockStoreProduct(string productId, bool consumable)
+        {
+            ProductId = productId;
+            Consumable = consumable;
+        }
+    }
+
+    // A purchase the store charged for; Handle is the store library's own order.
+    internal sealed class FlockStoreOrder
+    {
+        public readonly string ProductId;
+        public readonly string TransactionId;
+        public readonly object Handle;
+
+        public FlockStoreOrder(string productId, string transactionId, object handle)
+        {
+            ProductId = productId;
+            TransactionId = transactionId;
+            Handle = handle;
+        }
+    }
+
+    // A purchase the store did not take: the product, why (FlockStoreFailureReasons, Cancelled when the player cancelled), and the store's own words.
+    internal readonly struct FlockStoreFailure
+    {
+        public readonly string ProductId;
+        public readonly string Reason;
+        public readonly string Text;
+
+        public FlockStoreFailure(string productId, string reason, string text)
+        {
+            ProductId = productId;
+            Reason = reason;
+            Text = text;
+        }
+    }
+
+    // What FlockStore needs of a store library; Unity IAP 5 is the one a game uses.
+    internal interface IFlockStoreConnection
+    {
+        event Action<FlockStoreOrder> OrderPaid;
+        event Action<FlockStoreOrder> OrderDeferred;
+        event Action<FlockStoreFailure> OrderFailed;
+
+        Task ConnectAsync();
+        Task RegisterProductsAsync(IReadOnlyList<FlockStoreProduct> products, CancellationToken cancellationToken);
+        void SetAccountToken(string accountToken);
+        void Buy(string productId);
+        void Finish(FlockStoreOrder order);
+        void FetchUnfinishedPurchases();
+
+        // The store's own price of a registered product, or null when the store did not find the product.
+        FlockStorePrice PriceOf(string productId);
+
+        // Purchases the store says this store account already owns and has finished, after asking the store to restore them.
+        Task<IReadOnlyList<FlockStoreOrder>> FetchOwnedPurchasesAsync(CancellationToken cancellationToken);
+
+        void StopListening();
+    }
+
+    /// <summary>The game's way to pay real money, the same on every platform: connect it once at start, and <c>Shop.PurchaseAsync</c> buys real-money items through it. On a phone it is the store, through Unity IAP 5: the store charges the player, Flock checks the purchase with the store and delivers the item, and the store's purchase is finished only once Flock delivered; a purchase Flock refused stays unfinished, so the store hands it back at the next launch, where it is sent again once the player is signed in. Everywhere else it is a web checkout through the game's gateway (Stripe, Tap or Moyasar, connected in the Flock dashboard): the purchase opens the gateway's payment page in the browser and waits until it is paid, failed or expired, and a checkout left open when the game closed is found again at the player's next sign-in.</summary>
     public sealed class FlockStore : IDisposable, IFlockStoreCheckout
     {
-        /// <summary>Raised for every real-money purchase Flock delivers: one bought just now, one the store was waiting to be paid for, and one left unfinished at an earlier launch, and one a restore sent again (not the finished purchases <see cref="RestoreAsync"/> lists). Refresh the wallet and inventory here. Raised on the main thread.</summary>
+        /// <summary>Raised for every real-money purchase Flock delivers: one bought just now, one the store or the gateway was waiting to be paid for (a web checkout whose wait the game cancelled included), one left unfinished at an earlier launch or found open at a sign-in, and one a restore sent again (not the finished purchases <see cref="RestoreAsync"/> lists). Refresh the wallet and inventory here. The item is null when a web checkout's item can no longer be read. Raised on the main thread.</summary>
         public event Action<ShopItem, PurchaseResult> PurchaseCompleted;
 
-        /// <summary>Raised for every purchase the player paid for that Flock did not deliver; it stays unfinished in the store and is sent again at the next launch. Raised on the main thread.</summary>
+        /// <summary>Raised for every store purchase the player paid for that Flock did not deliver; it stays unfinished in the store and is sent again at the next launch. Never raised on a web checkout, which Flock's server delivers itself. Raised on the main thread.</summary>
         public event Action<FlockUndeliveredPurchase> PurchaseNotDelivered;
 
-        /// <summary>The store this connection buys from: <see cref="PaymentProviders.AppleAppStore"/> or <see cref="PaymentProviders.GooglePlay"/>.</summary>
+        /// <summary>What this connection pays through: <see cref="PaymentProviders.GooglePlay"/> or <see cref="PaymentProviders.AppleAppStore"/>, the web gateway named in <see cref="FlockStoreOptions.PaymentProvider"/>, or null for a web checkout through the game's one active gateway.</summary>
         public string PaymentProvider { get; }
+
+        /// <summary>True when purchases go through a web checkout (the gateway's payment page in the browser), false through a phone's store.</summary>
+        public bool IsWebCheckout => _connection == null;
+
+        // Unity IAP 5's connection, set by its assembly when the game has Unity IAP 5; a store is refused without it.
+        internal static Func<IFlockStoreConnection> StoreLibrary;
 
         private sealed class Buying
         {
@@ -143,7 +205,10 @@ namespace Flock.Providers
             public readonly TaskCompletionSource<PurchaseResult> Done = new TaskCompletionSource<PurchaseResult>();
         }
 
+        // Null on a web checkout, which pays through _web.
         private readonly IFlockStoreConnection _connection;
+        private readonly FlockStoreOptions _options;
+        private FlockWebCheckout _web;
         private readonly Dictionary<string, ShopItem> _itemsById = new Dictionary<string, ShopItem>();
         private readonly Dictionary<string, ShopItem> _itemByProduct = new Dictionary<string, ShopItem>();
         private readonly HashSet<string> _productsSoldTwice = new HashSet<string>();
@@ -165,55 +230,102 @@ namespace Flock.Providers
         // One connection a client: two would each send every purchase and raise every event.
         private static FlockStore _connected;
 
-        private FlockStore(IFlockStoreConnection connection, string paymentProvider)
+        private FlockStore(IFlockStoreConnection connection, string paymentProvider, FlockStoreOptions options)
         {
             _connection = connection;
             PaymentProvider = paymentProvider;
+            // Copied as connected, with the way to pay this connection checked, so a game changing its options later changes nothing here.
+            _options = new FlockStoreOptions
+            {
+                PaymentProvider = paymentProvider,
+                ReturnUrl = options.ReturnUrl,
+                CancelUrl = options.CancelUrl,
+                OpenPaymentPage = options.OpenPaymentPage,
+                CheckEvery = options.CheckEvery
+            };
         }
 
-        /// <summary>Connects Unity IAP's store, reads the game's shops and registers each item that has a product id for this store (a currency pack or consumable as a consumable product, a standard item as a one-time product); from then on <c>Shop.PurchaseAsync</c> buys real-money items through it. Once a player is signed in, purchases left unfinished are sent to Flock. <paramref name="store"/> is found from the platform on a phone; in the editor, where Unity IAP's fake store answers, name the store to test with. Connect once and keep the result: a second connect while it is connected is refused, so Dispose it before connecting again. A store that never answers is waited for until <paramref name="cancellationToken"/> is cancelled.</summary>
-        public static Task<FlockStore> ConnectAsync(string store = null, CancellationToken cancellationToken = default)
+        /// <summary>Connects the game's way to pay real money: <see cref="FlockStoreOptions.PaymentProvider"/>, or this platform's own when it is null or empty (Google Play on Android and the App Store on iOS, tvOS and visionOS, through Unity IAP 5; a web checkout everywhere else). It reads the game's shops; a store also registers each item that has a product id for it (a currency pack or consumable as a consumable product, a standard item as a one-time product) and sends Flock the purchases left unfinished once a player is signed in, and a web checkout reads the signed-in player's checkouts still open. From then on <c>Shop.PurchaseAsync</c> buys real-money items through it. A store is refused when Unity IAP 5 is not installed, never replaced by a web checkout, as a phone's store rules forbid paying for digital goods elsewhere. Connect once and keep the result: a second connect while it is connected is refused, so Dispose it before connecting again. A store that never answers is waited for until <paramref name="cancellationToken"/> is cancelled.</summary>
+        public static async Task<FlockStore> ConnectAsync(FlockStoreOptions options = null, CancellationToken cancellationToken = default)
         {
-            string chosen = store ?? StoreOfThisPlatform();
-            return ConnectAsync(new FlockUnityIapConnection(), chosen, cancellationToken);
+            FlockStoreOptions chosen = options ?? new FlockStoreOptions();
+            // Empty is a serialized string field left blank: the platform's own, as null is.
+            string paymentProvider = string.IsNullOrEmpty(chosen.PaymentProvider) ? PaymentProviderOfThisPlatform() : chosen.PaymentProvider;
+            if (!IsAStore(paymentProvider))
+                return await ConnectAsync(null, paymentProvider, chosen, cancellationToken);
+            if (StoreLibrary == null)
+                throw NoStoreLibrary(paymentProvider);
+            return await ConnectAsync(StoreLibrary(), paymentProvider, chosen, cancellationToken);
         }
 
-        internal static async Task<FlockStore> ConnectAsync(IFlockStoreConnection connection, string store, CancellationToken cancellationToken)
+        // The build target's own way to pay: its store on a phone, else a web checkout through the game's one active gateway (null).
+        internal static string PaymentProviderOfThisPlatform()
         {
-            FlockStore connected = new FlockStore(connection, store);
+#if UNITY_ANDROID
+            return PaymentProviders.GooglePlay;
+#elif UNITY_IOS || UNITY_TVOS || UNITY_VISIONOS
+            return PaymentProviders.AppleAppStore;
+#else
+            return null;
+#endif
+        }
+
+        internal static Task<FlockStore> ConnectAsync(IFlockStoreConnection connection, string store, CancellationToken cancellationToken)
+            => ConnectAsync(connection, store, new FlockStoreOptions(), cancellationToken);
+
+        // A store connection pays through a store; none, through a web checkout with the gateway named, or the game's one active gateway when null.
+        internal static async Task<FlockStore> ConnectAsync(IFlockStoreConnection connection, string paymentProvider, FlockStoreOptions options, CancellationToken cancellationToken)
+        {
+            FlockStore connected = new FlockStore(connection, paymentProvider, options);
             try
             {
-                if (store != PaymentProviders.AppleAppStore && store != PaymentProviders.GooglePlay)
-                    throw new FlockValidationException($"'{store}' is not a store Unity IAP buys from") { Hint = "Pass PaymentProviders.AppleAppStore or PaymentProviders.GooglePlay." };
+                bool paysThatWay = connection != null ? IsAStore(paymentProvider) : paymentProvider == null || FlockWebCheckout.IsWebGateway(paymentProvider);
+                if (!paysThatWay)
+                    throw new FlockValidationException($"'{paymentProvider}' is not a store or a web gateway Flock pays through")
+                    {
+                        Hint = "Leave FlockStoreOptions.PaymentProvider null for this platform's own, or name one of PaymentProviders: GooglePlay or AppleAppStore (a store, through Unity IAP 5), Stripe, Tap or Moyasar (a web checkout)."
+                    };
                 connected._client = FlockClient.Instance;
                 if (_connected != null && _connected._client == connected._client)
-                    throw new FlockValidationException("The store is already connected") { Hint = "Keep the FlockStore that ConnectAsync returned and use it everywhere, or Dispose it before connecting again." };
+                    throw new FlockValidationException("A way to pay real money is already connected") { Hint = "Keep the FlockStore that ConnectAsync returned and use it everywhere, or Dispose it before connecting again." };
                 _connected = connected;
-                // Listening first: a store hands back unfinished purchases as it connects, and those are held until the shops are read.
-                connected.ListenToTheStore();
-                await DoneOrCancelled(connection.ConnectAsync(), cancellationToken);
+                if (connection != null)
+                {
+                    // Listening first: a store hands back unfinished purchases as it connects, and those are held until the shops are read.
+                    connected.ListenToTheStore();
+                    await DoneOrCancelled(connection.ConnectAsync(), cancellationToken);
+                }
                 List<ShopItem> catalog = await connected.ReadCatalogAsync(cancellationToken);
-                List<FlockStoreProduct> products = connected.LearnProducts(catalog);
-                products.AddRange(connected.RememberProducts());
-                await connection.RegisterProductsAsync(products, cancellationToken);
+                connected.KnowItems(catalog);
+                if (connection != null)
+                {
+                    List<FlockStoreProduct> products = connected.LearnProducts(catalog);
+                    products.AddRange(connected.RememberProducts());
+                    await connection.RegisterProductsAsync(products, cancellationToken);
+                }
+                connected.BeReady();
+                connected._client.Shop.ConnectedStore = connected;
             }
             catch
             {
                 connected.Dispose();
                 throw;
             }
-            connected.BeReady();
             return connected;
         }
 
+        // A store sells the items it read at connect; a web checkout's item is read by the shop at each purchase, and checked again by the server as the checkout opens.
         ShopItem IFlockStoreCheckout.Find(string shopItemId)
-            => !_disposed && shopItemId != null && _itemsById.TryGetValue(shopItemId, out ShopItem item) ? item : null;
+            => !_disposed && _connection != null && shopItemId != null && _itemsById.TryGetValue(shopItemId, out ShopItem item) ? item : null;
 
-        // Shop.PurchaseAsync's real-money path: sets the signed-in player's account token on the store, starts the store's purchase and, once the
-        // store has charged, has Flock deliver it before the store's purchase is finished. A store that does not take the payment throws FlockStoreException.
+        // Shop.PurchaseAsync's real-money path. A store: sets the signed-in player's account token on the store, starts the store's purchase and, once the
+        // store has charged, has Flock deliver it before the store's purchase is finished. A web checkout: opens the checkout and waits for its payment.
+        // A store or gateway that does not take the payment throws FlockStoreException.
         async Task<PurchaseResult> IFlockStoreCheckout.PurchaseAsync(ShopItem shopItem, CancellationToken cancellationToken)
         {
             ThrowIfUnusable();
+            if (_connection == null)
+                return await _web.PurchaseAsync(shopItem, cancellationToken);
             string productId = ProductOf(shopItem?.Id, out ShopItem item);
             if (_buying.ContainsKey(productId))
                 throw new FlockValidationException("This product is already being bought") { Hint = "Wait for the first PurchaseAsync of it to end before starting another." };
@@ -244,19 +356,26 @@ namespace Flock.Providers
             }
         }
 
-        /// <summary>The item's price as the store shows it to this player, in their currency and with their taxes: show this rather than the item's Flock price. Null when the store did not find the item's product; throws for an item with no product id for this store.</summary>
+        /// <summary>A real-money item's price to show this player, rather than its Price in the currency's smallest unit. On a phone, as the store shows it, in their currency and with their taxes: null when the store did not find the item's product, and refused for an item with no product id for this store. On a web checkout, the item's own price.</summary>
         public FlockStorePrice GetPrice(string shopItemId)
         {
             ThrowIfUnusable();
+            if (_connection == null)
+                return PriceOfTheItem(KnownItem(shopItemId));
             return _connection.PriceOf(ProductOf(shopItemId, out ShopItem _));
         }
 
-        /// <summary>Asks the store for the one-time purchases this store account already owns and has Flock deliver each to the signed-in player; a purchase Flock delivered before grants nothing more. Purchases still unfinished, one Flock could not be reached for earlier in this launch included, are sent again and go through <see cref="PurchaseCompleted"/> or <see cref="PurchaseNotDelivered"/> as usual. One made for another Flock account is refused and listed in <see cref="FlockStoreRestore.NotDelivered"/>. Throws <see cref="FlockException"/> when the store cannot list the purchases (on Apple, also when the player does not sign in to the store); a store that never answers is waited for until <paramref name="cancellationToken"/> is cancelled.</summary>
+        /// <summary>Asks the store for the one-time purchases this store account already owns and has Flock deliver each to the signed-in player; a purchase Flock delivered before grants nothing more. Purchases still unfinished, one Flock could not be reached for earlier in this launch included, are sent again and go through <see cref="PurchaseCompleted"/> or <see cref="PurchaseNotDelivered"/> as usual. One made for another Flock account is refused and listed in <see cref="FlockStoreRestore.NotDelivered"/>. Throws <see cref="FlockException"/> when the store cannot list the purchases (on Apple, also when the player does not sign in to the store); a store that never answers is waited for until <paramref name="cancellationToken"/> is cancelled. On a web checkout Flock already holds what the player bought: the player's checkouts still open are read again (each one paid goes through <see cref="PurchaseCompleted"/>), and both lists are empty.</summary>
         public async Task<FlockStoreRestore> RestoreAsync(CancellationToken cancellationToken = default)
         {
             ThrowIfUnusable();
             if (!FlockClient.Instance.IsAuthenticated)
                 throw new FlockAuthException("No player is signed in") { Hint = FlockErrorHints.SignInFirst };
+            if (_connection == null)
+            {
+                await _web.FindOpenCheckoutsAsync(cancellationToken);
+                return new FlockStoreRestore(new List<ShopItem>(), new List<FlockUndeliveredPurchase>());
+            }
             // The player asked: an unfinished purchase whose send this launch has ended goes again when the fetch hands it over.
             _sentThisLaunch.RemoveWhere(transaction => !_sendingNow.Contains(transaction));
             IReadOnlyList<FlockStoreOrder> owned = await _connection.FetchOwnedPurchasesAsync(cancellationToken);
@@ -288,12 +407,14 @@ namespace Flock.Providers
             return new FlockStoreRestore(restored, notDelivered);
         }
 
-        /// <summary>Checks the store setup without buying anything: which real-money items the store did not find or have no product id for this store, and whether Flock's server can ask the store about a purchase with the game's keys (it is asked about a made-up purchase, which the store answers as unknown when the keys work). Needs a signed-in player.</summary>
+        /// <summary>Checks the store setup without buying anything: which real-money items the store did not find or have no product id for this store, and whether Flock's server can ask the store about a purchase with the game's keys (it is asked about a made-up purchase, which the store answers as unknown when the keys work). On a web checkout nothing can be asked without opening a checkout, so <see cref="FlockStoreSetupCheck.NotChecked"/> says how to check the gateway. Needs a signed-in player.</summary>
         public async Task<FlockStoreSetupCheck> CheckSetupAsync(CancellationToken cancellationToken = default)
         {
             ThrowIfUnusable();
             if (!FlockClient.Instance.IsAuthenticated)
                 throw new FlockAuthException("No player is signed in") { Hint = FlockErrorHints.SignInFirst };
+            if (_connection == null)
+                return new FlockStoreSetupCheck(new List<ShopItem>(), new List<ShopItem>(), false, null, WebGatewayNotChecked);
             List<ShopItem> notFound = new List<ShopItem>();
             List<ShopItem> missingProductId = new List<ShopItem>();
             ShopItem askAbout = null;
@@ -353,13 +474,20 @@ namespace Flock.Providers
                 throw new FlockValidationException("This store connection was made before the Flock client was created again") { Hint = "Dispose it and call FlockStore.ConnectAsync again once the new client is created." };
         }
 
-        // The store's product for a shop item this connection sells, or a refusal saying why there is none.
-        private string ProductOf(string shopItemId, out ShopItem item)
+        // A shop item read when this connection was made, or a refusal saying why there is none.
+        private ShopItem KnownItem(string shopItemId)
         {
             if (string.IsNullOrEmpty(shopItemId))
                 throw new FlockValidationException("Shop Item ID is empty") { Hint = "Pass the shop item's Id (ShopItem.Id)." };
-            if (!_itemsById.TryGetValue(shopItemId, out item))
+            if (!_itemsById.TryGetValue(shopItemId, out ShopItem item))
                 throw new FlockValidationException("That shop item was not in the game's shops when the store connected") { Hint = "Pass a ShopItem.Id from this game's shops. An item added in the Flock dashboard since then is sold once this connection is disposed and ConnectAsync runs again; an item or shop switched off (Inactive) there is not sold." };
+            return item;
+        }
+
+        // The store's product for a shop item this connection sells, or a refusal saying why there is none.
+        private string ProductOf(string shopItemId, out ShopItem item)
+        {
+            item = KnownItem(shopItemId);
             if (!item.StoreProductIds.TryGetValue(PaymentProvider, out string productId) || !IsSoldHere(item))
                 throw new FlockValidationException($"This shop item has no {PaymentProvider} product id") { Hint = $"Enter the item's {PaymentProvider} product id under Store product IDs on the shop item in the Flock dashboard, exactly as the store has it, then connect again." };
             return productId;
@@ -371,7 +499,7 @@ namespace Flock.Providers
                 ? StoreReceipt.FromAppleAppStore("0")
                 : StoreReceipt.FromGooglePlay(productId, "flock-setup-check");
 
-        /// <summary>Stops listening to the store and to sign-ins; <c>Shop.PurchaseAsync</c> no longer buys real-money items through it, and one still waiting ends as cancelled.</summary>
+        /// <summary>Stops listening to the store, the web checkouts and sign-ins; <c>Shop.PurchaseAsync</c> no longer buys real-money items through it, and one still waiting ends as cancelled. A web checkout paid afterwards is still delivered by the server, and found again at the next connect.</summary>
         public void Dispose()
         {
             if (_disposed)
@@ -381,10 +509,14 @@ namespace Flock.Providers
                 _connected = null;
             if (_client != null && _client.Shop != null && _client.Shop.ConnectedStore == this)
                 _client.Shop.ConnectedStore = null;
-            _connection.OrderPaid -= HandlePaid;
-            _connection.OrderDeferred -= HandleDeferred;
-            _connection.OrderFailed -= HandleFailed;
-            _connection.StopListening();
+            _web?.Dispose();
+            if (_connection != null)
+            {
+                _connection.OrderPaid -= HandlePaid;
+                _connection.OrderDeferred -= HandleDeferred;
+                _connection.OrderFailed -= HandleFailed;
+                _connection.StopListening();
+            }
             FlockEvents.OnAuthenticated -= HandleSignedIn;
             _waiting.Clear();
             foreach (Buying buying in new List<Buying>(_buying.Values))
@@ -392,19 +524,43 @@ namespace Flock.Providers
             _buying.Clear();
         }
 
-        private static string StoreOfThisPlatform()
+        // Without Unity IAP 5 in the project, what to install; with it, its Flock connection (Flock.Shop.UnityIap) was left out of the build.
+        private static FlockValidationException NoStoreLibrary(string paymentProvider)
         {
-            switch (Application.platform)
+            const string NeverAWebPage = " A phone's store rules forbid paying for digital goods elsewhere, so Flock never opens a web checkout instead.";
+#if FLOCK_UNITY_IAP_5
+            return new FlockValidationException($"'{paymentProvider}' is reached through Flock's Unity IAP 5 connection, which this build left out, so nothing was connected")
             {
-                case RuntimePlatform.Android:
-                    return PaymentProviders.GooglePlay;
-                case RuntimePlatform.IPhonePlayer:
-                case RuntimePlatform.tvOS:
-                case RuntimePlatform.OSXPlayer:
-                    return PaymentProviders.AppleAppStore;
-                default:
-                    throw new FlockValidationException($"No store sells in-app purchases on {Application.platform}") { Hint = "On a phone the store is found by itself. In the editor, where Unity IAP's fake store answers, name the store to test with: FlockStore.ConnectAsync(PaymentProviders.GooglePlay)." };
-            }
+                Hint = "Keep the assembly Flock.Shop.UnityIap in the build: a link.xml that strips it (or every assembly it does not name) drops it, and so does FLOCK_NO_SHOP in the Scripting Define Symbols." + NeverAWebPage
+            };
+#else
+            return new FlockValidationException($"'{paymentProvider}' is reached through Unity IAP 5, which this build does not have, so nothing was connected")
+            {
+                Hint = "Install In-App Purchasing 5 (com.unity.purchasing 5.x) from the Package Manager." + NeverAWebPage + " A game on Unity IAP 4 sends its store purchases with Shop.RedeemStoreReceiptAsync, as the SDK's Unity IAP 4 recipe does."
+            };
+#endif
+        }
+
+        private static bool IsAStore(string paymentProvider)
+            => paymentProvider == PaymentProviders.GooglePlay || paymentProvider == PaymentProviders.AppleAppStore;
+
+        private const string WebGatewayNotChecked = "The web gateway: Flock's server says whether one is connected only as a checkout opens. Buy a real-money item with the gateway's test keys connected in the Flock dashboard and its test card.";
+
+        // Currencies Flock's server counts in thousandths or in whole units; every other one in hundredths.
+        private static readonly HashSet<string> ThreeDigitCurrencies = new HashSet<string> { "BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND" };
+        private static readonly HashSet<string> WholeUnitCurrencies = new HashSet<string> { "BIF", "CLP", "DJF", "GNF", "ISK", "JPY", "KMF", "KRW", "PYG", "RWF", "UGX", "VND", "VUV", "XAF", "XOF", "XPF" };
+
+        // A web checkout charges the item's own price, kept in the currency's smallest unit.
+        private static FlockStorePrice PriceOfTheItem(ShopItem item)
+        {
+            if (!item.IsRealMoney)
+                throw new FlockValidationException($"'{item.Name}' is priced in a game currency, so it has no real-money price") { Hint = "Show a game-currency item's Price and Currency as they are; GetPrice is for real-money items." };
+            string currency = (item.Currency ?? string.Empty).ToUpperInvariant();
+            int digits = ThreeDigitCurrencies.Contains(currency) ? 3 : WholeUnitCurrencies.Contains(currency) ? 0 : 2;
+            decimal amount = item.Price;
+            for (int i = 0; i < digits; i++)
+                amount /= 10m;
+            return new FlockStorePrice(currency + " " + amount.ToString("N" + digits, CultureInfo.CurrentCulture), amount, currency);
         }
 
         private async Task<List<ShopItem>> ReadCatalogAsync(CancellationToken cancellationToken)
@@ -431,6 +587,14 @@ namespace Flock.Providers
             }
         }
 
+        // The items this connection sells and prices.
+        private void KnowItems(List<ShopItem> catalog)
+        {
+            foreach (ShopItem item in catalog)
+                if (item != null && !string.IsNullOrEmpty(item.Id))
+                    _itemsById[item.Id] = item;
+        }
+
         // A standard item is a one-time product; a currency pack or a consumable a consumable one; a kind added later is not sold here.
         private static bool IsSoldHere(ShopItem item)
             => item.Type == ShopItemTypes.Standard || item.Type == ShopItemTypes.CurrencyPack || item.Type == ShopItemTypes.Consumable;
@@ -442,7 +606,6 @@ namespace Flock.Providers
             {
                 if (item == null || string.IsNullOrEmpty(item.Id))
                     continue;
-                _itemsById[item.Id] = item;
                 if (!item.StoreProductIds.TryGetValue(PaymentProvider, out string productId) || string.IsNullOrEmpty(productId))
                     continue;
                 if (!IsSoldHere(item))
@@ -511,7 +674,12 @@ namespace Flock.Providers
         private void BeReady()
         {
             _ready = true;
-            _client.Shop.ConnectedStore = this;
+            if (_connection == null)
+            {
+                _web = new FlockWebCheckout(_client, _options, RaiseCompleted);
+                _web.Start();
+                return;
+            }
             FlockEvents.OnAuthenticated += HandleSignedIn;
             if (FlockClient.Instance.IsAuthenticated)
                 HandleSignedIn(null);
@@ -597,8 +765,11 @@ namespace Flock.Providers
             }
             _sendingNow.Remove(order.TransactionId);
             buying?.Done.TrySetResult(delivery);
-            FlockEvents.InvokeEach(PurchaseCompleted, item, delivery, $"{nameof(FlockStore)}.{nameof(PurchaseCompleted)}");
+            RaiseCompleted(item, delivery);
         }
+
+        private void RaiseCompleted(ShopItem item, PurchaseResult delivery)
+            => FlockEvents.InvokeEach(PurchaseCompleted, item, delivery, $"{nameof(FlockStore)}.{nameof(PurchaseCompleted)}");
 
         // Paid for an item the shops no longer list: its own read still finds a switched-off item, and Flock delivers what was paid for or says why not.
         private async void SendForAnItemNoLongerSold(FlockStoreOrder order, string shopItemId)

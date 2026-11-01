@@ -106,7 +106,7 @@ the `Hint` covers each, so read the reason before deciding what to tell the play
 | `PaymentProviderCredentialsUnreadable` | The keys stored for the provider cannot be read, or cannot be used (HTTP 503; a setting of the game, so trying again does not help) |
 | `ShopRealCurrencySettlementUnavailable` | No web checkout provider is connected and active (HTTP 422), or the Flock server has no address for payment confirmations (HTTP 503) |
 | `ShopWebhookProviderUnknown` | The provider named does not open web checkouts, or several are active and none was named |
-| `ShopPurchaseNotFound` | No purchase of the signed-in player has that id (another player's reads the same), or purchases were listed by a status the server does not have (HTTP 422) |
+| `ShopPurchaseNotFound` | No purchase of the signed-in player has that id (another player's reads the same), or, on a server from before `ShopInvalidPurchaseStatus`, purchases were listed by a status it does not have (HTTP 422) |
 | `PlayerInventoryInventoryEntryNotFound` | No entry has that id in this game, or, while a player is signed in, it is another player's entry |
 
 Two payment codes are never final: `PaymentProviderStoreUnavailable` (the store could not be asked) and
@@ -240,6 +240,7 @@ A wallet `PurchaseAsync` carries one key for every attempt, so after an answer t
 | `ShopCurrencyTemplateNotFound` | `shop.currency_template_not_found` |
 | `ShopIdempotencyKeyReused` | `shop.idempotency_key_reused` |
 | `ShopInsufficientFunds` | `shop.insufficient_funds` |
+| `ShopInvalidPurchaseStatus` | `shop.invalid_purchase_status` |
 | `ShopItemNotFound` | `shop.item_not_found` |
 | `ShopItemNotForSale` | `shop.item_not_for_sale` |
 | `ShopMalformedReward` | `shop.malformed_reward` |

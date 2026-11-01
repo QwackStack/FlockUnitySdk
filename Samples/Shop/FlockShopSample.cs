@@ -1,24 +1,22 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
 using Flock.Exceptions;
 using Flock.Models;
-#if FLOCK_UNITY_IAP_5
-using System.Threading;
 using Flock.Providers;
-#endif
 
 namespace Flock.Samples
 {
-    /// A shop screen: every item of the game's shops with its price (the store's own for a real-money item), what the player
-    /// owns, wallet items the player cannot pay for greyed out, and each purchase's outcome in plain words. Real-money items
-    /// are sold when Unity IAP 5 is installed, with Restore purchases and Check store setup beside them. Drop it on any
-    /// GameObject beside a FlockBootstrap and press Play; in the editor, Unity IAP's fake store answers for the store below.
+    /// A shop screen: every item of the game's shops with its price (the store's own for a real-money item on a phone), what the
+    /// player owns, wallet items the player cannot pay for greyed out, and each purchase's outcome in plain words. Real-money items
+    /// are sold through FlockStore: the store on a phone (with Unity IAP 5), a web checkout through the game's gateway on other
+    /// builds, with Check setup beside them, and Restore purchases on a phone. Drop it on any GameObject beside a FlockBootstrap and press Play.
     public class FlockShopSample : MonoBehaviour
     {
-        [Tooltip("The store to test with in the editor, where Unity IAP's fake store answers; a phone finds its own.")]
-        [SerializeField] private string editorStore = PaymentProviders.GooglePlay;
+        [Tooltip("Empty pays this build target's own way: Google Play on Android, the App Store on iOS, a web checkout elsewhere. Name google_play or apple_app_store to try Unity IAP's fake store in the editor.")]
+        [SerializeField] private string paymentProvider = "";
 
         private readonly List<ShopItem> _items = new List<ShopItem>();
         private readonly List<string> _lines = new List<string>();
@@ -27,10 +25,8 @@ namespace Flock.Samples
         private bool _opened;
         private bool _busy;
         private Vector2 _scroll;
-#if FLOCK_UNITY_IAP_5
         private FlockStore _store;
         private readonly Dictionary<string, FlockStorePrice> _storePrices = new Dictionary<string, FlockStorePrice>();
-#endif
 
         private void OnGUI()
         {
@@ -76,9 +72,7 @@ namespace Flock.Samples
 
         private void OnDestroy()
         {
-#if FLOCK_UNITY_IAP_5
             _store?.Dispose();
-#endif
         }
 
         // One button's work: the buttons are off while it runs, and a failure is shown (a Flock failure's message ends with its fix).
@@ -123,10 +117,8 @@ namespace Flock.Samples
         {
             _items.Clear();
             _items.AddRange(await ReadItemsAsync());
-#if FLOCK_UNITY_IAP_5
             if (_store == null && _items.Exists(item => item.IsRealMoney))
                 await ConnectTheStoreAsync();
-#endif
             await RefreshAsync();
             _opened = true;
             Say($"The shop has {_items.Count} items.");
@@ -202,13 +194,9 @@ namespace Flock.Samples
                 return "Owned";
             if (item.IsRealMoney)
             {
-#if FLOCK_UNITY_IAP_5
                 if (_store == null)
                     return "Store not connected";
                 return _storePrices.TryGetValue(item.Id, out FlockStorePrice price) && price != null ? null : "Not in the store";
-#else
-                return "Needs Unity IAP 5";
-#endif
             }
             // Without a wallet read the server decides, and says why when it refuses.
             if (_wallet != null && !_wallet.CanAfford(item))
@@ -220,11 +208,9 @@ namespace Flock.Samples
         {
             if (!item.IsRealMoney)
                 return $"{item.Price} {item.Currency}";
-#if FLOCK_UNITY_IAP_5
-            // The store's price is in the player's currency with their taxes, so it is the one to show.
+            // A phone's store gives its own price, in the player's currency with their taxes, so it is the one to show.
             if (_storePrices.TryGetValue(item.Id, out FlockStorePrice price) && price != null)
                 return price.Text;
-#endif
             return string.Empty;
         }
 
@@ -238,7 +224,7 @@ namespace Flock.Samples
             return balances.Count > 0 ? string.Join(", ", balances) : "empty";
         }
 
-        // One call for every item: the wallet pays for a game-currency one, the store for a real-money one.
+        // One call for every item: the wallet pays for a game-currency one, the store or the web checkout for a real-money one.
         private async Task BuyAsync(ShopItem item)
         {
             Say($"Buying {item.Name}...");
@@ -251,12 +237,10 @@ namespace Flock.Samples
             {
                 Say($"Not enough {item.Currency} for {item.Name}: nothing was bought.");
             }
-#if FLOCK_UNITY_IAP_5
             catch (FlockStoreException notTaken)
             {
                 Say(StoreAnswer(item, notTaken));
             }
-#endif
             catch (FlockException unknown) when (unknown.OutcomeUnknown)
             {
                 // No answer said whether it went through: what the player holds, read below, says which.
@@ -285,16 +269,15 @@ namespace Flock.Samples
 
         private void DrawStoreButtons()
         {
-#if FLOCK_UNITY_IAP_5
             if (_store == null)
                 return;
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button("Restore purchases", GUILayout.Height(40f)))
+            // A phone's store needs a restore button; a web checkout's purchases are already on Flock's server.
+            if (!_store.IsWebCheckout && GUILayout.Button("Restore purchases", GUILayout.Height(40f)))
                 Run(RestoreAsync);
             if (GUILayout.Button("Check store setup", GUILayout.Height(40f)))
                 Run(CheckSetupAsync);
             GUILayout.EndHorizontal();
-#endif
         }
 
         private static string Granted(List<ShopItemReward> granted)
@@ -313,14 +296,14 @@ namespace Flock.Samples
             Debug.Log("[Flock Shop Sample] " + line);
         }
 
-#if FLOCK_UNITY_IAP_5
         // A store that never answers is given up on after a while, so the wallet items still sell.
         private async Task ConnectTheStoreAsync()
         {
             try
             {
+                FlockStoreOptions options = new FlockStoreOptions { PaymentProvider = string.IsNullOrEmpty(paymentProvider) ? null : paymentProvider };
                 using (CancellationTokenSource wait = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
-                    _store = await FlockStore.ConnectAsync(Application.isEditor ? editorStore : null, wait.Token);
+                    _store = await FlockStore.ConnectAsync(options, wait.Token);
             }
             catch (FlockException failed)
             {
@@ -332,13 +315,13 @@ namespace Flock.Samples
                 Say("The store did not answer in 30 seconds, so real-money items cannot be bought now.");
                 return;
             }
-            // Every delivered store purchase, this screen's own included: the place to refresh what the player holds.
+            // Every delivered real-money purchase, this screen's own included: the place to refresh what the player holds.
             _store.PurchaseCompleted += (item, result) => RefreshInTheBackgroundAsync();
             _store.PurchaseNotDelivered += purchase => Say($"A purchase of {purchase.ProductId} was paid for but not delivered: {purchase.Error.Message}");
             foreach (ShopItem item in _items)
                 if (item.IsRealMoney)
                     _storePrices[item.Id] = StorePriceOf(item);
-            Say($"Connected to {_store.PaymentProvider}.");
+            Say(_store.IsWebCheckout ? $"Connected a web checkout through {_store.PaymentProvider ?? "the game's gateway"}." : $"Connected to {_store.PaymentProvider}.");
         }
 
         private FlockStorePrice StorePriceOf(ShopItem item)
@@ -368,6 +351,8 @@ namespace Flock.Samples
                     return $"A purchase of {item.Name} is already waiting for its payment.";
                 case FlockStoreFailureReasons.PaymentDeclined:
                     return "The payment was declined: nothing was charged.";
+                case FlockStoreFailureReasons.Expired:
+                    return "The checkout closed unpaid after an hour: nothing was charged.";
                 case FlockStoreFailureReasons.StoreUnavailable:
                     return "The store could not take the payment, so nothing was charged: check the connection and the way to pay, then try again.";
                 case FlockStoreFailureReasons.NotSignedInToTheStore:
@@ -391,6 +376,8 @@ namespace Flock.Samples
         private async Task CheckSetupAsync()
         {
             FlockStoreSetupCheck check = await _store.CheckSetupAsync();
+            if (check.NotChecked != null)
+                Say("Not checked: " + check.NotChecked);
             if (check.IsReady)
                 Say("The store setup is complete: the store has every real-money item, and Flock's server can ask it about purchases.");
             foreach (ShopItem missing in check.NotFoundInTheStore)
@@ -400,6 +387,5 @@ namespace Flock.Samples
             if (check.ServerProblem != null)
                 Say("Flock's server cannot ask the store about purchases: " + check.ServerProblem.Message);
         }
-#endif
     }
 }

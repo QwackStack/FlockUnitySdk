@@ -6,6 +6,56 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.98.0]
+
+Web checkout, and one way to pay real money on every platform: `FlockStore` pays through the store on a phone and through the
+game's web payment gateway (Stripe, Tap or Moyasar) on Windows, macOS, Linux and WebGL, with the same calls everywhere.
+
+### Added
+
+- **Web checkout through `FlockStore`**: on a build target with no phone store, `FlockStore.ConnectAsync()` connects the game's
+  web gateway, and `Shop.PurchaseAsync(shopItemId)` buys a real-money item through it: it opens a checkout, opens the gateway's
+  payment page in the browser and waits until the purchase is paid (returned like any purchase), or failed or expired
+  (`FlockStoreException` with `PaymentDeclined` or `Expired`; nothing is charged). `PurchaseCompleted` is raised once for every
+  paid checkout: the call's own, one whose wait the game cancelled, and one found open at the player's next sign-in after a
+  restart. A wait ends with the sign-in it began under, and with Flock shutting down.
+- **`FlockStoreOptions`**: `PaymentProvider` (a store or a gateway; null for the build target's own), and for a web checkout the
+  browser's return and cancel addresses, how often a checkout is read (3 seconds) and how the page opens (for a WebGL button,
+  where a browser may block a tab opened after an answer from the network). **`FlockStore.IsWebCheckout`**, and
+  **`FlockStoreSetupCheck.NotChecked`**: on a web checkout only a checkout shows whether a gateway is connected.
+- **`Shop.StartCheckoutAsync`, `Shop.GetPurchaseAsync` and `Shop.GetPurchasesAsync`**, for a game that runs its own checkout flow:
+  open a checkout (`FlockCheckout`: the purchase id, the gateway, the payment page, when it expires), read one of the signed-in
+  player's purchases (`PlayerPurchase`), and list them by status. A checkout is never sent again after an answer that did not come,
+  so it never opens twice.
+- **`FlockErrorCode.ShopInvalidPurchaseStatus`** (`shop.invalid_purchase_status`): purchases listed by a status the server does not
+  have; and **`FlockStoreFailureReasons.Expired`**.
+
+### Changed
+
+- **`FlockStore` is in the core package** and connects with `FlockStore.ConnectAsync(FlockStoreOptions)` (was
+  `ConnectAsync(string store)`). With nothing named (null or empty) it pays the build target's way: Google Play on Android and
+  the App Store on iOS, tvOS and visionOS, through Unity IAP 5, and a web checkout everywhere else, macOS included (a Mac App
+  Store build names `PaymentProviders.AppleAppStore`). In the editor the build target decides, so with Unity IAP 5 installed an
+  Android project's Play button uses Unity IAP's fake store. A store without Unity IAP 5 installed is refused with what to install, never sent to a web page. Its members mean
+  the same on every platform: `GetPrice` is the item's own price through a web checkout (in its currency's digits, so 799 SAR
+  reads `SAR 7.99`), `RestoreAsync` reads the open checkouts again, and `PurchaseNotDelivered` is never raised there.
+- `FlockStoreException` and `FlockStoreFailureReasons` are in the core package now, so a store and a web checkout fail the same way;
+  the namespace is unchanged.
+- The fixes for `ShopRealCurrencyNeedsCheckout`, `ShopNotARealCurrencyItem` and `ShopWebhookProviderUnknown` name the SDK's web
+  checkout calls and `FlockStoreOptions.PaymentProvider`; a real-money purchase with nothing connected says to connect
+  `FlockStore`.
+- The shop sample sells real-money items on every build target, with Restore purchases on a phone.
+- The fix for `PaymentProviderCheckoutFailed` also names a price below the smallest amount the gateway charges (Stripe answers
+  `amount_too_small`): raise the item's price.
+
+### Fixed
+
+- A checkout this game just opened that reads as not found is read again for up to 30 seconds: the server can save a new checkout
+  a moment after answering, and the wait no longer ends with `ShopPurchaseNotFound` while the checkout is open.
+- A session an earlier launch left unended, registered as its end is sent, is ended again for a few seconds when it reads as not
+  found: the server saves a new session a moment after answering (184 ms measured on a phone), and its end was dropped, leaving the
+  session open on the server.
+
 ## [1.97.0]
 
 The store release check: every player build, both install paths, codegen and the upgrade from 1.89.2, measured, with what it found.
@@ -24,6 +74,8 @@ The store release check: every player build, both install paths, codegen and the
   item's `AlreadyOwned` fix tells the game to restore. Restore now sends each such purchase again (one still being sent is
   left to its send, so it is never sent twice); it is finished once delivered and reported through `PurchaseCompleted`.
   Measured on a phone: paid while Flock was unreachable, Google's "already owned", then Restore.
+- **`GamePatchGameConfigNotFound`'s fix names the cause a game meets**: a config id no config of the game has (another game's, or
+  deleted), with codegen to sync; it said the patch pointed at a deleted config, which only the dashboard's patch editing meets.
 
 ### Documentation
 
@@ -41,6 +93,8 @@ The store release check: every player build, both install paths, codegen and the
   a cancel, a declined card, a slow card approved minutes later, a payment Flock could not be reached for (delivered once at the
   next launch), an item switched off after the store connected (refused before Google's sheet) and an unfinished purchase of it
   (still delivered), and restore after the app's data was cleared.
+- Production: the purchase paths' run in Windows players (Mono and IL2CPP), and the release's live checks (player data, a write
+  queued offline, an event, a config), against a test game; the tests ship as `FlockReleaseLiveTests`, run by hand.
 
 ## [1.96.0]
 

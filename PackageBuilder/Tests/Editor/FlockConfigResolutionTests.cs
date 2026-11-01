@@ -3,6 +3,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Flock.Config;
+using Flock.Exceptions;
 using Flock.Http;
 using NUnit.Framework;
 
@@ -27,11 +28,12 @@ namespace Flock.Tests
         {
             private readonly string _patchesBody;
             private readonly string _configBody;
-            public RoutingAdapter(string patchesBody, string configBody) { _patchesBody = patchesBody; _configBody = configBody; }
+            private readonly int _patchesStatus;
+            public RoutingAdapter(string patchesBody, string configBody, int patchesStatus = 200) { _patchesBody = patchesBody; _configBody = configBody; _patchesStatus = patchesStatus; }
             public Task<FlockHttpResponse> SendAsync(FlockHttpRequest request, CancellationToken cancellationToken)
             {
-                string body = request.Url.Contains("/game_patch/") ? _patchesBody : _configBody;
-                return Task.FromResult(new FlockHttpResponse { Result = FlockHttpResult.Success, StatusCode = 200, Body = body });
+                bool patches = request.Url.Contains("/game_patch/");
+                return Task.FromResult(new FlockHttpResponse { Result = FlockHttpResult.Success, StatusCode = patches ? _patchesStatus : 200, Body = patches ? _patchesBody : _configBody });
             }
         }
 
@@ -80,6 +82,16 @@ namespace Flock.Tests
             FlockHttpClient.Configure(new RoutingAdapter(NoPatches, ConfigBody(100)));
             TestConfig result = Run(() => FlockClient.Instance.Config.GetByConfigIdAsync<TestConfig>(ConfigId, CancellationToken.None));
             Assert.AreEqual(100, result.Coins);
+        }
+
+        // Measured on production: the patch route answers an id no config of the game has, and the fix names that cause.
+        [Test]
+        public void AnIdNoConfigHas_IsRefused_WithAFixForAWrongId()
+        {
+            FlockHttpClient.Configure(new RoutingAdapter("{\"detail\":{\"code\":\"game_patch.game_config_not_found\",\"message\":\"Game config with ID 'cfg1' not found\"}}", ConfigBody(100), 404));
+            FlockException refused = Assert.Catch<FlockException>(() => Run(() => FlockClient.Instance.Config.GetByConfigIdAsync<TestConfig>(ConfigId, CancellationToken.None)));
+            Assert.AreEqual(FlockErrorCode.GamePatchGameConfigNotFound, refused.ErrorCode);
+            StringAssert.Contains("No config in this game has this id", refused.Hint);
         }
     }
 }

@@ -10,11 +10,11 @@
 | Show the player's balances | `Player.GetWalletAsync()`, then `wallet.BalanceOf("Gold")` |
 | Grey out what they cannot pay for | `wallet.CanAfford(item)` (false for a real-money item) |
 | Show what they own | `Shop.GetOwnedItemCountsAsync()`, or `Shop.OwnsAsync(item.Id)` |
-| Show a real-money item's price | `store.GetPrice(item.Id).Text`, the store's price in the player's currency |
-| Buy any item | `Shop.PurchaseAsync(item.Id)`: the wallet pays for a game currency, the store for real money |
+| Show a real-money item's price | `store.GetPrice(item.Id).Text`: on a phone the store's price in the player's currency, else the item's own |
+| Buy any item | `Shop.PurchaseAsync(item.Id)`: the wallet pays for a game currency, `FlockStore` for real money |
 | Tell "not enough currency" | catch `FlockException` with `ErrorCode == FlockErrorCode.ShopInsufficientFunds` |
 | Tell "no longer for sale" (switched off in the dashboard) | catch `FlockException` with `ErrorCode == FlockErrorCode.ShopItemNotForSale`, then read the shop again |
-| Tell "the store did not take the payment" | catch `FlockStoreException`, and read its `Reason` (`Cancelled`, `PaymentDeclined`, `AlreadyOwned`...) |
+| Tell "the payment was not taken" | catch `FlockStoreException`, and read its `Reason` (`Cancelled`, `PaymentDeclined`, `Expired`, `AlreadyOwned`...) |
 | Handle "no answer came" | catch `FlockException` with `OutcomeUnknown`, then read the wallet and inventory again |
 | Handle "waiting for the payment" | `bought.IsPaid` is false; `store.PurchaseCompleted` reports it once paid |
 | Use a consumable the player holds | `Shop.ConsumeOneAsync(item.Id)` |
@@ -29,8 +29,8 @@ var shops = await FlockClient.Instance.Shop.GetAllAsync(page: 1, limit: 10);
 var shop = await FlockClient.Instance.Shop.GetByIdAsync("shop-id");
 var item = await FlockClient.Instance.Shop.GetItemAsync("shop-item-id");
 var items = await FlockClient.Instance.Shop.GetItemsByShopAsync("shop-id");
-// One call buys any item for the signed-in player: from the wallet when it costs a game currency, through the store
-// (FlockStore, below) when it costs real money. It takes the shop item's Id (ShopItem.Id, from the shop's ShopItems): not the
+// One call buys any item for the signed-in player: from the wallet when it costs a game currency, through FlockStore
+// (below: the store on a phone, a web checkout elsewhere) when it costs real money. It takes the shop item's Id (ShopItem.Id, from the shop's ShopItems): not the
 // item's name, and not the shop's id. Catch FlockException and check e.ErrorCode for specific reasons (e.g.
 // FlockErrorCode.ShopInsufficientFunds, ShopWalletNotFound); e.Message says what went wrong and, on a "Fix:" line, how to fix it.
 PurchaseResult purchase = await FlockClient.Instance.Shop.PurchaseAsync(item.Id);
@@ -70,7 +70,7 @@ is a string compared against `ShopItemRewardTypes.Currency` rather than an enum:
 typed entries so new kinds can appear without a schema migration, and an unknown value must not break
 deserialization.
 
-A wallet purchase is paid at once, so its `Status` reads `paid` (`IsPaid` is true). A real-money item goes through the store
+A wallet purchase is paid at once, so its `Status` reads `paid` (`IsPaid` is true). A real-money item goes through `FlockStore`,
 connected with `FlockStore.ConnectAsync`; with none connected the call refuses it before anything is sent and says to connect
 one. `Status` is one of `PurchaseResultStatuses` (`pending`, `paid`, `failed`, `expired`, `refunded`), a string for the same
 reason as `reward.Type`, and reads `paid` when the server leaves it out. A purchase or consume that reports a wallet also
@@ -158,9 +158,9 @@ catch (FlockException e) when (e.ErrorCode == FlockErrorCode.ShopInsufficientFun
 {
     // Not enough of the item's currency: nothing was bought.
 }
-catch (FlockStoreException e)   // with Unity IAP 5 installed
+catch (FlockStoreException e)   // a real-money item, through the store or a web checkout
 {
-    // The store did not take the payment (e.Reason: cancelled, payment declined, already owned...): nothing was charged.
+    // The payment was not taken (e.Reason: cancelled, payment declined, expired, already owned...): nothing was charged.
 }
 catch (FlockException e) when (e.OutcomeUnknown)
 {
@@ -182,8 +182,8 @@ catch (FlockException e) when (e.OutcomeUnknown)
   for the next; any other failure stops, so one call never uses two. It is refused, before anything is used, when the player holds
   none.
 
-The `Samples/Shop` folder has a one-screen shop built on these calls (`FlockShopSample`), with store items when Unity IAP 5 is
-installed.
+The `Samples/Shop` folder has a one-screen shop built on these calls (`FlockShopSample`), with real-money items through the
+store on a phone and through a web checkout on other build targets.
 
 ## Store purchases
 
@@ -223,16 +223,18 @@ catch (FlockException e)
 - **Revenue is recorded by the server**, once per store purchase, at the item's `Price` and `Currency`; the SDK records no
   analytics transaction for a store purchase (a wallet purchase's, which it does record, is never counted as revenue).
 
-## Buying with Unity IAP 5
+## Buying with real money: FlockStore
 
-With Unity IAP 5 in the project (`com.unity.purchasing` 5.x), connect `FlockStore` once at start; from then on
-`Shop.PurchaseAsync` buys real-money items through it: the store charges the player, Flock checks it with the store and delivers
-the item, and only then is the store's purchase finished. It is compiled only when Unity IAP 5 is installed, so a game without
-it carries none of it. On Android, set **Minimum API Level** to 23 or higher (Player Settings > Other Settings): Unity IAP 5's
-Google Play Billing library needs it, and a Unity 2021.3 project starts at 22, so its build stops at Gradle's manifest merge.
+Connect `FlockStore` once at start; from then on `Shop.PurchaseAsync` buys real-money items through it, with the same calls on
+every platform. On Android and iOS it is the store, through Unity IAP 5 (`com.unity.purchasing` 5.x): the store charges the
+player, Flock checks it with the store and delivers the item, and only then is the store's purchase finished. On every other
+build target it is a web checkout through the game's gateway ([below](#through-a-web-checkout)). Without Unity IAP 5 a phone's
+store is refused, with what to install; a phone's player is never sent to a web page instead, as the stores' rules forbid it for
+digital goods. On Android, set **Minimum API Level** to 23 or higher (Player Settings > Other Settings): Unity IAP 5's Google
+Play Billing library needs it, and a Unity 2021.3 project starts at 22, so its build stops at Gradle's manifest merge.
 
 ```csharp
-// Once, after FlockClient.Create. On a phone the store is found by itself.
+// Once, after FlockClient.Create: the store on a phone, a web checkout on other build targets.
 FlockStore store = await FlockStore.ConnectAsync();
 // Every real-money purchase Flock delivers, the ones PurchaseAsync answers included: refresh the wallet and inventory here.
 store.PurchaseCompleted += (item, result) => RefreshTheShopScreen();
@@ -240,14 +242,18 @@ store.PurchaseNotDelivered += purchase => Debug.LogWarning($"{purchase.ProductId
 
 PurchaseResult bought = await FlockClient.Instance.Shop.PurchaseAsync(item.Id);   // the same call as for a wallet item
 
-// The price the store shows this player, in their currency with their taxes; null when the store did not find the product.
+// The price to show: on a phone the store's, in the player's currency with their taxes (null when the store did not find
+// the product); through a web checkout the item's own.
 FlockStorePrice price = store.GetPrice(item.Id);
-FlockStoreRestore restore = await store.RestoreAsync();          // one-time items this store account already owns
+FlockStoreRestore restore = await store.RestoreAsync();          // on a phone, one-time items this store account already owns
 FlockStoreSetupCheck check = await store.CheckSetupAsync();      // what is missing from the setup, without buying anything
 ```
 
-- **`ConnectAsync`** reads the game's shops and registers each item that has a product id for this store: a currency pack or
-  consumable as a consumable product, a standard item as a one-time product (other kinds are not sold here). Connect once and
+- **`ConnectAsync`** pays this build target's own way unless `FlockStoreOptions.PaymentProvider` names another: a Mac App Store
+  build names `PaymentProviders.AppleAppStore`, and a game with several active gateways names `Stripe`, `Tap` or `Moyasar`.
+  `IsWebCheckout` and `PaymentProvider` say which it connected. It reads the game's shops; a store also registers each item that
+  has a product id for it: a currency pack or consumable as a consumable product, a standard item as a one-time product (other
+  kinds are not sold here). Connect once and
   keep the result: a second `ConnectAsync` while it is connected is refused, so `Dispose` it before connecting again (an item
   added in the Flock dashboard later is sold from the next connection). A connection made before the Flock client was created
   again no longer acts; connect again under the new client. Once disposed, `PurchaseAsync` refuses real-money items again.
@@ -273,24 +279,56 @@ FlockStoreSetupCheck check = await store.CheckSetupAsync();      // what is miss
   player is signed in, each is sent to Flock once a launch: delivered ones raise `PurchaseCompleted`, refused ones
   `PurchaseNotDelivered` and stay unfinished for the next launch. Store purchases of products no Flock item sells are left to
   the game. A product two items share is sold only through `PurchaseAsync`, which names the item.
-- **In the editor** Unity IAP's fake store answers (define `IAP_FAKE_STORE_DEFAULT` to buy without its dialog). Name the store to
-  test with, `ConnectAsync(PaymentProviders.GooglePlay)`; the account token is not set there, and Flock refuses the fake
-  store's purchases, so try a real purchase in the store's sandbox on a device.
-- **`GetPrice`** reads the store's product: `Text` to show, `Amount` and `CurrencyCode`. Show it rather than the item's
-  Flock `Price`. It throws for an item with no product id for this store.
+- **In the editor** the build target picks, and Unity IAP's fake store answers for a store (define `IAP_FAKE_STORE_DEFAULT` to
+  buy without its dialog): switch the build target to Android or iOS, or name the store,
+  `ConnectAsync(new FlockStoreOptions { PaymentProvider = PaymentProviders.GooglePlay })`. The account token is not set there,
+  and Flock refuses the fake store's purchases, so try a real purchase in the store's sandbox on a device.
+- **`GetPrice`** gives `Text` to show, `Amount` and `CurrencyCode`: on a phone the store's product, else the item's own price
+  (its `Price` is in the currency's smallest unit, so 799 SAR reads `SAR 7.99`). Show it rather than the item's `Price`. It
+  throws for an item with no product id for this store, and for a game-currency item.
 - **`RestoreAsync`** asks the store for the one-time purchases this store account owns (on a new phone, or after a reinstall)
   and has Flock deliver each to the signed-in player; `Restored` lists their items. A purchase Flock delivered before grants
   nothing more; one Flock refuses (bought for another player) is listed in `NotDelivered`, and the store's purchases are not
   finished again. A purchase still unfinished, one Flock could not be reached for earlier in this launch included, is sent
   again and arrives through `PurchaseCompleted` (or `PurchaseNotDelivered`), not in `Restored`. Apple asks the player to sign
   in to the store for it, so start it from a button. It throws `FlockException`
-  when the store cannot list the purchases, and on Apple when the player does not sign in to the store.
+  when the store cannot list the purchases, and on Apple when the player does not sign in to the store. Through a web checkout
+  Flock already holds what the player bought: it reads the player's checkouts still open again, and both lists are empty.
 - **`CheckSetupAsync`** is for the developer: `NotFoundInTheStore`, `MissingProductId`, and `ServerCanCheckPurchases`, measured
   by asking the server to redeem a made-up purchase, which the store answers as unknown when the game's keys work (`ServerProblem`
   holds the refusal when they do not); `IsReady` is true when nothing needs fixing. Nothing is bought and nothing is recorded. In
-  the editor the fake store finds every product, so only the keys are checked there.
+  the editor the fake store finds every product, so only the keys are checked there. Through a web checkout only a checkout shows
+  whether a gateway is connected, so `NotChecked` says so and `IsReady` stays false: buy an item with the gateway's test card.
 - The events are raised on the main thread; `Dispose` stops listening.
 - **Unity IAP 4.x:** copy `Docs~/recipes/FlockUnityIap4Store.cs` into the game. It holds each purchase until
   `RedeemStoreReceiptAsync` has delivered it, then confirms it.
+
+### Through a web checkout
+
+On a build target with no phone store (Windows, macOS, Linux, WebGL), `FlockStore` pays through the game's gateway: Stripe, Tap
+or Moyasar, connected under Monetization > Payments in the Flock dashboard. The server uses the game's one active gateway; with
+several active, name one in `FlockStoreOptions.PaymentProvider`.
+
+- **A real-money `PurchaseAsync`** opens a checkout, opens its payment page in the browser, and reads the purchase every 3 seconds
+  until it ends. Paid: it returns with `Granted`, and the SDK's cached player data is dropped, so read the wallet and inventory
+  again. Declined, or given up: `FlockStoreException` with `PaymentDeclined`. Left unpaid for the hour a checkout stays open:
+  `Expired`. A checkout is never opened again after an answer that never came.
+- **`FlockStoreOptions`**: `ReturnUrl` and `CancelUrl` are where the browser lands after paying and after giving up (your own
+  pages); `OpenPaymentPage` opens the page yourself; `CheckEvery` sets how often the purchase is read.
+- **WebGL:** a browser opens a new tab only for a short time after the player's click. The page opens once the checkout answers,
+  about 1.5 s after the click in our tests, which a Chromium browser (Chrome, Edge) allowed; Safari allows about a second and may
+  block it. For Safari, set `OpenPaymentPage` to keep the address and show a **Pay now** button whose click calls
+  `Application.OpenURL` with it.
+- **The gateway's setup** (Monetization > Payments): Stripe needs a webhook at
+  `https://api-flock.qwacks.com/v1/shop/webhook/<game id>/stripe` (events `checkout.session.completed`,
+  `checkout.session.expired`, `payment_intent.payment_failed`, `charge.refunded`, `charge.dispute.closed`), or a payment waits
+  for the server's 10-minute check and refunds never arrive; Moyasar needs one at the same address ending `/moyasar` for refunds;
+  Tap is given its address with each checkout. Stripe refuses a price below its smallest charge in the account's own currency
+  (`PaymentProviderCheckoutFailed`, "amount_too_small"); Moyasar charges in SAR only (a USD price converted, others refused).
+- **A wait the game cancels** leaves the checkout read, and `PurchaseCompleted` reports it once paid. A checkout still open when
+  the game closed is found again at the player's next sign-in and reported the same way. One paid while the game was closed is
+  delivered by the server all the same, and shows in the wallet and inventory; it raises no `PurchaseCompleted`.
+- **Signing out** ends the waits; the checkouts are found again at that player's next sign-in. `PurchaseNotDelivered` is never
+  raised: the server delivers a paid checkout itself.
 
 See also: [Codegen](codegen.md) for typed shop accessors and the `FlockShopItemId` / `FlockFundId` enums, and [Player Data & Game Commands](player-data.md) for `AddGameFundsAsync`.

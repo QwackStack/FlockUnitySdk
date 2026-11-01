@@ -19,7 +19,7 @@ namespace Flock.Providers
         //Status will change once validation/flow changes
         Purchase
     }
-    // The store connection a real-money PurchaseAsync goes through (FlockStore, in the Unity IAP assembly), set while it is connected.
+    // The way to pay real money a PurchaseAsync goes through (FlockStore: a phone's store, or a web checkout elsewhere), set while it is connected.
     internal interface IFlockStoreCheckout
     {
         // The item as the store connection read it from the game's shops, or null when it was not there.
@@ -32,7 +32,7 @@ namespace Flock.Providers
     {
         private const string SnapshotCategory = "shop";
 
-        // Set by FlockStore when it connects and cleared when it is disposed.
+        // Set by FlockStore once it connects and cleared when it is disposed.
         internal IFlockStoreCheckout ConnectedStore { get; set; }
 
         // Full paginated response cache — page metadata (total/page/limit) isn't part of the Shop entity, so it isn't folded into _shopsById.
@@ -220,7 +220,7 @@ namespace Flock.Providers
             return result;
         }
 
-        /// <summary>Buys a shop item for the signed-in player: one priced in a game currency from the wallet, a real-money one through the store connected with FlockStore.ConnectAsync. Returns what Flock delivered (Granted, Inventory, Balances), the wallet also written into the cached player data; a real-money purchase the store is still waiting to be paid for answers with Status pending and is reported by FlockStore.PurchaseCompleted once paid. Throws when nothing was bought: the server's refusal (such as ShopInsufficientFunds), or FlockStoreException when the store did not take the payment. A failure with <see cref="FlockException.OutcomeUnknown"/> set may have bought it. A wallet purchase whose answer never came is sent again under the same key, so it is never charged twice.</summary>
+        /// <summary>Buys a shop item for the signed-in player: one priced in a game currency from the wallet, a real-money one through FlockStore, connected once at start with FlockStore.ConnectAsync: the store on a phone, a web checkout elsewhere (which opens the gateway's payment page and waits for the payment). Returns what Flock delivered (Granted, Inventory, Balances), the wallet also written into the cached player data; through a web checkout, Granted alone, and the player's cached data is dropped so the next wallet and inventory reads ask the server; a real-money purchase the store is still waiting to be paid for answers with Status pending and is reported by FlockStore.PurchaseCompleted once paid. Throws when nothing was bought: the server's refusal (such as ShopInsufficientFunds), or FlockStoreException when the store or the web checkout did not take the payment. A failure with <see cref="FlockException.OutcomeUnknown"/> set may have bought it. A wallet purchase whose answer never came is sent again under the same key, so it is never charged twice.</summary>
         public async Task<PurchaseResult> PurchaseAsync(string shopItemId, CancellationToken cancellationToken = default)
         {
             RequireNotEmpty(shopItemId, "Shop Item ID");
@@ -234,10 +234,13 @@ namespace Flock.Providers
                 return await BuyWithTheWalletAsync(shopItemId, buyer, purchaser, item, cancellationToken);
 
             if (store == null)
-                throw new FlockValidationException("This shop item costs real money, and no store is connected")
+                throw new FlockValidationException("This shop item costs real money, and no way to pay real money is connected")
                 {
-                    Hint = "Connect the store once at start with FlockStore.ConnectAsync (it needs Unity IAP 5, on a phone or with the editor's fake store); real-money items are then bought through this same call."
+                    Hint = "Connect one once at start with FlockStore.ConnectAsync: the store on a phone (through Unity IAP 5), a web checkout through the game's gateway elsewhere; real-money items are then bought through this same call."
                 };
+            // Bought for the player who asked, never for one who signed in while the item was read.
+            if (SignInToActFor != purchaser)
+                throw new OperationCanceledException("The player signed out or changed while the item was read, so nothing was bought");
             return await store.PurchaseAsync(item, cancellationToken);
         }
 
@@ -359,6 +362,78 @@ namespace Flock.Providers
             }
             return answer.AccountToken;
         }
+
+        /// <summary>Opens a web checkout for a real-money item as the signed-in player and returns where to send them (<see cref="FlockCheckout.PaymentUrl"/>); nothing is paid or delivered until the gateway confirms, which <see cref="GetPurchaseAsync"/> reads. Leave <paramref name="provider"/> null for the game's one active web gateway (<see cref="PaymentProviders.Stripe"/>, Tap or Moyasar); the browser lands on <paramref name="returnUrl"/> after paying and <paramref name="cancelUrl"/> after giving up, and null leaves each to the server. Never sent again after a failure with no answer, so it opens no second checkout. A web checkout connected with FlockStore.ConnectAsync does all of this inside <see cref="PurchaseAsync(string, CancellationToken)"/>.</summary>
+        public async Task<FlockCheckout> StartCheckoutAsync(string shopItemId, string provider = null, string returnUrl = null, string cancelUrl = null, CancellationToken cancellationToken = default)
+        {
+            RequireNotEmpty(shopItemId, "Shop Item ID");
+            int? buyer = SignInToActFor;
+            if (!buyer.HasValue)
+                throw new FlockAuthException("No player is signed in") { Hint = FlockErrorHints.SignInFirst };
+
+            CheckoutRequest request = new CheckoutRequest
+            {
+                ShopItemId = shopItemId,
+                Provider = string.IsNullOrEmpty(provider) ? null : provider,
+                ReturnUrl = string.IsNullOrEmpty(returnUrl) ? null : returnUrl,
+                CancelUrl = string.IsNullOrEmpty(cancelUrl) ? null : cancelUrl
+            };
+            // A checkout is never sent again after an answer that did not come (payment plan D-P3).
+            FlockCheckout checkout;
+            try
+            {
+                checkout = await ExecuteAsync(async () =>
+                    await FlockHttpClient.PostAsync<FlockCheckout>(
+                        $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.ShopCheckout}", request, Client.GetBaseHeaders(), cancellationToken),
+                    "Start checkout", cancellationToken, idempotent: false, actsForSignIn: buyer);
+            }
+            catch (FlockException refused) when (refused.ErrorCode == FlockErrorCode.ShopItemNotForSale)
+            {
+                // Switched off in the dashboard: the cached shops no longer show it for sale, as after a wallet purchase's refusal.
+                ForgetTheCatalog();
+                throw;
+            }
+            if (checkout == null || string.IsNullOrEmpty(checkout.PurchaseId) || string.IsNullOrEmpty(checkout.PaymentUrl))
+                throw new FlockSerializationException("The server's answer had no purchase id or payment page") { Hint = FlockErrorHints.NotFlocksAnswer };
+            return checkout;
+        }
+
+        /// <summary>One of the signed-in player's purchases, read now from the server (never cached): a web checkout's purchase is pending until it is paid, failed or expired. Another player's purchase is refused with <see cref="FlockErrorCode.ShopPurchaseNotFound"/>.</summary>
+        public async Task<PlayerPurchase> GetPurchaseAsync(string purchaseId, CancellationToken cancellationToken = default)
+        {
+            RequireNotEmpty(purchaseId, "Purchase ID");
+            int? reader = SignInToActFor;
+            if (!reader.HasValue)
+                throw new FlockAuthException("No player is signed in") { Hint = FlockErrorHints.SignInFirst };
+
+            PlayerPurchase purchase = await ExecuteAsync(async () =>
+                await FlockHttpClient.GetAsync<PlayerPurchase>(
+                    $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.ShopPurchaseById(purchaseId)}", Client.GetBaseHeaders(), cancellationToken),
+                "Get purchase", cancellationToken, actsForSignIn: reader);
+            if (purchase == null || string.IsNullOrEmpty(purchase.Id) || string.IsNullOrEmpty(purchase.Status))
+                throw new FlockSerializationException("The server's answer had no purchase id or status") { Hint = FlockErrorHints.NotFlocksAnswer };
+            return purchase;
+        }
+
+        /// <summary>The signed-in player's purchases, newest first, read now from the server (never cached). Pass <see cref="PurchaseResultStatuses.Pending"/> for the web checkouts not settled yet, or null for every purchase; <paramref name="limit"/> is at most 100.</summary>
+        public async Task<PaginatedResponse<PlayerPurchase>> GetPurchasesAsync(string status = null, int page = 1, int limit = 25, CancellationToken cancellationToken = default)
+        {
+            int? reader = SignInToActFor;
+            if (!reader.HasValue)
+                throw new FlockAuthException("No player is signed in") { Hint = FlockErrorHints.SignInFirst };
+
+            string query = $"page={page}&limit={limit}" + (string.IsNullOrEmpty(status) ? "" : $"&status={Uri.EscapeDataString(status)}");
+            PaginatedResponse<PlayerPurchase> purchases = await ExecuteAsync(async () =>
+                await FlockHttpClient.GetAsync<PaginatedResponse<PlayerPurchase>>(
+                    $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.ShopPurchases}?{query}", Client.GetBaseHeaders(), cancellationToken),
+                "List purchases", cancellationToken, actsForSignIn: reader);
+            if (purchases?.Items == null)
+                throw new FlockSerializationException("The server's answer had no purchase list") { Hint = FlockErrorHints.NotFlocksAnswer };
+            return purchases;
+        }
+
+        // A payment settled outside a call that answers with the wallet (a web checkout): the next read of the player's data asks the server.
+        internal void ForgetPlayerDataAfterPayment() => ForgetThePlayersData();
 
         // The receipt's ids as the route takes them, each exactly as the store issued it.
         private Dictionary<string, string> ReceiptIds(StoreReceipt receipt)

@@ -7,76 +7,18 @@ using UnityEngine.Purchasing;
 
 namespace Flock.Providers
 {
-    // A store's product as Flock sells it: consumable, or one-time.
-    internal readonly struct FlockStoreProduct
-    {
-        public readonly string ProductId;
-        public readonly bool Consumable;
-
-        public FlockStoreProduct(string productId, bool consumable)
-        {
-            ProductId = productId;
-            Consumable = consumable;
-        }
-    }
-
-    // A purchase the store charged for; Handle is the store library's own order.
-    internal sealed class FlockStoreOrder
-    {
-        public readonly string ProductId;
-        public readonly string TransactionId;
-        public readonly object Handle;
-
-        public FlockStoreOrder(string productId, string transactionId, object handle)
-        {
-            ProductId = productId;
-            TransactionId = transactionId;
-            Handle = handle;
-        }
-    }
-
-    // A purchase the store did not take: the product, why (FlockStoreFailureReasons, Cancelled when the player cancelled), and the store's own words.
-    internal readonly struct FlockStoreFailure
-    {
-        public readonly string ProductId;
-        public readonly string Reason;
-        public readonly string Text;
-
-        public FlockStoreFailure(string productId, string reason, string text)
-        {
-            ProductId = productId;
-            Reason = reason;
-            Text = text;
-        }
-    }
-
-    // What FlockStore needs of a store library; Unity IAP 5 is the one a game uses.
-    internal interface IFlockStoreConnection
-    {
-        event Action<FlockStoreOrder> OrderPaid;
-        event Action<FlockStoreOrder> OrderDeferred;
-        event Action<FlockStoreFailure> OrderFailed;
-
-        Task ConnectAsync();
-        Task RegisterProductsAsync(IReadOnlyList<FlockStoreProduct> products, CancellationToken cancellationToken);
-        void SetAccountToken(string accountToken);
-        void Buy(string productId);
-        void Finish(FlockStoreOrder order);
-        void FetchUnfinishedPurchases();
-
-        // The store's own price of a registered product, or null when the store did not find the product.
-        FlockStorePrice PriceOf(string productId);
-
-        // Purchases the store says this store account already owns and has finished, after asking the store to restore them.
-        Task<IReadOnlyList<FlockStoreOrder>> FetchOwnedPurchasesAsync(CancellationToken cancellationToken);
-
-        void StopListening();
-    }
-
     // Unity IAP 5's StoreController, through its order API: an order is finished by itself, never by its product.
     internal sealed class FlockUnityIapConnection : IFlockStoreConnection
     {
         private readonly StoreController _store = UnityIAPServices.StoreController();
+
+        // Makes Unity IAP 5 FlockStore's store library from the start of play: on a phone, FlockStore.ConnectAsync buys through it.
+#if UNITY_EDITOR
+        [UnityEditor.InitializeOnLoadMethod]
+#endif
+        [UnityEngine.RuntimeInitializeOnLoadMethod(UnityEngine.RuntimeInitializeLoadType.SubsystemRegistration)]
+        [UnityEngine.Scripting.Preserve]
+        private static void BeTheStoreLibrary() => FlockStore.StoreLibrary = () => new FlockUnityIapConnection();
 
         public event Action<FlockStoreOrder> OrderPaid;
         public event Action<FlockStoreOrder> OrderDeferred;

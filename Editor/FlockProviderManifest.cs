@@ -112,6 +112,8 @@ namespace Flock.Editor
                 Files = new[]
                 {
                     "Runtime/Providers/FlockShopProvider.cs",
+                    "Runtime/Providers/FlockStore.cs",
+                    "Runtime/Providers/FlockWebCheckout.cs",
                 },
                 // The Unity IAP store adapter sells shop items, so it goes with the shop, and so does the shop sample.
                 Folders = new[] { "Runtime/Providers/StorePurchases/", "Samples/Shop/" },
