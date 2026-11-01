@@ -322,8 +322,10 @@ several active, name one in `FlockStoreOptions.PaymentProvider`.
 - **The gateway's setup** (Monetization > Payments): Stripe needs a webhook at
   `https://api-flock.qwacks.com/v1/shop/webhook/<game id>/stripe` (events `checkout.session.completed`,
   `checkout.session.expired`, `payment_intent.payment_failed`, `charge.refunded`, `charge.dispute.closed`), or a payment waits
-  for the server's 10-minute check and refunds never arrive; Moyasar needs one at the same address ending `/moyasar` for refunds;
-  Tap is given its address with each checkout. Stripe refuses a price below its smallest charge in the account's own currency
+  for the server's 10-minute check; Moyasar wants one at the same address ending `/moyasar` (its secret token is the Webhook secret);
+  Tap is given its address with each checkout. A refund or dispute made in Stripe's or Moyasar's own dashboard does not reach Flock
+  yet: the purchase stays paid. A Moyasar player whose card is declined can try another on the same page; the purchase stays open
+  until paid or expired. Stripe refuses a price below its smallest charge in the account's own currency
   (`PaymentProviderCheckoutFailed`, "amount_too_small"); Moyasar charges in SAR only (a USD price converted, others refused).
 - **A wait the game cancels** leaves the checkout read, and `PurchaseCompleted` reports it once paid. A checkout still open when
   the game closed is found again at the player's next sign-in and reported the same way. One paid while the game was closed is
