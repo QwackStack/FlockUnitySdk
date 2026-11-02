@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 It is released with the Flock SDK, at the Flock SDK's version.
 
+## [Unreleased]
+
+### Added
+- A playtest session started while a player is signed in to Flock carries that player's sign-in, so Protokite can link the
+  session to their Qwacks Community account. An expired sign-in is renewed first; with no one signed in, or a renewal that
+  fails, the session starts as before, unlinked. The request body is unchanged, and the sign-in is never logged or sent with
+  anything but the start. Needs the Flock SDK at the same version.
 
 ## [1.98.0]
 

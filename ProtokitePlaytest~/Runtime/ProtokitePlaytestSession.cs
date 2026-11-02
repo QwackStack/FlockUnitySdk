@@ -27,6 +27,10 @@ namespace Protokite.Playtest
         // How long quitting waits for the session end: Protokite takes no end after the fact, so this is its one chance.
         private static readonly TimeSpan QuitWait = TimeSpan.FromSeconds(3);
 
+        // Proves which player is playing, so Protokite can link the session to their Community account; sent on the start alone.
+        internal const string PlayerTokenHeader = "X-Flock-Player-Token";
+        private static readonly TimeSpan PlayerTokenMargin = TimeSpan.FromSeconds(60);
+
         private static ProtokitePlaytestSessionState _sessionState;
         private static string _playtestSessionId;
         private static string _sessionApiUrl;
@@ -37,6 +41,10 @@ namespace Protokite.Playtest
         private static bool _playtestNoLongerCollecting;
         private static bool _loggedWaitingForFlockSession;
         private static bool _loggedWaitingForUploadNetwork;
+        private static Task<bool> _playerTokenRenewal;
+        private static FlockClient _playerTokenRenewedFor;
+        private static int _playerTokenRenewedSignIn;
+        private static string _flockSessionIdAtRenewal;
         private static int _launch;
         private static string _steamId;
         private static string _playerName;
@@ -86,7 +94,15 @@ namespace Protokite.Playtest
         // A session can start once the playtest is ready, the player's answer lets it collect something, and a Flock session has reached the server.
         private static bool SessionCanStart(FlockClient running)
             => _sessionState == ProtokitePlaytestSessionState.NotStarted && _configState == ProtokitePlaytestConfigState.Loaded
-               && running != null && running.ServerSessionId != null && ProtokitePlaytestConsent.CollectsAnything(EffectiveConsent());
+               && running != null && FlockSessionIdFor(running) != null && ProtokitePlaytestConsent.CollectsAnything(EffectiveConsent());
+
+        // The Flock session on the server, or the one a sign-in renewal started under: a renewal Flock refuses signs the player out and ends it, and the start still goes, unlinked.
+        private static string FlockSessionIdFor(FlockClient running)
+            => running.ServerSessionId ?? (ReferenceEquals(_playerTokenRenewedFor, running) ? _flockSessionIdAtRenewal : null);
+
+        // Renewed this close to running out, so a slow start or a device clock behind the server's still sends a token Protokite takes.
+        private static bool PlayerTokenRunsOutSoon(FlockClient running)
+            => running.IsAuthenticated && running.TokenClaims?.ExpirationTime is DateTime expires && expires <= DateTime.UtcNow + PlayerTokenMargin;
 
         private static void StartPlaytestSessionWhenAllowed(FlockClient running, string protokiteApiUrl)
         {
@@ -103,7 +119,7 @@ namespace Protokite.Playtest
                 return;
             }
 
-            string flockSessionId = running.ServerSessionId;
+            string flockSessionId = FlockSessionIdFor(running);
             if (flockSessionId == null)
             {
                 if (!_loggedWaitingForFlockSession)
@@ -113,6 +129,18 @@ namespace Protokite.Playtest
                 }
                 return;
             }
+
+            // A sign-in running out is renewed once per sign-in, here on the main thread, and the start waits for it; Protokite treats an expired token as none.
+            bool renewedThisSignIn = ReferenceEquals(_playerTokenRenewedFor, running) && _playerTokenRenewedSignIn == running.SignInNumber;
+            if (PlayerTokenRunsOutSoon(running) && !renewedThisSignIn)
+            {
+                _playerTokenRenewedFor = running;
+                _playerTokenRenewedSignIn = running.SignInNumber;
+                _flockSessionIdAtRenewal = flockSessionId;
+                _playerTokenRenewal = running.TryRefreshTokenAsync(CancellationToken.None);
+            }
+            if (ReferenceEquals(_playerTokenRenewedFor, running) && _playerTokenRenewal != null && !_playerTokenRenewal.IsCompleted)
+                return;
 
             JObject body = new JObject();
             if (_steamId != null)
@@ -149,9 +177,19 @@ namespace Protokite.Playtest
             ProtokiteClient client = new ProtokiteClient(_sessionRetryPolicy);
             string url = _sessionApiUrl;
             Dictionary<string, string> headers = _sessionHeaders;
-            _sessionStart = SendOffTheMainThread(() => client.StartPlaytestSessionAsync(url, headers, body, CancellationToken.None));
+            Dictionary<string, string> startHeaders = WithPlayerToken(headers, running);
+            _sessionStart = SendOffTheMainThread(() => client.StartPlaytestSessionAsync(url, startHeaders, body, CancellationToken.None));
             _ = FinishPlaytestSessionStartAsync(_sessionStart, _launch, body["steam_id"] != null,
                 body["flock_session_id"] != null ? flockSessionId : "(none: its id could not be sent)", url, headers, _sessionRetryPolicy);
+        }
+
+        // A copy carrying the player's token, raw, while one is signed in and not expired; the game's headers otherwise.
+        private static Dictionary<string, string> WithPlayerToken(Dictionary<string, string> headers, FlockClient running)
+        {
+            string token = running.PlayerAccessToken;
+            if (token == null || running.IsTokenExpired)
+                return headers;
+            return new Dictionary<string, string>(headers) { [PlayerTokenHeader] = token };
         }
 
         private static async Task FinishPlaytestSessionStartAsync(Task<string> start, int launch, bool sentSteamId, string flockSessionId,
@@ -379,6 +417,9 @@ namespace Protokite.Playtest
             _playtestNoLongerCollecting = false;
             _loggedWaitingForFlockSession = false;
             _loggedWaitingForUploadNetwork = false;
+            _playerTokenRenewal = null;
+            _playerTokenRenewedFor = null;
+            _flockSessionIdAtRenewal = null;
             _steamId = null;
             _playerName = null;
         }

@@ -79,7 +79,10 @@ namespace Flock.Tests.Support
         public void SetReachable(bool reachable) => Client.ReachabilityProbe = () => reachable;
 
         // Establish an authenticated player without the login round-trip (SetTokens is internal to Runtime).
-        public void LoginAs(string playerId) => Client.SetTokens(MakeJwt(playerId, 3600), "refresh-" + playerId);
+        public void LoginAs(string playerId) => LoginWithToken(MakeJwt(playerId, 3600), "refresh-" + playerId);
+
+        // Signs in with exactly this access token (an expired one included), for a test that reads it back off a request.
+        public void LoginWithToken(string accessToken, string refreshToken) => Client.SetTokens(accessToken, refreshToken);
 
         // Safe to block inline: the fake always returns completed tasks, so every await resolves synchronously.
         public T Run<T>(Func<Task<T>> action) => action().GetAwaiter().GetResult();

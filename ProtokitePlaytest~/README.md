@@ -263,6 +263,10 @@ ProtokitePlaytest.SetSteamId(SteamUser.GetSteamID().ToString(), SteamFriends.Get
 
 An id that is empty, longer than 64 characters or holds whitespace is refused (not trimmed), and the device id is sent.
 
+When a player is signed in to Flock, the session start also carries their sign-in, renewed first if it has expired, so
+Protokite can link the session to the player's Qwacks Community account. Nothing else is needed from the game; with no one
+signed in, or a sign-in that cannot be renewed, the session starts as before, unlinked.
+
 ## Heavy analytics
 
 When the playtest's config turns **heavy_analytics** on, the playtest sends events through the Flock SDK's `TrackEvent`,

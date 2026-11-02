@@ -368,6 +368,9 @@ namespace Flock
             _tokenClaims.ExpirationTime.Value <= DateTime.UtcNow;
         public JwtTokenClaims TokenClaims => _tokenClaims;
 
+        /// <summary>The signed-in player's access token, raw (no "Bearer "), for a Qwacks service that checks who is playing; null when no one is signed in. Never log it.</summary>
+        internal string PlayerAccessToken => string.IsNullOrEmpty(_accessToken) ? null : _accessToken;
+
         /// <summary>A new copy of the headers that identify this game to a Qwacks service: X-Flock-API-Key and X-Game-Version-ID. Never carries the player's sign-in.</summary>
         public Dictionary<string, string> GetGameHeaders() => new Dictionary<string, string>(_initConfig.GetBaseHeaders());
 
