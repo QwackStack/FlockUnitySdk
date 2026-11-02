@@ -88,6 +88,11 @@ namespace Flock.Providers
                     {
                         _pendingWrites.Dequeue();
                         PersistQueue();
+#if !FLOCK_NO_PLAYER
+                        // The server's row has only this write: the ones still queued behind it stay laid over it.
+                        if (result != null)
+                            OverlayQueuedWrites(new PlayerData[] { result });
+#endif
                         ApplyToPlayerCache(result);
                     }
                     else

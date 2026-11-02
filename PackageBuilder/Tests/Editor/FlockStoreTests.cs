@@ -1137,6 +1137,192 @@ namespace Flock.Tests.Editor
             }
         }
 
+        // The store's backend, whose read of the item's shop (made just before the store's dialog) runs duringTheRead as it answers.
+        private static FlockFakeTransport BackendWhoseShopRead(Action duringTheRead)
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.Shop + "?", FlockFakeTransport.Ok(Catalog));
+            transport.On(FlockEndpoints.ShopAccountToken, FlockFakeTransport.Ok("{\"player_id\":\"player-a\",\"account_token\":\"" + AccountToken + "\"}"));
+            transport.On(FlockEndpoints.ShopValidateReceipt, FlockFakeTransport.Ok(Delivered));
+            string shop = JObject.Parse(Catalog)["items"][0].ToString();
+            transport.Default(request =>
+            {
+                if (!request.Url.Contains(FlockEndpoints.ShopById("shop-1")))
+                    return FlockFakeTransport.Ok("{}");
+                duringTheRead();
+                return FlockFakeTransport.Ok(shop);
+            });
+            return transport;
+        }
+
+        // Bought for the player who asked: one who signed in while the item's shop was read gets nothing from this call.
+        [Test]
+        public void Buy_AnotherPlayerSignsInWhileTheShopIsRead_TheStoreIsNotAsked()
+        {
+            FakeStore store = new FakeStore();
+            store.OnBuy = productId => store.Pay(productId, "token-1");
+            Action duringTheShopRead = null;
+            FlockFakeTransport transport = BackendWhoseShopRead(() => duringTheShopRead?.Invoke());
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.SetReachable(true);
+                h.LoginAs("player-a");
+                Connect(h, store);
+                duringTheShopRead = () => h.LoginAs("player-b");
+
+                Assert.Catch<OperationCanceledException>(() => h.Run(() => h.Client.Shop.PurchaseAsync("gems")));
+
+                Assert.AreEqual(1, transport.CountTo(FlockEndpoints.ShopById("shop-1")), "Control: the item's shop was read for the player who asked.");
+                Assert.IsFalse(store.Calls.Exists(call => call.StartsWith("token:") || call.StartsWith("buy:")), "No account token was set and the store was never asked to charge.");
+                Assert.AreEqual(0, transport.CountTo(FlockEndpoints.ShopValidateReceipt));
+            }
+        }
+
+        // Cancelled while the item's shop was read: the store's dialog never opens for a call that reported cancelled.
+        [Test]
+        public void Buy_CancelledWhileTheShopIsRead_TheStoreIsNotAsked()
+        {
+            FakeStore store = new FakeStore();
+            store.OnBuy = productId => store.Pay(productId, "token-1");
+            CancellationTokenSource giveUp = new CancellationTokenSource();
+            Action duringTheShopRead = null;
+            FlockFakeTransport transport = BackendWhoseShopRead(() => duringTheShopRead?.Invoke());
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.SetReachable(true);
+                h.LoginAs("player-a");
+                Connect(h, store);
+                // Kept for this sign-in, so the purchase has it without waiting on anything.
+                h.Run(() => h.Client.Shop.GetStoreAccountTokenAsync());
+                duringTheShopRead = giveUp.Cancel;
+
+                Assert.Catch<OperationCanceledException>(() => h.Run(() => h.Client.Shop.PurchaseAsync("gems", giveUp.Token)));
+
+                CollectionAssert.Contains(store.Calls, "token:" + AccountToken, "Control: the call went as far as the store's purchase.");
+                Assert.IsFalse(store.Calls.Exists(call => call.StartsWith("buy:")), "The store's dialog never opened.");
+                Assert.AreEqual(0, transport.CountTo(FlockEndpoints.ShopValidateReceipt));
+            }
+        }
+
+        // Frames until done holds or 10 s pass, without failing: the test asserts in its own body, so a failure still disposes its client.
+        private static IEnumerator FramesUntil(Func<bool> done)
+        {
+            DateTime until = DateTime.UtcNow.AddSeconds(10);
+            while (!done() && DateTime.UtcNow < until)
+                yield return null;
+        }
+
+        // A sign-out ends the call waiting on the store's dialog; the store's purchase is held, then delivered at the next sign-in.
+        [UnityTest]
+        public IEnumerator Buy_SigningOutWhileTheStoreWaits_EndsTheCallAsCancelled_AndItIsDeliveredAtTheNextSignIn()
+        {
+            FakeStore store = new FakeStore();
+            FlockFakeTransport transport = Backend(FlockFakeTransport.Ok(Delivered));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.SetReachable(true);
+                h.LoginAs("player-a");
+                FlockStore purchases = Connect(h, store);
+                Task<PurchaseResult> buying = h.Client.Shop.PurchaseAsync("gems");
+                Assert.IsTrue(store.Calls.Contains("buy:" + Gems) && !buying.IsCompleted, "Control: the call waits on the store's dialog.");
+
+                h.Client.Authentication.Logout();
+                yield return FramesUntil(() => buying.IsCompleted);
+
+                Assert.IsTrue(buying.IsCanceled, "The wait ended with the sign-in, as cancelled: " + buying.Status);
+                store.Pay(Gems, "token-1");
+                Assert.AreEqual(0, transport.CountTo(FlockEndpoints.ShopValidateReceipt), "Held while nobody is signed in.");
+                SignIn(h, "player-a");
+                yield return FramesUntil(() => store.Calls.Contains("finish:token-1"));
+                CollectionAssert.Contains(store.Calls, "finish:token-1", "Delivered at the next sign-in.");
+                purchases.Dispose();
+            }
+        }
+
+        // Another player signing in ends the call waiting on the store's dialog, as a sign-out does; the same sign-in announced again does not.
+        [UnityTest]
+        public IEnumerator Buy_AnotherPlayerSigningInWhileTheStoreWaits_EndsTheCallAsCancelled()
+        {
+            FakeStore store = new FakeStore();
+            using (FlockTestClient h = FlockTestClient.Create(Backend(FlockFakeTransport.Ok(Delivered))))
+            {
+                h.SetReachable(true);
+                h.LoginAs("player-a");
+                FlockStore purchases = Connect(h, store);
+                Task<PurchaseResult> buying = h.Client.Shop.PurchaseAsync("gems");
+
+                FlockEvents.InvokeAuthenticated(new FlockAuthInfo("player-a", FlockAuthMethod.Device));
+                yield return null;
+                Assert.IsFalse(buying.IsCompleted, "Control: the same sign-in announced again keeps the wait.");
+
+                SignIn(h, "player-b");
+                yield return FramesUntil(() => buying.IsCompleted);
+
+                Assert.IsTrue(buying.IsCanceled, "The wait ended with the sign-in, as cancelled: " + buying.Status);
+                purchases.Dispose();
+            }
+        }
+
+        // Flock shutting down ends the call waiting on the store's dialog, as Dispose does; the connection made under it no longer acts.
+        [UnityTest]
+        public IEnumerator Buy_FlockShuttingDownWhileTheStoreWaits_EndsTheCallAsCancelled()
+        {
+            FakeStore store = new FakeStore();
+            using (FlockTestClient h = FlockTestClient.Create(Backend(FlockFakeTransport.Ok(Delivered))))
+            {
+                h.SetReachable(true);
+                h.LoginAs("player-a");
+                Connect(h, store);
+                Task<PurchaseResult> buying = h.Client.Shop.PurchaseAsync("gems");
+                Assert.IsTrue(store.Calls.Contains("buy:" + Gems) && !buying.IsCompleted, "Control: the call waits on the store's dialog.");
+
+                FlockClient.Shutdown();
+                yield return FramesUntil(() => buying.IsCompleted);
+
+                Assert.IsTrue(buying.IsCanceled, "The wait ended with Flock, as cancelled: " + buying.Status);
+            }
+        }
+
+        // The store's backend, whose redemption runs duringIt as it answers, delivered.
+        private static FlockFakeTransport BackendWhoseRedemption(Action duringIt)
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.Shop + "?", FlockFakeTransport.Ok(Catalog));
+            transport.On(FlockEndpoints.ShopAccountToken, FlockFakeTransport.Ok("{\"player_id\":\"player-a\",\"account_token\":\"" + AccountToken + "\"}"));
+            ItemReads(transport, Catalog);
+            transport.Default(request =>
+            {
+                if (!request.Url.Contains(FlockEndpoints.ShopValidateReceipt))
+                    return FlockFakeTransport.Ok("{}");
+                duringIt();
+                return FlockFakeTransport.Ok(Delivered);
+            });
+            return transport;
+        }
+
+        // Restored for the player who asked: once another signs in, the rest of the store's purchases are never sent as them.
+        [Test]
+        public void Restore_AnotherPlayerSignsInMeanwhile_TheRestAreNotSent()
+        {
+            FakeStore store = new FakeStore();
+            store.Own(Sword, "token-1");
+            store.Own(Gems, "token-2");
+            Action duringTheRedemption = null;
+            FlockFakeTransport transport = BackendWhoseRedemption(() => duringTheRedemption?.Invoke());
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.SetReachable(true);
+                h.LoginAs("player-a");
+                FlockStore purchases = Connect(h, store);
+                duringTheRedemption = () => h.LoginAs("player-b");
+
+                Assert.Catch<OperationCanceledException>(() => h.Run(() => purchases.RestoreAsync()));
+
+                Assert.IsTrue(transport.Sent(FlockEndpoints.ShopValidateReceipt), "Control: the first purchase was sent for the player who asked.");
+                Assert.AreEqual(1, transport.CountTo(FlockEndpoints.ShopValidateReceipt), "The rest were never sent as the player who signed in meanwhile.");
+            }
+        }
+
         // An earlier launch that read the whole catalog, on the same disk as the test's next launch.
         private static void ALaunchThatSoldEverything(string sharedDir, string apiUrl = null)
         {

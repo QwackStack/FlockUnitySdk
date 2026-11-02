@@ -21,6 +21,9 @@ namespace Flock.Providers
         private readonly Dictionary<string, Task<Dictionary<string, PlayerData>>> _playerDataFetchTasks = new Dictionary<string, Task<Dictionary<string, PlayerData>>>();
         // Counts every time cached player data is dropped, so a read already on its way never puts back what was dropped.
         private int _playerDataDrops;
+        // Which read is a player's one on its way, so a read ending late never takes a newer one's place away.
+        private readonly Dictionary<string, int> _playerDataFetchNumbers = new Dictionary<string, int>();
+        private int _playerDataFetchesSent;
 
         private const string SnapshotCategory = "player_template";
 
@@ -42,10 +45,15 @@ namespace Flock.Providers
             DeleteSnapshotCategory(SnapshotCategory);
         }
 
-        // Class B write-through: game commands hand their server-returned row here.
+        // Class B write-through: game commands and money answers hand their server-returned row here.
         internal void ApplyServerPlayerData(PlayerData data)
         {
-            if (data == null || string.IsNullOrEmpty(data.PlayerId) || string.IsNullOrEmpty(data.PlayerTemplateId))
+            if (data == null || string.IsNullOrEmpty(data.PlayerId))
+                return;
+            // Newer than any read of the player's data already on its way: that read is not kept, and a read from now on is sent afresh.
+            _playerDataDrops++;
+            _playerDataFetchTasks.Remove(data.PlayerId);
+            if (string.IsNullOrEmpty(data.PlayerTemplateId))
                 return;
 
             if (_playerDataByPlayerCache.TryGetValue(data.PlayerId, out Dictionary<string, PlayerData> byTemplate))
@@ -260,12 +268,16 @@ namespace Flock.Providers
                 return inFlight;
 
             Task<Dictionary<string, PlayerData>> task = FetchAndCacheAsync(playerId, cancellationToken);
-            _playerDataFetchTasks[playerId] = task;
+            // Never keep a read that already ended (a token already cancelled ends it at once): its own clean-up ran before it was kept.
+            if (!task.IsCompleted)
+                _playerDataFetchTasks[playerId] = task;
             return task;
         }
 
         private async Task<Dictionary<string, PlayerData>> FetchAndCacheAsync(string playerId, CancellationToken cancellationToken)
         {
+            int fetch = ++_playerDataFetchesSent;
+            _playerDataFetchNumbers[playerId] = fetch;
             int dropsWhenSent = _playerDataDrops;
             try
             {
@@ -281,7 +293,12 @@ namespace Flock.Providers
             }
             finally
             {
-                _playerDataFetchTasks.Remove(playerId);
+                // Dropped while on its way, its entry may already be a newer read's, which stays.
+                if (_playerDataFetchNumbers.TryGetValue(playerId, out int current) && current == fetch)
+                {
+                    _playerDataFetchTasks.Remove(playerId);
+                    _playerDataFetchNumbers.Remove(playerId);
+                }
             }
         }
 

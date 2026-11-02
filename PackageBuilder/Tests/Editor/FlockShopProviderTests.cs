@@ -1373,6 +1373,171 @@ namespace Flock.Tests.Editor
             }
         }
 
+        // An attempt that may have bought it decides the call, even when a later attempt answers that it was not done.
+        [Test]
+        public void Purchase_AnAttemptWithNoAnswer_ThenOnesNotDone_ItsOutcomeIsStillUnknown()
+        {
+            FlockFakeTransport transport = WithItem();
+            transport.On(FlockEndpoints.ShopTransaction, FlockFakeTransport.Status(429, "{}"));
+            using (FlockTestClient h = FlockTestClient.Create(transport, config => config.RetryPolicy = RetriesEnabled()))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+                FlockException notDone = Assert.Catch<FlockException>(() => h.Run(() => h.Client.Shop.PurchaseAsync("item-1")));
+                Assert.IsFalse(notDone.OutcomeUnknown, "Control: every attempt answered not done, so nothing was bought.");
+
+                transport.OnSequence(FlockEndpoints.ShopTransaction, FlockFakeTransport.Timeout(), FlockFakeTransport.Status(429, "{}"));
+                FlockException failed = Assert.Catch<FlockException>(() => h.Run(() => h.Client.Shop.PurchaseAsync("item-1")));
+
+                Assert.AreEqual(429, failed.StatusCode, "Control: the last attempt answered not done.");
+                Assert.IsTrue(failed.OutcomeUnknown, "The attempt with no answer may have bought it, so a new purchase could charge again.");
+                StringAssert.Contains("may have been made", failed.Hint);
+            }
+        }
+
+        // A refresh the server refuses after an attempt with no answer ends the call, and the purchase may still have been made.
+        [Test]
+        public void Purchase_AnAttemptWithNoAnswer_ThenARefusedRefresh_ItsOutcomeIsUnknown()
+        {
+            FlockFakeTransport transport = WithItem();
+            transport.On(FlockEndpoints.PlayerTokenRefresh, FlockFakeTransport.Status(401, "{}"));
+            transport.On(FlockEndpoints.ShopTransaction, FlockFakeTransport.Coded(401, "player.expired_token"));
+            using (FlockTestClient h = FlockTestClient.Create(transport, config => config.RetryPolicy = RetriesEnabled()))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+                FlockAuthException refused = Assert.Throws<FlockAuthException>(() => h.Run(() => h.Client.Shop.PurchaseAsync("item-1")));
+                Assert.IsFalse(refused.OutcomeUnknown, "Control: refused before anything was bought.");
+
+                h.LoginAs("player-a");
+                transport.OnSequence(FlockEndpoints.ShopTransaction, FlockFakeTransport.Status(502, "<html>Bad Gateway</html>"), FlockFakeTransport.Coded(401, "player.expired_token"));
+                FlockAuthException failed = Assert.Throws<FlockAuthException>(() => h.Run(() => h.Client.Shop.PurchaseAsync("item-1")));
+
+                Assert.AreEqual(2, transport.CountTo(FlockEndpoints.PlayerTokenRefresh), "Control: each call's refresh was tried and refused.");
+                Assert.IsTrue(failed.OutcomeUnknown, "The first attempt may have bought it.");
+                StringAssert.Contains("may have been made", failed.Hint);
+            }
+        }
+
+        // The sign-in ends before a purchase whose answer never came is sent again: never sent as nobody, and it may have been made.
+        [Test]
+        public void Purchase_SignedOutBeforeItIsSentAgain_AfterAnAttemptWithNoAnswer_ItsOutcomeIsUnknown()
+        {
+            FlockFakeTransport transport = WithItem();
+            using (FlockTestClient h = FlockTestClient.Create(transport, config => config.RetryPolicy = RetriesEnabled()))
+            {
+                h.SetReachable(true);
+                FlockHttpResponse answer = FlockFakeTransport.Status(429, "{}");
+                transport.Default(request =>
+                {
+                    if (!request.Url.Contains(FlockEndpoints.ShopTransaction))
+                        return FlockFakeTransport.Ok("{}");
+                    h.Client.Authentication.Logout();
+                    return answer;
+                });
+                h.LoginAs("player-a");
+                Assert.Catch<OperationCanceledException>(() => h.Run(() => h.Client.Shop.PurchaseAsync("item-1")), "Control: with no attempt in doubt, the sign-out is a cancel.");
+
+                answer = FlockFakeTransport.Timeout();
+                h.LoginAs("player-a");
+                FlockNetworkException failed = Assert.Throws<FlockNetworkException>(() => h.Run(() => h.Client.Shop.PurchaseAsync("item-1")));
+
+                Assert.IsTrue(failed.OutcomeUnknown, "The attempt with no answer may have bought it.");
+                StringAssert.Contains("may have been made", failed.Hint);
+                Assert.AreEqual(2, transport.CountTo(FlockEndpoints.ShopTransaction), "Never sent again once its sign-in ended.");
+            }
+        }
+
+        // A failure that is not the SDK's own came with no status, so a money call it ends may have been done.
+        [Test]
+        public void Consume_AFailureNotTheSdksOwn_ItsOutcomeIsUnknown()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.Default(request => throw new InvalidOperationException("The transport broke"));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                FlockNetworkException read = Assert.Throws<FlockNetworkException>(() => h.Run(() => h.Client.Shop.GetItemAsync("item-1")));
+                FlockNetworkException failed = Assert.Throws<FlockNetworkException>(() => h.Run(() => h.Client.Shop.ConsumeAsync("inv-1")));
+
+                Assert.IsFalse(read.OutcomeUnknown, "Control: a read that failed changed nothing.");
+                Assert.IsTrue(failed.OutcomeUnknown, "No answer said whether the entry was used.");
+            }
+        }
+
+        // The server looks a wallet purchase's key up before refusing for funds, so after an attempt with no answer the refusal still proves nothing was bought.
+        [TestCase("shop.insufficient_funds", FlockErrorCode.ShopInsufficientFunds)]
+        [TestCase("shop.currency_not_held", FlockErrorCode.ShopCurrencyNotHeld)]
+        public void Purchase_AnAttemptWithNoAnswer_ThenNotEnoughFunds_NothingWasBought_AndTheWalletIsReadAgain(string code, FlockErrorCode expected)
+        {
+            FlockFakeTransport transport = WithItem();
+            transport.On(FlockEndpoints.PlayerTemplate, FlockFakeTransport.Ok(WalletTemplates));
+            transport.OnSequence("player_data?page=", WalletPage(100), WalletPage(10));
+            transport.OnSequence(FlockEndpoints.ShopTransaction, FlockFakeTransport.Timeout(), FlockFakeTransport.Coded(400, code));
+            using (FlockTestClient h = FlockTestClient.Create(transport, config => config.RetryPolicy = RetriesEnabled()))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+                h.Run(() => h.Client.Player.GetWalletAsync());
+
+                FlockException refused = Assert.Catch<FlockException>(() => h.Run(() => h.Client.Shop.PurchaseAsync("item-1")));
+
+                Assert.AreEqual(2, transport.CountTo(FlockEndpoints.ShopTransaction), "Control: the first attempt got no answer and was sent again under its key.");
+                Assert.AreEqual(expected, refused.ErrorCode);
+                Assert.IsFalse(refused.OutcomeUnknown, "Refused under the same key: no attempt bought it.");
+                Assert.AreEqual(FlockErrorHints.For(expected), refused.Hint, "The code's own fix, not the one for a purchase that may have been made.");
+                Assert.AreEqual(10, h.Run(() => h.Client.Player.GetWalletAsync()).BalanceOf("Gold"), "Its own refusal drops the cached wallet: the next read asks the server.");
+            }
+        }
+
+        // Not for sale is checked after the key too: nothing was bought, and its own refusal drops the cached shops.
+        [Test]
+        public void Purchase_AnAttemptWithNoAnswer_ThenNotForSale_NothingWasBought_AndTheShopsAreReadAgain()
+        {
+            FlockFakeTransport transport = WithItem();
+            transport.On(FlockEndpoints.ShopByName("main"), FlockFakeTransport.Ok("{\"id\":\"shop-1\",\"name\":\"main\",\"shop_items\":[" + ItemBody + "]}"));
+            transport.OnSequence(FlockEndpoints.ShopTransaction, FlockFakeTransport.Timeout(), FlockFakeTransport.Coded(409, "shop.item_not_for_sale"));
+            using (FlockTestClient h = FlockTestClient.Create(transport, config => config.RetryPolicy = RetriesEnabled()))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+                h.Run(() => h.Client.Shop.GetByNameAsync("main"));
+
+                FlockException refused = Assert.Catch<FlockException>(() => h.Run(() => h.Client.Shop.PurchaseAsync("item-1")));
+                h.Run(() => h.Client.Shop.GetByNameAsync("main"));
+
+                Assert.AreEqual(2, transport.CountTo(FlockEndpoints.ShopTransaction), "Control: the first attempt got no answer and was sent again under its key.");
+                Assert.AreEqual(FlockErrorCode.ShopItemNotForSale, refused.ErrorCode);
+                Assert.IsFalse(refused.OutcomeUnknown, "Refused under the same key: no attempt bought it.");
+                StringAssert.Contains("switched off", refused.Hint);
+                Assert.AreEqual(2, transport.CountTo(FlockEndpoints.ShopByName("main")), "Its own refusal drops the cached shops: the next read asks the server.");
+            }
+        }
+
+        // Any other failure after an attempt with no answer proves nothing about that attempt, so the purchase may still have been made.
+        [TestCase(404, "shop_item.shop_item_not_found")]
+        [TestCase(404, "shop.player_not_found")]
+        [TestCase(403, "shop.player_mismatch")]
+        [TestCase(408, null)]
+        public void Purchase_AnAttemptWithNoAnswer_ThenAnyOtherRefusal_ItsOutcomeIsStillUnknown(int status, string code)
+        {
+            FlockFakeTransport transport = WithItem();
+            transport.OnSequence(FlockEndpoints.ShopTransaction, FlockFakeTransport.Timeout(),
+                code == null ? FlockFakeTransport.Status(status, "{}") : FlockFakeTransport.Coded(status, code));
+            using (FlockTestClient h = FlockTestClient.Create(transport, config => config.RetryPolicy = RetriesEnabled()))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                FlockException failed = Assert.Catch<FlockException>(() => h.Run(() => h.Client.Shop.PurchaseAsync("item-1")));
+
+                Assert.AreEqual(status, failed.StatusCode, "Control: the last attempt was refused.");
+                Assert.IsTrue(failed.OutcomeUnknown, "The attempt with no answer may have bought it.");
+            }
+        }
+
         // Only calls that spend or grant carry the flag; a read that fails changed nothing.
         [Test]
         public void ARead_WithNoAnswer_ItsOutcomeIsNotUnknown()
@@ -1645,6 +1810,67 @@ namespace Flock.Tests.Editor
                 FlockException failed = Assert.Catch<FlockException>(() => h.Run(() => h.Client.Shop.PurchaseAsync("item-1")));
 
                 Assert.IsTrue(failed.OutcomeUnknown);
+                Assert.AreEqual(80, h.Run(() => h.Client.Player.GetWalletAsync()).BalanceOf("Gold"), "Read from the server, not the copy from before the purchase.");
+            }
+        }
+
+        // Cancelled by the game once the purchase went out, with no attempt in doubt before: still a cancel, and since it may have been made, the next wallet read asks the server.
+        [Test]
+        public void Purchase_CancelledAfterItWasSent_StaysACancel_AndDropsTheCachedWallet()
+        {
+            FlockFakeTransport transport = WithItem();
+            transport.On(FlockEndpoints.PlayerTemplate, FlockFakeTransport.Ok(WalletTemplates));
+            transport.OnSequence("player_data?page=", WalletPage(100), WalletPage(80));
+            CancellationTokenSource giveUp = new CancellationTokenSource();
+            transport.Default(request =>
+            {
+                if (!request.Url.Contains(FlockEndpoints.ShopTransaction))
+                    return FlockFakeTransport.Ok("{}");
+                // As the platform's transport does when the caller's token cancels a request on its way.
+                giveUp.Cancel();
+                throw new OperationCanceledException(giveUp.Token);
+            });
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+                Assert.AreEqual(100, h.Run(() => h.Client.Player.GetWalletAsync()).BalanceOf("Gold"));
+
+                Assert.Catch<OperationCanceledException>(() => h.Run(() => h.Client.Shop.PurchaseAsync("item-1", giveUp.Token)));
+
+                Assert.AreEqual(1, transport.CountTo(FlockEndpoints.ShopTransaction), "Control: the purchase went out before the cancel.");
+                Assert.AreEqual(80, h.Run(() => h.Client.Player.GetWalletAsync()).BalanceOf("Gold"), "Read from the server, not the copy from before the purchase.");
+            }
+        }
+
+        // Cancelled by the game after an attempt got no answer: it ends with that attempt's failure, its outcome unknown, so it never reads as "nothing bought".
+        [Test]
+        public void Purchase_CancelledByTheGameAfterAnAttemptWithNoAnswer_EndsWithThatAttemptsFailure_ItsOutcomeUnknown()
+        {
+            FlockFakeTransport transport = WithItem();
+            transport.On(FlockEndpoints.PlayerTemplate, FlockFakeTransport.Ok(WalletTemplates));
+            transport.OnSequence("player_data?page=", WalletPage(100), WalletPage(80));
+            CancellationTokenSource giveUp = new CancellationTokenSource();
+            transport.Default(request =>
+            {
+                if (!request.Url.Contains(FlockEndpoints.ShopTransaction))
+                    return FlockFakeTransport.Ok("{}");
+                // The game gives up while the answer is lost, before the purchase is sent again.
+                giveUp.Cancel();
+                return FlockFakeTransport.Timeout();
+            });
+            using (FlockTestClient h = FlockTestClient.Create(transport, config => config.RetryPolicy = RetriesEnabled()))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+                Assert.AreEqual(100, h.Run(() => h.Client.Player.GetWalletAsync()).BalanceOf("Gold"));
+
+                FlockNetworkException failed = Assert.Throws<FlockNetworkException>(() => h.Run(() => h.Client.Shop.PurchaseAsync("item-1", giveUp.Token)));
+
+                Assert.IsTrue(giveUp.IsCancellationRequested, "Control: the game's own token was cancelled.");
+                Assert.AreEqual(1, transport.CountTo(FlockEndpoints.ShopTransaction), "Not sent again after the cancel.");
+                Assert.IsTrue(failed.OutcomeUnknown, "The attempt with no answer may have bought it.");
+                StringAssert.Contains("may have been made", failed.Hint);
                 Assert.AreEqual(80, h.Run(() => h.Client.Player.GetWalletAsync()).BalanceOf("Gold"), "Read from the server, not the copy from before the purchase.");
             }
         }

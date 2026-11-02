@@ -202,6 +202,8 @@ namespace Flock.Providers
         private sealed class Buying
         {
             public ShopItem Item;
+            // The sign-in the store's dialog was opened under, null until then; the call's wait ends with it.
+            public int? SignIn;
             public readonly TaskCompletionSource<PurchaseResult> Done = new TaskCompletionSource<PurchaseResult>();
         }
 
@@ -331,6 +333,8 @@ namespace Flock.Providers
                 throw new FlockValidationException("This product is already being bought") { Hint = "Wait for the first PurchaseAsync of it to end before starting another." };
             if (!FlockClient.Instance.IsAuthenticated)
                 throw new FlockAuthException("No player is signed in") { Hint = FlockErrorHints.SignInFirst };
+            // The sign-in the purchase is for, so the store never charges for a player who signed in while the item was read.
+            int signIn = _client.SignInNumber;
 
             // Taken before the first await, so a second call for this product meanwhile is refused rather than overwriting this one.
             Buying buying = new Buying { Item = item };
@@ -341,10 +345,16 @@ namespace Flock.Providers
                 if (!await FlockClient.Instance.Shop.IsForSaleAsync(_shopOfItem[item.Id], item.Id, cancellationToken))
                     throw new FlockValidationException($"'{item.Name}' is not for sale right now") { Code = NotForSaleCode, Hint = FlockErrorHints.For(FlockErrorCode.ShopItemNotForSale) };
                 string accountToken = await FlockClient.Instance.Shop.GetStoreAccountTokenAsync(cancellationToken);
+                // Bought for the player who asked, never for one who signed in while the item was read.
+                if (_client.SignInNumber != signIn)
+                    throw new OperationCanceledException("The player signed out or changed while the item was read, so nothing was bought");
                 _connection.SetAccountToken(accountToken);
                 // A cancelled wait leaves the store's purchase going: once paid it is delivered through PurchaseCompleted.
                 using (cancellationToken.Register(() => buying.Done.TrySetCanceled()))
                 {
+                    // Cancelled before the store's dialog opens: the dialog never opens for a call that reported cancelled.
+                    cancellationToken.ThrowIfCancellationRequested();
+                    buying.SignIn = signIn;
                     _connection.Buy(productId);
                     return await buying.Done.Task;
                 }
@@ -365,7 +375,7 @@ namespace Flock.Providers
             return _connection.PriceOf(ProductOf(shopItemId, out ShopItem _));
         }
 
-        /// <summary>Asks the store for the one-time purchases this store account already owns and has Flock deliver each to the signed-in player; a purchase Flock delivered before grants nothing more. Purchases still unfinished, one Flock could not be reached for earlier in this launch included, are sent again and go through <see cref="PurchaseCompleted"/> or <see cref="PurchaseNotDelivered"/> as usual. One made for another Flock account is refused and listed in <see cref="FlockStoreRestore.NotDelivered"/>. Throws <see cref="FlockException"/> when the store cannot list the purchases (on Apple, also when the player does not sign in to the store); a store that never answers is waited for until <paramref name="cancellationToken"/> is cancelled. On a web checkout Flock already holds what the player bought: the player's checkouts still open are read again (each one paid goes through <see cref="PurchaseCompleted"/>), and both lists are empty.</summary>
+        /// <summary>Asks the store for the one-time purchases this store account already owns and has Flock deliver each to the signed-in player; a purchase Flock delivered before grants nothing more. Purchases still unfinished, one Flock could not be reached for earlier in this launch included, are sent again and go through <see cref="PurchaseCompleted"/> or <see cref="PurchaseNotDelivered"/> as usual. One made for another Flock account is refused and listed in <see cref="FlockStoreRestore.NotDelivered"/>. Throws <see cref="FlockException"/> when the store cannot list the purchases (on Apple, also when the player does not sign in to the store); a store that never answers is waited for until <paramref name="cancellationToken"/> is cancelled. On a web checkout Flock already holds what the player bought: the player's checkouts still open are read again (each one paid goes through <see cref="PurchaseCompleted"/>), and both lists are empty. When the player signs out or changes while it runs, it ends with <see cref="OperationCanceledException"/> and sends none of the rest.</summary>
         public async Task<FlockStoreRestore> RestoreAsync(CancellationToken cancellationToken = default)
         {
             ThrowIfUnusable();
@@ -376,6 +386,8 @@ namespace Flock.Providers
                 await _web.FindOpenCheckoutsAsync(cancellationToken);
                 return new FlockStoreRestore(new List<ShopItem>(), new List<FlockUndeliveredPurchase>());
             }
+            // The sign-in the restore is for: the store's purchases are never sent as a player who signed in meanwhile.
+            int signIn = _client.SignInNumber;
             // The player asked: an unfinished purchase whose send this launch has ended goes again when the fetch hands it over.
             _sentThisLaunch.RemoveWhere(transaction => !_sendingNow.Contains(transaction));
             IReadOnlyList<FlockStoreOrder> owned = await _connection.FetchOwnedPurchasesAsync(cancellationToken);
@@ -396,6 +408,8 @@ namespace Flock.Providers
                 try
                 {
                     item = item ?? await FlockClient.Instance.Shop.GetItemAsync(_soldBefore[order.ProductId], cancellationToken);
+                    if (_client.SignInNumber != signIn)
+                        throw new OperationCanceledException("The player signed out or changed while the store's purchases were restored, so the rest were not sent");
                     await FlockClient.Instance.Shop.RedeemStoreReceiptAsync(item.Id, ReceiptOf(order), cancellationToken);
                     restored.Add(item);
                 }
@@ -518,6 +532,9 @@ namespace Flock.Providers
                 _connection.StopListening();
             }
             FlockEvents.OnAuthenticated -= HandleSignedIn;
+            FlockEvents.OnLoggedOut -= EndTheWaitsOfAnEndedSignIn;
+            FlockEvents.OnAuthExpired -= EndTheWaitsOfAnEndedSignIn;
+            FlockEvents.OnShutdown -= EndTheWaitsAsFlockShutsDown;
             _waiting.Clear();
             foreach (Buying buying in new List<Buying>(_buying.Values))
                 buying.Done.TrySetCanceled();
@@ -681,8 +698,28 @@ namespace Flock.Providers
                 return;
             }
             FlockEvents.OnAuthenticated += HandleSignedIn;
+            FlockEvents.OnLoggedOut += EndTheWaitsOfAnEndedSignIn;
+            FlockEvents.OnAuthExpired += EndTheWaitsOfAnEndedSignIn;
+            FlockEvents.OnShutdown += EndTheWaitsAsFlockShutsDown;
             if (FlockClient.Instance.IsAuthenticated)
                 HandleSignedIn(null);
+        }
+
+        // A purchase call's wait belongs to the sign-in it opened the store's dialog under; the store's purchase is held and sent again at a later sign-in.
+        private void EndTheWaitsOfAnEndedSignIn()
+        {
+            foreach (Buying buying in new List<Buying>(_buying.Values))
+            {
+                if (buying.SignIn.HasValue && buying.SignIn != _client.SignInNumber)
+                    buying.Done.TrySetException(new OperationCanceledException("The player signed out or changed while the store's purchase was waited for; once paid, it is delivered to the player who bought it at a later sign-in of theirs, or through RestoreAsync"));
+            }
+        }
+
+        // Flock shutting down ends every purchase call's wait, as Dispose does; this connection no longer acts, and the store hands a purchase paid later back to the next one.
+        private void EndTheWaitsAsFlockShutsDown()
+        {
+            foreach (Buying buying in new List<Buying>(_buying.Values))
+                buying.Done.TrySetCanceled();
         }
 
         // Purchases that waited for a sign-in go now, and the store is asked for any it still holds (Google hands them back only when asked).
@@ -690,6 +727,7 @@ namespace Flock.Providers
         {
             if (_disposed)
                 return;
+            EndTheWaitsOfAnEndedSignIn();
             List<FlockStoreOrder> waiting = new List<FlockStoreOrder>(_waiting);
             _waiting.Clear();
             foreach (FlockStoreOrder order in waiting)

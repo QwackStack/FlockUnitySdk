@@ -10,7 +10,7 @@
 | Show the player's balances | `Player.GetWalletAsync()`, then `wallet.BalanceOf("Gold")` |
 | Grey out what they cannot pay for | `wallet.CanAfford(item)` (false for a real-money item) |
 | Show what they own | `Shop.GetOwnedItemCountsAsync()`, or `Shop.OwnsAsync(item.Id)` |
-| Show a real-money item's price | `store.GetPrice(item.Id).Text`: on a phone the store's price in the player's currency, else the item's own |
+| Show a real-money item's price | `store.GetPrice(item.Id)?.Text`: on a phone the store's price in the player's currency (null when the store did not find the product), else the item's own |
 | Buy any item | `Shop.PurchaseAsync(item.Id)`: the wallet pays for a game currency, `FlockStore` for real money |
 | Tell "not enough currency" | catch `FlockException` with `ErrorCode == FlockErrorCode.ShopInsufficientFunds` |
 | Tell "no longer for sale" (switched off in the dashboard) | catch `FlockException` with `ErrorCode == FlockErrorCode.ShopItemNotForSale`, then read the shop again |
@@ -98,9 +98,14 @@ catch (FlockException e) when (e.OutcomeUnknown)
 ```
 
 `OutcomeUnknown` is set on a purchase, a consume, a fund grant and a store redemption that failed with no answer, a server error
-naming no cause, or an answer that could not be read. It is false for a refusal (such as not enough currency) and for every
-read. A call cancelled through its own token after it was sent may also have been made. When it is set, the SDK drops its cached copy of the player's data,
-so the next wallet read asks the server rather than answering with the balance from before the call.
+naming no cause, or an answer that could not be read, and on one whose later attempt was refused after an earlier one got no
+answer. It is false for a refusal of a call that got every answer (such as not enough currency) and for every read; a wallet
+purchase refused for not enough currency, a currency not held or an item not for sale is a known outcome even after an attempt
+with no answer, since the server checks the purchase's key before refusing. A call cancelled through its own token ends with
+`OperationCanceledException` unless an earlier attempt got no answer: then it ends with that attempt's `FlockException`,
+`OutcomeUnknown` set, so a cancel never reads as "nothing bought" when an attempt may have bought it. A cancelled call may still
+have been made, so the SDK drops its cached player data either way. When it is set, the SDK drops its cached copy of the
+player's data, so the next wallet read asks the server rather than answering with the balance from before the call.
 
 > Inventory is deliberately **never offline-cached** — it changes on every purchase, so the SDK always
 > reads it fresh and there is no stale copy to fall back on when the network is down. Reading it offline
@@ -149,9 +154,10 @@ foreach (ShopItem item in shop.ShopItems)
     bool payable = item.IsRealMoney || wallet.CanAfford(item);              // grey out a wallet item the player cannot pay for
 }
 
+ShopItem picked = shop.ShopItems[0];  // the item the player picked
 try
 {
-    PurchaseResult bought = await FlockClient.Instance.Shop.PurchaseAsync(item.Id);
+    PurchaseResult bought = await FlockClient.Instance.Shop.PurchaseAsync(picked.Id);
     // bought.IsPaid is false only for a store purchase still waiting for its payment.
 }
 catch (FlockException e) when (e.ErrorCode == FlockErrorCode.ShopInsufficientFunds)
@@ -214,7 +220,8 @@ catch (FlockException e)
   answer that never came or a store that could not be asked, under the client's retry settings; keys the server cannot read
   are not sent again. A wallet purchase is sent again too, with its key; a consume never is.
 - **It acts for the signed-in player** and throws `FlockAuthException` when nobody is signed in. If the player signs out or
-  changes while it is being sent again, the next attempt is not sent and the call ends with `OperationCanceledException`.
+  changes while it is being sent again, the next attempt is not sent and the call ends with `OperationCanceledException`; after an
+  attempt that got no answer, it ends with that attempt's `FlockException` instead, `OutcomeUnknown` set.
 - **It is never queued offline.** The store's unfinished purchase is the queue: send it again when the store hands it back.
 - The ids are sent exactly as given; one with a space before or after it is refused rather than trimmed.
 - `Status` reads `paid` for a delivered purchase. A receipt already redeemed and since refunded reads `refunded`: nothing
@@ -261,9 +268,10 @@ FlockStoreSetupCheck check = await store.CheckSetupAsync();      // what is miss
   (`Shop.GetStoreAccountTokenAsync`), so a purchase cannot be redeemed by anyone else, then buys. A store that does not take the
   payment throws **`FlockStoreException`**: nothing was charged, and its `Reason` says why, one of `FlockStoreFailureReasons`
   (`Cancelled`, `PaymentDeclined`, `AlreadyOwned`, `AlreadyPending`, `ProductUnavailable`, `StoreUnavailable`,
-  `NotSignedInToTheStore`, `Unknown`; a string, for the same reason as `reward.Type`), with the store's own words in its message.
+  `NotSignedInToTheStore`, `Expired`, `Unknown`; a string, for the same reason as `reward.Type`), with the store's own words in its message.
   Google Play reports a payment method it could not charge the same way as purchases being unavailable, so a declined card
-  there reads `StoreUnavailable`; `PaymentDeclined` comes from the App Store.
+  there reads `StoreUnavailable`; `PaymentDeclined` comes from the App Store and a web checkout, `Expired` from a web checkout
+  left unpaid.
   When Flock refuses a purchase the player paid for, it throws `FlockException` (its `ErrorCode` and `Hint` say why), the purchase
   stays unfinished, and `PurchaseNotDelivered` reports it.
 - **An item switched off in the dashboard** (Inactive, the item or its shop) is not shown to players and not sold. Players'
@@ -274,7 +282,11 @@ FlockStoreSetupCheck check = await store.CheckSetupAsync();      // what is miss
   an item the shops no longer list comes back and is sent to Flock at the next launch, and restoring still delivers it. One whose
   item was deleted is reported through `PurchaseNotDelivered`.
 - **A pending purchase** (a slow way to pay, or "Ask to Buy") answers with `Status` `pending` (`IsPaid` false); once paid it is
-  reported by `PurchaseCompleted`. If the call's cancellation token fires, the purchase carries on and is reported the same way.
+  reported by `PurchaseCompleted`. If the call's cancellation token fires, the purchase carries on and is reported the same way. The
+  call ends, cancelled, when the player signs out or changes while the store's dialog is open; the store's purchase, once paid, is
+  delivered to the player who bought it at a later sign-in of theirs, or through `RestoreAsync` (sent while another player is signed
+  in, it is refused for that player and not sent again in that launch). A player who signs out or changes before the dialog opens
+  buys nothing.
 - **Purchases left unfinished** (a crash, a lost connection, a refusal) come back from the store at the next launch. Once a
   player is signed in, each is sent to Flock once a launch: delivered ones raise `PurchaseCompleted`, refused ones
   `PurchaseNotDelivered` and stay unfinished for the next launch. Store purchases of products no Flock item sells are left to
@@ -284,8 +296,10 @@ FlockStoreSetupCheck check = await store.CheckSetupAsync();      // what is miss
   `ConnectAsync(new FlockStoreOptions { PaymentProvider = PaymentProviders.GooglePlay })`. The account token is not set there,
   and Flock refuses the fake store's purchases, so try a real purchase in the store's sandbox on a device.
 - **`GetPrice`** gives `Text` to show, `Amount` and `CurrencyCode`: on a phone the store's product, else the item's own price
-  (its `Price` is in the currency's smallest unit, so 799 SAR reads `SAR 7.99`). Show it rather than the item's `Price`. It
-  throws for an item with no product id for this store, and for a game-currency item.
+  (its `Price` is in the currency's smallest unit, so 799 SAR reads `SAR 7.99`, in the device's number format). Show it rather
+  than the item's `Price`. On a phone it is null when the store did not find the item's product, and it throws for an item with
+  no product id for this store; it throws for a game-currency item everywhere.
+- **`RestoreAsync`** and **`CheckSetupAsync`** need a signed-in player and throw `FlockAuthException` before one is.
 - **`RestoreAsync`** asks the store for the one-time purchases this store account owns (on a new phone, or after a reinstall)
   and has Flock deliver each to the signed-in player; `Restored` lists their items. A purchase Flock delivered before grants
   nothing more; one Flock refuses (bought for another player) is listed in `NotDelivered`, and the store's purchases are not
@@ -322,7 +336,7 @@ several active, name one in `FlockStoreOptions.PaymentProvider`.
 - **The gateway's setup** (Monetization > Payments): Stripe needs a webhook at
   `https://api-flock.qwacks.com/v1/shop/webhook/<game id>/stripe` (events `checkout.session.completed`,
   `checkout.session.expired`, `payment_intent.payment_failed`, `charge.refunded`, `charge.dispute.closed`), or a payment waits
-  for the server's 10-minute check; Moyasar wants one at the same address ending `/moyasar` (its secret token is the Webhook secret);
+  for the server's own check (within about 15 minutes); Moyasar wants one at the same address ending `/moyasar` (its secret token is the Webhook secret);
   Tap is given its address with each checkout. A refund or dispute made in Stripe's or Moyasar's own dashboard does not reach Flock
   yet: the purchase stays paid. A Moyasar player whose card is declined can try another on the same page; the purchase stays open
   until paid or expired. Stripe refuses a price below its smallest charge in the account's own currency

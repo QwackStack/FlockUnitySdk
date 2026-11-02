@@ -274,7 +274,7 @@ namespace Flock.Providers
 
                     return await FlockHttpClient.PostAsync<PurchaseResult>(
                         $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.ShopTransaction}", request, Client.GetBaseHeaders(), cancellationToken);
-                }, "Purchase shop item", cancellationToken, idempotent: true, actsForSignIn: purchaser, spendsOrGrants: true);
+                }, "Purchase shop item", cancellationToken, idempotent: true, actsForSignIn: purchaser, spendsOrGrants: true, provesNoAttemptDidIt: IsARefusalAfterTheKey);
             }
             catch (FlockException unknown) when (unknown.OutcomeUnknown)
             {
@@ -308,6 +308,11 @@ namespace Flock.Providers
             ApplyWalletToPlayerCache(result.Wallet);
             return result;
         }
+
+        // The server looks the purchase's key up before refusing for these, so a purchase refused with one was bought by no attempt under its key.
+        private static bool IsARefusalAfterTheKey(FlockException refused)
+            => refused.ErrorCode == FlockErrorCode.ShopInsufficientFunds || refused.ErrorCode == FlockErrorCode.ShopCurrencyNotHeld
+               || refused.ErrorCode == FlockErrorCode.ShopItemNotForSale;
 
         /// <summary>Redeems a purchase a store made for a shop item, as the signed-in player: Flock asks the store and delivers the item. Safe to send again: one store purchase makes one Flock purchase, and a repeat returns what the first delivered. The wallet is also written into the cached player data.</summary>
         public async Task<PurchaseResult> RedeemStoreReceiptAsync(

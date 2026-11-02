@@ -70,11 +70,13 @@ namespace Flock.Tests.Support
         public void GoOnline() => _offline = false;
 
         // Hold the next request whose URL contains `urlFragment` open until ReleaseGate() is called.
-        // One-shot: once released, later matching requests resolve normally.
-        public void GateNext(string urlFragment)
+        // One-shot: once released, later matching requests resolve normally. The gate is returned, so a test can hold
+        // two requests on two gates (gate again after the first is held) and release the earlier one alone with TrySetResult.
+        public TaskCompletionSource<bool> GateNext(string urlFragment)
         {
             _gateFragment = urlFragment;
             _gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            return _gate;
         }
 
         public void ReleaseGate() => _gate?.TrySetResult(true);

@@ -55,6 +55,22 @@ game's web payment gateway (Stripe, Tap or Moyasar) on Windows, macOS, Linux and
 - A session an earlier launch left unended, registered as its end is sent, is ended again for a few seconds when it reads as not
   found: the server saves a new session a moment after answering (184 ms measured on a phone), and its end was dropped, leaving the
   session open on the server.
+- A wallet purchase whose first attempt got no answer now ends with `OutcomeUnknown` when a later attempt fails without saying
+  whether anything was bought (too many requests, a sign-in that could not be refreshed, a sign-out before it was sent again): it may have been made,
+  so the game reads the wallet before offering it again. A money call that fails in a way the SDK does not recognise is marked
+  the same way.
+- A money call cancelled by the game's token drops the cached wallet, so the next read asks the server; cancelled after an attempt
+  that got no answer, it ends with that attempt's failure and `OutcomeUnknown`, never as a plain cancel.
+- A wallet purchase refused (not enough currency, not for sale) after an attempt that got no answer is not `OutcomeUnknown`: the
+  server checks the purchase's key first, so a refusal means nothing was bought.
+- A store purchase whose player signed out or changed while the item was read buys nothing; one cancelled before the store's
+  dialog opens never opens it; and its wait ends, cancelled, when the player signs out or Flock shuts down (the store's purchase,
+  once paid, is delivered to the player who bought it at a later sign-in, or through Restore). Restore stops once its player signs
+  out or changes.
+- A player-data read cancelled before it was sent no longer stands in for every later read of that player.
+- A player-data read already on its way when a purchase, consume or grant answered no longer puts the older wallet back in the
+  cache.
+- An offline write sent to the server no longer hides the writes still queued behind it from the cached data.
 
 ## [1.97.0]
 

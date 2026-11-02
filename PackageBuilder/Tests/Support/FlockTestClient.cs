@@ -157,4 +157,21 @@ namespace Flock.Tests.Support
             PlayerPrefs.DeleteKey(PrefAuthMethod);
         }
     }
+
+    /// <summary>Shuts down a client a test left behind (a UnityTest whose wait failed inside a nested coroutine never runs its Dispose), so only that test fails.</summary>
+    [AttributeUsage(AttributeTargets.Assembly)]
+    public sealed class ShutDownAClientLeftBehindAttribute : Attribute, NUnit.Framework.ITestAction
+    {
+        public NUnit.Framework.ActionTargets Targets => NUnit.Framework.ActionTargets.Test;
+
+        public void BeforeTest(NUnit.Framework.Interfaces.ITest test)
+        {
+        }
+
+        public void AfterTest(NUnit.Framework.Interfaces.ITest test)
+        {
+            if (FlockClient.IsInitialized)
+                FlockClient.Shutdown();
+        }
+    }
 }

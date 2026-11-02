@@ -571,6 +571,31 @@ namespace Flock.Tests.Editor
             }
         }
 
+        // The server's answer to the first queued write knows nothing of the next one, which must still show until it is sent.
+        [Test]
+        public void Flush_ServerRowOfOneWrite_KeepsTheWritesQueuedBehindItLaidOver()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.OnSequence(FlockEndpoints.CommandUpdatePlayerData,
+                FlockFakeTransport.Ok(RowJson("player-a", "tpl-1", "pd-1", new List<DataField> { Field("score", "2") })),
+                FlockFakeTransport.Offline());
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                PrimeCachedRow(h, "player-a", "tpl-1", "pd-1", new List<DataField> { Field("score", "1") });
+                h.SetReachable(false);
+                h.Run(() => h.Client.Commands.UpdatePlayerDataAsync("pd-1", new List<DataField> { Field("score", "2") }));
+                h.Run(() => h.Client.Commands.UpdatePlayerDataAsync("pd-1", new List<DataField> { Field("score", "3") }));
+
+                h.SetReachable(true);
+                h.Run(() => h.Client.Commands.FlushPendingWritesAsync());
+
+                Assert.AreEqual(2, transport.CountTo(FlockEndpoints.CommandUpdatePlayerData), "Control: the first was sent, the second failed and stays queued.");
+                PlayerData cached = h.Client.Player.TryGetCachedRow("pd-1");
+                Assert.AreEqual("3", cached.Data.Find(f => f.FieldName == "score").Value, "The write still queued is laid over the server's row.");
+            }
+        }
+
         // ---- CMD-13: a re-entrant flush is a no-op (single-flight guard) ----
         [Test]
         public void Flush_IsSingleFlight_NoDoublePost()

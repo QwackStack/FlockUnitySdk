@@ -300,7 +300,7 @@ namespace Flock.Models
         [JsonProperty("currency")]
         public string Currency { get; set; }
 
-        /// <summary>True when <see cref="Currency"/> is one the game's currency config lists as real money: the item is paid for through a store or a web checkout, never from the wallet, and <c>PurchaseAsync</c> refuses it with <c>ShopRealCurrencyNeedsCheckout</c>. False when the server does not say.</summary>
+        /// <summary>True when <see cref="Currency"/> is one the game's currency config lists as real money: the item is paid for through a store or a web checkout, never from the wallet: <c>PurchaseAsync</c> buys it through the connected <c>FlockStore</c>. False when the server does not say.</summary>
         [JsonProperty("is_real_money", NullValueHandling = NullValueHandling.Ignore)]
         public bool IsRealMoney { get; set; }
 
