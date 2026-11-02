@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+### Fixed
+
+- **A renewal of the player's sign-in answered after `FlockClient.Shutdown()` saves its new tokens for the next `Create`.** The
+  server keeps one refresh token per player and replaces it on every renewal, so the refresh token left saved was no longer
+  taken, and the player the next `Create` restored was signed out at their next renewal. The new tokens are saved only while
+  the saved sign-in is still that player's and holds the refresh token the renewal sent, so a sign-out or another sign-in since
+  is left alone; the client that shut down keeps nothing and raises no event.
+- **A renewal refused because another start of Flock, or another run of the game sharing the saved sign-in, renewed it first no
+  longer signs the player out.** When the saved sign-in is the same player's with a newer refresh token, the sign-in carries on
+  with it (`OnTokenRefreshed` is raised, and the sign-in is the same one); when its access token has run out, it is renewed once
+  more with that refresh token. A saved sign-in is taken once a renewal, and one of another player, or one with no refresh
+  token, is never taken.
+- **Flock started again while a renewal was waiting for its answer no longer sends the same refresh token twice.** The next
+  `Create` restores the same saved sign-in, and when its access token had run out it renewed with the refresh token the
+  renewal on its way had sent; the server could grant both or refuse the second, leaving the player signed out. A renewal now
+  waits for the answer to one sent with the same refresh token, takes the sign-in that answer saved, and sends its own only
+  when nothing new was saved.
+- **A sign-in answered after `FlockClient.Shutdown()` is no longer kept.** It replaced the saved sign-in the next `Create`
+  restores and raised `OnAuthenticated` to the next client's listeners. The login now fails with a `FlockException` saying
+  Flock was shut down before the server answered, with its fix; nothing is saved and nothing is raised.
+- **A client that has shut down announces nothing to the next one's listeners**: a session restore that finishes after
+  `FlockClient.Shutdown()` raises no `OnSessionRestored` and leaves `FlockClient.IsRestoringSession` to the next client's own
+  restore (a shutdown ends the restore it was running), and a link or unlink answered after it raises no `OnAccountLinked` or
+  `OnAccountUnlinked`; its call still returns the server's answer.
+
 ## [1.98.0]
 
 Web checkout, and one way to pay real money on every platform: `FlockStore` pays through the store on a phone and through the

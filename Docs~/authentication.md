@@ -194,7 +194,16 @@ player may not do what was asked (for example, a player who is not the host), no
 trigger it manually, and listen for the case where the refresh fails (the
 player must re-authenticate). A refresh that answers after the player signed out,
 or after another player signed in, is ignored, so it never signs the earlier player
-back in.
+back in. The server takes only the newest refresh token of each player, so a refresh that answers after
+`FlockClient.Shutdown()` still saves its new tokens for the next `Create`, while the saved sign-in is that player's. A
+refresh refused because another run of the game sharing the saved sign-in renewed it first carries on with that saved
+sign-in, when it is the same player's, instead of signing the player out. When Flock is started again while a refresh is
+waiting for its answer, the next client's refresh with the same refresh token waits for that answer and takes the sign-in
+it saved, rather than sending the token a second time.
+
+A client that has shut down keeps no sign-in and announces nothing: a login answered after `FlockClient.Shutdown()` fails
+with a `FlockException` saying Flock was shut down before the server answered (sign the player in again once Flock is
+initialized), and a restore, link or unlink that finishes after it raises no event for the next client's listeners.
 
 ```csharp
 FlockClient.Instance.OnSessionExpired += () => ShowLoginScreen();

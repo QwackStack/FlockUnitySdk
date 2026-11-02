@@ -90,7 +90,9 @@ namespace Flock.Providers
         /// <summary>Resumes a persisted session (refreshing an expired token), toggling <see cref="FlockClient.IsRestoringSession"/> and raising <see cref="FlockEvents.OnSessionRestored"/>. Returns true if signed in afterward.</summary>
         public async Task<bool> TryRestoreSessionAsync(CancellationToken cancellationToken = default)
         {
-            FlockClient.IsRestoringSession = true;
+            // A client that has shut down leaves the flag and the event to the client running now, whose listeners they reach.
+            if (!Client.HasShutDown)
+                FlockClient.IsRestoringSession = true;
             bool restored = false;
             try
             {
@@ -98,8 +100,11 @@ namespace Flock.Providers
             }
             finally
             {
-                FlockClient.IsRestoringSession = false;
-                FlockEvents.InvokeSessionRestored(restored);
+                if (!Client.HasShutDown)
+                {
+                    FlockClient.IsRestoringSession = false;
+                    FlockEvents.InvokeSessionRestored(restored);
+                }
             }
             return restored;
         }
@@ -442,7 +447,9 @@ namespace Flock.Providers
 
             List<PlayerLinkedAccount> accounts = ReadAccounts(response);
             Client.Logger.LogInfo($"Unlinked {wire} from player: {Client.CurrentPlayerId}");
-            FlockEvents.InvokeAccountUnlinked(provider);
+            // Answered after Shutdown: the next client's listeners would hear of another client's player.
+            if (!Client.HasShutDown)
+                FlockEvents.InvokeAccountUnlinked(provider);
             return accounts;
         }
 
@@ -465,7 +472,9 @@ namespace Flock.Providers
 
             List<PlayerLinkedAccount> accounts = ReadAccounts(response);
             Client.Logger.LogInfo($"{context} succeeded for player: {Client.CurrentPlayerId}");
-            FlockEvents.InvokeAccountLinked(provider);
+            // Answered after Shutdown: the next client's listeners would hear of another client's player.
+            if (!Client.HasShutDown)
+                FlockEvents.InvokeAccountLinked(provider);
             return accounts;
         }
 

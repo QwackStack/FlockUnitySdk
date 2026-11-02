@@ -224,5 +224,73 @@ namespace Flock.Tests.PlayMode
             Assert.AreEqual(1, transport.CountTo("probe/x"), "Nor is A's request sent again under B's sign-in");
             Assert.AreEqual("player-b", _h.Client.CurrentPlayerId);
         }
+
+        // ---- A restart while a refresh is on its way: the server takes each refresh token once ----
+
+        private static FlockHttpResponse Granted(string accessToken, string refreshToken)
+            => FlockFakeTransport.Ok("{\"player_id\":\"player-a\",\"access_token\":\"" + accessToken + "\",\"refresh_token\":\"" + refreshToken + "\"}");
+
+        // Flock shut down while its refresh waited for an answer and started again at once: the next client restores the same saved
+        // pair, whose access token has run out. It waits for that answer and takes the pair it saved, rather than sending the same
+        // refresh token a second time, which the server could grant twice or refuse.
+        [UnityTest]
+        public IEnumerator ARestoreAfterARestartWaitsForTheEarlierRefreshAndTakesItsPair()
+        {
+            string granted = FlockTestClient.MakeJwt("player-a", 3600, "granted");
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.PlayerTokenRefresh, Granted(granted, "refresh-a-2"));
+            transport.GateNext(FlockEndpoints.PlayerTokenRefresh);
+            _h = FlockTestClient.Create(transport);
+            _h.LoginWithToken(FlockTestClient.MakeJwt("player-a", -60), "refresh-a");
+            Task<bool> earlier = _h.Client.TryRefreshTokenAsync(System.Threading.CancellationToken.None);
+            yield return FlockTestWait.Until(() => transport.CountTo(FlockEndpoints.PlayerTokenRefresh) >= 1, "The first client's refresh is on its way");
+
+            FlockClient.Shutdown();
+            FlockClient next = _h.CreateAgain();
+            Task<bool> restore = next.Authentication.TryRestoreSessionAsync();
+            for (int frame = 0; frame < 5; frame++)
+                yield return null;
+            Assert.AreEqual(1, transport.CountTo(FlockEndpoints.PlayerTokenRefresh), "The next client waits for the answer to the same refresh token");
+
+            transport.ReleaseGate();
+            yield return FlockTestWait.Until(() => restore.IsCompleted, "The restore ended");
+
+            Assert.IsTrue(restore.Result, "Restored: " + restore.Exception);
+            Assert.AreEqual(1, transport.CountTo(FlockEndpoints.PlayerTokenRefresh), "One refresh in all");
+            Assert.AreEqual(granted, next.PlayerAccessToken, "Signed in with the pair the first refresh was granted");
+            Assert.AreEqual("refresh-a-2", next.LoadPersistedTokens()?.RefreshToken, "And that pair is saved");
+            Assert.IsFalse(earlier.Result, "The first client's refresh ended with its client");
+        }
+
+        // The earlier refresh got no answer, so nothing new was saved: the next client sends its own once it has waited. Asked with a
+        // token the caller could cancel, which waits the other way.
+        [UnityTest]
+        public IEnumerator ARestoreAfterARestartSendsItsOwnRefreshWhenTheEarlierOneGotNoAnswer()
+        {
+            string granted = FlockTestClient.MakeJwt("player-a", 3600, "granted");
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.OnSequence(FlockEndpoints.PlayerTokenRefresh, FlockFakeTransport.Offline(), Granted(granted, "refresh-a-2"));
+            transport.GateNext(FlockEndpoints.PlayerTokenRefresh);
+            _h = FlockTestClient.Create(transport);
+            _h.LoginWithToken(FlockTestClient.MakeJwt("player-a", -60), "refresh-a");
+            Task<bool> earlier = _h.Client.TryRefreshTokenAsync(System.Threading.CancellationToken.None);
+            yield return FlockTestWait.Until(() => transport.CountTo(FlockEndpoints.PlayerTokenRefresh) >= 1, "The first client's refresh is on its way");
+
+            FlockClient.Shutdown();
+            FlockClient next = _h.CreateAgain();
+            System.Threading.CancellationTokenSource couldCancel = new System.Threading.CancellationTokenSource();
+            Task<bool> restore = next.Authentication.TryRestoreSessionAsync(couldCancel.Token);
+            for (int frame = 0; frame < 5; frame++)
+                yield return null;
+            Assert.AreEqual(1, transport.CountTo(FlockEndpoints.PlayerTokenRefresh), "The next client waits for the earlier answer first");
+
+            transport.ReleaseGate();
+            yield return FlockTestWait.Until(() => restore.IsCompleted, "The restore ended");
+
+            Assert.IsTrue(restore.Result, "Restored: " + restore.Exception);
+            Assert.AreEqual(2, transport.CountTo(FlockEndpoints.PlayerTokenRefresh), "Its own refresh went once the earlier one had its answer");
+            Assert.AreEqual(granted, next.PlayerAccessToken);
+            Assert.IsFalse(earlier.Result);
+        }
     }
 }

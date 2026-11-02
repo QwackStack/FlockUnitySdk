@@ -47,6 +47,8 @@ namespace Flock.Analytics
 
         internal string SessionId { get; private set; }
         internal string ServerSessionId { get; private set; }
+        /// <summary>The client's sign-in this session started under; its registration answers for that sign-in even after a player switch.</summary>
+        internal int StartedUnderSignIn { get; private set; }
         internal DateTime StartTimeUtc { get; private set; }
         internal DateTime? EndTimeUtc { get; private set; }
         internal float StartRealtimeSinceStartup { get; private set; }
@@ -149,7 +151,7 @@ namespace Flock.Analytics
             return null;
         }
 
-        internal string Start(string playerId)
+        internal string Start(string playerId, int signInNumber)
         {
             if (_active)
             {
@@ -162,6 +164,7 @@ namespace Flock.Analytics
             _playerId = playerId;
             SessionId = Guid.NewGuid().ToString();
             ServerSessionId = null;
+            StartedUnderSignIn = signInNumber;
             StartTimeUtc = DateTime.UtcNow;
             EndTimeUtc = null;
             StartRealtimeSinceStartup = Time.realtimeSinceStartup;

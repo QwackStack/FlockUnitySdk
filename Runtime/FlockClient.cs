@@ -59,6 +59,12 @@ namespace Flock
         private string _accessToken;
         private string _refreshToken;
         private JwtTokenClaims _tokenClaims;
+        // Set by Shutdown: an answer this client gets afterwards keeps no sign-in and announces nothing to the next client's listeners.
+        private bool _shutDown;
+
+        // Every refresh token a client in this process sent and has no answer for yet, never logged: the server takes each one once,
+        // so a client restarted while the one before it waits for an answer sends the same token only after that answer.
+        private static readonly Dictionary<string, Task> RefreshTokensOnTheirWay = new Dictionary<string, Task>(StringComparer.Ordinal);
 
         // Clears the static singleton when domain reload is disabled on enter-play-mode,
         // so a fresh play session always starts with no SDK state.
@@ -191,7 +197,8 @@ namespace Flock
         /// Clears the global <see cref="Instance"/>, allowing <see cref="Create"/> to be
         /// called again. Ends the analytics session as a quit and lets go of this client's tokens; the saved
         /// sign-in stays, so the next <see cref="Create"/> restores the player (call
-        /// <c>Authentication.Logout()</c> first to sign the player out).
+        /// <c>Authentication.Logout()</c> first to sign the player out). A login this client gets an answer to afterwards fails and
+        /// keeps nothing, and a restore, link or unlink it finishes afterwards raises no event.
         /// Invokes <see cref="FlockEvents.OnShutdown"/> last, then clears all <see cref="FlockEvents"/> subscriptions.
         /// </summary>
         public static void Shutdown()
@@ -208,7 +215,10 @@ namespace Flock
             _instance._multiplayer?.StopForShutdown();
 #endif
             _instance.StopRepeatingCalls();
+            _instance._shutDown = true;
             _instance.EndSignIn(FlockSessionEndReason.Quit, deleteSavedSignIn: false);
+            // A restore under way was this client's; the next client's own restore sets it again.
+            IsRestoringSession = false;
             // After the session end is spooled: a later Create takes this launch's folder over.
             _instance._analyticsLaunches?.Dispose();
             _instance = null;
@@ -330,6 +340,12 @@ namespace Flock
         /// <summary>Which sign-in the tokens belong to: moves on every sign-in and sign-out, never on a refresh.</summary>
         internal int SignInNumber => _signInNumber;
 
+        /// <summary>The sign-in the analytics session named by <see cref="ServerSessionId"/> started under, which can differ from the current one.</summary>
+        internal int ServerSessionSignInNumber => _session != null && _session.IsActive ? _session.StartedUnderSignIn : 0;
+
+        /// <summary>True once <see cref="Shutdown"/> let go of this client.</summary>
+        internal bool HasShutDown => _shutDown;
+
         /// <summary>The one owner of every call the SDK repeats; run on the game's frames while Flock runs.</summary>
         internal FlockRepeatingCalls RepeatingCalls => _repeatingCalls;
 
@@ -407,14 +423,12 @@ namespace Flock
         internal Task<bool> TryRefreshTokenAsync(CancellationToken cancellationToken)
             => TryRefreshTokenAsync(_signInNumber, cancellationToken);
 
-        /// <summary>Refreshes the tokens of sign-in <paramref name="signInNumber"/>; false, changing nothing, once that sign-in has ended.</summary>
+        /// <summary>Refreshes the tokens of sign-in <paramref name="signInNumber"/>; false, changing nothing in this client, once that sign-in has ended.</summary>
         internal async Task<bool> TryRefreshTokenAsync(int signInNumber, CancellationToken cancellationToken)
         {
             if (string.IsNullOrEmpty(_refreshToken))
                 return false;
 
-            string refreshSnapshot = _refreshToken;
-            string playerIdSnapshot = CurrentPlayerId;
             int generationSnapshot = _refreshGeneration;
 
             await _refreshSemaphore.WaitAsync(cancellationToken);
@@ -429,18 +443,59 @@ namespace Flock
                 if (_refreshGeneration != generationSnapshot && !string.IsNullOrEmpty(_accessToken))
                     return true;
 
-                PlayerRefreshTokenRequest refreshRequest = new PlayerRefreshTokenRequest { PlayerId = playerIdSnapshot, RefreshToken = refreshSnapshot };
+                // The tokens held now, not those held before the wait: a saved sign-in taken meanwhile replaced them.
+                return await SendRefreshAsync(signInNumber, CurrentPlayerId, _refreshToken, mayTakeTheSavedSignIn: true, cancellationToken);
+            }
+            finally
+            {
+                _refreshSemaphore.Release();
+            }
+        }
+
+        // Sends one refresh while the caller holds the refresh turn, so the one sent again after taking a saved sign-in never waits for it.
+        private async Task<bool> SendRefreshAsync(int signInNumber, string playerId, string sentRefreshToken, bool mayTakeTheSavedSignIn,
+            CancellationToken cancellationToken)
+        {
+            // A client shut down while its refresh was on its way sent this same token: its answer is waited for, and the pair it
+            // saved is taken rather than the token sent a second time.
+            Task earlierRefresh = RefreshOnItsWayWith(sentRefreshToken);
+            if (earlierRefresh != null)
+            {
+                _logger.LogDebug("Waiting for the answer to a refresh an earlier start of Flock sent with the same refresh token");
+                // The earlier refresh's answer always comes (its request has a timeout), so a caller that cannot give up waits for it.
+                if (cancellationToken.CanBeCanceled)
+                    await FlockWaiting.FinishedBeforeGivenUpAsync(earlierRefresh, cancellationToken);
+                else
+                    await earlierRefresh;
+                cancellationToken.ThrowIfCancellationRequested();
+                if (IsSignInOver(signInNumber))
+                    return false;
+                if (mayTakeTheSavedSignIn && TakeANewerSavedSignIn(playerId, sentRefreshToken))
+                    return await CarryOnWithTheSavedSignInAsync(signInNumber, playerId, cancellationToken);
+            }
+
+            TaskCompletionSource<bool> answered = new TaskCompletionSource<bool>();
+            lock (RefreshTokensOnTheirWay)
+                RefreshTokensOnTheirWay[sentRefreshToken] = answered.Task;
+            try
+            {
+                PlayerRefreshTokenRequest refreshRequest = new PlayerRefreshTokenRequest { PlayerId = playerId, RefreshToken = sentRefreshToken };
                 // Never log the body — it carries the refresh token, and Debug.Log reaches player logs and crash reporters.
-                _logger.LogDebug($"Refresh POST {GetVersionedApiUrl()}/{FlockEndpoints.PlayerTokenRefresh} for PlayerId: {playerIdSnapshot}");
+                _logger.LogDebug($"Refresh POST {GetVersionedApiUrl()}/{FlockEndpoints.PlayerTokenRefresh} for PlayerId: {playerId}");
 
                 PlayerLoginResponse response = await FlockHttpClient.PostAsync<PlayerLoginResponse>(
                     $"{GetVersionedApiUrl()}/{FlockEndpoints.PlayerTokenRefresh}",
                     refreshRequest,
                     _initConfig.GetBaseHeaders(), cancellationToken);
 
-                // Applying a reply for an ended sign-in would sign that player back in, or sign the next one out.
+                // Applying a reply for an ended sign-in would sign that player back in, or sign the next one out. The server no longer
+                // takes the refresh token it replaced, though, so a shutdown's saved sign-in gets the new pair.
                 if (IsSignInOver(signInNumber))
+                {
+                    if (response != null && !string.IsNullOrEmpty(response.AccessToken))
+                        SaveWhereTheSentSignInIsStillSaved(playerId, sentRefreshToken, response.AccessToken, response.RefreshToken);
                     return false;
+                }
 
                 if (response == null || string.IsNullOrEmpty(response.AccessToken))
                 {
@@ -460,12 +515,15 @@ namespace Flock
             {
                 if (IsSignInOver(signInNumber))
                     return false;
-                _logger.LogWarning("Token refresh failed: session expired");
-                _logger.LogException(e);
-                ClearTokens();
-                OnSessionExpired?.Invoke();
-                FlockEvents.InvokeAuthExpired();
-                return false;
+                if (!mayTakeTheSavedSignIn || !TakeANewerSavedSignIn(playerId, sentRefreshToken))
+                {
+                    _logger.LogWarning("Token refresh failed: session expired");
+                    _logger.LogException(e);
+                    ClearTokens();
+                    OnSessionExpired?.Invoke();
+                    FlockEvents.InvokeAuthExpired();
+                    return false;
+                }
             }
             catch (Exception ex)
             {
@@ -474,7 +532,78 @@ namespace Flock
             }
             finally
             {
-                _refreshSemaphore.Release();
+                // After a late answer's save, so a client waiting on it finds the new pair. A token has one refresh on its way at a time,
+                // as any other waits for it before sending.
+                lock (RefreshTokensOnTheirWay)
+                    RefreshTokensOnTheirWay.Remove(sentRefreshToken);
+                answered.TrySetResult(true);
+            }
+
+            return await CarryOnWithTheSavedSignInAsync(signInNumber, playerId, cancellationToken);
+        }
+
+        // The same sign-in carries on with the saved pair taken; one whose access token has run out is renewed once more, never taken again.
+        private async Task<bool> CarryOnWithTheSavedSignInAsync(int signInNumber, string playerId, CancellationToken cancellationToken)
+        {
+            if (IsTokenExpired)
+                return await SendRefreshAsync(signInNumber, playerId, _refreshToken, mayTakeTheSavedSignIn: false, cancellationToken);
+            _refreshGeneration++;
+            FlockEvents.InvokeTokenRefreshed();
+            return true;
+        }
+
+        // The answer still awaited for a refresh sent with this token, by any client in this process; null when there is none.
+        private static Task RefreshOnItsWayWith(string refreshToken)
+        {
+            lock (RefreshTokensOnTheirWay)
+                return RefreshTokensOnTheirWay.TryGetValue(refreshToken, out Task answered) ? answered : null;
+        }
+
+        // Another start of Flock, or another run of the game sharing the save, renewed this player's sign-in first, so the server
+        // refused the refresh token sent here as replaced: the saved pair is taken as this sign-in's, its number kept.
+        private bool TakeANewerSavedSignIn(string playerId, string sentRefreshToken)
+        {
+            StoredTokens saved = LoadPersistedTokens();
+            if (saved == null || string.IsNullOrEmpty(saved.RefreshToken) || string.Equals(saved.RefreshToken, sentRefreshToken, StringComparison.Ordinal)
+                || !IsSavedFor(saved, playerId))
+                return false;
+            StoreTokens(saved.AccessToken, saved.RefreshToken);
+            _logger.LogInfo("The player's sign-in was renewed by another start of Flock or another run of the game; carrying on with it");
+            return true;
+        }
+
+        // A refresh answered after its sign-in ended: saved only while the save is still that player's with the refresh token sent,
+        // as after a shutdown. A sign-out cleared it and another sign-in replaced it, so those are left alone.
+        private void SaveWhereTheSentSignInIsStillSaved(string playerId, string sentRefreshToken, string accessToken, string refreshToken)
+        {
+            StoredTokens saved = LoadPersistedTokens();
+            if (saved == null || string.IsNullOrEmpty(sentRefreshToken) || !string.Equals(saved.RefreshToken, sentRefreshToken, StringComparison.Ordinal)
+                || !IsSavedFor(saved, playerId))
+                return;
+            ITokenStore store = _initConfig.TokenStore;
+            try
+            {
+                store.Save(accessToken, refreshToken);
+                _logger.LogDebug($"[{store.GetType().Name}] Saved the renewed tokens of a sign-in that had ended, as the server no longer takes the ones they replaced");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning($"[{store.GetType().Name}] Persist failed: {ex.Message}");
+            }
+        }
+
+        // Whether the saved access token names this player; one that cannot be read names no one.
+        private static bool IsSavedFor(StoredTokens saved, string playerId)
+        {
+            if (string.IsNullOrEmpty(playerId) || string.IsNullOrEmpty(saved.AccessToken))
+                return false;
+            try
+            {
+                return string.Equals(JwtTokenParser.Parse(saved.AccessToken).PlayerId, playerId, StringComparison.Ordinal);
+            }
+            catch (Exception)
+            {
+                return false;
             }
         }
 
@@ -537,6 +666,12 @@ namespace Flock
         /// </summary>
         internal void SetTokens(string accessToken, string refreshToken)
         {
+            // A sign-in answered after Shutdown would overwrite the saved sign-in the next Create restores, and be announced to its listeners.
+            if (_shutDown)
+                throw new FlockException("Flock was shut down before the server answered, so the player is not signed in")
+                {
+                    Hint = "Sign the player in again once Flock is initialized again (FlockClient.Create), through FlockClient.Instance."
+                };
             StoreTokens(accessToken, refreshToken);
             _signInNumber++;
         }
