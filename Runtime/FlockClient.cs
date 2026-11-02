@@ -74,6 +74,7 @@ namespace Flock
 #if !FLOCK_NO_MULTIPLAYER
             _instance?._multiplayer?.StopForShutdown();
 #endif
+            _instance?.StopRepeatingCalls();
             _instance = null;
             IsRestoringSession = false;
             InitializationError = null;
@@ -110,6 +111,9 @@ namespace Flock
 #if !FLOCK_NO_MULTIPLAYER
         private FlockMultiplayerProvider _multiplayer;
 #endif
+        private FlockRepeatingCalls _repeatingCalls;
+        // The game's frames the repeating calls run on, held while they do.
+        private FlockBehaviour _repeatingCallsFrames;
         private FlockSession _session;
         private FlockAnalyticsLaunches _analyticsLaunches;
 #if !FLOCK_NO_ANALYTICS
@@ -203,6 +207,7 @@ namespace Flock
 #if !FLOCK_NO_MULTIPLAYER
             _instance._multiplayer?.StopForShutdown();
 #endif
+            _instance.StopRepeatingCalls();
             _instance.EndSignIn(FlockSessionEndReason.Quit, deleteSavedSignIn: false);
             // After the session end is spooled: a later Create takes this launch's folder over.
             _instance._analyticsLaunches?.Dispose();
@@ -214,6 +219,7 @@ namespace Flock
 
         private void InitializeServices()
         {
+            _repeatingCalls = new FlockRepeatingCalls(this);
 #if !FLOCK_NO_PLAYER
             _playerData = new PlayerProvider(this);
 #endif
@@ -243,6 +249,8 @@ namespace Flock
             _multiplayer = new FlockMultiplayerProvider(this);
             _multiplayer.StartFrameUpdates();
 #endif
+            // After multiplayer's: each frame its sessions check their sign-in before the calls due are sent.
+            StartRepeatingCalls();
             _authentication = new FlockAuthProvider(this);
 
 #if !FLOCK_NO_ANALYTICS
@@ -321,6 +329,35 @@ namespace Flock
 
         /// <summary>Which sign-in the tokens belong to: moves on every sign-in and sign-out, never on a refresh.</summary>
         internal int SignInNumber => _signInNumber;
+
+        /// <summary>The one owner of every call the SDK repeats; run on the game's frames while Flock runs.</summary>
+        internal FlockRepeatingCalls RepeatingCalls => _repeatingCalls;
+
+        // The repeating calls run on the game's frames, so a web player needs no timers; quitting stops them.
+        private void StartRepeatingCalls()
+        {
+            if (_repeatingCallsFrames != null || !Application.isPlaying)
+                return;
+            FlockBehaviour behaviour = FlockBehaviour.Instance;
+            if (behaviour == null)
+                return;
+            _repeatingCallsFrames = behaviour;
+            behaviour.OnTick += _repeatingCalls.SendThoseDue;
+            behaviour.OnQuit += _repeatingCalls.StopAll;
+        }
+
+        // Flock shutting down: every repeating call stops, and the game's frames are let go.
+        private void StopRepeatingCalls()
+        {
+            if (_repeatingCallsFrames != null)
+            {
+                _repeatingCallsFrames.OnTick -= _repeatingCalls.SendThoseDue;
+                _repeatingCallsFrames.OnQuit -= _repeatingCalls.StopAll;
+                _repeatingCallsFrames = null;
+            }
+            _repeatingCalls?.StopAll();
+        }
+
         public string GameId => _initConfig.GameId;
         /// <summary>The Game Version name this client was initialized with; <see cref="GameVersionId"/> is the ID it resolved to.</summary>
         public string GameVersion => _initConfig.GameVersion;

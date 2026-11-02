@@ -91,9 +91,32 @@ catch (FlockException ex) when (ex.IsAlreadyRegistered())
 
 > A taken **display name** is not part of `IsAlreadyRegistered()` — it's a different fix. Catch `FlockErrorCode.PlayerNameAlreadyRegistered` and prompt for another name.
 
+## One code, several causes
+
+A few codes, all from Flock's payment and purchase routes (redeeming a store receipt, opening a web checkout, reading a
+purchase, consuming an inventory entry), cover more than one cause. The server's reason (`ServerMessage`) tells them apart, and
+the `Hint` covers each, so read the reason before deciding what to tell the player:
+
+| Code | Causes |
+|------|--------|
+| `PaymentProviderReceiptInvalid` | The store does not know the receipt or refunded it, or the receipt lacks the store's ids; the store's answer could not be read (send the same receipt again later). An older Flock server also sends it for three causes newer ones give codes of their own: the store refused the game's own keys (`Apple returned 401`, `Google rejected the service account`), the store was busy, down or out of reach (a 429 or 5xx; HTTP 502), and a Google payment still pending (`purchase state is 2`); send the same receipt again later for those last two |
+| `PaymentProviderReceiptBelongsToAnotherPlayer` | The store purchase was started for another player, or another player already redeemed the receipt (HTTP 403) |
+| `PaymentProviderReceiptProductMismatch` | The shop item has no product id for that store, or the receipt is for another product |
+| `PaymentProviderProviderNotFound` | The provider was never connected, or it is paused |
+| `PaymentProviderCredentialsUnreadable` | The keys stored for the provider cannot be read, or cannot be used (HTTP 503; a setting of the game, so trying again does not help) |
+| `ShopRealCurrencySettlementUnavailable` | No web checkout provider is connected and active (HTTP 422), or the Flock server has no address for payment confirmations (HTTP 503) |
+| `ShopWebhookProviderUnknown` | The provider named does not open web checkouts, or several are active and none was named |
+| `ShopPurchaseNotFound` | No purchase of the signed-in player has that id (another player's reads the same), or, on a server from before `ShopInvalidPurchaseStatus`, purchases were listed by a status it does not have (HTTP 422) |
+| `PlayerInventoryInventoryEntryNotFound` | No entry has that id in this game, or, while a player is signed in, it is another player's entry |
+
+Two payment codes are never final: `PaymentProviderStoreUnavailable` (the store could not be asked) and
+`PaymentProviderReceiptPending` (Google is still waiting for the player's payment). Leave the store's purchase unfinished and
+send the same receipt again later. `PaymentProviderStoreCredentialsRejected` is the studio's to fix (the store refused the
+game's own keys); the receipt goes through once the keys are fixed.
+
 ## Money safety
 
-`AddGameFundsAsync` and shop `PurchaseAsync` never auto-retry ambiguous failures (a client timeout may have already committed on the server). They throw, and the caller decides. Only provably-unprocessed failures (HTTP 408/429) are retried automatically. See the [Shop guide](shop.md).
+A wallet `PurchaseAsync` carries one key for every attempt, so after an answer that never came it is sent again and the server answers the repeat with the first purchase. `AddGameFundsAsync`, `ConsumeAsync` and `ConsumeOneAsync` never auto-retry ambiguous failures (a timeout may have already committed on the server): only provably-unprocessed failures (HTTP 408/429) are retried. When any of these, or a store redemption, fails without an answer that says whether it was done, the exception's `OutcomeUnknown` is true: read the wallet and inventory before offering it again. A store that did not take a real-money payment throws `FlockStoreException`, whose `Reason` says why; nothing was charged. See the [Shop guide](shop.md).
 
 ## Coded-error reference
 
@@ -107,6 +130,8 @@ catch (FlockException ex) when (ex.IsAlreadyRegistered())
 | `AnalyticsSessionNotFound` | `analytics.session_not_found` |
 | `AssetAssetNotFound` | `asset.asset_not_found` |
 | `GameGameNotFound` | `game.game_not_found` |
+| `GameInvalidApiKey` | `game.invalid_api_key` |
+| `GameMissingApiKey` | `game.missing_api_key` |
 | `GameMissingStudioId` | `game.missing_studio_id` |
 | `GameCommandAchievementNotFound` | `game_command.achievement_not_found` |
 | `GameCommandCurrencyNotFound` | `game_command.currency_not_found` |
@@ -135,6 +160,7 @@ catch (FlockException ex) when (ex.IsAlreadyRegistered())
 | `MatchmakingPartyTooLarge` | `matchmaking.party_too_large` |
 | `MatchmakingPlayerNotEligible` | `matchmaking.player_not_eligible` |
 | `MatchmakingQueueNotFound` | `matchmaking.queue_not_found` |
+| `MatchmakingSearchInputRequired` | `matchmaking.search_input_required` |
 | `MatchmakingTicketNotCancelable` | `matchmaking.ticket_not_cancelable` |
 | `MatchmakingTicketNotFound` | `matchmaking.ticket_not_found` |
 | `MatchmakingVersionMismatch` | `matchmaking.version_mismatch` |
@@ -145,6 +171,7 @@ catch (FlockException ex) when (ex.IsAlreadyRegistered())
 | `MultiplayerMintRateLimited` | `multiplayer.mint_rate_limited` |
 | `MultiplayerNotAParticipant` | `multiplayer.not_a_participant` |
 | `MultiplayerNotHost` | `multiplayer.not_host` |
+| `MultiplayerSeatMintLimit` | `multiplayer.seat_mint_limit` |
 | `MultiplayerSessionFull` | `multiplayer.session_full` |
 | `MultiplayerSessionNotFound` | `multiplayer.session_not_found` |
 | `MultiplayerTargetNotAParticipant` | `multiplayer.target_not_a_participant` |
@@ -158,12 +185,23 @@ catch (FlockException ex) when (ex.IsAlreadyRegistered())
 | `PartyNotFound` | `party.not_found` |
 | `PartyNotPartyLeader` | `party.not_party_leader` |
 | `PartyTargetNotAMember` | `party.target_not_a_member` |
+| `PaymentProviderCheckoutFailed` | `payment_provider.checkout_failed` |
+| `PaymentProviderCredentialsUnreadable` | `payment_provider.credentials_unreadable` |
+| `PaymentProviderProviderNotFound` | `payment_provider.provider_not_found` |
+| `PaymentProviderProviderNotSupportedHere` | `payment_provider.provider_not_supported_here` |
+| `PaymentProviderReceiptBelongsToAnotherPlayer` | `payment_provider.receipt_belongs_to_another_player` |
+| `PaymentProviderReceiptInvalid` | `payment_provider.receipt_invalid` |
+| `PaymentProviderReceiptPending` | `payment_provider.receipt_pending` |
+| `PaymentProviderReceiptProductMismatch` | `payment_provider.receipt_product_mismatch` |
+| `PaymentProviderStoreCredentialsRejected` | `payment_provider.store_credentials_rejected` |
+| `PaymentProviderStoreUnavailable` | `payment_provider.store_unavailable` |
 | `PlayerAccountAlreadyLinked` | `player.account_already_linked` |
 | `PlayerAccountNotLinked` | `player.account_not_linked` |
 | `PlayerAppleAccountAlreadyRegistered` | `player.apple_account_already_registered` |
 | `PlayerCannotUnlinkLastCredential` | `player.cannot_unlink_last_credential` |
 | `PlayerDeviceAlreadyRegistered` | `player.device_already_registered` |
 | `PlayerEmailAlreadyRegistered` | `player.email_already_registered` |
+| `PlayerExpiredToken` | `player.expired_token` |
 | `PlayerGameJwkNotConfigured` | `player.game_jwk_not_configured` |
 | `PlayerGameVersionIdRequired` | `player.game_version_id_required` |
 | `PlayerGoogleAccountAlreadyRegistered` | `player.google_account_already_registered` |
@@ -173,7 +211,9 @@ catch (FlockException ex) when (ex.IsAlreadyRegistered())
 | `PlayerInvalidRefreshToken` | `player.invalid_refresh_token` |
 | `PlayerInvalidRegistrationRequest` | `player.invalid_registration_request` |
 | `PlayerInvalidResetCode` | `player.invalid_reset_code` |
+| `PlayerInvalidToken` | `player.invalid_token` |
 | `PlayerInvalidVerificationCode` | `player.invalid_verification_code` |
+| `PlayerMissingToken` | `player.missing_token` |
 | `PlayerNameAlreadyRegistered` | `player.name_already_registered` |
 | `PlayerNoEmailAccount` | `player.no_email_account` |
 | `PlayerOauthFailed` | `player.oauth_failed` |
@@ -187,16 +227,34 @@ catch (FlockException ex) when (ex.IsAlreadyRegistered())
 | `PlayerInventoryPlayerNotFound` | `player_inventory.player_not_found` |
 | `PlayerTemplateNotFound` | `player_template.not_found` |
 | `PlayerTemplateNotFoundByName` | `player_template.not_found_by_name` |
+| `RequestConflict` | `request.conflict` |
+| `RequestFailed` | `request.failed` |
+| `RequestForbidden` | `request.forbidden` |
+| `RequestMethodNotAllowed` | `request.method_not_allowed` |
+| `RequestNotFound` | `request.not_found` |
+| `RequestPayloadTooLarge` | `request.payload_too_large` |
+| `RequestRateLimited` | `request.rate_limited` |
+| `RequestUnauthorized` | `request.unauthorized` |
+| `RequestValidationFailed` | `request.validation_failed` |
 | `ShopCurrencyNotHeld` | `shop.currency_not_held` |
 | `ShopCurrencyTemplateNotFound` | `shop.currency_template_not_found` |
+| `ShopIdempotencyKeyReused` | `shop.idempotency_key_reused` |
 | `ShopInsufficientFunds` | `shop.insufficient_funds` |
+| `ShopInvalidPurchaseStatus` | `shop.invalid_purchase_status` |
 | `ShopItemNotFound` | `shop.item_not_found` |
+| `ShopItemNotForSale` | `shop.item_not_for_sale` |
 | `ShopMalformedReward` | `shop.malformed_reward` |
+| `ShopNotARealCurrencyItem` | `shop.not_a_real_currency_item` |
 | `ShopPackGrantsNothing` | `shop.pack_grants_nothing` |
+| `ShopPlayerMismatch` | `shop.player_mismatch` |
 | `ShopPlayerNotFound` | `shop.player_not_found` |
+| `ShopPlayerRequired` | `shop.player_required` |
+| `ShopPurchaseNotFound` | `shop.purchase_not_found` |
 | `ShopRealCurrencyNeedsCheckout` | `shop.real_currency_needs_checkout` |
+| `ShopRealCurrencySettlementUnavailable` | `shop.real_currency_settlement_unavailable` |
 | `ShopRewardCurrencyNotHeld` | `shop.reward_currency_not_held` |
 | `ShopShopNotFound` | `shop.shop_not_found` |
 | `ShopWalletNotFound` | `shop.wallet_not_found` |
+| `ShopWebhookProviderUnknown` | `shop.webhook_provider_unknown` |
 | `ShopItemShopItemNotFound` | `shop_item.shop_item_not_found` |
 | `ShopItemShopNotFound` | `shop_item.shop_not_found` |

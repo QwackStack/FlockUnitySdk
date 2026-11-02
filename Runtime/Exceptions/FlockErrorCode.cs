@@ -3,7 +3,7 @@ using System.Text;
 
 namespace Flock.Exceptions
 {
-    // Mirrors the backend OpenAPI detail.code set; keep in sync when the spec adds codes.
+    // Mirrors the backend's detail.code set as Tooling~/WireErrorCodes.txt records it (CI diffs the two); the spec alone misses codes.
     /// <summary>Typed view of the backend's coded-error contract (the `detail.code` string). Member name = wire code PascalCased, e.g. "player.email_already_registered" -> PlayerEmailAlreadyRegistered. Unknown = no code, or one this SDK version predates (read FlockException.Code for the raw string).</summary>
     public enum FlockErrorCode
     {
@@ -65,6 +65,7 @@ namespace Flock.Exceptions
         MatchmakingPartyTooLarge,                   // matchmaking.party_too_large
         MatchmakingPlayerNotEligible,               // matchmaking.player_not_eligible
         MatchmakingQueueNotFound,                   // matchmaking.queue_not_found
+        MatchmakingSearchInputRequired,             // matchmaking.search_input_required
         MatchmakingTicketNotCancelable,             // matchmaking.ticket_not_cancelable
         MatchmakingTicketNotFound,                  // matchmaking.ticket_not_found
         MatchmakingVersionMismatch,                 // matchmaking.version_mismatch
@@ -95,6 +96,18 @@ namespace Flock.Exceptions
         PartyNotFound,                              // party.not_found
         PartyNotPartyLeader,                        // party.not_party_leader
         PartyTargetNotAMember,                      // party.target_not_a_member
+
+        // payment_provider.* (from redeeming a store receipt and opening a web checkout)
+        PaymentProviderCheckoutFailed,              // payment_provider.checkout_failed
+        PaymentProviderCredentialsUnreadable,       // payment_provider.credentials_unreadable
+        PaymentProviderProviderNotFound,            // payment_provider.provider_not_found
+        PaymentProviderProviderNotSupportedHere,    // payment_provider.provider_not_supported_here
+        PaymentProviderReceiptBelongsToAnotherPlayer, // payment_provider.receipt_belongs_to_another_player
+        PaymentProviderReceiptInvalid,              // payment_provider.receipt_invalid
+        PaymentProviderReceiptPending,              // payment_provider.receipt_pending
+        PaymentProviderReceiptProductMismatch,      // payment_provider.receipt_product_mismatch
+        PaymentProviderStoreCredentialsRejected,    // payment_provider.store_credentials_rejected
+        PaymentProviderStoreUnavailable,            // payment_provider.store_unavailable
 
         // player.* (MissingToken, ExpiredToken and InvalidToken come from the sign-in check of a route that acts as the player)
         PlayerAccountAlreadyLinked,                 // player.account_already_linked
@@ -151,18 +164,27 @@ namespace Flock.Exceptions
         RequestUnauthorized,                        // request.unauthorized
         RequestValidationFailed,                    // request.validation_failed
 
-        // shop.*
+        // shop.* (PlayerMismatch and PlayerRequired come from the purchase routes' check of which player a call acts for)
         ShopCurrencyNotHeld,                        // shop.currency_not_held
         ShopCurrencyTemplateNotFound,               // shop.currency_template_not_found
+        ShopIdempotencyKeyReused,                   // shop.idempotency_key_reused
         ShopInsufficientFunds,                      // shop.insufficient_funds
+        ShopInvalidPurchaseStatus,                  // shop.invalid_purchase_status
         ShopItemNotFound,                           // shop.item_not_found
+        ShopItemNotForSale,                         // shop.item_not_for_sale
         ShopMalformedReward,                        // shop.malformed_reward
+        ShopNotARealCurrencyItem,                   // shop.not_a_real_currency_item
         ShopPackGrantsNothing,                      // shop.pack_grants_nothing
+        ShopPlayerMismatch,                         // shop.player_mismatch
         ShopPlayerNotFound,                         // shop.player_not_found
+        ShopPlayerRequired,                         // shop.player_required
+        ShopPurchaseNotFound,                       // shop.purchase_not_found
         ShopRealCurrencyNeedsCheckout,              // shop.real_currency_needs_checkout
+        ShopRealCurrencySettlementUnavailable,      // shop.real_currency_settlement_unavailable
         ShopRewardCurrencyNotHeld,                  // shop.reward_currency_not_held
         ShopShopNotFound,                           // shop.shop_not_found
         ShopWalletNotFound,                         // shop.wallet_not_found
+        ShopWebhookProviderUnknown,                 // shop.webhook_provider_unknown
 
         // shop_item.*
         ShopItemShopItemNotFound,                   // shop_item.shop_item_not_found

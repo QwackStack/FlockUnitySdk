@@ -8,13 +8,16 @@ using UnityEngine;
 
 namespace Flock.Editor.Codegen
 {
-    // Emits typed shop accessors plus enum-keyed Purchase / AddGameFunds / GetMyInventory extensions.
-    // FlockShopItemId maps each item to its string id; FlockFundId maps each currency name to itself
+    // Emits typed shop accessors plus enum-keyed Purchase / ConsumeOne / AddGameFunds / GetMyInventory extensions.
+    // FlockShopItemId maps each item, wallet or real money, to its string id; FlockFundId maps each currency name to itself
     // (name-based, not id-based — ShopItem.Currency is the name string). AddGameFunds resolves the
     // player's wallet by the currency-tagged template id baked at sync time.
     internal static class ShopEmitter
     {
-        private sealed class ShopItemEntry
+        // 1.94.0 wrote real-money items into an assembly of their own here; a sync removes what it left.
+        internal const string RetiredStoreItemsSubdir = "StoreItems";
+
+        internal sealed class ShopItemEntry
         {
             public string Member;
             public string Id;
@@ -90,6 +93,9 @@ namespace Flock.Editor.Codegen
                 Debug.LogWarning("[Flock Codegen] Shop currencies exist but no player template is tagged \"currency\" — generated AddGameFunds(FlockFundId) will throw at runtime. Tag your wallet/currency template \"currency\".");
 
             File.WriteAllText(Path.Combine(outputDir, "FlockShopCatalog.g.cs"), BuildSource(shopByName, itemEntries, fundByMember, currencyTemplateId));
+            string retired = Path.Combine(outputDir, RetiredStoreItemsSubdir);
+            GeneratedFiles.DeleteUnder(retired);
+            GeneratedFiles.DeleteFolderIfEmpty(retired);
             Debug.Log($"[Flock Codegen] Shops: emitted {shopByName.Count} accessor(s), {itemEntries.Count} item id(s), {fundByMember.Count} fund(s).");
             return shopByName.Count;
         }
@@ -106,7 +112,7 @@ namespace Flock.Editor.Codegen
             return sb.ToString();
         }
 
-        private static string BuildSource(
+        internal static string BuildSource(
             List<KeyValuePair<string, Shop>> shops,
             List<ShopItemEntry> items,
             List<KeyValuePair<string, string>> funds,
@@ -132,7 +138,7 @@ namespace Flock.Editor.Codegen
                 foreach (ShopItemEntry entry in items)
                 {
                     // No price: prices change on the dashboard without a sync, and the drift hash leaves them out.
-                    sb.AppendLine($"        /// <summary>Sold in {entry.ShopName}.</summary>");
+                    sb.AppendLine($"        /// <summary>Sold in {CodeGenNamingHelpers.SanitizeForLineComment(entry.ShopName)}.</summary>");
                     sb.AppendLine($"        {entry.Member},");
                 }
                 sb.AppendLine("    }");
@@ -162,9 +168,13 @@ namespace Flock.Editor.Codegen
             if (items.Count > 0)
             {
                 sb.AppendLine("        public static Task<PurchaseResult> PurchaseAsync(this FlockShopProvider provider, FlockShopItemId item, CancellationToken cancellationToken = default)");
-                sb.AppendLine("            => provider.PurchaseAsync(ShopItemUuid(item), cancellationToken: cancellationToken);");
+                sb.AppendLine("            => provider.PurchaseAsync(item.ShopItemId(), cancellationToken);");
                 sb.AppendLine();
-                sb.AppendLine("        private static string ShopItemUuid(FlockShopItemId item)");
+                sb.AppendLine("        public static Task<ConsumeResult> ConsumeOneAsync(this FlockShopProvider provider, FlockShopItemId item, CancellationToken cancellationToken = default)");
+                sb.AppendLine("            => provider.ConsumeOneAsync(item.ShopItemId(), cancellationToken);");
+                sb.AppendLine();
+                sb.AppendLine("        /// <summary>The shop item's id, for calls that take one.</summary>");
+                sb.AppendLine("        public static string ShopItemId(this FlockShopItemId item)");
                 sb.AppendLine("        {");
                 sb.AppendLine("            switch (item)");
                 sb.AppendLine("            {");

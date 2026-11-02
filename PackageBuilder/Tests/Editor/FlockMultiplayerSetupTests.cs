@@ -315,7 +315,7 @@ namespace Flock.Tests.Editor
             using (FlockTestClient h = FlockTestClient.Create(transport))
             {
                 h.LoginAs("player-a");
-                FlockRepeatingCalls calls = h.Client.Multiplayer.RepeatingCalls;
+                FlockRepeatingCalls calls = h.Client.RepeatingCalls;
                 List<double> firstWaits = new List<double>();
                 List<double> latestDueTimes = new List<double>();
                 for (int i = 0; i < 8; i++)

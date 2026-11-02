@@ -19,6 +19,11 @@ namespace Flock.Providers
 
         private readonly Dictionary<string, Dictionary<string, PlayerData>> _playerDataByPlayerCache = new Dictionary<string, Dictionary<string, PlayerData>>();
         private readonly Dictionary<string, Task<Dictionary<string, PlayerData>>> _playerDataFetchTasks = new Dictionary<string, Task<Dictionary<string, PlayerData>>>();
+        // Counts every time cached player data is dropped, so a read already on its way never puts back what was dropped.
+        private int _playerDataDrops;
+        // Which read is a player's one on its way, so a read ending late never takes a newer one's place away.
+        private readonly Dictionary<string, int> _playerDataFetchNumbers = new Dictionary<string, int>();
+        private int _playerDataFetchesSent;
 
         private const string SnapshotCategory = "player_template";
 
@@ -34,15 +39,21 @@ namespace Flock.Providers
             _templateIdByName.Clear();
             _allTemplatesFetched = false;
             _allTemplatesFetchTask = null;
+            _playerDataDrops++;
             _playerDataByPlayerCache.Clear();
             _playerDataFetchTasks.Clear();
             DeleteSnapshotCategory(SnapshotCategory);
         }
 
-        // Class B write-through: game commands hand their server-returned row here.
+        // Class B write-through: game commands and money answers hand their server-returned row here.
         internal void ApplyServerPlayerData(PlayerData data)
         {
-            if (data == null || string.IsNullOrEmpty(data.PlayerId) || string.IsNullOrEmpty(data.PlayerTemplateId))
+            if (data == null || string.IsNullOrEmpty(data.PlayerId))
+                return;
+            // Newer than any read of the player's data already on its way: that read is not kept, and a read from now on is sent afresh.
+            _playerDataDrops++;
+            _playerDataFetchTasks.Remove(data.PlayerId);
+            if (string.IsNullOrEmpty(data.PlayerTemplateId))
                 return;
 
             if (_playerDataByPlayerCache.TryGetValue(data.PlayerId, out Dictionary<string, PlayerData> byTemplate))
@@ -80,8 +91,17 @@ namespace Flock.Providers
                 if (ownerPlayerId != null)
                     break;
             }
-            if (ownerPlayerId != null)
-                _playerDataByPlayerCache.Remove(ownerPlayerId);
+            ForgetPlayerData(ownerPlayerId);
+        }
+
+        // Drops the player's cached data and any read of it already on its way, so the next read asks the server.
+        internal void ForgetPlayerData(string playerId)
+        {
+            if (string.IsNullOrEmpty(playerId))
+                return;
+            _playerDataDrops++;
+            _playerDataByPlayerCache.Remove(playerId);
+            _playerDataFetchTasks.Remove(playerId);
         }
 
         public async Task<PlayerData> GetDataByIdAsync(string playerDataId, CancellationToken cancellationToken = default)
@@ -228,6 +248,18 @@ namespace Flock.Providers
             return await GetMyDataByTemplateAsync(template.Id, cancellationToken);
         }
 
+        /// <summary>The signed-in player's wallet: balances by currency code, from the player template tagged "currency". Read through the same cache as <see cref="GetMyDataByTemplateAsync"/>, which purchases, store redemptions and fund grants keep current; <see cref="ClearCache"/> reads it afresh.</summary>
+        public async Task<FlockWallet> GetWalletAsync(CancellationToken cancellationToken = default)
+        {
+            PlayerData wallet = await GetMyDataByTagAsync("currency", cancellationToken);
+            if (wallet == null)
+                throw new FlockValidationException("The signed-in player has no wallet in this Game Version")
+                {
+                    Hint = "The server makes a player's wallet when the player registers, from the Game Version's currency template, so a player who registered before that template existed, or under another Game Version, has none. Create the currency template first, then register the player under this build's Game Version."
+                };
+            return FlockWallet.From(wallet);
+        }
+
         private Task<Dictionary<string, PlayerData>> GetOrFetchByTemplateAsync(string playerId, CancellationToken cancellationToken)
         {
             if (_playerDataByPlayerCache.TryGetValue(playerId, out Dictionary<string, PlayerData> cached))
@@ -236,21 +268,37 @@ namespace Flock.Providers
                 return inFlight;
 
             Task<Dictionary<string, PlayerData>> task = FetchAndCacheAsync(playerId, cancellationToken);
-            _playerDataFetchTasks[playerId] = task;
+            // Never keep a read that already ended (a token already cancelled ends it at once): its own clean-up ran before it was kept.
+            if (!task.IsCompleted)
+                _playerDataFetchTasks[playerId] = task;
             return task;
         }
 
         private async Task<Dictionary<string, PlayerData>> FetchAndCacheAsync(string playerId, CancellationToken cancellationToken)
         {
+            int fetch = ++_playerDataFetchesSent;
+            _playerDataFetchNumbers[playerId] = fetch;
+            int dropsWhenSent = _playerDataDrops;
             try
             {
                 Dictionary<string, PlayerData> byTemplate = await FetchAllMyDataAsync(playerId, cancellationToken);
-                _playerDataByPlayerCache[playerId] = byTemplate;
+#if !FLOCK_NO_COMMANDS
+                // The server has not had the writes still queued for it, so they are laid over its answer as they were over the copy.
+                Client.Commands?.OverlayQueuedWrites(byTemplate.Values);
+#endif
+                // Dropped while on its way: the answer may be from before a change, so it is handed back but not kept.
+                if (_playerDataDrops == dropsWhenSent)
+                    _playerDataByPlayerCache[playerId] = byTemplate;
                 return byTemplate;
             }
             finally
             {
-                _playerDataFetchTasks.Remove(playerId);
+                // Dropped while on its way, its entry may already be a newer read's, which stays.
+                if (_playerDataFetchNumbers.TryGetValue(playerId, out int current) && current == fetch)
+                {
+                    _playerDataFetchTasks.Remove(playerId);
+                    _playerDataFetchNumbers.Remove(playerId);
+                }
             }
         }
 

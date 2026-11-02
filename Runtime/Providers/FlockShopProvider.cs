@@ -19,9 +19,21 @@ namespace Flock.Providers
         //Status will change once validation/flow changes
         Purchase
     }
+    // The way to pay real money a PurchaseAsync goes through (FlockStore: a phone's store, or a web checkout elsewhere), set while it is connected.
+    internal interface IFlockStoreCheckout
+    {
+        // The item as the store connection read it from the game's shops, or null when it was not there.
+        ShopItem Find(string shopItemId);
+
+        Task<PurchaseResult> PurchaseAsync(ShopItem item, CancellationToken cancellationToken);
+    }
+
     public class FlockShopProvider : FlockProviderBase
     {
         private const string SnapshotCategory = "shop";
+
+        // Set by FlockStore once it connects and cleared when it is disposed.
+        internal IFlockStoreCheckout ConnectedStore { get; set; }
 
         // Full paginated response cache — page metadata (total/page/limit) isn't part of the Shop entity, so it isn't folded into _shopsById.
         private readonly Dictionary<string, PaginatedResponse<Shop>> _shopPages = new Dictionary<string, PaginatedResponse<Shop>>();
@@ -34,16 +46,47 @@ namespace Flock.Providers
         private readonly Dictionary<string, string> _shopIdByName = new Dictionary<string, string>();
         private readonly Dictionary<string, List<string>> _itemIdsByShop = new Dictionary<string, List<string>>();
 
+        // The store account token and the sign-in it belongs to.
+        private string _accountToken;
+        private int? _accountTokenSignIn;
+
         public FlockShopProvider(FlockClient client) : base(client) { }
 
         public void ClearCache()
+        {
+            ForgetTheCatalog();
+            DeleteSnapshotCategory(SnapshotCategory);
+        }
+
+        // The next read of a shop or item asks the server; the copy on disk stays for reading offline.
+        private void ForgetTheCatalog()
         {
             _shopPages.Clear();
             _shopsById.Clear();
             _shopIdByName.Clear();
             _itemsById.Clear();
             _itemIdsByShop.Clear();
-            DeleteSnapshotCategory(SnapshotCategory);
+        }
+
+        // Read from the server, never a cache: whether the shop still sells the item to players (a switched-off shop or item is not shown to them).
+        // A shop no longer found drops the cached catalog, so the read the refusal's fix asks for shows it gone.
+        internal async Task<bool> IsForSaleAsync(string shopId, string shopItemId, CancellationToken cancellationToken)
+        {
+            Shop shop;
+            try
+            {
+                shop = await ExecuteAsync(async () => await FlockHttpClient.GetAsync<Shop>(
+                    $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.ShopById(shopId)}", Client.GetBaseHeaders(), cancellationToken),
+                    "Check the item is for sale", cancellationToken);
+            }
+            catch (FlockException gone) when (gone.ErrorCode == FlockErrorCode.ShopShopNotFound)
+            {
+                shop = null;
+            }
+            bool forSale = shop?.ShopItems != null && shop.ShopItems.Exists(item => item?.Id == shopItemId);
+            if (!forSale)
+                ForgetTheCatalog();
+            return forSale;
         }
 
         public async Task<PaginatedResponse<Shop>> GetAllAsync(
@@ -177,23 +220,46 @@ namespace Flock.Providers
             return result;
         }
 
-        /// <summary>Buys a shop item. Returns the inventory row plus anything the purchase granted immediately (Granted/Wallet); the wallet is also written into the cached player data.</summary>
-        public async Task<PurchaseResult> PurchaseAsync(
-            string shopItemId, string playerId = null,
-            CancellationToken cancellationToken = default)
+        /// <summary>Buys a shop item for the signed-in player: one priced in a game currency from the wallet, a real-money one through FlockStore, connected once at start with FlockStore.ConnectAsync: the store on a phone, a web checkout elsewhere (which opens the gateway's payment page and waits for the payment). Returns what Flock delivered (Granted, Inventory, Balances), the wallet also written into the cached player data; through a web checkout, Granted alone, and the player's cached data is dropped so the next wallet and inventory reads ask the server; a real-money purchase the store is still waiting to be paid for answers with Status pending and is reported by FlockStore.PurchaseCompleted once paid. Throws when nothing was bought: the server's refusal (such as ShopInsufficientFunds), or FlockStoreException when the store or the web checkout did not take the payment. A failure with <see cref="FlockException.OutcomeUnknown"/> set may have bought it. A wallet purchase whose answer never came is sent again under the same key, so it is never charged twice.</summary>
+        public async Task<PurchaseResult> PurchaseAsync(string shopItemId, CancellationToken cancellationToken = default)
         {
             RequireNotEmpty(shopItemId, "Shop Item ID");
-            // Default to the signed-in player; callers no longer need to pass CurrentPlayerId.
-            if (string.IsNullOrEmpty(playerId))
-                playerId = Client.CurrentPlayerId;
-            RequireNotEmpty(playerId, "Player ID", FlockErrorHints.SignInFirst);
-            // Taken with the player id, so the purchase and its records never go out as a player who signed in after.
+            string buyer = Client.CurrentPlayerId;
+            RequireNotEmpty(buyer, "Player ID", FlockErrorHints.SignInFirst);
+            // Taken before the item is read, so the purchase and its records never go out as a player who signed in meanwhile.
             int? purchaser = SignInToActFor;
+            IFlockStoreCheckout store = ConnectedStore;
+            ShopItem item = store?.Find(shopItemId) ?? await GetItemAsync(shopItemId, cancellationToken);
+            if (item == null || !item.IsRealMoney)
+                return await BuyWithTheWalletAsync(shopItemId, buyer, purchaser, item, cancellationToken);
 
-            ShopItem shopItem = await GetItemAsync(shopItemId, cancellationToken);
+            if (store == null)
+                throw new FlockValidationException("This shop item costs real money, and no way to pay real money is connected")
+                {
+                    Hint = "Connect one once at start with FlockStore.ConnectAsync: the store on a phone (through Unity IAP 5), a web checkout through the game's gateway elsewhere; real-money items are then bought through this same call."
+                };
+            // Bought for the player who asked, never for one who signed in while the item was read.
+            if (SignInToActFor != purchaser)
+                throw new OperationCanceledException("The player signed out or changed while the item was read, so nothing was bought");
+            return await store.PurchaseAsync(item, cancellationToken);
+        }
+
+        /// <summary>Buys a shop item with the wallet of <paramref name="playerId"/>, or of the signed-in player when it is null.</summary>
+        [Obsolete("Use PurchaseAsync(shopItemId): a purchase is always for the signed-in player, and the server refuses another player's id.")]
+        public Task<PurchaseResult> PurchaseAsync(string shopItemId, string playerId, CancellationToken cancellationToken = default)
+            => BuyWithTheWalletAsync(shopItemId, string.IsNullOrEmpty(playerId) ? Client.CurrentPlayerId : playerId, SignInToActFor, null, cancellationToken);
+
+        // The purchaser is the sign-in taken with the player id, so the purchase and its records never go out as a player who signed in after.
+        private async Task<PurchaseResult> BuyWithTheWalletAsync(string shopItemId, string playerId, int? purchaser, ShopItem knownItem, CancellationToken cancellationToken)
+        {
+            RequireNotEmpty(shopItemId, "Shop Item ID");
+            RequireNotEmpty(playerId, "Player ID", FlockErrorHints.SignInFirst);
+
+            ShopItem shopItem = knownItem ?? await GetItemAsync(shopItemId, cancellationToken);
             RecordPurchaseInTheBackground(shopItem, shopItemId, nameof(PurchaseStatus.Started), purchaser);
 
-            // Purchase is non-idempotent: an ambiguous failure may mean the charge already cleared, so surface it rather than re-send (double-charge). Only 408/429 (not processed) retry.
+            // One key for every attempt of this call: the server answers a resend with the first purchase, so an answer that never came is sent again.
+            string purchaseKey = Guid.NewGuid().ToString("N");
             PurchaseResult result;
             try
             {
@@ -202,12 +268,34 @@ namespace Flock.Providers
                     ShopTransactionRequest request = new ShopTransactionRequest
                     {
                         ShopItemId = shopItemId,
-                        PlayerId = playerId
+                        PlayerId = playerId,
+                        IdempotencyKey = purchaseKey
                     };
 
                     return await FlockHttpClient.PostAsync<PurchaseResult>(
                         $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.ShopTransaction}", request, Client.GetBaseHeaders(), cancellationToken);
-                }, "Purchase shop item", cancellationToken, idempotent: false, actsForSignIn: purchaser);
+                }, "Purchase shop item", cancellationToken, idempotent: true, actsForSignIn: purchaser, spendsOrGrants: true, provesNoAttemptDidIt: IsARefusalAfterTheKey);
+            }
+            catch (FlockException unknown) when (unknown.OutcomeUnknown)
+            {
+                // Neither delivered nor refused: the usual "make the call again" would be a second purchase.
+                unknown.Hint = "The purchase may have been made: no answer said whether it was. " + ReadBeforeBuyingAgain;
+                RecordPurchaseInTheBackground(shopItem, shopItemId, nameof(PurchaseStatus.Failed), purchaser);
+                throw;
+            }
+            // The server's balance is not the cached one (another device spent from it, say), so the read the fix asks for asks the server.
+            catch (FlockException refused) when (refused.ErrorCode == FlockErrorCode.ShopInsufficientFunds || refused.ErrorCode == FlockErrorCode.ShopCurrencyNotHeld)
+            {
+                ForgetThePlayersData();
+                RecordPurchaseInTheBackground(shopItem, shopItemId, nameof(PurchaseStatus.Failed), purchaser);
+                throw;
+            }
+            // Switched off in the dashboard since the shop was read: the read the fix asks for asks the server, which leaves it out.
+            catch (FlockException refused) when (refused.ErrorCode == FlockErrorCode.ShopItemNotForSale)
+            {
+                ForgetTheCatalog();
+                RecordPurchaseInTheBackground(shopItem, shopItemId, nameof(PurchaseStatus.Failed), purchaser);
+                throw;
             }
             catch
             {
@@ -215,9 +303,174 @@ namespace Flock.Providers
                 throw;
             }
 
+            RequirePurchaseNamed(result, ReadBeforeBuyingAgain);
             RecordPurchaseInTheBackground(shopItem, shopItemId, nameof(PurchaseStatus.Purchased), purchaser);
-            ApplyWalletToPlayerCache(result?.Wallet);
+            ApplyWalletToPlayerCache(result.Wallet);
             return result;
+        }
+
+        // The server looks the purchase's key up before refusing for these, so a purchase refused with one was bought by no attempt under its key.
+        private static bool IsARefusalAfterTheKey(FlockException refused)
+            => refused.ErrorCode == FlockErrorCode.ShopInsufficientFunds || refused.ErrorCode == FlockErrorCode.ShopCurrencyNotHeld
+               || refused.ErrorCode == FlockErrorCode.ShopItemNotForSale;
+
+        /// <summary>Redeems a purchase a store made for a shop item, as the signed-in player: Flock asks the store and delivers the item. Safe to send again: one store purchase makes one Flock purchase, and a repeat returns what the first delivered. The wallet is also written into the cached player data.</summary>
+        public async Task<PurchaseResult> RedeemStoreReceiptAsync(
+            string shopItemId, StoreReceipt receipt,
+            CancellationToken cancellationToken = default)
+        {
+            RequireNotEmpty(shopItemId, "Shop Item ID");
+            Dictionary<string, string> ids = ReceiptIds(receipt);
+            int? redeemer = SignInToActFor;
+            if (!redeemer.HasValue)
+                throw new FlockAuthException("No player is signed in") { Hint = FlockErrorHints.SignInFirst };
+
+            // A store purchase makes one Flock purchase, so this one may be sent again (payment plan D-P3), unlike a wallet purchase.
+            PurchaseResult result = await ExecuteAsync(async () =>
+            {
+                StoreReceiptRedemption request = new StoreReceiptRedemption
+                {
+                    ShopItemId = shopItemId,
+                    Provider = receipt.Store,
+                    Receipt = ids
+                };
+                return await FlockHttpClient.PostAsync<PurchaseResult>(
+                    $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.ShopValidateReceipt}", request, Client.GetBaseHeaders(), cancellationToken);
+            }, "Redeem store receipt", cancellationToken, idempotent: true, actsForSignIn: redeemer, spendsOrGrants: true);
+
+            RequirePurchaseNamed(result, "Leave the store's purchase unfinished and send the same receipt again: it cannot be paid for twice.");
+            ApplyWalletToPlayerCache(result.Wallet);
+            return result;
+        }
+
+        /// <summary>The value to attach to a store purchase for the signed-in player: Apple's appAccountToken (a UUID) and Google Play's obfuscated account id. The receipt check then refuses a purchase the store says is another player's. Stable per player, so it is read once per sign-in.</summary>
+        public async Task<string> GetStoreAccountTokenAsync(CancellationToken cancellationToken = default)
+        {
+            int? reader = SignInToActFor;
+            if (!reader.HasValue)
+                throw new FlockAuthException("No player is signed in") { Hint = FlockErrorHints.SignInFirst };
+            if (_accountTokenSignIn == reader && !string.IsNullOrEmpty(_accountToken))
+                return _accountToken;
+
+            StoreAccountTokenAnswer answer = await ExecuteAsync(async () =>
+                await FlockHttpClient.GetAsync<StoreAccountTokenAnswer>(
+                    $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.ShopAccountToken}", Client.GetBaseHeaders(), cancellationToken),
+                "Get store account token", cancellationToken, actsForSignIn: reader);
+            if (answer == null || string.IsNullOrEmpty(answer.AccountToken))
+                throw new FlockSerializationException("The server's answer had no account token") { Hint = FlockErrorHints.NotFlocksAnswer };
+
+            // Kept only for the sign-in it was read for, so the next player never gets this one.
+            if (SignInToActFor == reader)
+            {
+                _accountToken = answer.AccountToken;
+                _accountTokenSignIn = reader;
+            }
+            return answer.AccountToken;
+        }
+
+        /// <summary>Opens a web checkout for a real-money item as the signed-in player and returns where to send them (<see cref="FlockCheckout.PaymentUrl"/>); nothing is paid or delivered until the gateway confirms, which <see cref="GetPurchaseAsync"/> reads. Leave <paramref name="provider"/> null for the game's one active web gateway (<see cref="PaymentProviders.Stripe"/>, Tap or Moyasar); the browser lands on <paramref name="returnUrl"/> after paying and <paramref name="cancelUrl"/> after giving up, and null leaves each to the server. Never sent again after a failure with no answer, so it opens no second checkout. A web checkout connected with FlockStore.ConnectAsync does all of this inside <see cref="PurchaseAsync(string, CancellationToken)"/>.</summary>
+        public async Task<FlockCheckout> StartCheckoutAsync(string shopItemId, string provider = null, string returnUrl = null, string cancelUrl = null, CancellationToken cancellationToken = default)
+        {
+            RequireNotEmpty(shopItemId, "Shop Item ID");
+            int? buyer = SignInToActFor;
+            if (!buyer.HasValue)
+                throw new FlockAuthException("No player is signed in") { Hint = FlockErrorHints.SignInFirst };
+
+            CheckoutRequest request = new CheckoutRequest
+            {
+                ShopItemId = shopItemId,
+                Provider = string.IsNullOrEmpty(provider) ? null : provider,
+                ReturnUrl = string.IsNullOrEmpty(returnUrl) ? null : returnUrl,
+                CancelUrl = string.IsNullOrEmpty(cancelUrl) ? null : cancelUrl
+            };
+            // A checkout is never sent again after an answer that did not come (payment plan D-P3).
+            FlockCheckout checkout;
+            try
+            {
+                checkout = await ExecuteAsync(async () =>
+                    await FlockHttpClient.PostAsync<FlockCheckout>(
+                        $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.ShopCheckout}", request, Client.GetBaseHeaders(), cancellationToken),
+                    "Start checkout", cancellationToken, idempotent: false, actsForSignIn: buyer);
+            }
+            catch (FlockException refused) when (refused.ErrorCode == FlockErrorCode.ShopItemNotForSale)
+            {
+                // Switched off in the dashboard: the cached shops no longer show it for sale, as after a wallet purchase's refusal.
+                ForgetTheCatalog();
+                throw;
+            }
+            if (checkout == null || string.IsNullOrEmpty(checkout.PurchaseId) || string.IsNullOrEmpty(checkout.PaymentUrl))
+                throw new FlockSerializationException("The server's answer had no purchase id or payment page") { Hint = FlockErrorHints.NotFlocksAnswer };
+            return checkout;
+        }
+
+        /// <summary>One of the signed-in player's purchases, read now from the server (never cached): a web checkout's purchase is pending until it is paid, failed or expired. Another player's purchase is refused with <see cref="FlockErrorCode.ShopPurchaseNotFound"/>.</summary>
+        public async Task<PlayerPurchase> GetPurchaseAsync(string purchaseId, CancellationToken cancellationToken = default)
+        {
+            RequireNotEmpty(purchaseId, "Purchase ID");
+            int? reader = SignInToActFor;
+            if (!reader.HasValue)
+                throw new FlockAuthException("No player is signed in") { Hint = FlockErrorHints.SignInFirst };
+
+            PlayerPurchase purchase = await ExecuteAsync(async () =>
+                await FlockHttpClient.GetAsync<PlayerPurchase>(
+                    $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.ShopPurchaseById(purchaseId)}", Client.GetBaseHeaders(), cancellationToken),
+                "Get purchase", cancellationToken, actsForSignIn: reader);
+            if (purchase == null || string.IsNullOrEmpty(purchase.Id) || string.IsNullOrEmpty(purchase.Status))
+                throw new FlockSerializationException("The server's answer had no purchase id or status") { Hint = FlockErrorHints.NotFlocksAnswer };
+            return purchase;
+        }
+
+        /// <summary>The signed-in player's purchases, newest first, read now from the server (never cached). Pass <see cref="PurchaseResultStatuses.Pending"/> for the web checkouts not settled yet, or null for every purchase; <paramref name="limit"/> is at most 100.</summary>
+        public async Task<PaginatedResponse<PlayerPurchase>> GetPurchasesAsync(string status = null, int page = 1, int limit = 25, CancellationToken cancellationToken = default)
+        {
+            int? reader = SignInToActFor;
+            if (!reader.HasValue)
+                throw new FlockAuthException("No player is signed in") { Hint = FlockErrorHints.SignInFirst };
+
+            string query = $"page={page}&limit={limit}" + (string.IsNullOrEmpty(status) ? "" : $"&status={Uri.EscapeDataString(status)}");
+            PaginatedResponse<PlayerPurchase> purchases = await ExecuteAsync(async () =>
+                await FlockHttpClient.GetAsync<PaginatedResponse<PlayerPurchase>>(
+                    $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.ShopPurchases}?{query}", Client.GetBaseHeaders(), cancellationToken),
+                "List purchases", cancellationToken, actsForSignIn: reader);
+            if (purchases?.Items == null)
+                throw new FlockSerializationException("The server's answer had no purchase list") { Hint = FlockErrorHints.NotFlocksAnswer };
+            return purchases;
+        }
+
+        // A payment settled outside a call that answers with the wallet (a web checkout): the next read of the player's data asks the server.
+        internal void ForgetPlayerDataAfterPayment() => ForgetThePlayersData();
+
+        // The receipt's ids as the route takes them, each exactly as the store issued it.
+        private Dictionary<string, string> ReceiptIds(StoreReceipt receipt)
+        {
+            if (receipt == null)
+                throw new FlockValidationException("No store receipt was given") { Hint = "Pass the store's purchase as StoreReceipt.FromAppleAppStore or StoreReceipt.FromGooglePlay." };
+            if (receipt.Store == PaymentProviders.AppleAppStore)
+                return new Dictionary<string, string> { { "transaction_id", AsTheStoreIssuedIt(receipt.TransactionId, "App Store transaction id") } };
+            return new Dictionary<string, string>
+            {
+                { "product_id", AsTheStoreIssuedIt(receipt.ProductId, "Google Play product id") },
+                { "purchase_token", AsTheStoreIssuedIt(receipt.PurchaseToken, "Google Play purchase token") }
+            };
+        }
+
+        // A store id with spaces around it is a bug where it was copied; trimming it here would hide that bug.
+        private string AsTheStoreIssuedIt(string id, string name)
+        {
+            RequireNotEmpty(id, name, $"Pass the {name} the store gave for this purchase.");
+            if (char.IsWhiteSpace(id[0]) || char.IsWhiteSpace(id[id.Length - 1]))
+                throw new FlockValidationException($"The {name} starts or ends with a space") { Hint = $"Pass the {name} exactly as the store gave it; spaces around it come from wherever it was copied or stored." };
+            return id;
+        }
+
+        // A 2xx that names no purchase is not Flock's answer about one: without this, PurchaseResult's default status would read it as paid.
+        private void RequirePurchaseNamed(PurchaseResult result, string fix)
+        {
+            if (result != null && !string.IsNullOrEmpty(result.PurchaseId))
+                return;
+            FlockSerializationException unsure = new FlockSerializationException("The server's answer named no purchase, so whether it went through is unknown") { Hint = fix };
+            MarkOutcomeUnknown(unsure);
+            throw unsure;
         }
 
         // The purchase never waits on its records: they are analytics, and their sending and retries must not hold up or fail
@@ -254,9 +507,40 @@ namespace Flock.Providers
 #endif
         }
 
-        /// <summary>Consumes an owned inventory item, granting its rewards. Returns the updated row plus what was granted; the wallet is also written into the cached player data.</summary>
-        public async Task<ConsumeResult> ConsumeAsync(
+        /// <summary>Consumes an owned inventory entry, granting its rewards. Returns the updated row plus what was granted; the wallet is also written into the cached player data. To use one of a shop item without reading the inventory, see <see cref="ConsumeOneAsync"/>.</summary>
+        public Task<ConsumeResult> ConsumeAsync(
             string inventoryId, CancellationToken cancellationToken = default)
+            => ConsumeEntryAsync(inventoryId, SignInToActFor, cancellationToken);
+
+        /// <summary>Uses up one unused entry of a shop item the signed-in player holds, granting what it holds (a consumable's rewards; a standard item just becomes used). Reads the inventory to find one; an entry used meanwhile on another device is passed over for the next. Refused when the player holds none.</summary>
+        public async Task<ConsumeResult> ConsumeOneAsync(string shopItemId, CancellationToken cancellationToken = default)
+        {
+            RequireNotEmpty(shopItemId, "Shop Item ID");
+            // Taken before the read, so an entry read for one player is never used as the player who signed in next.
+            int? consumer = SignInToActFor;
+            if (!consumer.HasValue)
+                throw new FlockAuthException("No player is signed in") { Hint = FlockErrorHints.SignInFirst };
+
+            foreach (PlayerInventory entry in await ReadUnusedEntriesAsync(cancellationToken))
+            {
+                if (entry.ShopItemId != shopItemId || string.IsNullOrEmpty(entry.Id))
+                    continue;
+                try
+                {
+                    return await ConsumeEntryAsync(entry.Id, consumer, cancellationToken);
+                }
+                // Used by another call or device since the read: the next one is still the player's to use. Any other failure stops, so one call never uses two.
+                catch (FlockException usedMeanwhile) when (usedMeanwhile.ErrorCode == FlockErrorCode.PlayerInventoryAlreadyUsed)
+                {
+                }
+            }
+            throw new FlockValidationException("The signed-in player holds no unused entry of that shop item")
+            {
+                Hint = "Offer to use it only while GetOwnedItemCountsAsync counts it; it may have been used on another device."
+            };
+        }
+
+        private async Task<ConsumeResult> ConsumeEntryAsync(string inventoryId, int? consumer, CancellationToken cancellationToken)
         {
             RequireNotEmpty(inventoryId, "Inventory ID");
 
@@ -266,8 +550,15 @@ namespace Flock.Providers
                 // Route takes no request body — an empty object keeps the POST well-formed.
                 return await FlockHttpClient.PostAsync<ConsumeResult>(
                     $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.PlayerInventoryConsume(inventoryId)}", new { }, Client.GetBaseHeaders(), cancellationToken);
-            }, "Consume inventory item", cancellationToken, idempotent: false, actsForSignIn: SignInToActFor);
-            ApplyWalletToPlayerCache(result?.Wallet);
+            }, "Consume inventory item", cancellationToken, idempotent: false, actsForSignIn: consumer, spendsOrGrants: true);
+            // A 2xx that names no entry is not Flock's answer about one, so whether it was used is unknown.
+            if (result?.Inventory == null || string.IsNullOrEmpty(result.Inventory.Id))
+            {
+                FlockSerializationException unsure = new FlockSerializationException("The server's answer named no inventory entry, so whether it was used is unknown") { Hint = "Read the player's inventory to see whether it was used before offering to use it again." };
+                MarkOutcomeUnknown(unsure);
+                throw unsure;
+            }
+            ApplyWalletToPlayerCache(result.Wallet);
             return result;
         }
 
@@ -287,5 +578,44 @@ namespace Flock.Providers
                     Client.GetBaseHeaders(), cancellationToken);
             }, "Get player inventory", cancellationToken);
         }
+
+        /// <summary>How many unused entries of each shop item the signed-in player holds, by shop item id, from every page of the inventory; used and refunded entries do not count. The inventory is never cached, so each call reads it afresh: for a screen of items, read this once.</summary>
+        public async Task<IReadOnlyDictionary<string, int>> GetOwnedItemCountsAsync(CancellationToken cancellationToken = default)
+        {
+            Dictionary<string, int> counts = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (PlayerInventory entry in await ReadUnusedEntriesAsync(cancellationToken))
+                counts[entry.ShopItemId] = counts.TryGetValue(entry.ShopItemId, out int held) ? held + 1 : 1;
+            return counts;
+        }
+
+        // The signed-in player's unused entries from every page of the inventory, in the server's order.
+        private async Task<List<PlayerInventory>> ReadUnusedEntriesAsync(CancellationToken cancellationToken)
+        {
+            List<PlayerInventory> unused = new List<PlayerInventory>();
+            int page = 1;
+            while (true)
+            {
+                PaginatedResponse<PlayerInventory> entries = await GetPlayerInventoryAsync(page: page, limit: InventoryPageSize, cancellationToken: cancellationToken);
+                if (entries?.Items == null || entries.Items.Length == 0)
+                    return unused;
+                foreach (PlayerInventory entry in entries.Items)
+                    if (entry != null && !string.IsNullOrEmpty(entry.ShopItemId) && entry.Status == PlayerInventoryStatuses.Unused)
+                        unused.Add(entry);
+                if (page * InventoryPageSize >= entries.Total)
+                    return unused;
+                page++;
+            }
+        }
+
+        /// <summary>Whether the signed-in player holds an unused entry of this shop item, such as a standard item bought and not used up. Reads the whole inventory.</summary>
+        public async Task<bool> OwnsAsync(string shopItemId, CancellationToken cancellationToken = default)
+        {
+            RequireNotEmpty(shopItemId, "Shop Item ID");
+            IReadOnlyDictionary<string, int> counts = await GetOwnedItemCountsAsync(cancellationToken);
+            return counts.ContainsKey(shopItemId);
+        }
+
+        private const int InventoryPageSize = 100;
+        private const string ReadBeforeBuyingAgain = "Read the player's inventory and wallet to see whether it went through before offering it again; a new PurchaseAsync call is a new purchase.";
     }
 }

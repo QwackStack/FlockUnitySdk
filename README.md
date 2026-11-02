@@ -31,7 +31,7 @@ The Flock Unity SDK provides access to Flock's game backend services from Unity 
 - Game configuration — typed accessors generated from your schemas (via codegen)
 - Game and game version metadata (lookup by ID or name)
 - Player data — read with pagination; typed player-data and template accessors via codegen
-- Shop (browse shops, items, purchase, inventory)
+- Shop (browse shops, items, one purchase call for every item: from the wallet, or for real money through FlockStore, the App Store or Google Play with Unity IAP 5 on a phone and a web checkout (Stripe, Tap or Moyasar) on other platforms; inventory and using items, the player's wallet, restore, redeem store purchases from your own store code, a shop sample)
 - Leaderboards — standings, the player's own rank, and an around-me slice, by board name
 - Game commands (server-side operations: update player data, add funds)
 - Player ban lookup
@@ -171,7 +171,7 @@ Per-feature usage and examples live in their own guides:
 | [Authentication](Docs~/authentication.md) | Login/register for every provider, account linking/unlinking, logout, token refresh/revocation, password reset, email verification, session expiry |
 | [Game & Config](Docs~/game-config.md) | Typed game-config accessors, game/version metadata |
 | [Player Data & Game Commands](Docs~/player-data.md) | Reads, typed template accessors, update commands, funds, achievements, bans |
-| [Shop](Docs~/shop.md) | Shops, items, purchase (money-safety contract), player inventory |
+| [Shop](Docs~/shop.md) | Shops, items, purchase (money-safety contract), a shop screen (wallet, owned items, what the player can afford), real-money items, store purchases, buying with real money (Unity IAP 5 on a phone, a web checkout elsewhere), player inventory |
 | [Leaderboards](Docs~/leaderboards.md) | Standings, my-rank, around-me by board name; windows, board config, score formatting |
 | [Assets](Docs~/assets.md) | Listing/lookup, typed downloads, disk cache, preloading |
 | [Notifications](Docs~/notifications.md) | Player inbox, unread badge event, scheduling a template for later, pending-schedule tracking |
@@ -218,7 +218,7 @@ from installing it to a first playtest session, with screenshots; every setting 
 
 ## Error handling
 
-Every SDK call throws on failure — there are no result/error return types. Server errors surface as a `FlockException` (or a subtype: `FlockAuthException`, `FlockValidationException`, `FlockNetworkException`, `FlockSerializationException`) carrying a typed `ErrorCode` you can branch on:
+Every SDK call throws on failure — there are no result/error return types. Server errors surface as a `FlockException` (or a subtype: `FlockAuthException`, `FlockValidationException`, `FlockNetworkException`, `FlockSerializationException`, and `FlockStoreException` for a store that did not take a payment) carrying a typed `ErrorCode` you can branch on:
 
 ```csharp
 try

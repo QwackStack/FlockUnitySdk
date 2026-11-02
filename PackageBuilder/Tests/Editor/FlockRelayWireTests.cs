@@ -7,7 +7,7 @@ using NUnit.Framework;
 
 namespace Flock.Tests.Editor
 {
-    // The relay's messages: a signed request matching one Python's own hmac, md5 and crc wrote (Libraries/multiplayer-relay/
+    // The relay's messages: a signed request matching one Python's own hmac, md5 and crc wrote (Libraries/Backend/relay-wire-probes/
     // make_wire_vector.py, the form coturn_p2p accepted in MM-13), answers checked before they are believed, addresses, channel
     // frames, and the relay servers read from Flock's answer.
     public class FlockRelayWireTests

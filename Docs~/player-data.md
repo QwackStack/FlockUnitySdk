@@ -30,9 +30,10 @@ PlayerData updated = await FlockClient.Instance.Commands.UpdatePlayerDataFieldAs
 // "Level.Stage" is stored under that exact string and then refused by template validation (422). To change
 // a nested value, write the whole object — UpdatePlayerDataFieldAsync("id", "Level", theWholeLevelObject).
 
-// Money mutations (AddGameFunds + shop Purchase) only retry failures the server provably didn't process (408/429); ambiguous failures (timeout/5xx) throw rather than risk a double-credit, so wrap them in try/catch.
+// AddGameFunds only retries failures the server provably didn't process (408/429); ambiguous failures (timeout/5xx) throw rather than risk a double-credit, so wrap it in try/catch. (A shop purchase carries a key and is sent again; see the Shop guide.)
 PlayerData updated = await FlockClient.Instance.Commands.AddGameFundsAsync("gold", 500);
 // No player-data id — the SDK resolves your currency wallet (the player template tagged "currency").
+// Player.GetWalletAsync() reads that wallet's balances by currency code (FlockWallet; see the Shop guide).
 // With codegen you can pass a typed FlockFundId of your currency ids instead of the raw string:
 // PlayerData updated = await FlockClient.Instance.Commands.AddGameFundsAsync(FlockFundId._100, 500);
 

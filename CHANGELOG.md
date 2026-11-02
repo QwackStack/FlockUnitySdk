@@ -6,6 +6,355 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.98.0]
+
+Web checkout, and one way to pay real money on every platform: `FlockStore` pays through the store on a phone and through the
+game's web payment gateway (Stripe, Tap or Moyasar) on Windows, macOS, Linux and WebGL, with the same calls everywhere.
+
+### Added
+
+- **Web checkout through `FlockStore`**: on a build target with no phone store, `FlockStore.ConnectAsync()` connects the game's
+  web gateway, and `Shop.PurchaseAsync(shopItemId)` buys a real-money item through it: it opens a checkout, opens the gateway's
+  payment page in the browser and waits until the purchase is paid (returned like any purchase), or failed or expired
+  (`FlockStoreException` with `PaymentDeclined` or `Expired`; nothing is charged). `PurchaseCompleted` is raised once for every
+  paid checkout: the call's own, one whose wait the game cancelled, and one found open at the player's next sign-in after a
+  restart. A wait ends with the sign-in it began under, and with Flock shutting down.
+- **`FlockStoreOptions`**: `PaymentProvider` (a store or a gateway; null for the build target's own), and for a web checkout the
+  browser's return and cancel addresses, how often a checkout is read (3 seconds) and how the page opens (for a WebGL button,
+  where a browser may block a tab opened after an answer from the network). **`FlockStore.IsWebCheckout`**, and
+  **`FlockStoreSetupCheck.NotChecked`**: on a web checkout only a checkout shows whether a gateway is connected.
+- **`Shop.StartCheckoutAsync`, `Shop.GetPurchaseAsync` and `Shop.GetPurchasesAsync`**, for a game that runs its own checkout flow:
+  open a checkout (`FlockCheckout`: the purchase id, the gateway, the payment page, when it expires), read one of the signed-in
+  player's purchases (`PlayerPurchase`), and list them by status. A checkout is never sent again after an answer that did not come,
+  so it never opens twice.
+- **`FlockErrorCode.ShopInvalidPurchaseStatus`** (`shop.invalid_purchase_status`): purchases listed by a status the server does not
+  have; and **`FlockStoreFailureReasons.Expired`**.
+
+### Changed
+
+- **`FlockStore` is in the core package** and connects with `FlockStore.ConnectAsync(FlockStoreOptions)` (was
+  `ConnectAsync(string store)`). With nothing named (null or empty) it pays the build target's way: Google Play on Android and
+  the App Store on iOS, tvOS and visionOS, through Unity IAP 5, and a web checkout everywhere else, macOS included (a Mac App
+  Store build names `PaymentProviders.AppleAppStore`). In the editor the build target decides, so with Unity IAP 5 installed an
+  Android project's Play button uses Unity IAP's fake store. A store without Unity IAP 5 installed is refused with what to install, never sent to a web page. Its members mean
+  the same on every platform: `GetPrice` is the item's own price through a web checkout (in its currency's digits, so 799 SAR
+  reads `SAR 7.99`), `RestoreAsync` reads the open checkouts again, and `PurchaseNotDelivered` is never raised there.
+- `FlockStoreException` and `FlockStoreFailureReasons` are in the core package now, so a store and a web checkout fail the same way;
+  the namespace is unchanged.
+- The fixes for `ShopRealCurrencyNeedsCheckout`, `ShopNotARealCurrencyItem` and `ShopWebhookProviderUnknown` name the SDK's web
+  checkout calls and `FlockStoreOptions.PaymentProvider`; a real-money purchase with nothing connected says to connect
+  `FlockStore`.
+- The shop sample sells real-money items on every build target, with Restore purchases on a phone.
+- The fix for `PaymentProviderCheckoutFailed` also names a price below the smallest amount the gateway charges (Stripe answers
+  `amount_too_small`): raise the item's price.
+
+### Fixed
+
+- A checkout this game just opened that reads as not found is read again for up to 30 seconds: the server can save a new checkout
+  a moment after answering, and the wait no longer ends with `ShopPurchaseNotFound` while the checkout is open.
+- A session an earlier launch left unended, registered as its end is sent, is ended again for a few seconds when it reads as not
+  found: the server saves a new session a moment after answering (184 ms measured on a phone), and its end was dropped, leaving the
+  session open on the server.
+- A wallet purchase whose first attempt got no answer now ends with `OutcomeUnknown` when a later attempt fails without saying
+  whether anything was bought (too many requests, a sign-in that could not be refreshed, a sign-out before it was sent again): it may have been made,
+  so the game reads the wallet before offering it again. A money call that fails in a way the SDK does not recognise is marked
+  the same way.
+- A money call cancelled by the game's token drops the cached wallet, so the next read asks the server; cancelled after an attempt
+  that got no answer, it ends with that attempt's failure and `OutcomeUnknown`, never as a plain cancel.
+- A wallet purchase refused (not enough currency, not for sale) after an attempt that got no answer is not `OutcomeUnknown`: the
+  server checks the purchase's key first, so a refusal means nothing was bought.
+- A store purchase whose player signed out or changed while the item was read buys nothing; one cancelled before the store's
+  dialog opens never opens it; and its wait ends, cancelled, when the player signs out or Flock shuts down (the store's purchase,
+  once paid, is delivered to the player who bought it at a later sign-in, or through Restore). Restore stops once its player signs
+  out or changes.
+- A player-data read cancelled before it was sent no longer stands in for every later read of that player.
+- A player-data read already on its way when a purchase, consume or grant answered no longer puts the older wallet back in the
+  cache.
+- An offline write sent to the server no longer hides the writes still queued behind it from the cached data.
+
+## [1.97.0]
+
+The store release check: every player build, both install paths, codegen and the upgrade from 1.89.2, measured, with what it found.
+
+### Changed
+
+- **`FlockProviderBase`'s two helpers from 1.96.0 are no longer public API.** `MarkOutcomeUnknown` and `ForgetThePlayersData` were
+  `protected` on a public base class, so a game could see and call them; they are now for the SDK's own providers only. No call
+  a game makes changed.
+- **A declined card on Google Play now gets the right fix.** Google Play answers a payment it could not charge the same way as
+  purchases being unavailable, so it reaches the game as `FlockStoreFailureReasons.StoreUnavailable`, whose fix said only to
+  check the device is online. The fix now also names the payment method, and the reason's description says so;
+  `PaymentDeclined` comes from the App Store. The shop sample's line says the same. Measured with Google's declining test card.
+- **Restore delivers a purchase Flock could not be reached for earlier in the same launch.** A store's unfinished purchase is
+  sent to Flock once a launch, so after a failed send `RestoreAsync` skipped it until the next launch, though a one-time
+  item's `AlreadyOwned` fix tells the game to restore. Restore now sends each such purchase again (one still being sent is
+  left to its send, so it is never sent twice); it is finished once delivered and reported through `PurchaseCompleted`.
+  Measured on a phone: paid while Flock was unreachable, Google's "already owned", then Restore.
+- **`GamePatchGameConfigNotFound`'s fix names the cause a game meets**: a config id no config of the game has (another game's, or
+  deleted), with codegen to sync; it said the patch pointed at a deleted config, which only the dashboard's patch editing meets.
+
+### Documentation
+
+- The shop guide says Android needs **Minimum API Level** 23 or higher with Unity IAP 5: its Google Play Billing library needs it,
+  and a Unity 2021.3 project starts at 22, so its build stops at Gradle's manifest merge.
+
+### Notes
+
+- Measured for this release, the SDK installed from its GitHub address: Windows (Mono and IL2CPP), Android (IL2CPP) and WebGL
+  players build on Unity 6000.3 and Windows and Android on 2021.3, and each Windows player and the WebGL page passes a 16-step run
+  of the shop's purchase paths against a Flock backend; both `.unitypackage`s import and compile on both versions.
+- A write a 1.89.2 game queued offline, saved without the overlay 1.96.0 added, still sends after the update, and reads before it
+  show the server's value.
+- Google Play sandbox purchases on an Android phone, from Play's internal testing: a currency pack, a consumable bought and used,
+  a cancel, a declined card, a slow card approved minutes later, a payment Flock could not be reached for (delivered once at the
+  next launch), an item switched off after the store connected (refused before Google's sheet) and an unfinished purchase of it
+  (still delivered), and restore after the app's data was cleared.
+- Production: the purchase paths' run in Windows players (Mono and IL2CPP), and the release's live checks (player data, a write
+  queued offline, an event, a config), against a test game; the tests ship as `FlockReleaseLiveTests`, run by hand.
+
+## [1.96.0]
+
+Documentation for buying, with an example for every situation, the fix it found, the fixes a search for its kind found, and
+items switched off in the dashboard, which the server now leaves out of players' shops.
+
+### Added
+
+- **`FlockErrorCode.ShopItemNotForSale`** (`shop.item_not_for_sale`): the item, or its shop, is set to Inactive in the Flock
+  dashboard, so it is not sold and nothing was bought. A newer server sends it for a wallet purchase; the store connection sends
+  it too, before the store takes any payment.
+
+### Fixed
+
+- **After a purchase, consume, fund grant or store redemption whose outcome is unknown, the next wallet read asks the server.**
+  Reading the wallet again is what such a failure tells a game to do, and it answered with the cached balance from before the
+  call. The SDK now drops its cached copy of the player's data whenever it sets `OutcomeUnknown`.
+- **A player-data read sent before that copy was dropped is no longer kept** when it answers late: it may hold data from before
+  the change. Its caller still gets its answer.
+- **A write waiting to be sent offline still shows after the cached copy is dropped.** A read made after an unknown outcome,
+  `ClearCache` or a new launch asked the server, which has not had the write yet, and showed the value from before it.
+  Writes still queued are now laid over every fresh read, on the row they were written to.
+- **An achievement unlocked offline shows as unlocked at once**, as the server marks it: the time now, and an achievement
+  unlocked earlier keeps its time. It used to read as locked until the unlock was sent.
+- **A purchase refused for not enough of the item's currency, or none of it, drops the cached wallet**, so the read its fix asks
+  for shows the server's balance (spent on another device, say) instead of the cached one.
+- **A real-money item switched off in the dashboard is no longer sold by a game that read the shop before.** `PurchaseAsync`
+  checks with the server just before the store's dialog and refuses with `ShopItemNotForSale`; the store never charges.
+  A not-for-sale refusal, wallet or store, drops the cached shops, so reading them again shows the item gone.
+- **A purchase paid for and not delivered is still delivered after its item is switched off** (set to Inactive in the
+  dashboard). The store connection keeps the products it sold (per game, with the offline cache on), so the store hands
+  such a purchase back at the next launch and Flock delivers it; restoring delivers it too. One whose item was deleted is
+  reported through `PurchaseNotDelivered` instead of being left silently.
+- **Not finding a shop names its other cause:** a shop set to Inactive also answers `ShopShopNotFound` (and `GetItemsByShopAsync`
+  `ShopItemShopNotFound`), and their fixes now say so.
+
+### Changed
+
+- The shop guide opens with a table of every situation and the call for it.
+
+## [1.95.0]
+
+One purchase call for every item, and plain names for the store calls. Everything renamed or removed here was new in 1.93.0
+or 1.94.0, neither of which shipped.
+
+### Added
+
+- **`Shop.PurchaseAsync(shopItemId)` buys any item**: from the wallet when it costs a game currency, through the store when it
+  costs real money, once `FlockStore.ConnectAsync` has connected it. With no store connected a real-money item is refused
+  before anything is sent, saying to connect one. A store purchase still waiting for its payment answers with `Status`
+  `pending`.
+- **`FlockException.OutcomeUnknown`**: true when a purchase, consume, fund grant or store redemption failed with no answer
+  saying whether it was done (no answer, a server error naming no cause, an answer that could not be read). Read the wallet and
+  inventory before offering it again. False for a refusal and for every read.
+- **`Shop.ConsumeOneAsync(shopItemId)`**: uses the first unused entry of a shop item the player holds; one used meanwhile on
+  another device is passed over, any other failure stops, and a player holding none is refused before anything is used.
+- **`PurchaseResult.Balances`** and **`ConsumeResult.Balances`**: the wallet after the call as a `FlockWallet`, or null when no
+  currency moved.
+- **`FlockStoreException`**, thrown when the store did not take the payment (nothing was charged); its `Reason` is one of
+  `FlockStoreFailureReasons`, `Cancelled` included.
+- In the generated code, **`ConsumeOneAsync(FlockShopItemId)`** and a public **`ShopItemId()`** for the calls that take an id.
+
+### Changed
+
+- **`FlockStorePurchases` is `FlockStore`**, and its purchase goes through `Shop.PurchaseAsync`: `BuyAsync` and
+  `FlockStorePurchase` / `FlockStorePurchaseOutcome` are gone. `Store` is `PaymentProvider`, `GetStorePrice` is `GetPrice`,
+  `PurchaseDelivered` is `PurchaseCompleted` (now raised for every real-money purchase Flock delivers, the ones the call answers
+  included, with the item and the result), `PurchaseNeedsAttention` is `PurchaseNotDelivered` (raised for every paid purchase
+  Flock did not deliver) with `FlockUndeliveredPurchase`, `FlockStoreRestore.Restored` lists the items and `Problems` is
+  `NotDelivered`, and `FlockStoreSetupCheck` reads `NotFoundInTheStore`, `MissingProductId`, `ServerCanCheckPurchases`,
+  `ServerProblem` and `IsReady`.
+- **Codegen puts every item back in `FlockShopItemId`**: `FlockStoreItemId` and its assembly are gone, and a sync removes the
+  `Shops/StoreItems/` folder 1.94.0 wrote. Sync again after upgrading.
+- **`Shop.PurchaseAsync(shopItemId, playerId)` is obsolete**: a purchase is for the signed-in player, and the server refuses any
+  other id. It still sends the player it names, from the wallet only.
+- **`ConsumeAsync` refuses a 2xx that names no inventory entry** (`FlockSerializationException`, with `OutcomeUnknown` set), as a
+  purchase does.
+- The shop sample buys through the one call and uses a consumable it holds ("Use").
+- `ShopItemTypes.Standard` and the shop guide say that only a store sells a standard item once: the wallet sells it again, so
+  check `GetOwnedItemCountsAsync` before offering a wallet one.
+- The errors guide's money section says which calls are sent again, which never are, and what `OutcomeUnknown` means.
+
+
+## [1.94.0]
+
+Samples and testing. A shop sample, and the calls a shop screen needs: the store's price, the wallet, what the player owns, a
+restore, a setup check, the store's reason as a value, and wallet purchases that are safe to send again.
+
+### Added
+
+- **The shop sample**, `Samples/Shop` (`FlockShopSample`): every shop item with its price (the store's own for a real-money
+  item), what the player owns, wallet items the player cannot pay for greyed out, every outcome in plain words, and Restore
+  purchases and Check store setup. Real-money items need Unity IAP 5; without it the sample sells the game-currency items. It
+  leaves a package with the shop.
+- **`Player.GetWalletAsync()`** and **`FlockWallet`**: the signed-in player's balances by currency code (`GameCurrencies`,
+  `RealCurrencies`, `BalanceOf`, `Holds`), and `CanAfford(item)` for an item paid from the wallet. `FlockWallet.From(wallet)`
+  reads a purchase's `Wallet`.
+- **`Shop.GetOwnedItemCountsAsync()`** and **`Shop.OwnsAsync(shopItemId)`**: how many unused inventory entries of each item the
+  player holds, from every page; used and refunded entries do not count. `PlayerInventoryStatuses` names the statuses.
+- **`FlockStorePurchases.GetStorePrice(shopItemId)`**: the price the store shows this player (text, amount, currency code), or
+  null when the store did not find the product.
+- **`FlockStorePurchases.RestoreAsync()`**: has Flock deliver the one-time purchases this store account owns; a purchase Flock
+  delivered before is answered with what it granted then, and grants nothing more.
+- **`FlockStorePurchases.CheckSetupAsync()`**: which real-money items the store did not find or have no product id for this
+  store, and whether Flock's server can ask the store about purchases with the game's keys. It buys nothing.
+- **`FlockStorePurchase.StoreFailureReason`**, one of `FlockStoreFailureReasons`, so a game tells a declined payment from an
+  item already owned or a store that is down without reading the store's words.
+- **`FlockStoreItemId`** in the generated code: real-money items get an enum of their own, with `BuyAsync` and
+  `GetStorePrice` taking it, in an assembly compiled only with Unity IAP 5.
+- **`FlockErrorCode.ShopIdempotencyKeyReused`**, with its fix.
+
+### Changed
+
+- **`Shop.PurchaseAsync` is sent again after an answer that never came** (a dropped connection, a timeout, a server error),
+  with the key every attempt of the call carries (`idempotency_key`): the server answers a repeat with the first purchase, so
+  the player pays once. A new call is a new purchase, and a purchase is still never queued offline. This needs a Flock server
+  that reads the key: an older one ignores it, and there a purchase sent again can be charged twice.
+- **`FlockShopItemId` lists only the items paid from the wallet**; real-money items moved to `FlockStoreItemId`. Sync the
+  codegen again after upgrading.
+
+
+## [1.93.0]
+
+Buying with Unity IAP 5. A game with Unity IAP 5 sells Flock shop items for real money in one call.
+
+### Added
+
+- **`FlockStorePurchases`**, compiled only when Unity IAP 5 (`com.unity.purchasing` 5.x) is installed and the shop is in the
+  package. `ConnectAsync()` connects Unity IAP's store, reads the game's shops and registers each item with a product id for
+  this store (a currency pack or consumable as a consumable product, a standard item as a one-time product). `BuyAsync(shopItemId)`
+  sets the signed-in player's account token on the store, buys, has Flock redeem the purchase, and finishes it in the store only
+  once Flock delivered; it ends `Delivered`, `Pending` (slow payment, "Ask to Buy"), `Cancelled` or `Failed` (the store's reason),
+  and throws `FlockException` when Flock refuses a paid purchase, which stays unfinished. Purchases left unfinished come back at
+  the next launch and are sent once a launch after sign-in (Google's asked for at each sign-in); `PurchaseDelivered` and
+  `PurchaseNeedsAttention` report those and pending ones paid later. Store purchases of products no Flock item sells are left to
+  the game. One connection a client: a second `ConnectAsync` while one is connected is refused (`Dispose` it first), and a
+  connection made before the Flock client was created again no longer acts. Built on Unity IAP 5's order API, tested with its
+  fake store on 5.3.1 and 5.4.4, and bought through Google Play on a phone: a currency pack, a standard item and a consumable.
+- **`Shop.GetStoreAccountTokenAsync()`**: the value to set on a store purchase for the signed-in player (Apple's
+  appAccountToken, Google Play's obfuscated account id), so the server refuses a receipt that is another player's. Read once a
+  sign-in.
+- **A Unity IAP 4.x recipe**, `Docs~/recipes/FlockUnityIap4Store.cs`, which holds each purchase until Flock delivered it; it
+  compiles against Unity IAP 4.15.1.
+
+
+## [1.92.0]
+
+Store purchase validation. A game that has an App Store or Google Play purchase in hand can have Flock check it with the store
+and deliver the item.
+
+### Added
+
+- **`Shop.RedeemStoreReceiptAsync(shopItemId, StoreReceipt)`** redeems a store's purchase for a shop item as the signed-in
+  player: the server asks the store itself, checks the product is the item's `StoreProductIds` entry for that store, and
+  returns the `PurchaseResult` (what was granted, the inventory entry, the wallet, which is also written into the cached
+  player data). Make the receipt with `StoreReceipt.FromAppleAppStore(transactionId)` or
+  `StoreReceipt.FromGooglePlay(productId, purchaseToken)`. One store purchase makes one Flock purchase, so it may be sent
+  again, unlike a wallet purchase: the SDK re-sends it after an answer that never came or a store that could not be asked,
+  and a repeat returns what the first delivered. Finish the purchase in the store library only once this call returns.
+  Not queued offline; it throws `FlockAuthException` with nobody signed in; a retry is never sent once the player signs out
+  or changes; an id with a space before or after it is refused, not trimmed. A repeat of a receipt since refunded returns
+  status `refunded`. It records no analytics transaction: the server records each delivered store purchase as revenue.
+
+### Changed
+
+- **The payment fixes name the call:** "send the same receipt again later with `Shop.RedeemStoreReceiptAsync`";
+  `ShopRealCurrencyNeedsCheckout` points at selling the item through a store and redeeming it; `ShopItemNotFound` names it
+  among the calls that take a shop item id; and the five setup faults a store purchase can meet after the player has paid
+  (`ShopCurrencyTemplateNotFound`, `ShopWalletNotFound`, `ShopMalformedReward`, `ShopPackGrantsNothing`,
+  `ShopRewardCurrencyNotHeld`) say the same receipt redeems once the setup is fixed.
+- **A 5xx that names one of the game's own settings is not sent again**: `PaymentProviderCredentialsUnreadable` and
+  `ShopRealCurrencySettlementUnavailable` stay the same until the studio fixes them.
+
+### Fixed
+
+- **`Shop.PurchaseAsync` no longer reads an answer that names no purchase as paid.** A 2xx without a purchase id (`{}`)
+  read as a paid purchase, since `PurchaseResult.Status` defaults to `paid`; it now throws `FlockSerializationException`
+  saying to check the inventory and wallet before offering the item again.
+
+
+## [1.91.0]
+
+Real-money shop items. A game can tell which shop items cost real money and read each one's product id in each store.
+
+### Added
+
+- **`ShopItem.IsRealMoney`**: true when the item's currency is one the game's currency config lists as real money, so the
+  item is paid for through a store or a web checkout, never from the wallet (`PurchaseAsync` refuses it with
+  `ShopRealCurrencyNeedsCheckout`). It is the server's own answer, sent with the catalog by every shop read; a server that
+  does not send it reads false.
+- **`ShopItem.StoreProductIds`**: the item's product id in each store, keyed by store name (`PaymentProviders.AppleAppStore`,
+  `PaymentProviders.GooglePlay`), exactly as set in the Flock dashboard. Never null: an item with none reads an empty map, and a
+  store the SDK does not know yet is kept.
+- **`PaymentProviders`** and **`ShopItemTypes`**: the server's names for its stores and payment gateways (`apple_app_store`,
+  `google_play`, `stripe`, `tap`, `moyasar`) and for its item kinds (`standard`, `currency_pack`, `consumable`), as string
+  constants, since the server can add to either.
+- **`FlockErrorCode.MatchmakingSearchInputRequired`** with its fix. Flock's matchmaking can now match by region or skill, and a
+  queue given those rules refuses every search that sends neither, as this SDK's do; it read as `Unknown` until now.
+
+### Changed
+
+- **`ShopItem.Price` says its unit**: for a real-money item it is the currency's smallest unit (199 is USD 1.99). A phone
+  shows the player the store's own price for the product.
+- **`MatchmakingPartyTooLarge`'s fix covers a queue's team size**, which Flock's matchmaking now also checks a party against.
+
+
+## [1.90.0]
+
+Payment error codes. This version adds no payment call; it makes every code Flock's payment routes send readable.
+
+### Added
+
+- **A `FlockErrorCode` member and a fix in `FlockErrorHints` for every code Flock's payment routes send** (redeeming a store
+  receipt, opening a web checkout): `PaymentProviderReceiptInvalid`, `PaymentProviderReceiptProductMismatch`,
+  `PaymentProviderProviderNotSupportedHere`, `PaymentProviderProviderNotFound`, `PaymentProviderCredentialsUnreadable`,
+  `PaymentProviderCheckoutFailed`, `ShopNotARealCurrencyItem`, `ShopRealCurrencySettlementUnavailable`,
+  `ShopWebhookProviderUnknown` and `ShopPurchaseNotFound`. Each read as `Unknown` until now. Several have more than one cause
+  that only the server's reason tells apart: a receipt the store does not know, the store refusing the game's own keys and a
+  store that is down all answer `PaymentProviderReceiptInvalid`. Each fix covers every cause, quoting the server's own words,
+  and `Docs~/errors.md` lists them under "One code, several causes". The tests use the bodies the server sent in a live run,
+  and the server's own messages for the causes no live run reached (a store out of reach, a store answer it cannot read, a
+  Google payment still pending, a receipt for another product, a provider refusing a checkout, an unknown purchase id).
+- **The codes of Flock's payment hardening**, a server change that gives a receipt's causes codes of their own and makes the
+  purchase routes act for the signed-in player: `PaymentProviderStoreUnavailable` (the store could not be asked) and
+  `PaymentProviderReceiptPending` (Google is still waiting for the payment), whose fix is to send the same receipt again
+  later; `PaymentProviderStoreCredentialsRejected` (the store refused the game's own keys, a setting the studio fixes);
+  `PaymentProviderReceiptBelongsToAnotherPlayer` (the purchase was started for, or already redeemed by, another player);
+  `ShopPlayerMismatch` (a purchase naming another player than the one signed in; leave `playerId` out of
+  `Shop.PurchaseAsync`) and `ShopPlayerRequired` (no sign-in and no player).
+
+### Changed
+
+- **Three fixes follow the payment hardening.** `PaymentProviderReceiptInvalid`'s now leads with the causes it keeps (the
+  receipt itself, a store answer that could not be read) and still covers the ones an older server sends it for.
+  `ShopPurchaseNotFound`'s covers another player's purchase and an unknown status, and
+  `PlayerInventoryInventoryEntryNotFound`'s another player's entry, which a server with the hardening answers as not found.
+
+### Fixed
+
+- **`Docs~/errors.md`'s code table lists every member.** It had fallen 15 behind (`GameInvalidApiKey`, `GameMissingApiKey`,
+  `MultiplayerSeatMintLimit`, `PlayerExpiredToken`, `PlayerInvalidToken`, `PlayerMissingToken` and the nine `Request*`
+  codes); CI now checks each row against the enum.
+
+
 ## [1.89.2]
 
 ### Fixed

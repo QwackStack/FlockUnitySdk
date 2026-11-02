@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace Flock.Models.CustomModels
 {
     // One queued offline write, replayed  to  the same endpoint when the server is reachable again.
@@ -7,5 +9,6 @@ namespace Flock.Models.CustomModels
         public string PayloadJson { get; set; } // serialized request body, re-POSTed as-is
         public string Context { get; set; }     // log label for the replay
         public int Attempts { get; set; }       // failed replays so far; persisted so the count survives a relaunch
+        public List<DataField> Overlay { get; set; } // the fields it changes, laid again over a fresh read while it waits; null when it changes none
     }
 }

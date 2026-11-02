@@ -20,7 +20,7 @@ import time
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EDITOR_VERSION = '6000.3.16f1'
-RSP_FOLDERS = ['Runtime', 'Editor', 'Samples/QuickStart']
+RSP_FOLDERS = ['Runtime', 'Editor', 'Samples/QuickStart', 'Samples/Shop']
 ROOT_FILES = ['package.json', 'CHANGELOG.md', 'LICENSE.md', 'README.md']
 PACKAGES = {
     'com.unity.nuget.newtonsoft-json': '3.2.2',

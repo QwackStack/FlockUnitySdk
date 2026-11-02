@@ -1330,7 +1330,8 @@ namespace Flock.Providers
                 try
                 {
                     string serverSessionId = snapshot.ServerSessionId;
-                    if (string.IsNullOrEmpty(serverSessionId))
+                    bool registeredNow = string.IsNullOrEmpty(serverSessionId);
+                    if (registeredNow)
                     {
                         serverSessionId = await PostSessionStartAsync(
                             BuildSessionStartRequest(snapshot), cancellationToken).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
@@ -1343,7 +1344,7 @@ namespace Flock.Providers
                         Client.Logger.LogInfo($"Spooled session registered with server: {localSessionId} -> {serverSessionId}");
                     }
 
-                    await PatchSessionEndAsync(serverSessionId, snapshot, cancellationToken).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
+                    await EndSpooledSessionAsync(serverSessionId, snapshot, registeredNow, cancellationToken).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
                 }
                 catch (OperationCanceledException)
                 {
@@ -1356,6 +1357,27 @@ namespace Flock.Providers
                 catch (FlockNetworkException ex) when (FlockNetworkException.IsPermanentStatus(ex.StatusCode))
                 {
                     Client.Logger.LogWarning($"Session end for '{snapshot.SessionId}' rejected by server (HTTP {ex.StatusCode}), dropping");
+                }
+            }
+        }
+
+        // The server saves a session just after answering its registration (184 ms measured), so the end of one registered a moment ago
+        // may read as not found: it is sent again after each of these waits before the not found counts.
+        internal static TimeSpan[] NewSessionSavedWithin = { TimeSpan.FromSeconds(0.25), TimeSpan.FromSeconds(0.5), TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2) };
+
+        private async Task EndSpooledSessionAsync(string serverSessionId, FlockSessionSnapshot snapshot, bool registeredNow, CancellationToken cancellationToken)
+        {
+            for (int attempt = 0; ; attempt++)
+            {
+                try
+                {
+                    await PatchSessionEndAsync(serverSessionId, snapshot, cancellationToken).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
+                    return;
+                }
+                catch (FlockNetworkException notSavedYet) when (registeredNow && notSavedYet.StatusCode == 404 && attempt < NewSessionSavedWithin.Length)
+                {
+                    Client.Logger.LogDebug($"Session '{serverSessionId}' is not saved yet, ending it again");
+                    await FlockWaiting.DelayAsync(NewSessionSavedWithin[attempt], cancellationToken).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
                 }
             }
         }

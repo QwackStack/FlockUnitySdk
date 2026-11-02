@@ -38,47 +38,67 @@ namespace Flock.Http
 
         /// <summary>Runs <paramref name="operation"/> via the retry handler. Pass idempotent=false for non-idempotent mutations (e.g. currency grants): ambiguous failures surface instead of being re-sent, and only provably-not-processed failures (408/429) are retried.</summary>
         /// <param name="actsForSignIn">For a call that acts as the signed-in player through its token (<see cref="SignInToActFor"/>): each attempt, retries included, is cancelled once that sign-in has ended.</param>
+        /// <param name="spendsOrGrants">For a call that moves money or items (a purchase, a fund grant, a consume, a redemption): once any attempt failed leaving it unknown whether it was done, the failure the call ends with sets <see cref="FlockException.OutcomeUnknown"/>, and a cancel, the caller's own included, ends with that attempt's failure rather than <see cref="OperationCanceledException"/>; a cancel with no attempt in doubt stays one and drops the player's cached data.</param>
+        /// <param name="provesNoAttemptDidIt">For a <paramref name="spendsOrGrants"/> call: a refusal the server makes only once it found no earlier attempt had done it, so an attempt in doubt before it does not make it unknown.</param>
         protected async Task<T> ExecuteAsync<T>(
             Func<Task<T>> operation,
             string context,
             CancellationToken cancellationToken,
             bool idempotent = true,
             int? maxRetriesOverride = null,
-            int? actsForSignIn = null)
+            int? actsForSignIn = null,
+            bool spendsOrGrants = false,
+            Func<FlockException, bool> provesNoAttemptDidIt = null)
         {
             // The sign-in this request goes out under; once it ends, the request is never re-sent as whoever signed in next.
             int signInNumber = Client.SignInNumber;
+            // Whose cached data a money call may change, kept for a failure that comes after the sign-in ended.
+            string player = Client.CurrentPlayerId;
             Func<Task<T>> send = actsForSignIn.HasValue ? () => SendForSignIn(operation, actsForSignIn.Value) : operation;
+            // The first attempt of a money call, retries and the one after a refresh included, that failed with its outcome unknown.
+            Exception inDoubt = null;
+            if (spendsOrGrants)
+            {
+                Func<Task<T>> sendOnce = send;
+                send = async () =>
+                {
+                    try
+                    {
+                        return await sendOnce();
+                    }
+                    catch (Exception failure) when (inDoubt == null && LeavesItUnknown(failure))
+                    {
+                        inDoubt = failure;
+                        throw;
+                    }
+                };
+            }
             try
             {
-                return await Client.RetryHandler.ExecuteAsync(send, cancellationToken, retryAmbiguousFailures: idempotent, maxRetriesOverride: maxRetriesOverride);
-            }
-            // A 403 means "not allowed", never a lapsed sign-in (that is a 401), so a new token would change nothing.
-            catch (FlockAuthException refused) when (Client.IsAuthenticated && refused.StatusCode != 403)
-            {
-                Client.Logger.LogDebug("Access token expired, attempting silent refresh");
-                bool refreshed = await Client.TryRefreshTokenAsync(signInNumber, cancellationToken);
-                if (!refreshed)
-                    throw;
-
                 try
                 {
                     return await Client.RetryHandler.ExecuteAsync(send, cancellationToken, retryAmbiguousFailures: idempotent, maxRetriesOverride: maxRetriesOverride);
                 }
-                catch (OperationCanceledException)
+                // A 403 means "not allowed", never a lapsed sign-in (that is a 401), so a new token would change nothing.
+                catch (FlockAuthException refused) when (Client.IsAuthenticated && refused.StatusCode != 403)
                 {
+                    Client.Logger.LogDebug("Access token expired, attempting silent refresh");
+                    bool refreshed = await Client.TryRefreshTokenAsync(signInNumber, cancellationToken);
+                    if (!refreshed)
+                        throw;
+                    return await Client.RetryHandler.ExecuteAsync(send, cancellationToken, retryAmbiguousFailures: idempotent, maxRetriesOverride: maxRetriesOverride);
+                }
+            }
+            catch (OperationCanceledException) when (spendsOrGrants)
+            {
+                // It may have gone out before the cancel, so the cached wallet is no longer known to be the server's.
+                ForgetThePlayersData(player);
+                // After an attempt that may have done it, any cancel (the caller's, or the sign-in ending before a retry) ends with that attempt's failure, so "cancelled" never reads as "nothing bought".
+                if (inDoubt == null)
                     throw;
-                }
-                catch (FlockException ex)
-                {
-                    StampOperation(ex, context);
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    Client.Logger.LogError($"{context} failed", ex);
-                    throw new FlockNetworkException(ex.Message, ex) { Operation = context, Hint = FlockErrorHints.ReportSdkFault };
-                }
+                FlockException earlier = AsFlockFailure(inDoubt, context);
+                MarkOutcomeUnknown(earlier, player);
+                throw earlier;
             }
             catch (OperationCanceledException)
             {
@@ -87,14 +107,34 @@ namespace Flock.Http
             catch (FlockException ex)
             {
                 StampOperation(ex, context);
+                if (spendsOrGrants && (IsOutcomeUnknown(ex) || (inDoubt != null && provesNoAttemptDidIt?.Invoke(ex) != true)))
+                    MarkOutcomeUnknown(ex, player);
                 throw;
             }
             catch (Exception ex)
             {
-                Client.Logger.LogError($"{context} failed", ex);
-                throw new FlockNetworkException(ex.Message, ex) { Operation = context, Hint = FlockErrorHints.ReportSdkFault };
+                FlockException wrapped = AsFlockFailure(ex, context);
+                if (spendsOrGrants && (inDoubt != null || IsOutcomeUnknown(wrapped)))
+                    MarkOutcomeUnknown(wrapped, player);
+                throw wrapped;
             }
         }
+
+        // The SDK's own failure named after the call; any other wrapped as a network failure with no status.
+        private FlockException AsFlockFailure(Exception failure, string context)
+        {
+            if (failure is FlockException flock)
+            {
+                StampOperation(flock, context);
+                return flock;
+            }
+            Client.Logger.LogError($"{context} failed", failure);
+            return new FlockNetworkException(failure.Message, failure) { Operation = context, Hint = FlockErrorHints.ReportSdkFault };
+        }
+
+        // An attempt's failure that leaves it unknown whether it was done; one that is not the SDK's own came with no status.
+        private static bool LeavesItUnknown(Exception failure)
+            => failure is FlockException flock ? IsOutcomeUnknown(flock) : !(failure is OperationCanceledException);
 
         // A call that acts for one sign-in goes out as it or not at all, so a retry never carries the next player's token.
         private Task<T> SendForSignIn<T>(Func<Task<T>> operation, int signInNumber)
@@ -103,6 +143,27 @@ namespace Flock.Http
                 throw new OperationCanceledException("The player signed out or changed, so the request was not sent");
             return operation();
         }
+
+        // A change that may have been made leaves the player's cached data unsure (the wallet above all), so it is dropped for the next read to ask the server.
+        private protected void MarkOutcomeUnknown(FlockException failure, string playerId = null)
+        {
+            failure.OutcomeUnknown = true;
+            ForgetThePlayersData(playerId);
+        }
+
+        // Drops the cached player data of the player named, else of the signed-in one, so the next read asks the server; writes still queued are laid over it again.
+        private protected void ForgetThePlayersData(string playerId = null)
+        {
+#if !FLOCK_NO_PLAYER
+            Client.Player?.ForgetPlayerData(playerId ?? Client.CurrentPlayerId);
+#endif
+        }
+
+        // No answer, a server error that names no cause, or an answer that could not be read: the change may have been made.
+        private static bool IsOutcomeUnknown(FlockException failure)
+            => failure is FlockSerializationException
+               || (failure is FlockNetworkException && (failure.StatusCode == null || failure.StatusCode >= 500)
+                   && string.IsNullOrEmpty(FlockErrorHints.For(failure.ErrorCode)));
 
         // Names the failing SDK call on the exception; first writer wins so the innermost, most specific context survives.
         private static void StampOperation(FlockException ex, string context)

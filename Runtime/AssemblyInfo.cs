@@ -8,3 +8,5 @@ using System.Runtime.CompilerServices;
 [assembly: InternalsVisibleTo("Flock.Editor")]
 // The netcode adapter, shipped in this package, logs through the client's logger.
 [assembly: InternalsVisibleTo("Flock.Multiplayer.Netcode")]
+// The store purchase adapter, shipped in this package, logs and raises its events the way the client does.
+[assembly: InternalsVisibleTo("Flock.Shop.UnityIap")]

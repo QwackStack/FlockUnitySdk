@@ -276,7 +276,8 @@ namespace Flock.Tests.PlayMode
             CancellationTokenSource cancel = new CancellationTokenSource();
             Task<FlockRelayConnection> opening = Open(A, cancellationToken: cancel.Token);
             yield return FlockTestWait.Until(() => _relay.SeenRequests(FakeRelayServer.MethodAllocate).Any(seen => seen.Signed), "the signed reservation reached the relay");
-            Assert.AreEqual(1, _relay.Reservations, "Precondition: the relay holds an address whose answer is on hold");
+            // The fake relay notes the request before it reserves the address, both on its own thread: wait for the reservation too.
+            yield return FlockTestWait.Until(() => _relay.Reservations == 1, "Precondition: the relay holds an address whose answer is on hold");
 
             cancel.Cancel();
             yield return Done(opening, "the open ended");

@@ -1,0 +1,27 @@
+{
+    "name": "Flock.Shop.UnityIap",
+    "rootNamespace": "Flock",
+    "references": [
+        "Flock.Runtime",
+        "GUID:60bfecf5cb232594891bc622f40d6bed",
+        "GUID:08d1c582746949b40ba6a45cdb776bdf"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "FLOCK_UNITY_IAP_5",
+        "!FLOCK_NO_SHOP"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.purchasing",
+            "expression": "[5.0.0,6.0.0)",
+            "define": "FLOCK_UNITY_IAP_5"
+        }
+    ],
+    "noEngineReferences": false
+}

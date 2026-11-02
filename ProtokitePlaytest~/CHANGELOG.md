@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 It is released with the Flock SDK, at the Flock SDK's version.
 
 
+## [1.98.0]
+
+No changes to the Protokite Playtest package: this version is released together with the Flock SDK's web checkout.
+
+## [1.97.0]
+
+No changes to the Protokite Playtest package: this version is released together with the Flock SDK's store release check.
+
+## [1.96.0]
+
+No changes to the Protokite Playtest package: this version is released together with the Flock SDK's purchase documentation.
+
+## [1.95.0]
+
+No changes to the Protokite Playtest package: this version is released together with the Flock SDK's one purchase call.
+
+
+## [1.94.0]
+
+No changes to the Protokite Playtest package: this version is released together with the Flock SDK's shop sample and purchase fixes.
+
+
+## [1.93.0]
+
+No changes to the Protokite Playtest package: this version is released together with the Flock SDK's Unity IAP purchase flow.
+
+
+## [1.92.0]
+
+No changes to the Protokite Playtest package: this version is released together with the Flock SDK's store purchase validation.
+
+
+## [1.91.0]
+
+No changes to the Protokite Playtest package: this version is released together with the Flock SDK's real-money shop items.
+
+
+## [1.90.0]
+
+No changes to the Protokite Playtest package: this version is released together with the Flock SDK's payment error codes.
+
+
 ## [1.89.2]
 
 No changes to the Protokite Playtest package: this version is released together with the Flock SDK's relay fix for networks

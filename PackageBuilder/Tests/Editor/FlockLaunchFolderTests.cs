@@ -6,6 +6,7 @@ using System.Linq;
 using System.Reflection;
 using System.Threading;
 using Flock.Analytics;
+using Flock.Http;
 using Flock.Logging;
 using Flock.Providers;
 using Flock.Tests.Support;
@@ -92,8 +93,9 @@ namespace Flock.Tests.Editor
             return FlockAnalyticsLaunches.QueuedEntries(queueFolder).Select(Path.GetFileNameWithoutExtension).ToList();
         }
 
-        private static string SessionJson(string sessionId) =>
-            "{\"session_id\":\"" + sessionId + "\",\"is_active\":true,\"start_time_utc\":\"2026-09-27T10:00:00Z\",\"last_heartbeat_utc\":\"2026-09-27T10:05:00Z\"}";
+        private static string SessionJson(string sessionId, string serverSessionId = null) =>
+            "{\"session_id\":\"" + sessionId + "\"" + (serverSessionId != null ? ",\"server_session_id\":\"" + serverSessionId + "\"" : "") +
+            ",\"is_active\":true,\"start_time_utc\":\"2026-09-27T10:00:00Z\",\"last_heartbeat_utc\":\"2026-09-27T10:05:00Z\"}";
 
         private static string MarkerJson(string sessionId) =>
             "{\"session_id\":\"" + sessionId + "\",\"last_state\":\"foreground\",\"last_alive_utc\":\"2026-09-27T10:05:00Z\",\"exception_count\":2}";
@@ -512,13 +514,75 @@ namespace Flock.Tests.Editor
             return FlockAnalyticsLaunches.QueuedEntries(Path.Combine(sdk.Client.AnalyticsLaunches.Folder, queue)).Select(File.ReadAllText).ToList();
         }
 
-        private static string PlantEndedLaunchUnderTheTestFolder(string sessionId)
+        private static string PlantEndedLaunchUnderTheTestFolder(string sessionId, string serverSessionId = null)
         {
             FlockLaunchFolder folder = FlockLaunchFolder.Create(FlockTestGame.LaunchesFolderIn(FlockTestSavedFiles.AnalyticsFolder));
             File.WriteAllText(Path.Combine(folder.Path, FlockAnalyticsLaunches.TerminationMarkerFileName), MarkerJson(sessionId));
-            File.WriteAllText(Path.Combine(folder.Path, FlockAnalyticsLaunches.SessionStateFileName), SessionJson(sessionId));
+            File.WriteAllText(Path.Combine(folder.Path, FlockAnalyticsLaunches.SessionStateFileName), SessionJson(sessionId, serverSessionId));
             folder.Dispose();
             return folder.Path;
+        }
+
+        // The server saves a session just after answering its registration (184 ms measured on a phone), so the end of an ended launch's
+        // session, registered a moment ago, reads as not found at first: it is sent again and the session ends on the server.
+        [Test]
+        public void Sdk_AnEndedLaunchsSessionRegisteredJustNow_WhoseEndReadsAsNotFound_IsEndedAgain()
+        {
+            PlantEndedLaunchUnderTheTestFolder("s-unregistered");
+            FlockFakeTransport transport = new FlockFakeTransport();
+            int ends = 0;
+            transport.Default(request => request.Method == "PATCH"
+                ? (++ends <= 2 ? FlockFakeTransport.Status(404, "{\"detail\":\"Session not found\"}") : FlockFakeTransport.Ok("{}"))
+                : FlockFakeTransport.Ok("{\"session_id\":\"srv-recovered\"}"));
+            TimeSpan[] waits = FlockAnalyticsProvider.NewSessionSavedWithin;
+            // No wait: the test blocks the main thread on the call, so a real wait's continuation would have nowhere to run.
+            FlockAnalyticsProvider.NewSessionSavedWithin = new[] { TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero };
+            try
+            {
+                using (FlockTestClient sdk = FlockTestClient.Create(transport, config => config.AnalyticsConfig.PersistSessionOnDisk = true))
+                {
+                    sdk.SetReachable(true);
+                    Initialize(sdk);
+
+                    Assert.AreEqual(3, transport.AllTo(FlockEndpoints.AnalyticsSessionById("srv-recovered")).Count(r => r.Method == "PATCH"), "Ended again until the server had saved it");
+                    Assert.IsFalse(sdk.Logger.Warnings.Exists(line => line.Contains("rejected")), "Not dropped: " + string.Join(" | ", sdk.Logger.Warnings));
+                    Assert.AreEqual(0, QueuedContents(sdk, FlockAnalyticsLaunches.SessionEndsQueueName).Count, "Delivered, so the spool is empty");
+                }
+            }
+            finally
+            {
+                FlockAnalyticsProvider.NewSessionSavedWithin = waits;
+            }
+        }
+
+        // A session registered at an earlier launch is on the server already: its end reading as not found is refused at once, as before.
+        [Test]
+        public void Sdk_AnEndedLaunchsSessionRegisteredEarlier_WhoseEndReadsAsNotFound_IsDroppedAtOnce()
+        {
+            PlantEndedLaunchUnderTheTestFolder("s-registered", "srv-earlier");
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.Default(request => request.Method == "PATCH"
+                ? FlockFakeTransport.Status(404, "{\"detail\":\"Session not found\"}")
+                : FlockFakeTransport.Ok("{\"session_id\":\"srv-new\"}"));
+            // No wait, so a wrong retry fails on the count rather than hanging the main thread this test blocks.
+            TimeSpan[] waits = FlockAnalyticsProvider.NewSessionSavedWithin;
+            FlockAnalyticsProvider.NewSessionSavedWithin = new[] { TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero };
+            try
+            {
+                using (FlockTestClient sdk = FlockTestClient.Create(transport, config => config.AnalyticsConfig.PersistSessionOnDisk = true))
+                {
+                    sdk.SetReachable(true);
+                    Initialize(sdk);
+
+                    Assert.AreEqual(1, transport.AllTo(FlockEndpoints.AnalyticsSessionById("srv-earlier")).Count(r => r.Method == "PATCH"), "Sent once");
+                    Assert.IsTrue(sdk.Logger.Warnings.Exists(line => line.Contains("rejected") && line.Contains("404")), "Dropped as refused");
+                    Assert.AreEqual(0, QueuedContents(sdk, FlockAnalyticsLaunches.SessionEndsQueueName).Count);
+                }
+            }
+            finally
+            {
+                FlockAnalyticsProvider.NewSessionSavedWithin = waits;
+            }
         }
 
         [Test]

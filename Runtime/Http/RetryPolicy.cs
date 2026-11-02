@@ -99,10 +99,18 @@ namespace Flock.Http
             if (ex is FlockNetworkException net && FlockNetworkException.IsPermanentStatus(net.StatusCode))
                 return false;
 
+            // A 5xx that names one of the game's own settings stays the same until the studio fixes it.
+            if (ex is FlockException coded && IsAGameSetting(coded.ErrorCode))
+                return false;
+
             // Non-idempotent callers only retry failures the server provably didn't process (408/429);
             // ambiguous ones (client timeout, dropped connection, 5xx) might have committed, so surface them.
             return retryAmbiguousFailures || IsNotProcessed(ex);
         }
+
+        // Keys the server cannot read (503), and no address for a payment provider to confirm a payment (503).
+        private static bool IsAGameSetting(FlockErrorCode code)
+            => code == FlockErrorCode.PaymentProviderCredentialsUnreadable || code == FlockErrorCode.ShopRealCurrencySettlementUnavailable;
 
         // 408/429 mean the server rejected the request before processing it, so a retry can't double-apply.
         private static bool IsNotProcessed(Exception ex)

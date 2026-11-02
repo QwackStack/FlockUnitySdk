@@ -8,7 +8,7 @@ using static System.FormattableString;
 
 namespace Flock.Providers
 {
-    /// <summary>Every multiplayer call the SDK repeats (search checks, heartbeats, party refreshes): one request at a time each, at a jittered interval, for the sign-in it started under.</summary>
+    /// <summary>Every call the SDK repeats (a web checkout's outcome, search checks, heartbeats, party refreshes): one request at a time each, at a jittered interval, for the sign-in it started under. Held by the client and run on the game's frames.</summary>
     internal sealed class FlockRepeatingCalls
     {
         private static readonly Random SharedRandom = new Random();

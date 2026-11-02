@@ -68,7 +68,11 @@ jobs:
           # The enum's members, one per line. Every member is written "Member,   // wire.code", so the
           # comma is matched without anchoring to end-of-line. Unknown carries "= 0" and is deliberately
           # not matched, since no wire code maps to it.
-          grep -oE '^[[:space:]]+[A-Z][A-Za-z]+,' "$ENUM" | tr -d ' \t,\r' | sort -u > /tmp/members.txt
+          { grep -oE '^[[:space:]]+[A-Z][A-Za-z]+,' "$ENUM" || true; } | tr -d ' \t,\r' | sort -u > /tmp/members.txt
+          if [ ! -s /tmp/members.txt ]; then
+            echo "::error file=$ENUM::No member read. Members are written 'Member,   // wire.code', one per line; if that changed, update this workflow with it."
+            exit 1
+          fi
 
           # Section-aware read of the snapshot: [documented] and [undocumented] must have members,
           # [waived] must not.
@@ -122,6 +126,46 @@ jobs:
             exit 1
           fi
           echo "$total wire error codes checked against $(wc -l < /tmp/members.txt) enum members — no drift."
+
+      - name: Every FlockErrorCode member is in the docs' code table
+        run: |
+          set -euo pipefail
+
+          # Docs~/errors.md lists every member with its wire code. The table was copied from the enum by hand and fell
+          # behind twice (8 members by 2026-10-06, 15 by 2026-10-22), so each row is checked against the enum's own lines.
+          ENUM='Runtime/Exceptions/FlockErrorCode.cs'
+          DOCS='Docs~/errors.md'
+
+          for f in "$ENUM" "$DOCS"; do
+            if [ ! -f "$f" ]; then
+              echo "::error::$f is missing. This check reads both files; if one moved, update this workflow with it."
+              exit 1
+            fi
+          done
+
+          # One row per member, from its "Member,   // wire.code" line; a member without its code comment is caught below.
+          awk '/^[[:space:]]+[A-Z][A-Za-z]+,[[:space:]]+\/\/ [a-z_]+\.[a-z_]+/ {
+            gsub(/\r/, ""); member = $1; sub(/,$/, "", member); print "| `" member "` | `" $3 "` |"
+          }' "$ENUM" | sort > /tmp/enum_rows.txt
+          members=$(grep -cE '^[[:space:]]+[A-Z][A-Za-z]+,' "$ENUM" || true)
+          if [ "$members" -eq 0 ]; then
+            echo "::error file=$ENUM::No member read. Members are written 'Member,   // wire.code', one per line; if that changed, update this workflow with it."
+            exit 1
+          fi
+          if [ "$(wc -l < /tmp/enum_rows.txt)" -ne "$members" ]; then
+            echo "::error file=$ENUM::$members members but $(wc -l < /tmp/enum_rows.txt) carry their wire code as '// namespace.code'. Write every member as 'Member,   // wire.code'."
+            exit 1
+          fi
+
+          tr -d '\r' < "$DOCS" | { grep -E '^\| `[A-Za-z]+` \| `[a-z_]+\.[a-z_]+` \|$' || true; } | sort > /tmp/doc_rows.txt
+          missing=$(comm -23 /tmp/enum_rows.txt /tmp/doc_rows.txt)
+          extra=$(comm -13 /tmp/enum_rows.txt /tmp/doc_rows.txt)
+          if [ -n "$missing" ] || [ -n "$extra" ]; then
+            [ -z "$missing" ] || { echo "::error file=$DOCS::Members missing from the code table (add each row in the enum's order):"; echo "$missing"; }
+            [ -z "$extra" ] || { echo "::error file=$DOCS::Rows in the code table that match no member (renamed or removed):"; echo "$extra"; }
+            exit 1
+          fi
+          echo "The docs' code table lists all $members members, each with its wire code."
 
       - name: Every failure the SDK finds itself says how to fix it
         run: |

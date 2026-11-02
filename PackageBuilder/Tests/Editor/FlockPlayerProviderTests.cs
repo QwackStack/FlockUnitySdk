@@ -1,9 +1,15 @@
+using System;
+using System.Collections;
 using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 using Flock.Exceptions;
 using Flock.Http;
 using Flock.Models;
 using Flock.Tests.Support;
+using Newtonsoft.Json;
 using NUnit.Framework;
+using UnityEngine.TestTools;
 
 namespace Flock.Tests.Editor
 {
@@ -99,6 +105,289 @@ namespace Flock.Tests.Editor
 
                 Assert.Throws<FlockValidationException>(() => h.Run(() => h.Client.Player.GetBanAsync("")));
             }
+        }
+
+        // ---- The wallet: balances by currency code, from the template tagged "currency" ----
+        // Both answers as the local backend sent them: the template list enveloped, each wallet category an object of integer fields.
+        private const string TemplateList =
+            "{\"error\":{\"code\":null},\"response\":{\"message\":null,\"code\":null},\"result\":[" +
+            "{\"id\":\"tpl-progress\",\"name\":\"progress\",\"game_version_id\":\"gv-1\",\"schema\":[],\"data\":[],\"tag\":\"progress\"}," +
+            "{\"id\":\"tpl-wallet\",\"name\":\"currencies\",\"game_version_id\":\"gv-1\",\"schema\":[],\"data\":[],\"tag\":\"currency\"}]}";
+
+        private static string Currency(string code, string value)
+            => "{\"type\":\"integer\",\"value\":" + value + ",\"type_name\":\"currency\",\"field_name\":\"" + code + "\"}";
+
+        private static readonly string WalletRow =
+            "{\"id\":\"pd-wallet\",\"player_template_id\":\"tpl-wallet\",\"game_id\":\"game-1\",\"player_id\":\"player-a\",\"data\":[" +
+            "{\"type\":\"object\",\"value\":[" + Currency("Gold", "250") + "," + Currency("Gems", "0") + "],\"type_name\":\"wallet\",\"field_name\":\"game_currencies\"}," +
+            "{\"type\":\"object\",\"value\":[" + Currency("SAR", "1200") + "],\"type_name\":\"wallet\",\"field_name\":\"real_currencies\"}]}";
+
+        private const string ProgressRow = "{\"id\":\"pd-progress\",\"player_template_id\":\"tpl-progress\",\"player_id\":\"player-a\",\"data\":[]}";
+
+        private static FlockFakeTransport WithRows(params string[] rows)
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On("player_data?page=", FlockFakeTransport.Ok("{\"items\":[" + string.Join(",", rows) + "],\"total\":" + rows.Length + ",\"page\":1,\"limit\":100}"));
+            transport.On(FlockEndpoints.PlayerTemplate, FlockFakeTransport.Ok(TemplateList));
+            return transport;
+        }
+
+        private static ShopItem WalletItem(string currency, int price) => new ShopItem { Id = "item", Currency = currency, Price = price };
+
+        [Test]
+        public void GetWallet_ReadsEachCurrencysBalance_FromTheCurrencyTemplatesRow()
+        {
+            using (FlockTestClient h = FlockTestClient.Create(WithRows(ProgressRow, WalletRow)))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                FlockWallet wallet = h.Run(() => h.Client.Player.GetWalletAsync());
+
+                Assert.AreEqual(250, wallet.BalanceOf("Gold"));
+                Assert.AreEqual(0, wallet.BalanceOf("Gems"));
+                Assert.IsTrue(wallet.Holds("Gems"), "A zero balance is still held.");
+                Assert.AreEqual(1200, wallet.RealCurrencies["SAR"]);
+                Assert.IsFalse(wallet.GameCurrencies.ContainsKey("SAR"), "Real currencies are kept apart from the game's own.");
+                Assert.AreEqual(0, wallet.BalanceOf("Shard"));
+                Assert.IsFalse(wallet.Holds("Shard"));
+                Assert.IsFalse(wallet.Holds("gold"), "Codes are matched exactly, as the server matches them.");
+            }
+        }
+
+        // A read sent before the player's data was dropped may answer with data from before a change: it is handed back but never kept.
+        [UnityTest]
+        public IEnumerator AReadOnItsWay_WhenThePlayersDataIsDropped_DoesNotPutTheOldDataBack()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.PlayerTemplate, FlockFakeTransport.Ok(TemplateList));
+            transport.Default(request =>
+            {
+                bool sentFirst = transport.AllTo("player_data?page=").IndexOf(request) == 0;
+                string row = WalletRow.Replace(Currency("Gold", "250"), Currency("Gold", sentFirst ? "250" : "80"));
+                return FlockFakeTransport.Ok("{\"items\":[" + row + "],\"total\":1,\"page\":1,\"limit\":100}");
+            });
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+                h.Run(() => h.Client.Player.GetTemplatesAsync());
+                transport.GateNext("player_data?page=");
+
+                Task<FlockWallet> before = h.Client.Player.GetWalletAsync();
+                yield return FlockTestWait.Until(() => transport.CountTo("player_data?page=") == 1, "The first read is on its way");
+                h.Client.Player.ForgetPlayerData("player-a");
+                transport.ReleaseGate();
+                yield return FlockTestWait.Until(() => before.IsCompleted, "The read from before the drop answered");
+
+                Assert.AreEqual(250, before.Result.BalanceOf("Gold"), "Control: the earlier read answered with the earlier balance, to its caller.");
+                Assert.AreEqual(80, h.Run(() => h.Client.Player.GetWalletAsync()).BalanceOf("Gold"), "The earlier answer was not kept: the next read asked the server.");
+                Assert.AreEqual(2, transport.CountTo("player_data?page="));
+            }
+        }
+
+        // The player's data reads: the first answers the wallet with 250 Gold, every later one with 80.
+        private static FlockFakeTransport FirstReadOlderThanTheRest()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            transport.On(FlockEndpoints.PlayerTemplate, FlockFakeTransport.Ok(TemplateList));
+            transport.Default(request =>
+            {
+                bool sentFirst = transport.AllTo("player_data?page=").IndexOf(request) == 0;
+                string row = WalletRow.Replace(Currency("Gold", "250"), Currency("Gold", sentFirst ? "250" : "80"));
+                return FlockFakeTransport.Ok("{\"items\":[" + row + "],\"total\":1,\"page\":1,\"limit\":100}");
+            });
+            return transport;
+        }
+
+        // The wallet row a purchase, consume or fund grant answers with, holding this much Gold.
+        private static PlayerData WalletWithGold(string gold)
+            => JsonConvert.DeserializeObject<PlayerData>(WalletRow.Replace(Currency("Gold", "250"), Currency("Gold", gold)));
+
+        // A money answer's row is newer than a read already on its way: that read is handed back but never kept, and the row applied over cached data is.
+        [UnityTest]
+        public IEnumerator AReadOnItsWay_WhenAServerRowIsApplied_DoesNotPutTheOlderDataBack()
+        {
+            FlockFakeTransport transport = FirstReadOlderThanTheRest();
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+                h.Run(() => h.Client.Player.GetTemplatesAsync());
+                transport.GateNext("player_data?page=");
+
+                Task<FlockWallet> before = h.Client.Player.GetWalletAsync();
+                yield return FlockTestWait.Until(() => transport.CountTo("player_data?page=") == 1, "The first read is on its way");
+                h.Client.Player.ApplyServerPlayerData(WalletWithGold("80"));
+                transport.ReleaseGate();
+                yield return FlockTestWait.Until(() => before.IsCompleted, "The read from before the row answered");
+
+                Assert.AreEqual(250, before.Result.BalanceOf("Gold"), "Control: the earlier read answered with the earlier balance, to its caller.");
+                Assert.AreEqual(80, h.Run(() => h.Client.Player.GetWalletAsync()).BalanceOf("Gold"), "The earlier answer was not kept: the next read asked the server.");
+                Assert.AreEqual(2, transport.CountTo("player_data?page="));
+                h.Client.Player.ApplyServerPlayerData(WalletWithGold("40"));
+                Assert.AreEqual(40, h.Run(() => h.Client.Player.GetWalletAsync()).BalanceOf("Gold"), "Control: a row applied over the cached data is kept.");
+                Assert.AreEqual(2, transport.CountTo("player_data?page="), "Read from the cache.");
+            }
+        }
+
+        // A read started once a money answer's row was applied is sent afresh, never joined to a read from before the row.
+        [UnityTest]
+        public IEnumerator AReadAfterAServerRowIsApplied_IsNotJoinedToAReadFromBefore()
+        {
+            FlockFakeTransport transport = FirstReadOlderThanTheRest();
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+                h.Run(() => h.Client.Player.GetTemplatesAsync());
+                transport.GateNext("player_data?page=");
+
+                Task<FlockWallet> before = h.Client.Player.GetWalletAsync();
+                yield return FlockTestWait.Until(() => transport.CountTo("player_data?page=") == 1, "The first read is on its way");
+                h.Client.Player.ApplyServerPlayerData(WalletWithGold("80"));
+                Task<FlockWallet> after = h.Client.Player.GetWalletAsync();
+                transport.ReleaseGate();
+                yield return FlockTestWait.Until(() => before.IsCompleted && after.IsCompleted, "Both reads answered");
+
+                Assert.AreEqual(250, before.Result.BalanceOf("Gold"), "Control: the read from before the row answered its caller with the earlier balance.");
+                Assert.AreEqual(80, after.Result.BalanceOf("Gold"), "The read after the row asked the server.");
+                Assert.AreEqual(2, transport.CountTo("player_data?page="));
+            }
+        }
+
+        // Another player's row applied while this player's read is on its way: that read, once ended, leaves no place behind that later reads would join.
+        [UnityTest]
+        public IEnumerator AReadEndedAfterAnotherPlayersRowWasApplied_IsNotJoinedByTheNextRead()
+        {
+            FlockFakeTransport transport = FirstReadOlderThanTheRest();
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-b");
+                h.SetReachable(true);
+                h.Run(() => h.Client.Player.GetTemplatesAsync());
+                transport.GateNext("player_data?page=");
+
+                Task<FlockWallet> before = h.Client.Player.GetWalletAsync();
+                yield return FlockTestWait.Until(() => transport.CountTo("player_data?page=") == 1, "The first read is on its way");
+                h.Client.Player.ApplyServerPlayerData(WalletWithGold("80"));
+                transport.ReleaseGate();
+                yield return FlockTestWait.Until(() => before.IsCompleted, "The read from before the row answered");
+
+                Assert.AreEqual(250, before.Result.BalanceOf("Gold"), "Control: the read answered its caller.");
+                Assert.AreEqual(80, h.Run(() => h.Client.Player.GetWalletAsync()).BalanceOf("Gold"), "The next read asked the server, not the ended read.");
+                Assert.AreEqual(2, transport.CountTo("player_data?page="));
+            }
+        }
+
+        // A read from before a row, ending while a newer read is still on its way, leaves that newer read for the next one to join.
+        [UnityTest]
+        public IEnumerator AReadFromBeforeARow_EndingLate_LeavesTheNewerReadForTheNextToJoin()
+        {
+            FlockFakeTransport transport = FirstReadOlderThanTheRest();
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+                h.Run(() => h.Client.Player.GetTemplatesAsync());
+
+                TaskCompletionSource<bool> firstGate = transport.GateNext("player_data?page=");
+                Task<FlockWallet> first = h.Client.Player.GetWalletAsync();
+                yield return FlockTestWait.Until(() => transport.CountTo("player_data?page=") == 1, "The first read is on its way");
+                h.Client.Player.ApplyServerPlayerData(WalletWithGold("80"));
+                transport.GateNext("player_data?page=");
+                Task<FlockWallet> second = h.Client.Player.GetWalletAsync();
+                yield return FlockTestWait.Until(() => transport.CountTo("player_data?page=") == 2, "The second read is on its way");
+                firstGate.TrySetResult(true);
+                yield return FlockTestWait.Until(() => first.IsCompleted, "The first read ended");
+                Assert.IsFalse(second.IsCompleted, "Control: the second read is still on its way.");
+
+                Task<FlockWallet> third = h.Client.Player.GetWalletAsync();
+                Assert.AreEqual(2, transport.CountTo("player_data?page="), "The third read joined the second rather than sending one of its own.");
+                transport.ReleaseGate();
+                yield return FlockTestWait.Until(() => second.IsCompleted && third.IsCompleted, "The second and third reads answered");
+
+                Assert.AreEqual(250, first.Result.BalanceOf("Gold"), "Control: the first read answered its caller with the earlier balance.");
+                Assert.AreEqual(80, third.Result.BalanceOf("Gold"));
+            }
+        }
+
+        // A read cancelled before it was sent ends at once; it is never kept as the read on its way, so the next read asks the server.
+        [Test]
+        public void AReadCancelledBeforeItWasSent_IsNotKeptForTheNextRead()
+        {
+            FlockFakeTransport transport = WithRows(WalletRow);
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+                CancellationTokenSource cancelled = new CancellationTokenSource();
+                cancelled.Cancel();
+
+                Assert.Catch<OperationCanceledException>(() => h.Run(() => h.Client.Player.GetMyDataByTemplateAsync("tpl-wallet", cancelled.Token)));
+                Assert.AreEqual(0, transport.CountTo("player_data?page="), "Control: nothing was sent.");
+
+                PlayerData row = h.Run(() => h.Client.Player.GetMyDataByTemplateAsync("tpl-wallet"));
+
+                Assert.AreEqual("pd-wallet", row.Id, "The next read asked the server rather than handing back the cancelled one.");
+                Assert.AreEqual(1, transport.CountTo("player_data?page="));
+            }
+        }
+
+        [Test]
+        public void Wallet_CanAfford_OnlyAGameCurrencyItemItsBalanceCovers()
+        {
+            using (FlockTestClient h = FlockTestClient.Create(WithRows(WalletRow)))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+                FlockWallet wallet = h.Run(() => h.Client.Player.GetWalletAsync());
+
+                Assert.IsTrue(wallet.CanAfford(WalletItem("Gold", 250)), "Exactly the balance is enough.");
+                Assert.IsFalse(wallet.CanAfford(WalletItem("Gold", 251)));
+                Assert.IsFalse(wallet.CanAfford(WalletItem("Shard", 0)), "A currency the wallet does not hold buys nothing, even at no cost.");
+                Assert.IsFalse(wallet.CanAfford(new ShopItem { Id = "pack", Currency = "Gold", Price = 1, IsRealMoney = true }), "A real-money item is bought through the store, never the wallet, whatever the wallet holds.");
+                Assert.IsFalse(wallet.CanAfford(WalletItem("SAR", 1)), "A real currency is never spent from the wallet.");
+                Assert.IsFalse(wallet.CanAfford(null));
+            }
+        }
+
+        [Test]
+        public void GetWallet_PlayerWithoutAWalletRow_ThrowsWithAHint()
+        {
+            using (FlockTestClient h = FlockTestClient.Create(WithRows(ProgressRow)))
+            {
+                h.LoginAs("player-a");
+                h.SetReachable(true);
+
+                FlockValidationException ex = Assert.Throws<FlockValidationException>(() => h.Run(() => h.Client.Player.GetWalletAsync()));
+
+                StringAssert.Contains("currency template", ex.Hint);
+            }
+        }
+
+        [Test]
+        public void GetWallet_NotSignedIn_ThrowsBeforeReadingPlayerData()
+        {
+            FlockFakeTransport transport = WithRows(WalletRow);
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.SetReachable(true);
+
+                Assert.Catch<FlockException>(() => h.Run(() => h.Client.Player.GetWalletAsync()));
+                Assert.AreEqual(0, transport.CountTo("player_data?page="));
+            }
+        }
+
+        [Test]
+        public void Wallet_FromAPurchasesWallet_ReadsTheSameShape()
+        {
+            PlayerData row = Newtonsoft.Json.JsonConvert.DeserializeObject<PlayerData>(WalletRow);
+
+            FlockWallet wallet = FlockWallet.From(row);
+
+            Assert.AreEqual(250, wallet.BalanceOf("Gold"));
+            Assert.AreEqual(0, FlockWallet.From(null).GameCurrencies.Count, "A purchase that returned no wallet reads as an empty one.");
         }
     }
 }

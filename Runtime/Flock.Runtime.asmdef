@@ -16,6 +16,11 @@
             "name": "com.unity.mobile.notifications",
             "expression": "2.0.0",
             "define": "FLOCK_MOBILE_NOTIFICATIONS"
+        },
+        {
+            "name": "com.unity.purchasing",
+            "expression": "[5.0.0,6.0.0)",
+            "define": "FLOCK_UNITY_IAP_5"
         }
     ],
     "noEngineReferences": false,
