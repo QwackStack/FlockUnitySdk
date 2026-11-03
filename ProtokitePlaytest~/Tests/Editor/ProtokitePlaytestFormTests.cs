@@ -323,7 +323,7 @@ namespace Protokite.Playtest.Tests
             public ProtokitePlaytestFormAnswers LastSent;
         }
 
-        private static ProtokitePlaytestFormView View(ProtokitePlaytestForm form, Calls calls, ProtokitePlaytestFormAnswers answers = null)
+        private static ProtokitePlaytestFormView View(ProtokitePlaytestForm form, Calls calls, ProtokitePlaytestFormAnswers answers = null, Texture2D[] logos = null, float logoHeight = ProtokitePlaytestSettings.DefaultFeedbackFormLogoHeight)
             => new ProtokitePlaytestFormView(form, answers ?? new ProtokitePlaytestFormAnswers(),
                 filledIn =>
                 {
@@ -339,7 +339,66 @@ namespace Protokite.Playtest.Tests
                     return calls.RecordingBegins;
                 },
                 () => false,
-                () => { });
+                () => { },
+                logos,
+                logoHeight);
+
+        [Test]
+        public void NewSettingsHaveNoLogos()
+        {
+            ProtokitePlaytestSettings settings = ScriptableObject.CreateInstance<ProtokitePlaytestSettings>();
+            try
+            {
+                Assert.AreEqual(0, settings.FeedbackFormLogos.Length, "Every other game keeps its form as it was");
+                Assert.AreEqual(ProtokitePlaytestSettings.DefaultFeedbackFormLogoHeight, settings.FeedbackFormLogoHeight);
+                settings.FeedbackFormLogos = null;
+                Assert.IsNotNull(settings.FeedbackFormLogos, "Set to null, it reads as none");
+                settings.FeedbackFormLogoHeight = 0f;
+                Assert.AreEqual(16f, settings.FeedbackFormLogoHeight, "Kept to the range the inspector offers");
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(settings);
+            }
+        }
+
+        [Test]
+        public void NoLogoRowWithoutLogosOrWithOnlyEmptySlots()
+        {
+            ProtokitePlaytestForm form = Form(Field("title", ProtokitePlaytestFormFieldTypes.Text));
+            Assert.IsNull(View(form, new Calls()).Root.Q(ProtokitePlaytestFormView.LogoRowName));
+            Assert.IsNull(View(form, new Calls(), logos: new Texture2D[0]).Root.Q(ProtokitePlaytestFormView.LogoRowName));
+            Assert.IsNull(View(form, new Calls(), logos: new Texture2D[] { null }).Root.Q(ProtokitePlaytestFormView.LogoRowName));
+        }
+
+        [Test]
+        public void TheLogosAreFirstInTheirOrderAtOneHeightAndTheirOwnShape()
+        {
+            Texture2D wide = new Texture2D(200, 100);
+            Texture2D square = new Texture2D(64, 64);
+            Texture2D destroyed = new Texture2D(8, 8);
+            UnityEngine.Object.DestroyImmediate(destroyed);
+            try
+            {
+                ProtokitePlaytestFormView view = View(Form(Field("title", ProtokitePlaytestFormFieldTypes.Text)), new Calls(),
+                    logos: new[] { wide, null, destroyed, square }, logoHeight: 30f);
+                VisualElement row = view.Root.Q(ProtokitePlaytestFormView.LogoRowName);
+                Assert.IsNotNull(row);
+                Assert.AreSame(row, view.Root[0], "Above the title");
+                Assert.AreEqual(2, row.childCount, "The empty slot and the destroyed image are left out");
+                Assert.AreSame(wide, row[0].style.backgroundImage.value.texture);
+                Assert.AreSame(square, row[1].style.backgroundImage.value.texture, "In their order");
+                Assert.AreEqual(ProtokitePlaytestFormView.LogoName(1), row[1].name);
+                Assert.AreEqual(30f, row[0].style.height.value.value, 0.001f);
+                Assert.AreEqual(60f, row[0].style.width.value.value, 0.001f, "Twice as wide as tall, like its image");
+                Assert.AreEqual(30f, row[1].style.width.value.value, 0.001f);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(wide);
+                UnityEngine.Object.DestroyImmediate(square);
+            }
+        }
 
         [Test]
         public void EveryQuestionIsDrawnAsItsKindAndAnUnknownKindAsText()

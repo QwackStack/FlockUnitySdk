@@ -39,6 +39,12 @@ namespace Protokite.Playtest
         [Tooltip("Off by default: a playtest is about what the player was doing, and many games cannot be paused. On: the game's time scale is 0 while the form is open, and put back when it closes unless the game set another one meanwhile; a game that pauses itself too (time scale 0) while the form is open is unpaused with it.")]
         [SerializeField] private bool pauseTheGameWhileTheFormIsOpen;
 
+        [Tooltip("Empty by default. Your own images (a studio's, an event's or its sponsors'), drawn left to right in a row above the feedback form's title. Import each with Non-Power of 2 set to None, or its shape is rounded to a power of two and drawn stretched, and with mipmaps on so it stays smooth drawn smaller. Images with transparent backgrounds suit the form's dark panel. Only the images listed here go into a build.")]
+        [SerializeField] private Texture2D[] feedbackFormLogos = new Texture2D[0];
+
+        [Tooltip("How tall each logo on the form is drawn, in points at a 1280x720 screen; each keeps its image's shape.")]
+        [SerializeField, Range(16f, 96f)] private float feedbackFormLogoHeight = DefaultFeedbackFormLogoHeight;
+
         [Header("Video recording (64-bit Windows)")]
         [Tooltip("The widest the video is, in pixels. The screen's shape is kept, a smaller window is not enlarged, and each side is rounded down to a multiple of 16.")]
         [SerializeField, Range(16, 3840)] private int videoWidth = 1280;
@@ -153,6 +159,15 @@ namespace Protokite.Playtest
 
         /// <summary>Whether the game's time scale is 0 while the feedback form is open.</summary>
         public bool PauseTheGameWhileTheFormIsOpen { get => pauseTheGameWhileTheFormIsOpen; set => pauseTheGameWhileTheFormIsOpen = value; }
+
+        /// <summary>The height a feedback form logo is drawn at when the settings say nothing else.</summary>
+        public const float DefaultFeedbackFormLogoHeight = 40f;
+
+        /// <summary>The game's own images drawn in a row above the feedback form's title; empty draws no row.</summary>
+        public Texture2D[] FeedbackFormLogos { get => feedbackFormLogos; set => feedbackFormLogos = value ?? new Texture2D[0]; }
+
+        /// <summary>How tall each feedback form logo is drawn, in points at a 1280x720 screen, from 16 to 96.</summary>
+        public float FeedbackFormLogoHeight { get => feedbackFormLogoHeight; set => feedbackFormLogoHeight = Mathf.Clamp(value, 16f, 96f); }
 
         /// <summary>The widest the video is, in pixels.</summary>
         public int VideoWidth { get => videoWidth; set => videoWidth = value; }

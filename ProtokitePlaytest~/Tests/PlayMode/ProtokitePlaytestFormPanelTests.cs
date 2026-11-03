@@ -39,6 +39,7 @@ namespace Protokite.Playtest.Tests
         private string _oldUrl;
         private KeyCode _oldKey;
         private bool _oldPause;
+        private Texture2D[] _oldLogos;
         private string _folder;
         private string _formsBefore;
         private ProtokitePlaytestConsentForPlayModeTests _consent;
@@ -63,11 +64,13 @@ namespace Protokite.Playtest.Tests
             _oldUrl = _settings.ProtokiteApiUrl;
             _oldKey = _settings.FeedbackFormKey;
             _oldPause = _settings.PauseTheGameWhileTheFormIsOpen;
+            _oldLogos = _settings.FeedbackFormLogos;
             _timeScaleBefore = Time.timeScale;
             _settings.PlaytestingEnabled = true;
             _settings.ProtokiteApiUrl = "http://protokite.test";
             _settings.FeedbackFormKey = KeyCode.F9;
             _settings.PauseTheGameWhileTheFormIsOpen = false;
+            _settings.FeedbackFormLogos = new Texture2D[0];
             _consent = new ProtokitePlaytestConsentForPlayModeTests(_settings);
             ProtokitePlaytest.ResetForNewLaunch();
             _folder = Path.Combine(Path.GetTempPath(), "protokite_form_panel_" + Guid.NewGuid().ToString("N"));
@@ -103,6 +106,7 @@ namespace Protokite.Playtest.Tests
                 _settings.ProtokiteApiUrl = _oldUrl;
                 _settings.FeedbackFormKey = _oldKey;
                 _settings.PauseTheGameWhileTheFormIsOpen = _oldPause;
+                _settings.FeedbackFormLogos = _oldLogos;
             }
             Assert.IsTrue(passEnded, "The finishing pass ended before its folder is deleted");
             try
@@ -203,6 +207,33 @@ namespace Protokite.Playtest.Tests
             Assert.AreEqual("It crashed on level two", (string)answers["title"]);
             Assert.AreEqual(3, (int)answers["rating"]);
             Assert.AreEqual("Jump twice", (string)answers["steps"]);
+        }
+
+        [UnityTest]
+        public IEnumerator TheLogosFollowTheSettingsEachTimeTheFormOpens()
+        {
+            yield return ThePlaytestLoads();
+            Assert.IsTrue(ProtokitePlaytest.OpenFeedbackForm());
+            yield return null;
+            Assert.IsNull(Form().Q(ProtokitePlaytestFormView.LogoRowName), "No logos set, no row");
+            ProtokitePlaytest.CloseFeedbackForm();
+
+            Texture2D logo = new Texture2D(120, 40);
+            try
+            {
+                _settings.FeedbackFormLogos = new[] { logo };
+                Assert.IsTrue(ProtokitePlaytest.OpenFeedbackForm());
+                yield return null;
+                VisualElement row = Form().Q(ProtokitePlaytestFormView.LogoRowName);
+                Assert.IsNotNull(row);
+                Assert.AreEqual(1, row.childCount);
+                Assert.AreEqual(_settings.FeedbackFormLogoHeight * 3f, row[0].layout.width, 1f, "Drawn three times as wide as tall, like its image");
+                ProtokitePlaytest.CloseFeedbackForm();
+            }
+            finally
+            {
+                Object.Destroy(logo);
+            }
         }
 
         [UnityTest]
