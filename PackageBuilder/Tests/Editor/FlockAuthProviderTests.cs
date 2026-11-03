@@ -659,6 +659,148 @@ namespace Flock.Tests.Editor
             Assert.AreEqual("player-a", second.CurrentPlayerId);
         }
 
+        // A login answered after Shutdown would overwrite the saved sign-in the next Create restores, and be announced to that
+        // client's listeners. Its caller is told why the player is not signed in instead.
+        [Test]
+        public void ALoginAnsweredAfterShutdownKeepsNoSignInAndRaisesNothing()
+        {
+            string savedA = MakeJwt("player-a", 3600);
+            int authenticated = 0;
+            Action<FlockAuthInfo> onAuthenticated = _ => authenticated++;
+            FlockClient client = CreateClient(new ScriptedAdapter(request =>
+            {
+                if (!request.Url.Contains(FlockEndpoints.PlayerLoginDevice))
+                    return Ok("{}");
+                FlockClient.Shutdown();
+                // Shutdown clears every subscription, so this listens as the next client's listener would.
+                FlockEvents.OnAuthenticated += onAuthenticated;
+                return Ok(LoginBody("player-b", MakeJwt("player-b", 3600), "refresh-b"));
+            }));
+            client.SetTokens(savedA, "refresh-a");
+            try
+            {
+                FlockException failure = Assert.Throws<FlockException>(() => Run(() => client.Authentication.LoginWithDeviceAsync("device-1")));
+
+                StringAssert.Contains("shut down before the server answered", failure.Message);
+                StringAssert.Contains("FlockClient.Create", failure.Hint, "It says how to fix it");
+                Assert.IsFalse(client.IsAuthenticated, "The client that shut down keeps no sign-in");
+                Assert.AreEqual(savedA, PlayerPrefs.GetString(PrefAccessToken), "The saved sign-in the next Create restores is untouched");
+                Assert.AreEqual(0, authenticated, "No sign-in is announced");
+            }
+            finally
+            {
+                FlockEvents.OnAuthenticated -= onAuthenticated;
+            }
+        }
+
+        // The restore's outcome, and whether a restore is under way, belong to the client running now.
+        [Test]
+        public void ARestoreWhoseRefreshAnswersAfterShutdownRaisesNothing()
+        {
+            int restoredRaised = 0;
+            int authenticated = 0;
+            Action<bool> onRestored = _ => restoredRaised++;
+            Action<FlockAuthInfo> onAuthenticated = _ => authenticated++;
+            bool restoringRightAfterShutdown = true;
+            FlockClient client = CreateClient(new ScriptedAdapter(request =>
+            {
+                if (!request.Url.Contains(FlockEndpoints.PlayerTokenRefresh))
+                    return Ok("{}");
+                FlockClient.Shutdown();
+                restoringRightAfterShutdown = FlockClient.IsRestoringSession;
+                // The next client's restore is under way, and its listeners are subscribed.
+                FlockClient.IsRestoringSession = true;
+                FlockEvents.OnSessionRestored += onRestored;
+                FlockEvents.OnAuthenticated += onAuthenticated;
+                return Ok(LoginBody("player-a", MakeJwt("player-a", 3600, "renewed"), "refresh-2"));
+            }));
+            PlayerPrefs.SetString(PrefAccessToken, MakeJwt("player-a", -60));
+            PlayerPrefs.SetString(PrefRefreshToken, "refresh-1");
+            try
+            {
+                Assert.IsFalse(Run(() => client.Authentication.TryRestoreSessionAsync()), "Flock shut down before the sign-in was restored");
+
+                Assert.IsFalse(restoringRightAfterShutdown, "Shutdown ends the restore it was running");
+                Assert.IsTrue(FlockClient.IsRestoringSession, "The next client's restore still shows as under way");
+                Assert.AreEqual(0, restoredRaised, "No restore outcome is announced");
+                Assert.AreEqual(0, authenticated, "Nor a sign-in");
+            }
+            finally
+            {
+                FlockEvents.OnSessionRestored -= onRestored;
+                FlockEvents.OnAuthenticated -= onAuthenticated;
+                FlockClient.IsRestoringSession = false;
+            }
+        }
+
+        // A restore asked of a client that has already shut down shows no restore under way and announces nothing.
+        [Test]
+        public void ARestoreAskedOfAClientThatHasShutDownLeavesNoRestoreShowing()
+        {
+            string savedA = MakeJwt("player-a", 3600);
+            FlockClient client = CreateClient(new ScriptedAdapter(request => Ok("{}")));
+            PlayerPrefs.SetString(PrefAccessToken, savedA);
+            PlayerPrefs.SetString(PrefRefreshToken, "refresh-1");
+            FlockClient.Shutdown();
+            int restoredRaised = 0;
+            Action<bool> onRestored = _ => restoredRaised++;
+            FlockEvents.OnSessionRestored += onRestored;
+            try
+            {
+                try
+                {
+                    Run(() => client.Authentication.TryRestoreSessionAsync());
+                }
+                catch (FlockException)
+                {
+                    // This client keeps no sign-in; what it says is the login test's to check.
+                }
+
+                Assert.IsFalse(FlockClient.IsRestoringSession, "No restore shows as under way");
+                Assert.AreEqual(0, restoredRaised, "No restore outcome is announced");
+                Assert.AreEqual(savedA, PlayerPrefs.GetString(PrefAccessToken), "The saved sign-in is untouched");
+            }
+            finally
+            {
+                FlockEvents.OnSessionRestored -= onRestored;
+                FlockClient.IsRestoringSession = false;
+            }
+        }
+
+        // The link was made, so its answer is handed back, but the next client's listeners do not hear of this client's player.
+        [TestCase(true)]
+        [TestCase(false)]
+        public void ALinkOrUnlinkAnsweredAfterShutdownRaisesNoEvent(bool link)
+        {
+            int raised = 0;
+            Action<FlockCredentialProvider> count = _ => raised++;
+            string route = link ? FlockEndpoints.PlayerLinkDevice : FlockEndpoints.PlayerUnlink("device_id");
+            FlockClient client = CreateClient(new ScriptedAdapter(request =>
+            {
+                if (!request.Url.Contains(route))
+                    return Ok("{}");
+                FlockClient.Shutdown();
+                FlockEvents.OnAccountLinked += count;
+                FlockEvents.OnAccountUnlinked += count;
+                return Ok("{\"accounts\":[]}");
+            }));
+            client.SetTokens(MakeJwt("player-a", 3600), "refresh-a");
+            try
+            {
+                List<PlayerLinkedAccount> accounts = link
+                    ? Run(() => client.Authentication.LinkDeviceAsync("device-2"))
+                    : Run(() => client.Authentication.UnlinkAsync(FlockCredentialProvider.DeviceId));
+
+                Assert.IsNotNull(accounts, "The server's answer is still handed back");
+                Assert.AreEqual(0, raised, "No account change is announced");
+            }
+            finally
+            {
+                FlockEvents.OnAccountLinked -= count;
+                FlockEvents.OnAccountUnlinked -= count;
+            }
+        }
+
         private sealed class MemoryTokenStore : ITokenStore
         {
             public StoredTokens Saved;

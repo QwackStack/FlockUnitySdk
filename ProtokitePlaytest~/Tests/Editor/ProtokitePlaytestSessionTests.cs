@@ -174,6 +174,290 @@ namespace Protokite.Playtest.Tests
             }
         }
 
+        // The player's token
+
+        private const string PlayerTokenHeader = "X-Flock-Player-Token";
+        private const string RefreshRoute = "player/token/refresh";
+
+        [UnityTest]
+        public IEnumerator TheStartCarriesTheSignedInPlayersRawTokenAndTheEndDoesNot()
+        {
+            string token = FlockTestClient.MakeJwt("player-1", 3600);
+            FlockFakeTransport transport = Transport(FlockFakeTransport.Ok(StartAnswer("pk-1")));
+            using (FlockTestClient flock = FlockTestClient.Create(transport))
+            {
+                flock.LoginWithToken(token, "refresh-1");
+                StartAFlockSession(flock);
+                yield return TheStartSettles();
+
+                FlockHttpRequest sent = transport.LastTo(StartRoute);
+                Assert.AreEqual(token, sent.Headers[PlayerTokenHeader], "The raw access token, with no Bearer prefix");
+                Assert.IsFalse(sent.Headers.ContainsKey("Authorization"));
+                Assert.IsNull(StartBody(transport)["flock_player_id"], "The body is unchanged");
+                Assert.IsFalse(transport.LastTo(ConfigRoute).Headers.ContainsKey(PlayerTokenHeader), "Only the start carries it");
+            }
+            FlockHttpClient.Configure(transport);
+            LogAssert.Expect(LogType.Log, new Regex("Protokite session pk-1 ended"));
+            ProtokitePlaytest.HandleGameQuitting();
+            Assert.IsFalse(transport.LastTo(EndRoute).Headers.ContainsKey(PlayerTokenHeader), "The end, sent after the sign-in may be gone, never carries it");
+        }
+
+        [UnityTest]
+        public IEnumerator WithNoPlayerSignedInTheStartLeavesTheTokenOut()
+        {
+            using (FlockTestClient flock = FlockTestClient.Create(Transport(FlockFakeTransport.Ok(StartAnswer("pk-1")))))
+            {
+                StartAFlockSession(flock);
+                yield return TheStartSettles();
+
+                Assert.IsFalse(flock.Transport.LastTo(StartRoute).Headers.ContainsKey(PlayerTokenHeader));
+                Assert.AreEqual("pk-1", ProtokitePlaytest.PlaytestSessionId, "The session still starts, unlinked");
+            }
+        }
+
+        private static string RenewedAnswer(string token) => "{\"player_id\":\"player-1\",\"access_token\":\"" + token + "\",\"refresh_token\":\"refresh-2\"}";
+
+        [UnityTest]
+        public IEnumerator AnExpiredSignInIsRenewedAndTheStartWaitsForTheNewToken()
+        {
+            string renewed = FlockTestClient.MakeJwt("player-1", 3600, "renewed");
+            FlockFakeTransport transport = Transport(FlockFakeTransport.Ok(StartAnswer("pk-1")))
+                .On(RefreshRoute, FlockFakeTransport.Ok(RenewedAnswer(renewed)));
+            using (FlockTestClient flock = FlockTestClient.Create(transport))
+            {
+                flock.LoginWithToken(FlockTestClient.MakeJwt("player-1", -60), "refresh-1");
+                transport.GateNext(RefreshRoute);
+                StartAFlockSession(flock);
+                for (int frame = 0; frame < 5; frame++)
+                {
+                    ProtokitePlaytest.Refresh();
+                    yield return null;
+                }
+                Assert.AreEqual(0, transport.CountTo(StartRoute), "Nothing starts while the renewal is on its way");
+
+                transport.ReleaseGate();
+                float until = Time.realtimeSinceStartup + 5f;
+                while (transport.CountTo(StartRoute) == 0 && Time.realtimeSinceStartup < until)
+                {
+                    ProtokitePlaytest.Refresh();
+                    yield return null;
+                }
+                yield return TheStartSettles();
+
+                Assert.AreEqual(1, transport.CountTo(RefreshRoute), "Renewed once");
+                Assert.AreEqual(renewed, transport.LastTo(StartRoute).Headers[PlayerTokenHeader]);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator ASignInAboutToRunOutIsRenewedFirst()
+        {
+            string renewed = FlockTestClient.MakeJwt("player-1", 3600, "renewed");
+            FlockFakeTransport transport = Transport(FlockFakeTransport.Ok(StartAnswer("pk-1")))
+                .On(RefreshRoute, FlockFakeTransport.Ok(RenewedAnswer(renewed)));
+            using (FlockTestClient flock = FlockTestClient.Create(transport))
+            {
+                flock.LoginWithToken(FlockTestClient.MakeJwt("player-1", 20), "refresh-1");
+                StartAFlockSession(flock);
+                yield return TheStartSettles();
+
+                Assert.AreEqual(renewed, transport.LastTo(StartRoute).Headers[PlayerTokenHeader], "20 s left is too close to send");
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator ARenewalFlockRefusesStillStartsTheSessionUnlinked()
+        {
+            FlockFakeTransport transport = Transport(FlockFakeTransport.Ok(StartAnswer("pk-1")))
+                .On(RefreshRoute, FlockFakeTransport.Status(401, "{\"detail\":\"Invalid refresh token\"}"));
+            using (FlockTestClient flock = FlockTestClient.Create(transport))
+            {
+                flock.LoginWithToken(FlockTestClient.MakeJwt("player-1", -60), "refresh-1");
+                transport.GateNext(RefreshRoute);
+                StartAFlockSession(flock);
+                yield return null;
+                // Answered a frame later, as over a real network, so the start is ready again after the sign-out.
+                transport.ReleaseGate();
+                float until = Time.realtimeSinceStartup + 5f;
+                while (transport.CountTo(StartRoute) == 0 && Time.realtimeSinceStartup < until)
+                {
+                    ProtokitePlaytest.Refresh();
+                    yield return null;
+                }
+                yield return TheStartSettles();
+
+                Assert.IsFalse(flock.Client.IsAuthenticated, "Precondition: the refusal signed the player out, ending the Flock session");
+                FlockHttpRequest sent = transport.LastTo(StartRoute);
+                Assert.IsNotNull(sent, "The start still went out");
+                Assert.IsFalse(sent.Headers.ContainsKey(PlayerTokenHeader));
+                Assert.AreEqual(ServerSessionId, (string)StartBody(transport)["flock_session_id"], "Named after the Flock session it was ready under");
+                Assert.AreEqual("pk-1", ProtokitePlaytest.PlaytestSessionId);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator ASignInThatCannotBeRenewedStartsTheSessionWithoutTheExpiredToken()
+        {
+            FlockFakeTransport transport = Transport(FlockFakeTransport.Ok(StartAnswer("pk-1")))
+                .On(RefreshRoute, FlockFakeTransport.Offline());
+            using (FlockTestClient flock = FlockTestClient.Create(transport))
+            {
+                flock.LoginWithToken(FlockTestClient.MakeJwt("player-1", -60), "refresh-1");
+                StartAFlockSession(flock);
+                yield return TheStartSettles();
+
+                Assert.AreEqual(1, transport.CountTo(RefreshRoute), "Tried once, then the start goes ahead");
+                Assert.IsFalse(transport.LastTo(StartRoute).Headers.ContainsKey(PlayerTokenHeader), "An expired token is never sent");
+                Assert.AreEqual("pk-1", ProtokitePlaytest.PlaytestSessionId);
+            }
+        }
+
+        // Protokite links the Flock session the start names to the player whose token it carries, so once the player has changed
+        // since the start was ready, it carries none, and the renewal sent for the earlier player holds nothing up.
+        [UnityTest]
+        public IEnumerator AfterASignOutAndAnotherPlayersSignInTheStartCarriesNoToken()
+            => TheStartAfterAPlayerSwitch(flock =>
+            {
+                flock.Client.Authentication.Logout();
+                flock.LoginAs("player-2");
+            });
+
+        [UnityTest]
+        public IEnumerator AfterAnotherPlayerSignsInOverTheFirstTheStartCarriesNoToken()
+            => TheStartAfterAPlayerSwitch(flock => flock.LoginAs("player-2"));
+
+        // Player 1's Flock session reached the server, then player 2 signed in over it before the playtest was ready: the session
+        // the start names is still player 1's, so player 2's token does not go with it.
+        [UnityTest]
+        public IEnumerator AStartReadyAfterAnotherPlayerSignedInOverTheFlockSessionCarriesNoToken()
+        {
+            FlockFakeTransport transport = Transport(FlockFakeTransport.Ok(StartAnswer("pk-1")));
+            using (FlockTestClient flock = FlockTestClient.Create(transport))
+            {
+                flock.LoginAs("player-1");
+                flock.Client.Analytics.InitializeAsync(CancellationToken.None).GetAwaiter().GetResult();
+                flock.Run(() => flock.Client.Analytics.StartSessionAsync());
+                flock.LoginAs("player-2");
+                Assert.AreEqual(ServerSessionId, flock.Client.ServerSessionId, "Precondition: player 1's Flock session is still the one on the server");
+
+                float until = Time.realtimeSinceStartup + 5f;
+                while (transport.CountTo(StartRoute) == 0 && Time.realtimeSinceStartup < until)
+                {
+                    ProtokitePlaytest.Refresh();
+                    yield return null;
+                }
+                yield return TheStartSettles();
+
+                Assert.IsFalse(transport.LastTo(StartRoute).Headers.ContainsKey(PlayerTokenHeader), "Player 2's token never goes with player 1's Flock session");
+                Assert.AreEqual(ServerSessionId, (string)StartBody(transport)["flock_session_id"]);
+                Assert.AreEqual("pk-1", ProtokitePlaytest.PlaytestSessionId, "The session still starts, unlinked");
+            }
+        }
+
+        private static IEnumerator TheStartAfterAPlayerSwitch(Action<FlockTestClient> switchPlayer)
+        {
+            FlockFakeTransport transport = Transport(FlockFakeTransport.Ok(StartAnswer("pk-1")))
+                .On(RefreshRoute, FlockFakeTransport.Ok(RenewedAnswer(FlockTestClient.MakeJwt("player-1", 3600, "renewed"))));
+            using (FlockTestClient flock = FlockTestClient.Create(transport))
+            {
+                flock.LoginWithToken(FlockTestClient.MakeJwt("player-1", -60), "refresh-1");
+                transport.GateNext(RefreshRoute);
+                StartAFlockSession(flock);
+                float until = Time.realtimeSinceStartup + 5f;
+                while (transport.CountTo(RefreshRoute) == 0 && Time.realtimeSinceStartup < until)
+                {
+                    ProtokitePlaytest.Refresh();
+                    yield return null;
+                }
+                Assert.AreEqual(0, transport.CountTo(StartRoute), "Precondition: the start waits for player 1's renewal");
+
+                switchPlayer(flock);
+                until = Time.realtimeSinceStartup + 5f;
+                while (transport.CountTo(StartRoute) == 0 && Time.realtimeSinceStartup < until)
+                {
+                    ProtokitePlaytest.Refresh();
+                    yield return null;
+                }
+                Assert.AreEqual(1, transport.CountTo(StartRoute), "The start went while player 1's renewal was still on its way");
+                transport.ReleaseGate();
+                yield return TheStartSettles();
+
+                Assert.IsFalse(transport.LastTo(StartRoute).Headers.ContainsKey(PlayerTokenHeader), "Player 2's token never goes with player 1's Flock session");
+                Assert.AreEqual(ServerSessionId, (string)StartBody(transport)["flock_session_id"], "Named after the Flock session it was ready under");
+                Assert.AreEqual(1, transport.CountTo(RefreshRoute), "Player 2's sign-in is not renewed for it");
+                Assert.AreEqual("pk-1", ProtokitePlaytest.PlaytestSessionId, "The session still starts, unlinked");
+            }
+        }
+
+        // Another run of the game renewed the sign-in first, so Flock refuses the renewal sent here and the saved sign-in is taken
+        // instead: the same sign-in carries on, and its token still goes with the start.
+        [UnityTest]
+        public IEnumerator ASignInRenewedByAnotherRunOfTheGameStillCarriesItsToken()
+        {
+            string renewedElsewhere = FlockTestClient.MakeJwt("player-1", 3600, "elsewhere");
+            FlockTestClient started = null;
+            FlockFakeTransport transport = Transport(FlockFakeTransport.Ok(StartAnswer("pk-1")))
+                .Default(request =>
+                {
+                    if (!request.Url.Contains(RefreshRoute))
+                        return FlockFakeTransport.Ok("{}");
+                    started.TokenStore.Save(renewedElsewhere, "refresh-2");
+                    return FlockFakeTransport.Coded(401, "player.invalid_refresh_token");
+                });
+            using (FlockTestClient flock = started = FlockTestClient.Create(transport))
+            {
+                flock.LoginWithToken(FlockTestClient.MakeJwt("player-1", -60), "refresh-1");
+                StartAFlockSession(flock);
+                yield return TheStartSettles();
+
+                Assert.IsTrue(flock.Client.IsAuthenticated, "Precondition: the saved sign-in was taken, not signed out");
+                Assert.AreEqual(renewedElsewhere, transport.LastTo(StartRoute).Headers[PlayerTokenHeader]);
+            }
+        }
+
+        // A new Flock client before the start is a new start of the Flock SDK: its own Flock session is the one named, with its player.
+        [UnityTest]
+        public IEnumerator AfterAFlockRestartTheStartNamesTheNewClientsSessionWithItsPlayersToken()
+        {
+            FlockFakeTransport first = Transport(FlockFakeTransport.Ok(StartAnswer("pk-1")))
+                .On(RefreshRoute, FlockFakeTransport.Ok(RenewedAnswer(FlockTestClient.MakeJwt("player-1", 3600, "renewed"))));
+            using (FlockTestClient flock = FlockTestClient.Create(first))
+            {
+                flock.LoginWithToken(FlockTestClient.MakeJwt("player-1", -60), "refresh-1");
+                first.GateNext(RefreshRoute);
+                StartAFlockSession(flock);
+                float until = Time.realtimeSinceStartup + 5f;
+                while (first.CountTo(RefreshRoute) == 0 && Time.realtimeSinceStartup < until)
+                {
+                    ProtokitePlaytest.Refresh();
+                    yield return null;
+                }
+                Assert.AreEqual(0, first.CountTo(StartRoute), "Precondition: the start waits for player 1's renewal");
+            }
+            first.ReleaseGate();
+
+            const string secondServerSessionId = "01K5SRVSESSION000000000002";
+            string player2 = FlockTestClient.MakeJwt("player-2", 3600);
+            FlockFakeTransport second = Transport(FlockFakeTransport.Ok(StartAnswer("pk-2")))
+                .On(FlockSessionRoute, FlockFakeTransport.Ok("{\"session_id\":\"" + secondServerSessionId + "\"}"));
+            using (FlockTestClient flock = FlockTestClient.Create(second))
+            {
+                flock.LoginWithToken(player2, "refresh-2");
+                StartAFlockSession(flock);
+                float until = Time.realtimeSinceStartup + 5f;
+                while (second.CountTo(StartRoute) == 0 && Time.realtimeSinceStartup < until)
+                {
+                    ProtokitePlaytest.Refresh();
+                    yield return null;
+                }
+                yield return TheStartSettles();
+
+                Assert.AreEqual(0, first.CountTo(StartRoute), "Nothing started under the client that shut down");
+                Assert.AreEqual(secondServerSessionId, (string)StartBody(second)["flock_session_id"]);
+                Assert.AreEqual(player2, second.LastTo(StartRoute).Headers[PlayerTokenHeader]);
+            }
+        }
+
         // What the player allowed
 
         [UnityTest]

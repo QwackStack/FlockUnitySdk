@@ -55,7 +55,7 @@ namespace Flock.Tests.Editor
             FlockSession session = NewSession(PersistingConfig());
             session.OnSessionEnded += _ => session.ReportEndSpoolFailed();
 
-            session.Start("player-1");
+            session.Start("player-1", 1);
             session.End(FlockSessionEndReason.Quit);
 
             Assert.IsNotNull(FlockSession.ReadOrphanedSession(_statePath, new NullFlockLogger()),
@@ -69,7 +69,7 @@ namespace Flock.Tests.Editor
             FlockSession session = NewSession(PersistingConfig());
             session.OnSessionEnded += _ => { };
 
-            session.Start("player-1");
+            session.Start("player-1", 1);
             Assert.IsTrue(File.Exists(_statePath), "A running session keeps its record in the launch's folder.");
             session.End(FlockSessionEndReason.Quit);
 
@@ -85,7 +85,7 @@ namespace Flock.Tests.Editor
             bool onSessionEndedFired = false;
             session.OnSessionEnded += _ => onSessionEndedFired = true;
 
-            session.Start("player-1");
+            session.Start("player-1", 1);
             Assert.IsTrue(session.IsActive);
 
             session.Discard();

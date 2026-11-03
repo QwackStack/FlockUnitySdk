@@ -10,3 +10,5 @@ using System.Runtime.CompilerServices;
 [assembly: InternalsVisibleTo("Flock.Multiplayer.Netcode")]
 // The store purchase adapter, shipped in this package, logs and raises its events the way the client does.
 [assembly: InternalsVisibleTo("Flock.Shop.UnityIap")]
+// The playtest, released at this exact version, sends the player's access token when it starts a session.
+[assembly: InternalsVisibleTo("Protokite.Playtest")]

@@ -404,7 +404,7 @@ namespace Flock.Providers
                     await DeliverSessionEndAsync(stale, cancellationToken);
             }
 
-            string localId = _session.Start(Client.CurrentPlayerId ?? FlockConstant.DummyUserID);
+            string localId = _session.Start(Client.CurrentPlayerId ?? FlockConstant.DummyUserID, Client.SignInNumber);
             _terminationTracker.NoteSessionStarted(localId);
 
             string serverId = await TryRegisterSessionAsync(cancellationToken);

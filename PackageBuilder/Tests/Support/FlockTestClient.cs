@@ -4,6 +4,7 @@ using System.IO;
 using System.Text;
 using System.Threading.Tasks;
 using Flock.Analytics;
+using Flock.Auth;
 using Flock.Config;
 using Flock.Http;
 using UnityEngine;
@@ -32,12 +33,19 @@ namespace Flock.Tests.Support
         /// <summary>What the SDK logged during the test — assert on it rather than letting errors vanish.</summary>
         public RecordingFlockLogger Logger { get; }
 
-        private FlockTestClient(FlockClient client, FlockFakeTransport transport, string snapshotDir, RecordingFlockLogger logger)
+        /// <summary>Where the client keeps its saved sign-in, for a test that writes it the way another run of the game would.</summary>
+        public ITokenStore TokenStore { get; }
+
+        private readonly FlockInitConfig _config;
+
+        private FlockTestClient(FlockClient client, FlockFakeTransport transport, string snapshotDir, RecordingFlockLogger logger, FlockInitConfig config)
         {
             Client = client;
             Transport = transport;
             SnapshotDirectory = snapshotDir;
             Logger = logger;
+            _config = config;
+            TokenStore = config.TokenStore;
         }
 
         // `tweak` lets a test override the config (e.g. pin a fixed snapshot dir for a relaunch test).
@@ -72,14 +80,26 @@ namespace Flock.Tests.Support
             FlockClient client = FlockClient.Create(config, logger);
             // The constructor rebuilds the real transport from HttpTimeout — re-apply the fake after Create.
             FlockHttpClient.Configure(transport);
-            return new FlockTestClient(client, transport, config.OfflineCacheDirectory, logger) { _developersPrefs = developersPrefs };
+            return new FlockTestClient(client, transport, config.OfflineCacheDirectory, logger, config) { _developersPrefs = developersPrefs };
+        }
+
+        // Starts Flock again after a shutdown, with the same config, saved sign-in and transport, the way a game's next Create does;
+        // Dispose shuts it down. Client stays the first one.
+        public FlockClient CreateAgain()
+        {
+            FlockClient client = FlockClient.Create(_config, Logger);
+            FlockHttpClient.Configure(Transport);
+            return client;
         }
 
         // Force the reachability seam. false = the SDK treats the network as down.
         public void SetReachable(bool reachable) => Client.ReachabilityProbe = () => reachable;
 
         // Establish an authenticated player without the login round-trip (SetTokens is internal to Runtime).
-        public void LoginAs(string playerId) => Client.SetTokens(MakeJwt(playerId, 3600), "refresh-" + playerId);
+        public void LoginAs(string playerId) => LoginWithToken(MakeJwt(playerId, 3600), "refresh-" + playerId);
+
+        // Signs in with exactly this access token (an expired one included), for a test that reads it back off a request.
+        public void LoginWithToken(string accessToken, string refreshToken) => Client.SetTokens(accessToken, refreshToken);
 
         // Safe to block inline: the fake always returns completed tasks, so every await resolves synchronously.
         public T Run<T>(Func<Task<T>> action) => action().GetAwaiter().GetResult();
