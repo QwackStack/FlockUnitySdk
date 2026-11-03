@@ -89,16 +89,18 @@ namespace Protokite.Playtest
             _formPanel = ProtokitePlaytestPanel.Open("Protokite Playtest Feedback");
             ProtokitePlaytestPanel panel = _formPanel;
             panel.Card.style.maxHeight = UnityEngine.UIElements.Length.Percent(90);
+            ProtokitePlaytestSettings settings = ProtokitePlaytestSettings.Load();
             _formView = new ProtokitePlaytestFormView(form, answers,
                 filledIn => SendFromTheForm(form, gameVersionId, filledIn),
                 () => CloseFeedbackForm(),
                 () => CanSendTheRecording,
                 StopRecordingAndSendIt,
                 () => panel.TheGameKeepsTheCursorLocked,
-                WarnThatTheGameHoldsTheCursorLockedOverTheForm);
+                WarnThatTheGameHoldsTheCursorLockedOverTheForm,
+                settings != null ? settings.FeedbackFormLogos : null,
+                settings != null ? settings.FeedbackFormLogoHeight : ProtokitePlaytestSettings.DefaultFeedbackFormLogoHeight);
             panel.Show(_formView.Root);
 
-            ProtokitePlaytestSettings settings = ProtokitePlaytestSettings.Load();
             if (settings != null && settings.PauseTheGameWhileTheFormIsOpen && Time.timeScale != 0f)
             {
                 _timeScaleBeforeTheForm = Time.timeScale;

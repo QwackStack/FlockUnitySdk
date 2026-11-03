@@ -18,6 +18,7 @@ namespace Protokite.Playtest
         internal const string SendRecordingButtonName = "protokite-form-send-recording";
         internal const string RecordingNoteName = "protokite-form-recording-note";
         internal const string NotSentName = "protokite-form-not-sent";
+        internal const string LogoRowName = "protokite-form-logos";
 
         internal const string SendRecordingText = "Upload your recording";
         internal const string SendRecordingExplanation = "Stops recording for the rest of this session and sends what was recorded.";
@@ -43,9 +44,11 @@ namespace Protokite.Playtest
         /// The view over <paramref name="answers"/>. <paramref name="send"/> hears answers Protokite would take and says why they could
         /// not be sent, or null. While <paramref name="theGameKeepsTheCursorLocked"/> says so, a mouse press on Send, Close or the recording
         /// button is ignored and <paramref name="pressIgnoredForALockedCursor"/> told: it lands at the centre, not where the player aimed.
+        /// <paramref name="logos"/> are drawn in a row above the title, each <paramref name="logoHeight"/> points tall; none, no row.
         /// </summary>
         internal ProtokitePlaytestFormView(ProtokitePlaytestForm form, ProtokitePlaytestFormAnswers answers, Func<ProtokitePlaytestFormAnswers, string> send,
-            Action close, Func<bool> canSendRecording, Func<bool> sendRecording, Func<bool> theGameKeepsTheCursorLocked, Action pressIgnoredForALockedCursor)
+            Action close, Func<bool> canSendRecording, Func<bool> sendRecording, Func<bool> theGameKeepsTheCursorLocked, Action pressIgnoredForALockedCursor,
+            IReadOnlyList<Texture2D> logos = null, float logoHeight = ProtokitePlaytestSettings.DefaultFeedbackFormLogoHeight)
         {
             _form = form;
             Answers = answers;
@@ -63,6 +66,9 @@ namespace Protokite.Playtest
             // Escape in a text field puts back what it held when it was focused (measured): here it is kept from the field.
             Root.RegisterCallback<KeyDownEvent>(KeepEscapeFromTheTextField, TrickleDown.TrickleDown);
 
+            VisualElement logoRow = LogoRow(logos, logoHeight);
+            if (logoRow != null)
+                Root.Add(logoRow);
             Root.Add(ProtokitePlaytestPanel.Text(string.IsNullOrWhiteSpace(form.Title) ? "Feedback" : form.Title, 22, ProtokitePlaytestPanel.TextColour, bold: true));
             if (!string.IsNullOrWhiteSpace(form.Description))
             {
@@ -125,6 +131,40 @@ namespace Protokite.Playtest
 
         /// <summary>What has been filled in so far.</summary>
         internal ProtokitePlaytestFormAnswers Answers { get; }
+
+        /// <summary>The name of one logo in the row, counted from 0 among the logos drawn.</summary>
+        internal static string LogoName(int index) => "protokite-form-logo-" + index;
+
+        // The game's own logos, each at one height and its image's shape, centred in one row with a line under it. An empty slot is left out.
+        private static VisualElement LogoRow(IReadOnlyList<Texture2D> logos, float height)
+        {
+            if (logos == null)
+                return null;
+            VisualElement row = new VisualElement { name = LogoRowName };
+            row.style.flexDirection = FlexDirection.Row;
+            row.style.flexWrap = Wrap.Wrap;
+            row.style.justifyContent = Justify.Center;
+            row.style.alignItems = Align.Center;
+            row.style.flexShrink = 0;
+            row.style.paddingBottom = 14;
+            row.style.marginBottom = 16;
+            row.style.borderBottomWidth = 1;
+            row.style.borderBottomColor = ProtokitePlaytestPanel.OptionBorderColour;
+            foreach (Texture2D image in logos)
+            {
+                if (image == null)
+                    continue;
+                VisualElement logo = new VisualElement { name = LogoName(row.childCount), pickingMode = PickingMode.Ignore };
+                logo.style.backgroundImage = new StyleBackground(image);
+                logo.style.height = height;
+                logo.style.width = height * image.width / image.height;
+                logo.style.flexShrink = 0;
+                logo.style.marginLeft = 16;
+                logo.style.marginRight = 16;
+                row.Add(logo);
+            }
+            return row.childCount > 0 ? row : null;
+        }
 
         /// <summary>The name of the element answering one question, for tests and probes.</summary>
         internal static string AnswerName(string fieldId) => "protokite-form-answer-" + fieldId;

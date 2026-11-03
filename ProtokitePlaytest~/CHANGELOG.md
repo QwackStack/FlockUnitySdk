@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 It is released with the Flock SDK, at the Flock SDK's version.
 
+## [1.100.0]
+
+### Added
+- **Your own logos on the feedback form.** **Feedback Form Logos** (Protokite > Playtest > Settings, under Feedback form;
+  `FeedbackFormLogos`) takes any images the game chooses: a studio's, an event's or its sponsors'. They are drawn left to right in
+  a row above the form's title, each **Feedback Form Logo Height** points tall (40 by default; `FeedbackFormLogoHeight`) and in
+  its image's own shape. An empty slot is left out. Import a logo with Non-Power of 2 set to None, or it is drawn stretched. The list is empty by default, and the form is then as before. The package
+  ships no images of its own: only the images a game lists go into its build.
+
 ## [1.99.0]
 
 ### Added

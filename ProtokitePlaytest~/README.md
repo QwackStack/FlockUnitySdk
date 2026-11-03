@@ -219,6 +219,8 @@ sends **whatever their consent answer**, "nothing" included; it never opens over
 |---|---|---|
 | Feedback Form Key | F9 | Opens the form and closes it again, also while the player types in it. Click **Detect Key** and press the key (Escape or **Cancel** keeps the old one), or choose it from the list. Read when the playtest loads; None leaves opening it to your game |
 | Pause The Game While The Form Is Open | off | The time scale is 0 while the form is open, and put back when it closes unless the game set another one meanwhile |
+| Feedback Form Logos | empty | Your own images (a studio's, an event's or its sponsors'), drawn left to right in a row above the form's title, each in its own shape. Import each with **Non-Power of 2** set to **None** (otherwise Unity rounds its size to a power of two and the logo is drawn stretched) and **Generate Mip Maps** on (so it stays smooth drawn smaller). Images with transparent backgrounds suit the form's dark panel. Only the images listed go into a build |
+| Feedback Form Logo Height | 40 | How tall each logo is drawn, from 16 to 96 points at a 1280x720 screen |
 
 ```csharp
 ProtokitePlaytest.CanOpenFeedbackForm            // a form to open: leave your "give feedback" button out when false
