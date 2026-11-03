@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 It is released with the Flock SDK, at the Flock SDK's version.
 
-## [Unreleased]
+## [1.99.0]
 
 ### Added
 - A playtest session started while a player is signed in to Flock carries that player's sign-in, so Protokite can link the

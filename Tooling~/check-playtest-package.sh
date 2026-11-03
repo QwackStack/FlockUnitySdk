@@ -60,7 +60,11 @@ case $? in
 esac
 
 # 3. The Flock SDK's runtime never names the playtest. Its editor may, for the Playtesting tab's install button.
-named=$(grep -rniI "protokite" "$ROOT/Runtime" "$ROOT/package.json" 2>/dev/null || true)
+#    One line is allowed (owner, 2026-11-03): the InternalsVisibleTo grant through which the playtest reads the player's
+#    sign-in for its session start. A grant to an assembly that is not installed changes nothing, so Flock still builds
+#    and loads alone. Only that exact line in AssemblyInfo.cs passes; every other mention fails as before.
+allowed_grant='^[^:]*/Runtime/AssemblyInfo\.cs:[0-9]+:\[assembly: InternalsVisibleTo\("Protokite\.Playtest"\)\][[:space:]]*$'
+named=$(grep -rniI "protokite" "$ROOT/Runtime" "$ROOT/package.json" 2>/dev/null | tr -d '\r' | grep -vE "$allowed_grant" || true)
 if [ -n "$named" ]; then
   error "The Flock SDK's runtime names the playtest; it must never depend on it:"
   echo "$named"
