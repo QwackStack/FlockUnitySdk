@@ -40,6 +40,7 @@ namespace Protokite.Playtest.Tests
         private KeyCode _oldKey;
         private bool _oldPause;
         private Texture2D[] _oldLogos;
+        private Texture2D _oldFooterLogo;
         private string _folder;
         private string _formsBefore;
         private ProtokitePlaytestConsentForPlayModeTests _consent;
@@ -65,12 +66,14 @@ namespace Protokite.Playtest.Tests
             _oldKey = _settings.FeedbackFormKey;
             _oldPause = _settings.PauseTheGameWhileTheFormIsOpen;
             _oldLogos = _settings.FeedbackFormLogos;
+            _oldFooterLogo = _settings.FeedbackFormFooterLogo;
             _timeScaleBefore = Time.timeScale;
             _settings.PlaytestingEnabled = true;
             _settings.ProtokiteApiUrl = "http://protokite.test";
             _settings.FeedbackFormKey = KeyCode.F9;
             _settings.PauseTheGameWhileTheFormIsOpen = false;
             _settings.FeedbackFormLogos = new Texture2D[0];
+            _settings.FeedbackFormFooterLogo = null;
             _consent = new ProtokitePlaytestConsentForPlayModeTests(_settings);
             ProtokitePlaytest.ResetForNewLaunch();
             _folder = Path.Combine(Path.GetTempPath(), "protokite_form_panel_" + Guid.NewGuid().ToString("N"));
@@ -107,6 +110,7 @@ namespace Protokite.Playtest.Tests
                 _settings.FeedbackFormKey = _oldKey;
                 _settings.PauseTheGameWhileTheFormIsOpen = _oldPause;
                 _settings.FeedbackFormLogos = _oldLogos;
+                _settings.FeedbackFormFooterLogo = _oldFooterLogo;
             }
             Assert.IsTrue(passEnded, "The finishing pass ended before its folder is deleted");
             try
@@ -216,23 +220,37 @@ namespace Protokite.Playtest.Tests
             Assert.IsTrue(ProtokitePlaytest.OpenFeedbackForm());
             yield return null;
             Assert.IsNull(Form().Q(ProtokitePlaytestFormView.LogoRowName), "No logos set, no row");
+            Assert.IsNull(Form().Q(ProtokitePlaytestFormView.FooterLogoName), "No footer logo set, none drawn");
             ProtokitePlaytest.CloseFeedbackForm();
 
             Texture2D logo = new Texture2D(120, 40);
+            Texture2D footerLogo = new Texture2D(100, 20);
             try
             {
                 _settings.FeedbackFormLogos = new[] { logo };
+                _settings.FeedbackFormFooterLogo = footerLogo;
                 Assert.IsTrue(ProtokitePlaytest.OpenFeedbackForm());
                 yield return null;
                 VisualElement row = Form().Q(ProtokitePlaytestFormView.LogoRowName);
                 Assert.IsNotNull(row);
                 Assert.AreEqual(1, row.childCount);
                 Assert.AreEqual(_settings.FeedbackFormLogoHeight * 3f, row[0].layout.width, 1f, "Drawn three times as wide as tall, like its image");
+                VisualElement footer = Form().Q(ProtokitePlaytestFormView.FooterLogoName);
+                Assert.IsNotNull(footer);
+                Assert.AreEqual(_settings.FeedbackFormFooterLogoHeight * 5f, footer.layout.width, 1f, "Five times as wide as tall, like its image");
+                Rect form = Form().worldBound;
+                Rect close = Form().Q<Button>(ProtokitePlaytestFormView.CloseButtonName).worldBound;
+                Rect send = Form().Q<Button>(ProtokitePlaytestFormView.SendButtonName).worldBound;
+                Assert.AreEqual(form.xMin, footer.worldBound.xMin, 1f, "At the form's left edge");
+                Assert.Less(form.yMax - footer.worldBound.yMax, close.height, "At the form's bottom, beside the buttons");
+                Assert.AreEqual(form.xMax, send.xMax, 1f, "Send stays at the right");
+                Assert.Greater(close.xMin, footer.worldBound.xMax, "Close is right of it");
                 ProtokitePlaytest.CloseFeedbackForm();
             }
             finally
             {
                 Object.Destroy(logo);
+                Object.Destroy(footerLogo);
             }
         }
 

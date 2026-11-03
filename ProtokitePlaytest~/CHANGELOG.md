@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 It is released with the Flock SDK, at the Flock SDK's version.
 
+## [1.101.0]
+
+### Added
+- **A footer logo on the feedback form.** **Feedback Form Footer Logo** (Protokite > Playtest > Settings, under Feedback form;
+  `FeedbackFormFooterLogo`) takes one small image of the game's own, such as a "Powered by" mark, drawn at the form's bottom left,
+  on the row of Close and Send (on a narrow screen it is drawn smaller, never the buttons), **Feedback Form Footer Logo Height** points tall (22 by default, 12 to 48; `FeedbackFormFooterLogoHeight`)
+  and in its image's own shape. It is empty by default, and the form is then as before. Import it as the logos above the title.
+
 ## [1.100.0]
 
 ### Added

@@ -98,7 +98,9 @@ namespace Protokite.Playtest
                 () => panel.TheGameKeepsTheCursorLocked,
                 WarnThatTheGameHoldsTheCursorLockedOverTheForm,
                 settings != null ? settings.FeedbackFormLogos : null,
-                settings != null ? settings.FeedbackFormLogoHeight : ProtokitePlaytestSettings.DefaultFeedbackFormLogoHeight);
+                settings != null ? settings.FeedbackFormLogoHeight : ProtokitePlaytestSettings.DefaultFeedbackFormLogoHeight,
+                settings != null ? settings.FeedbackFormFooterLogo : null,
+                settings != null ? settings.FeedbackFormFooterLogoHeight : ProtokitePlaytestSettings.DefaultFeedbackFormFooterLogoHeight);
             panel.Show(_formView.Root);
 
             if (settings != null && settings.PauseTheGameWhileTheFormIsOpen && Time.timeScale != 0f)

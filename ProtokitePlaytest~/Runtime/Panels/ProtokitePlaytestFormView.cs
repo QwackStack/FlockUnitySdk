@@ -19,6 +19,7 @@ namespace Protokite.Playtest
         internal const string RecordingNoteName = "protokite-form-recording-note";
         internal const string NotSentName = "protokite-form-not-sent";
         internal const string LogoRowName = "protokite-form-logos";
+        internal const string FooterLogoName = "protokite-form-footer-logo";
 
         internal const string SendRecordingText = "Upload your recording";
         internal const string SendRecordingExplanation = "Stops recording for the rest of this session and sends what was recorded.";
@@ -45,10 +46,12 @@ namespace Protokite.Playtest
         /// not be sent, or null. While <paramref name="theGameKeepsTheCursorLocked"/> says so, a mouse press on Send, Close or the recording
         /// button is ignored and <paramref name="pressIgnoredForALockedCursor"/> told: it lands at the centre, not where the player aimed.
         /// <paramref name="logos"/> are drawn in a row above the title, each <paramref name="logoHeight"/> points tall; none, no row.
+        /// <paramref name="footerLogo"/> is drawn at the bottom left, on the row of Close and Send, <paramref name="footerLogoHeight"/> points tall.
         /// </summary>
         internal ProtokitePlaytestFormView(ProtokitePlaytestForm form, ProtokitePlaytestFormAnswers answers, Func<ProtokitePlaytestFormAnswers, string> send,
             Action close, Func<bool> canSendRecording, Func<bool> sendRecording, Func<bool> theGameKeepsTheCursorLocked, Action pressIgnoredForALockedCursor,
-            IReadOnlyList<Texture2D> logos = null, float logoHeight = ProtokitePlaytestSettings.DefaultFeedbackFormLogoHeight)
+            IReadOnlyList<Texture2D> logos = null, float logoHeight = ProtokitePlaytestSettings.DefaultFeedbackFormLogoHeight,
+            Texture2D footerLogo = null, float footerLogoHeight = ProtokitePlaytestSettings.DefaultFeedbackFormFooterLogoHeight)
         {
             _form = form;
             Answers = answers;
@@ -118,10 +121,23 @@ namespace Protokite.Playtest
             VisualElement buttons = new VisualElement();
             buttons.style.flexDirection = FlexDirection.Row;
             buttons.style.justifyContent = Justify.FlexEnd;
+            buttons.style.alignItems = Align.Center;
             buttons.style.marginTop = 14;
-            buttons.Add(ActionButton(CloseButtonName, "Close", () => _close()));
+            if (footerLogo != null)
+            {
+                VisualElement footer = Logo(FooterLogoName, footerLogo, footerLogoHeight);
+                // Takes the row's free space on its left, so Close and Send stay at the right; on a narrow screen it is drawn smaller, never the buttons.
+                footer.style.marginRight = StyleKeyword.Auto;
+                footer.style.flexShrink = 1;
+                footer.style.minWidth = 0;
+                buttons.Add(footer);
+            }
+            Button closeButton = ActionButton(CloseButtonName, "Close", () => _close());
+            closeButton.style.flexShrink = 0;
+            buttons.Add(closeButton);
             Button sendButton = ActionButton(SendButtonName, "Send", () => TrySend());
             sendButton.style.marginLeft = 10;
+            sendButton.style.flexShrink = 0;
             buttons.Add(sendButton);
             Root.Add(buttons);
         }
@@ -154,16 +170,29 @@ namespace Protokite.Playtest
             {
                 if (image == null)
                     continue;
-                VisualElement logo = new VisualElement { name = LogoName(row.childCount), pickingMode = PickingMode.Ignore };
-                logo.style.backgroundImage = new StyleBackground(image);
-                logo.style.height = height;
-                logo.style.width = height * image.width / image.height;
-                logo.style.flexShrink = 0;
+                VisualElement logo = Logo(LogoName(row.childCount), image, height);
                 logo.style.marginLeft = 16;
                 logo.style.marginRight = 16;
                 row.Add(logo);
             }
             return row.childCount > 0 ? row : null;
+        }
+
+        // One image at one height in its own shape, which a click passes through.
+        private static VisualElement Logo(string name, Texture2D image, float height)
+        {
+            VisualElement logo = new VisualElement { name = name, pickingMode = PickingMode.Ignore };
+            logo.style.backgroundImage = new StyleBackground(image);
+            logo.style.height = height;
+            logo.style.width = height * image.width / image.height;
+            logo.style.flexShrink = 0;
+            // Kept in its shape when drawn narrower than its width.
+#if UNITY_2022_2_OR_NEWER
+            logo.style.backgroundSize = new BackgroundSize(BackgroundSizeType.Contain);
+#else
+            logo.style.unityBackgroundScaleMode = ScaleMode.ScaleToFit;
+#endif
+            return logo;
         }
 
         /// <summary>The name of the element answering one question, for tests and probes.</summary>

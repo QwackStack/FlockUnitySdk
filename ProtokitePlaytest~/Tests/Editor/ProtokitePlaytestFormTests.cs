@@ -323,7 +323,8 @@ namespace Protokite.Playtest.Tests
             public ProtokitePlaytestFormAnswers LastSent;
         }
 
-        private static ProtokitePlaytestFormView View(ProtokitePlaytestForm form, Calls calls, ProtokitePlaytestFormAnswers answers = null, Texture2D[] logos = null, float logoHeight = ProtokitePlaytestSettings.DefaultFeedbackFormLogoHeight)
+        private static ProtokitePlaytestFormView View(ProtokitePlaytestForm form, Calls calls, ProtokitePlaytestFormAnswers answers = null, Texture2D[] logos = null, float logoHeight = ProtokitePlaytestSettings.DefaultFeedbackFormLogoHeight,
+            Texture2D footerLogo = null, float footerLogoHeight = ProtokitePlaytestSettings.DefaultFeedbackFormFooterLogoHeight)
             => new ProtokitePlaytestFormView(form, answers ?? new ProtokitePlaytestFormAnswers(),
                 filledIn =>
                 {
@@ -341,7 +342,9 @@ namespace Protokite.Playtest.Tests
                 () => false,
                 () => { },
                 logos,
-                logoHeight);
+                logoHeight,
+                footerLogo,
+                footerLogoHeight);
 
         [Test]
         public void NewSettingsHaveNoLogos()
@@ -355,6 +358,10 @@ namespace Protokite.Playtest.Tests
                 Assert.IsNotNull(settings.FeedbackFormLogos, "Set to null, it reads as none");
                 settings.FeedbackFormLogoHeight = 0f;
                 Assert.AreEqual(16f, settings.FeedbackFormLogoHeight, "Kept to the range the inspector offers");
+                Assert.IsNull(settings.FeedbackFormFooterLogo, "No footer logo either");
+                Assert.AreEqual(ProtokitePlaytestSettings.DefaultFeedbackFormFooterLogoHeight, settings.FeedbackFormFooterLogoHeight);
+                settings.FeedbackFormFooterLogoHeight = 100f;
+                Assert.AreEqual(48f, settings.FeedbackFormFooterLogoHeight, "Kept to the range the inspector offers");
             }
             finally
             {
@@ -397,6 +404,39 @@ namespace Protokite.Playtest.Tests
             {
                 UnityEngine.Object.DestroyImmediate(wide);
                 UnityEngine.Object.DestroyImmediate(square);
+            }
+        }
+
+        [Test]
+        public void TheFooterLogoIsFirstInTheButtonRowAtItsHeightAndOwnShapeAndNoneWithoutOne()
+        {
+            ProtokitePlaytestForm form = Form(Field("title", ProtokitePlaytestFormFieldTypes.Text));
+            Assert.IsNull(View(form, new Calls()).Root.Q(ProtokitePlaytestFormView.FooterLogoName));
+            Texture2D destroyed = new Texture2D(8, 8);
+            UnityEngine.Object.DestroyImmediate(destroyed);
+            Assert.IsNull(View(form, new Calls(), footerLogo: destroyed).Root.Q(ProtokitePlaytestFormView.FooterLogoName), "A destroyed image is left out");
+
+            Texture2D wide = new Texture2D(160, 40);
+            try
+            {
+                ProtokitePlaytestFormView view = View(form, new Calls(), footerLogo: wide, footerLogoHeight: 20f);
+                VisualElement footer = view.Root.Q(ProtokitePlaytestFormView.FooterLogoName);
+                Assert.IsNotNull(footer);
+                VisualElement buttons = view.Root.Q<Button>(ProtokitePlaytestFormView.SendButtonName).parent;
+                Assert.AreSame(buttons, footer.parent, "On the row of Close and Send, at the bottom");
+                Assert.AreSame(footer, buttons[0], "On its left");
+                Assert.AreEqual(StyleKeyword.Auto, footer.style.marginRight.keyword, "Pushing Close and Send to the right");
+                Assert.AreSame(wide, footer.style.backgroundImage.value.texture);
+                Assert.AreEqual(20f, footer.style.height.value.value, 0.001f);
+                Assert.AreEqual(80f, footer.style.width.value.value, 0.001f, "Four times as wide as tall, like its image");
+                Assert.AreEqual(1f, footer.style.flexShrink.value, "On a narrow screen the logo is drawn smaller");
+                Assert.AreEqual(0f, view.Root.Q<Button>(ProtokitePlaytestFormView.SendButtonName).style.flexShrink.value, "Never Send");
+                Assert.AreEqual(0f, view.Root.Q<Button>(ProtokitePlaytestFormView.CloseButtonName).style.flexShrink.value, "Nor Close");
+                Assert.IsNull(view.Root.Q(ProtokitePlaytestFormView.LogoRowName), "The top row is its own setting");
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(wide);
             }
         }
 

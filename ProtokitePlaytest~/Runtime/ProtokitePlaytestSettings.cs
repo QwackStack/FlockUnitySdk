@@ -45,6 +45,12 @@ namespace Protokite.Playtest
         [Tooltip("How tall each logo on the form is drawn, in points at a 1280x720 screen; each keeps its image's shape.")]
         [SerializeField, Range(16f, 96f)] private float feedbackFormLogoHeight = DefaultFeedbackFormLogoHeight;
 
+        [Tooltip("Empty by default. One small image of your own (such as a \"Powered by\" mark) drawn at the feedback form's bottom left, on the row of Close and Send; on a narrow screen it is drawn smaller, never the buttons. Import it as the logos above. Only the image set here goes into a build.")]
+        [SerializeField] private Texture2D feedbackFormFooterLogo;
+
+        [Tooltip("How tall the footer logo is drawn, in points at a 1280x720 screen; it keeps its image's shape.")]
+        [SerializeField, Range(12f, 48f)] private float feedbackFormFooterLogoHeight = DefaultFeedbackFormFooterLogoHeight;
+
         [Header("Video recording (64-bit Windows)")]
         [Tooltip("The widest the video is, in pixels. The screen's shape is kept, a smaller window is not enlarged, and each side is rounded down to a multiple of 16.")]
         [SerializeField, Range(16, 3840)] private int videoWidth = 1280;
@@ -168,6 +174,15 @@ namespace Protokite.Playtest
 
         /// <summary>How tall each feedback form logo is drawn, in points at a 1280x720 screen, from 16 to 96.</summary>
         public float FeedbackFormLogoHeight { get => feedbackFormLogoHeight; set => feedbackFormLogoHeight = Mathf.Clamp(value, 16f, 96f); }
+
+        /// <summary>The height the footer logo is drawn at when the settings say nothing else.</summary>
+        public const float DefaultFeedbackFormFooterLogoHeight = 22f;
+
+        /// <summary>The game's own image drawn at the feedback form's bottom left; null draws none.</summary>
+        public Texture2D FeedbackFormFooterLogo { get => feedbackFormFooterLogo; set => feedbackFormFooterLogo = value; }
+
+        /// <summary>How tall the footer logo is drawn, in points at a 1280x720 screen, from 12 to 48.</summary>
+        public float FeedbackFormFooterLogoHeight { get => feedbackFormFooterLogoHeight; set => feedbackFormFooterLogoHeight = Mathf.Clamp(value, 12f, 48f); }
 
         /// <summary>The widest the video is, in pixels.</summary>
         public int VideoWidth { get => videoWidth; set => videoWidth = value; }
