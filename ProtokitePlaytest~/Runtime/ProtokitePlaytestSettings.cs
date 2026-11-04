@@ -45,7 +45,7 @@ namespace Protokite.Playtest
         [Tooltip("How tall each logo on the form is drawn, in points at a 1280x720 screen; each keeps its image's shape.")]
         [SerializeField, Range(16f, 96f)] private float feedbackFormLogoHeight = DefaultFeedbackFormLogoHeight;
 
-        [Tooltip("Empty by default. One small image of your own (such as a \"Powered by\" mark) drawn at the feedback form's bottom left, on the row of Close and Send; on a narrow screen it is drawn smaller, never the buttons. Import it as the logos above. Only the image set here goes into a build.")]
+        [Tooltip("Empty by default, when the form shows Powered by Qwacks there. One small image of your own, drawn instead at the feedback form's bottom left, on the row of Close and Send; on a narrow screen it is drawn smaller, never the buttons. Import it as the logos above.")]
         [SerializeField] private Texture2D feedbackFormFooterLogo;
 
         [Tooltip("How tall the footer logo is drawn, in points at a 1280x720 screen; it keeps its image's shape.")]
@@ -178,7 +178,7 @@ namespace Protokite.Playtest
         /// <summary>The height the footer logo is drawn at when the settings say nothing else.</summary>
         public const float DefaultFeedbackFormFooterLogoHeight = 22f;
 
-        /// <summary>The game's own image drawn at the feedback form's bottom left; null draws none.</summary>
+        /// <summary>The game's own image drawn at the feedback form's bottom left; null draws Powered by Qwacks there.</summary>
         public Texture2D FeedbackFormFooterLogo { get => feedbackFormFooterLogo; set => feedbackFormFooterLogo = value; }
 
         /// <summary>How tall the footer logo is drawn, in points at a 1280x720 screen, from 12 to 48.</summary>

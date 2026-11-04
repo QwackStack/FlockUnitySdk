@@ -15,6 +15,13 @@ namespace Protokite.Playtest
         /// <summary>How long after a failure that may pass the waiting forms are tried again, while the game runs.</summary>
         internal static readonly TimeSpan FormRetryInterval = TimeSpan.FromMinutes(2);
 
+        /// <summary>The name <see cref="Resources.Load(string)"/> finds the Powered by Qwacks mark under.</summary>
+        internal const string PoweredByQwacksResource = "ProtokitePlaytestPoweredByQwacks";
+
+        /// <summary>The game's own footer logo, else the Powered by Qwacks mark the package carries.</summary>
+        internal static Texture2D FooterLogoFor(ProtokitePlaytestSettings settings)
+            => settings != null && settings.FeedbackFormFooterLogo != null ? settings.FeedbackFormFooterLogo : Resources.Load<Texture2D>(PoweredByQwacksResource);
+
         private static ProtokitePlaytestPanel _formPanel;
         private static ProtokitePlaytestFormView _formView;
         private static string _openFormId;
@@ -99,7 +106,7 @@ namespace Protokite.Playtest
                 WarnThatTheGameHoldsTheCursorLockedOverTheForm,
                 settings != null ? settings.FeedbackFormLogos : null,
                 settings != null ? settings.FeedbackFormLogoHeight : ProtokitePlaytestSettings.DefaultFeedbackFormLogoHeight,
-                settings != null ? settings.FeedbackFormFooterLogo : null,
+                FooterLogoFor(settings),
                 settings != null ? settings.FeedbackFormFooterLogoHeight : ProtokitePlaytestSettings.DefaultFeedbackFormFooterLogoHeight);
             panel.Show(_formView.Root);
 

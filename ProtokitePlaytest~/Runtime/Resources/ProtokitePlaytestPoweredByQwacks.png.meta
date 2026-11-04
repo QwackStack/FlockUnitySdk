@@ -1,0 +1,546 @@
+fileFormatVersion: 2
+guid: f55de5d5bacdf3e439fe1ae8b6af9bd1
+TextureImporter:
+  internalIDToNameTable:
+  - first:
+      213: 5338974604225898917
+    second: ProtokitePlaytestPoweredByQwacks_0
+  - first:
+      213: -34318924674529351
+    second: ProtokitePlaytestPoweredByQwacks_1
+  - first:
+      213: 3868983775979230816
+    second: ProtokitePlaytestPoweredByQwacks_2
+  - first:
+      213: -8151126867328343878
+    second: ProtokitePlaytestPoweredByQwacks_3
+  - first:
+      213: -8271328809464143991
+    second: ProtokitePlaytestPoweredByQwacks_4
+  - first:
+      213: 5283023529906042214
+    second: ProtokitePlaytestPoweredByQwacks_5
+  - first:
+      213: -8003088961227796585
+    second: ProtokitePlaytestPoweredByQwacks_6
+  - first:
+      213: -8492509302643035346
+    second: ProtokitePlaytestPoweredByQwacks_7
+  - first:
+      213: -2906519258972575840
+    second: ProtokitePlaytestPoweredByQwacks_8
+  - first:
+      213: -7798635303850948265
+    second: ProtokitePlaytestPoweredByQwacks_9
+  - first:
+      213: 1652935920417111352
+    second: ProtokitePlaytestPoweredByQwacks_10
+  - first:
+      213: -8823175420256481215
+    second: ProtokitePlaytestPoweredByQwacks_11
+  - first:
+      213: -5591706027770745352
+    second: ProtokitePlaytestPoweredByQwacks_12
+  - first:
+      213: -22797672280788584
+    second: ProtokitePlaytestPoweredByQwacks_13
+  - first:
+      213: 6212104664267429092
+    second: ProtokitePlaytestPoweredByQwacks_14
+  externalObjects: {}
+  serializedVersion: 13
+  mipmaps:
+    mipMapMode: 0
+    enableMipMap: 1
+    sRGBTexture: 1
+    linearTexture: 0
+    fadeOut: 0
+    borderMipMap: 0
+    mipMapsPreserveCoverage: 0
+    alphaTestReferenceValue: 0.5
+    mipMapFadeDistanceStart: 1
+    mipMapFadeDistanceEnd: 3
+  bumpmap:
+    convertToNormalMap: 0
+    externalNormalMap: 0
+    heightScale: 0.25
+    normalMapFilter: 0
+    flipGreenChannel: 0
+  isReadable: 0
+  streamingMipmaps: 0
+  streamingMipmapsPriority: 0
+  vTOnly: 0
+  ignoreMipmapLimit: 0
+  grayScaleToAlpha: 0
+  generateCubemap: 6
+  cubemapConvolution: 0
+  seamlessCubemap: 0
+  textureFormat: 1
+  maxTextureSize: 2048
+  textureSettings:
+    serializedVersion: 2
+    filterMode: 1
+    aniso: 1
+    mipBias: 0
+    wrapU: 1
+    wrapV: 1
+    wrapW: 1
+  nPOTScale: 0
+  lightmap: 0
+  compressionQuality: 50
+  spriteMode: 0
+  spriteExtrude: 1
+  spriteMeshType: 1
+  alignment: 0
+  spritePivot: {x: 0.5, y: 0.5}
+  spritePixelsToUnits: 100
+  spriteBorder: {x: 0, y: 0, z: 0, w: 0}
+  spriteGenerateFallbackPhysicsShape: 1
+  alphaUsage: 1
+  alphaIsTransparency: 1
+  spriteTessellationDetail: -1
+  textureType: 0
+  textureShape: 1
+  singleChannelComponent: 0
+  flipbookRows: 1
+  flipbookColumns: 1
+  maxTextureSizeSet: 0
+  compressionQualitySet: 0
+  textureFormatSet: 0
+  ignorePngGamma: 0
+  applyGammaDecoding: 0
+  swizzle: 50462976
+  cookieLightType: 0
+  platformSettings:
+  - serializedVersion: 4
+    buildTarget: DefaultTexturePlatform
+    maxTextureSize: 2048
+    resizeAlgorithm: 0
+    textureFormat: -1
+    textureCompression: 1
+    compressionQuality: 50
+    crunchedCompression: 0
+    allowsAlphaSplitting: 0
+    overridden: 0
+    ignorePlatformSupport: 0
+    androidETC2FallbackOverride: 0
+    forceMaximumCompressionQuality_BC6H_BC7: 0
+  - serializedVersion: 4
+    buildTarget: Standalone
+    maxTextureSize: 2048
+    resizeAlgorithm: 0
+    textureFormat: -1
+    textureCompression: 1
+    compressionQuality: 50
+    crunchedCompression: 0
+    allowsAlphaSplitting: 0
+    overridden: 0
+    ignorePlatformSupport: 0
+    androidETC2FallbackOverride: 0
+    forceMaximumCompressionQuality_BC6H_BC7: 0
+  - serializedVersion: 4
+    buildTarget: Android
+    maxTextureSize: 2048
+    resizeAlgorithm: 0
+    textureFormat: -1
+    textureCompression: 1
+    compressionQuality: 50
+    crunchedCompression: 0
+    allowsAlphaSplitting: 0
+    overridden: 0
+    ignorePlatformSupport: 0
+    androidETC2FallbackOverride: 0
+    forceMaximumCompressionQuality_BC6H_BC7: 0
+  - serializedVersion: 4
+    buildTarget: WebGL
+    maxTextureSize: 2048
+    resizeAlgorithm: 0
+    textureFormat: -1
+    textureCompression: 1
+    compressionQuality: 50
+    crunchedCompression: 0
+    allowsAlphaSplitting: 0
+    overridden: 0
+    ignorePlatformSupport: 0
+    androidETC2FallbackOverride: 0
+    forceMaximumCompressionQuality_BC6H_BC7: 0
+  - serializedVersion: 4
+    buildTarget: iOS
+    maxTextureSize: 2048
+    resizeAlgorithm: 0
+    textureFormat: -1
+    textureCompression: 1
+    compressionQuality: 50
+    crunchedCompression: 0
+    allowsAlphaSplitting: 0
+    overridden: 0
+    ignorePlatformSupport: 0
+    androidETC2FallbackOverride: 0
+    forceMaximumCompressionQuality_BC6H_BC7: 0
+  spriteSheet:
+    serializedVersion: 2
+    sprites:
+    - serializedVersion: 2
+      name: ProtokitePlaytestPoweredByQwacks_0
+      rect:
+        serializedVersion: 2
+        x: 0
+        y: 26
+        width: 17
+        height: 23
+      alignment: 0
+      pivot: {x: 0, y: 0}
+      border: {x: 0, y: 0, z: 0, w: 0}
+      customData: 
+      outline: []
+      physicsShape: []
+      tessellationDetail: -1
+      bones: []
+      spriteID: 5a967bd8d19d71a40800000000000000
+      internalID: 5338974604225898917
+      vertices: []
+      indices: 
+      edges: []
+      weights: []
+    - serializedVersion: 2
+      name: ProtokitePlaytestPoweredByQwacks_1
+      rect:
+        serializedVersion: 2
+        x: 20
+        y: 26
+        width: 23
+        height: 23
+      alignment: 0
+      pivot: {x: 0, y: 0}
+      border: {x: 0, y: 0, z: 0, w: 0}
+      customData: 
+      outline: []
+      physicsShape: []
+      tessellationDetail: -1
+      bones: []
+      spriteID: 9b783bdae13168ff0800000000000000
+      internalID: -34318924674529351
+      vertices: []
+      indices: 
+      edges: []
+      weights: []
+    - serializedVersion: 2
+      name: ProtokitePlaytestPoweredByQwacks_2
+      rect:
+        serializedVersion: 2
+        x: 46
+        y: 26
+        width: 32
+        height: 23
+      alignment: 0
+      pivot: {x: 0, y: 0}
+      border: {x: 0, y: 0, z: 0, w: 0}
+      customData: 
+      outline: []
+      physicsShape: []
+      tessellationDetail: -1
+      bones: []
+      spriteID: 066ddf8de3461b530800000000000000
+      internalID: 3868983775979230816
+      vertices: []
+      indices: 
+      edges: []
+      weights: []
+    - serializedVersion: 2
+      name: ProtokitePlaytestPoweredByQwacks_3
+      rect:
+        serializedVersion: 2
+        x: 82
+        y: 26
+        width: 15
+        height: 23
+      alignment: 0
+      pivot: {x: 0, y: 0}
+      border: {x: 0, y: 0, z: 0, w: 0}
+      customData: 
+      outline: []
+      physicsShape: []
+      tessellationDetail: -1
+      bones: []
+      spriteID: ab060c9fc4161ee80800000000000000
+      internalID: -8151126867328343878
+      vertices: []
+      indices: 
+      edges: []
+      weights: []
+    - serializedVersion: 2
+      name: ProtokitePlaytestPoweredByQwacks_4
+      rect:
+        serializedVersion: 2
+        x: 102
+        y: 26
+        width: 20
+        height: 23
+      alignment: 0
+      pivot: {x: 0, y: 0}
+      border: {x: 0, y: 0, z: 0, w: 0}
+      customData: 
+      outline: []
+      physicsShape: []
+      tessellationDetail: -1
+      bones: []
+      spriteID: 98f5f6b6546563d80800000000000000
+      internalID: -8271328809464143991
+      vertices: []
+      indices: 
+      edges: []
+      weights: []
+    - serializedVersion: 2
+      name: ProtokitePlaytestPoweredByQwacks_5
+      rect:
+        serializedVersion: 2
+        x: 126
+        y: 26
+        width: 15
+        height: 23
+      alignment: 0
+      pivot: {x: 0, y: 0}
+      border: {x: 0, y: 0, z: 0, w: 0}
+      customData: 
+      outline: []
+      physicsShape: []
+      tessellationDetail: -1
+      bones: []
+      spriteID: 6657418e8e1115940800000000000000
+      internalID: 5283023529906042214
+      vertices: []
+      indices: 
+      edges: []
+      weights: []
+    - serializedVersion: 2
+      name: ProtokitePlaytestPoweredByQwacks_6
+      rect:
+        serializedVersion: 2
+        x: 146
+        y: 26
+        width: 22
+        height: 23
+      alignment: 0
+      pivot: {x: 0, y: 0}
+      border: {x: 0, y: 0, z: 0, w: 0}
+      customData: 
+      outline: []
+      physicsShape: []
+      tessellationDetail: -1
+      bones: []
+      spriteID: 79fca20fdf05fe090800000000000000
+      internalID: -8003088961227796585
+      vertices: []
+      indices: 
+      edges: []
+      weights: []
+    - serializedVersion: 2
+      name: ProtokitePlaytestPoweredByQwacks_7
+      rect:
+        serializedVersion: 2
+        x: 184
+        y: 26
+        width: 19
+        height: 23
+      alignment: 0
+      pivot: {x: 0, y: 0}
+      border: {x: 0, y: 0, z: 0, w: 0}
+      customData: 
+      outline: []
+      physicsShape: []
+      tessellationDetail: -1
+      bones: []
+      spriteID: e23f244d8cb842a80800000000000000
+      internalID: -8492509302643035346
+      vertices: []
+      indices: 
+      edges: []
+      weights: []
+    - serializedVersion: 2
+      name: ProtokitePlaytestPoweredByQwacks_8
+      rect:
+        serializedVersion: 2
+        x: 205
+        y: 26
+        width: 21
+        height: 23
+      alignment: 0
+      pivot: {x: 0, y: 0}
+      border: {x: 0, y: 0, z: 0, w: 0}
+      customData: 
+      outline: []
+      physicsShape: []
+      tessellationDetail: -1
+      bones: []
+      spriteID: 0a7ab142228f9a7d0800000000000000
+      internalID: -2906519258972575840
+      vertices: []
+      indices: 
+      edges: []
+      weights: []
+    - serializedVersion: 2
+      name: ProtokitePlaytestPoweredByQwacks_9
+      rect:
+        serializedVersion: 2
+        x: 245
+        y: 0
+        width: 78
+        height: 80
+      alignment: 0
+      pivot: {x: 0, y: 0}
+      border: {x: 0, y: 0, z: 0, w: 0}
+      customData: 
+      outline: []
+      physicsShape: []
+      tessellationDetail: -1
+      bones: []
+      spriteID: 759c425928ea5c390800000000000000
+      internalID: -7798635303850948265
+      vertices: []
+      indices: 
+      edges: []
+      weights: []
+    - serializedVersion: 2
+      name: ProtokitePlaytestPoweredByQwacks_10
+      rect:
+        serializedVersion: 2
+        x: 334
+        y: 13
+        width: 41
+        height: 43
+      alignment: 0
+      pivot: {x: 0, y: 0}
+      border: {x: 0, y: 0, z: 0, w: 0}
+      customData: 
+      outline: []
+      physicsShape: []
+      tessellationDetail: -1
+      bones: []
+      spriteID: 83df1f4467860f610800000000000000
+      internalID: 1652935920417111352
+      vertices: []
+      indices: 
+      edges: []
+      weights: []
+    - serializedVersion: 2
+      name: ProtokitePlaytestPoweredByQwacks_11
+      rect:
+        serializedVersion: 2
+        x: 371
+        y: 18
+        width: 42
+        height: 28
+      alignment: 0
+      pivot: {x: 0, y: 0}
+      border: {x: 0, y: 0, z: 0, w: 0}
+      customData: 
+      outline: []
+      physicsShape: []
+      tessellationDetail: -1
+      bones: []
+      spriteID: 14097a4d3b8cd8580800000000000000
+      internalID: -8823175420256481215
+      vertices: []
+      indices: 
+      edges: []
+      weights: []
+    - serializedVersion: 2
+      name: ProtokitePlaytestPoweredByQwacks_12
+      rect:
+        serializedVersion: 2
+        x: 412
+        y: 18
+        width: 26
+        height: 28
+      alignment: 0
+      pivot: {x: 0, y: 0}
+      border: {x: 0, y: 0, z: 0, w: 0}
+      customData: 
+      outline: []
+      physicsShape: []
+      tessellationDetail: -1
+      bones: []
+      spriteID: 8fd605e6ef44662b0800000000000000
+      internalID: -5591706027770745352
+      vertices: []
+      indices: 
+      edges: []
+      weights: []
+    - serializedVersion: 2
+      name: ProtokitePlaytestPoweredByQwacks_13
+      rect:
+        serializedVersion: 2
+        x: 439
+        y: 18
+        width: 24
+        height: 28
+      alignment: 0
+      pivot: {x: 0, y: 0}
+      border: {x: 0, y: 0, z: 0, w: 0}
+      customData: 
+      outline: []
+      physicsShape: []
+      tessellationDetail: -1
+      bones: []
+      spriteID: 8917ff943a10faff0800000000000000
+      internalID: -22797672280788584
+      vertices: []
+      indices: 
+      edges: []
+      weights: []
+    - serializedVersion: 2
+      name: ProtokitePlaytestPoweredByQwacks_14
+      rect:
+        serializedVersion: 2
+        x: 465
+        y: 18
+        width: 47
+        height: 40
+      alignment: 0
+      pivot: {x: 0, y: 0}
+      border: {x: 0, y: 0, z: 0, w: 0}
+      customData: 
+      outline: []
+      physicsShape: []
+      tessellationDetail: -1
+      bones: []
+      spriteID: 4e4153d6744d53650800000000000000
+      internalID: 6212104664267429092
+      vertices: []
+      indices: 
+      edges: []
+      weights: []
+    outline: []
+    customData: 
+    physicsShape: []
+    bones: []
+    spriteID: 
+    internalID: 0
+    vertices: []
+    indices: 
+    edges: []
+    weights: []
+    secondaryTextures: []
+    spriteCustomMetadata:
+      entries: []
+    nameFileIdTable:
+      ProtokitePlaytestPoweredByQwacks_0: 5338974604225898917
+      ProtokitePlaytestPoweredByQwacks_1: -34318924674529351
+      ProtokitePlaytestPoweredByQwacks_10: 1652935920417111352
+      ProtokitePlaytestPoweredByQwacks_11: -8823175420256481215
+      ProtokitePlaytestPoweredByQwacks_12: -5591706027770745352
+      ProtokitePlaytestPoweredByQwacks_13: -22797672280788584
+      ProtokitePlaytestPoweredByQwacks_14: 6212104664267429092
+      ProtokitePlaytestPoweredByQwacks_2: 3868983775979230816
+      ProtokitePlaytestPoweredByQwacks_3: -8151126867328343878
+      ProtokitePlaytestPoweredByQwacks_4: -8271328809464143991
+      ProtokitePlaytestPoweredByQwacks_5: 5283023529906042214
+      ProtokitePlaytestPoweredByQwacks_6: -8003088961227796585
+      ProtokitePlaytestPoweredByQwacks_7: -8492509302643035346
+      ProtokitePlaytestPoweredByQwacks_8: -2906519258972575840
+      ProtokitePlaytestPoweredByQwacks_9: -7798635303850948265
+  mipmapLimitGroupName: 
+  pSDRemoveMatte: 0
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 

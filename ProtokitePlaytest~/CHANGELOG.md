@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 It is released with the Flock SDK, at the Flock SDK's version.
 
+## [1.102.0]
+
+### Changed
+- **The feedback form shows Powered by Qwacks at its bottom left.** With **Feedback Form Footer Logo** left empty, the form draws
+  the Powered by Qwacks mark the package now carries (`Runtime/Resources/ProtokitePlaytestPoweredByQwacks.png`), at **Feedback Form
+  Footer Logo Height**. A game's own footer logo replaces it, as before.
+
 ## [1.101.0]
 
 ### Added

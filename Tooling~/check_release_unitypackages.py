@@ -47,6 +47,7 @@ PACKAGES = {
         "version_file": "Runtime/ProtokitePlaytestVersion.cs",
         "required": ["package.json", "README.md", "CHANGELOG.md", "Runtime/ProtokitePlaytest.cs", "Runtime/ProtokitePlaytestVersion.cs",
                      "Runtime/Resources/ProtokitePlaytestPanelSettings.asset", "Runtime/Resources/ProtokitePlaytestPanelTheme.tss",
+                     "Runtime/Resources/ProtokitePlaytestPoweredByQwacks.png",
                      "Editor/ProtokitePlaytestWindow.cs", "Samples/PlaytestSample/ProtokitePlaytestSample.cs"],
         "forbidden": [("Tests/", "tests stay in the repository"),
                       ("Documentation~", "the working docs are local only")],

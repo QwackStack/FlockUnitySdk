@@ -221,7 +221,7 @@ sends **whatever their consent answer**, "nothing" included; it never opens over
 | Pause The Game While The Form Is Open | off | The time scale is 0 while the form is open, and put back when it closes unless the game set another one meanwhile |
 | Feedback Form Logos | empty | Your own images (a studio's, an event's or its sponsors'), drawn left to right in a row above the form's title, each in its own shape. Import each with **Non-Power of 2** set to **None** (otherwise Unity rounds its size to a power of two and the logo is drawn stretched) and **Generate Mip Maps** on (so it stays smooth drawn smaller). Images with transparent backgrounds suit the form's dark panel. Only the images listed go into a build |
 | Feedback Form Logo Height | 40 | How tall each logo is drawn, from 16 to 96 points at a 1280x720 screen |
-| Feedback Form Footer Logo | empty | One small image of your own, such as a "Powered by" mark, drawn at the form's bottom left, on the row of Close and Send, in its own shape. Import it like the logos above. Only the image set here goes into a build |
+| Feedback Form Footer Logo | empty | Empty, the form shows Powered by Qwacks at its bottom left, on the row of Close and Send. One small image of your own drawn there instead, in its own shape; on a narrow screen it is drawn smaller, never the buttons. Import it like the logos above |
 | Feedback Form Footer Logo Height | 22 | How tall the footer logo is drawn, from 12 to 48 points at a 1280x720 screen |
 
 ```csharp

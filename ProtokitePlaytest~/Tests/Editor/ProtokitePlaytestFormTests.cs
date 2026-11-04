@@ -441,6 +441,43 @@ namespace Protokite.Playtest.Tests
         }
 
         [Test]
+        public void TheFooterIsPoweredByQwacksUntilTheGameSetsItsOwn()
+        {
+            Texture2D poweredByQwacks = ProtokitePlaytest.FooterLogoFor(null);
+            Assert.IsNotNull(poweredByQwacks, "The package carries the mark");
+            Assert.AreEqual(ProtokitePlaytest.PoweredByQwacksResource, poweredByQwacks.name);
+            ProtokitePlaytestSettings settings = ScriptableObject.CreateInstance<ProtokitePlaytestSettings>();
+            Texture2D own = new Texture2D(40, 20);
+            Texture2D destroyed = new Texture2D(8, 8);
+            UnityEngine.Object.DestroyImmediate(destroyed);
+            try
+            {
+                Assert.AreSame(poweredByQwacks, ProtokitePlaytest.FooterLogoFor(settings), "None set");
+                settings.FeedbackFormFooterLogo = destroyed;
+                Assert.AreSame(poweredByQwacks, ProtokitePlaytest.FooterLogoFor(settings), "A destroyed image counts as none");
+                settings.FeedbackFormFooterLogo = own;
+                Assert.AreSame(own, ProtokitePlaytest.FooterLogoFor(settings), "The game's own replaces it");
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(own);
+                UnityEngine.Object.DestroyImmediate(settings);
+            }
+        }
+
+        [Test]
+        public void ThePoweredByQwacksMarkIsImportedInItsOwnShapeAndSmooth()
+        {
+            UnityEditor.TextureImporter importer = UnityEditor.AssetImporter.GetAtPath(
+                "Packages/com.protokite.playtest/Runtime/Resources/" + ProtokitePlaytest.PoweredByQwacksResource + ".png") as UnityEditor.TextureImporter;
+            Assert.IsNotNull(importer);
+            Assert.AreEqual(UnityEditor.TextureImporterType.Default, importer.textureType);
+            Assert.AreEqual(UnityEditor.TextureImporterNPOTScale.None, importer.npotScale, "Rounded to a power of two, it is drawn stretched");
+            Assert.IsTrue(importer.mipmapEnabled, "Smooth drawn smaller");
+            Assert.IsTrue(importer.alphaIsTransparency);
+        }
+
+        [Test]
         public void EveryQuestionIsDrawnAsItsKindAndAnUnknownKindAsText()
         {
             ProtokitePlaytestForm form = Form(Field("title", ProtokitePlaytestFormFieldTypes.Text), Field("what", ProtokitePlaytestFormFieldTypes.TextArea, false),

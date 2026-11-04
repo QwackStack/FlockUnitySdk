@@ -220,7 +220,9 @@ namespace Protokite.Playtest.Tests
             Assert.IsTrue(ProtokitePlaytest.OpenFeedbackForm());
             yield return null;
             Assert.IsNull(Form().Q(ProtokitePlaytestFormView.LogoRowName), "No logos set, no row");
-            Assert.IsNull(Form().Q(ProtokitePlaytestFormView.FooterLogoName), "No footer logo set, none drawn");
+            VisualElement poweredByQwacks = Form().Q(ProtokitePlaytestFormView.FooterLogoName);
+            Assert.IsNotNull(poweredByQwacks, "No footer logo set, Powered by Qwacks drawn");
+            Assert.AreEqual(ProtokitePlaytest.PoweredByQwacksResource, poweredByQwacks.resolvedStyle.backgroundImage.texture.name);
             ProtokitePlaytest.CloseFeedbackForm();
 
             Texture2D logo = new Texture2D(120, 40);

@@ -205,7 +205,10 @@ script.
   unticked when drawn, unknown kinds as text), text boxes styled in code (with no theme their input box has no size), Escape
   stopped before a text field puts back its old text, select-all on click off, problems shown once Send is tried; Send, Close
   and **Upload your recording** have the consent question's two press guards. Buttons' actions are kept by name
-  (`PressForTesting`) for tests of a view in no panel. **Open Feedback Form** in the setup window (editor, Play Mode).
+  (`PressForTesting`) for tests of a view in no panel. **Open Feedback Form** in the setup window (editor, Play Mode). The game's own logos
+  (`FeedbackFormLogos`) in a row above the title, and one footer logo at the bottom left on the row of Close and Send, drawn
+  smaller on a narrow screen, never the buttons: the game's `FeedbackFormFooterLogo`, else the package's Powered by Qwacks mark
+  (`Runtime/Resources/ProtokitePlaytestPoweredByQwacks.png`, `ProtokitePlaytest.FooterLogoFor`).
 - **Feedback form (`ProtokitePlaytestFormAnswers.cs`, `ProtokitePlaytestFormSubmission.cs`, `ProtokitePlaytestForms.cs`)** —
   `ProtokitePlaytestFormAnswers` is the inert half: Protokite's own validator's rules (a required checkbox answered unticked,
   empty optional answers left out, unknown kinds as text, select trimmed and ordinal, rating 1-5), every problem in the
