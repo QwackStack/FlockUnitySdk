@@ -16,19 +16,44 @@ This guide covers the **inbox**, the server-side scheduler that feeds it, and **
 
 ## Inbox
 
+Every call on this page needs a signed-in player, except the template reads.
+
 ```csharp
-FlockNotificationProvider notifications = FlockClient.Instance.Notification;
+using System.Threading.Tasks;
+using Flock;
+using Flock.Models;
+using Flock.Providers;
+using UnityEngine;
 
-// Cheapest refresh: unread count + first page in one call.
-NotificationSummary summary = await notifications.GetSummaryAsync(limit: 10);
+public static class Mailbox
+{
+    // The cheapest refresh: the unread count and the first page in one call.
+    public static async Task RefreshAsync()
+    {
+        FlockNotificationProvider notifications = FlockClient.Instance.Notification;
+        NotificationSummary summary = await notifications.GetSummaryAsync(limit: 10);
+        Debug.Log($"{summary.UnreadCount} unread");
+    }
 
-// Full pages when the player opens their mailbox.
-PaginatedResponse<Notification> page = await notifications.GetInboxAsync(unreadOnly: false, page: 1, limit: 50);
+    // Full pages when the player opens their mailbox, then mark the first one read.
+    public static async Task OpenAsync()
+    {
+        FlockNotificationProvider notifications = FlockClient.Instance.Notification;
+        PaginatedResponse<Notification> page = await notifications.GetInboxAsync(unreadOnly: false, page: 1, limit: 50);
+        foreach (Notification notification in page.Items)
+            Debug.Log($"{notification.Title}: {notification.Body}");
 
-int unread = await notifications.GetUnreadCountAsync();
+        if (page.Items.Length > 0)
+            await notifications.MarkReadAsync(page.Items[0]);   // or MarkReadAsync(notificationId)
+    }
 
-await notifications.MarkReadAsync(page.Items[0]);   // or MarkReadAsync(id)
-int changed = await notifications.MarkAllReadAsync();
+    public static async Task MarkAllReadAsync()
+    {
+        int changed = await FlockClient.Instance.Notification.MarkAllReadAsync();
+        int unread = await FlockClient.Instance.Notification.GetUnreadCountAsync();
+        Debug.Log($"{changed} marked read; {unread} unread now");
+    }
+}
 ```
 
 A `Notification` carries `Title`, `Body`, `Type`, `Severity`, `CreatedAt`, `IsRead`, and a `Data` payload — that last one is your hook for deep links and in-game actions.
@@ -38,15 +63,34 @@ A `Notification` carries `Title`, `Body`, `Type`, `Severity`, `CreatedAt`, `IsRe
 Use the typed accessors rather than indexing the dictionary:
 
 ```csharp
-string screen = n.GetData<string>("deep_link");
-int    level  = n.GetData<int>("level");
-bool   isVip  = n.GetData<bool>("vip", fallback: false);
+using System;
+using Flock.Models;
+using UnityEngine;
 
-if (n.TryGetData("reward", out RewardPayload reward))
-    Grant(reward);
+public static class NotificationData
+{
+    // The shape of a "reward" value your template sends; yours follows your template.
+    [Serializable]
+    public class RewardPayload
+    {
+        public string item;
+        public int amount;
+    }
 
-// Or take the whole payload as one type, when the template's shape is known.
-RewardPayload payload = n.GetDataAs<RewardPayload>();
+    public static void Read(Notification notification)
+    {
+        string screen = notification.GetData<string>("deep_link");
+        int level = notification.GetData<int>("level");
+        bool isVip = notification.GetData<bool>("vip", fallback: false);
+        Debug.Log($"Open {screen} at level {level} (VIP: {isVip})");
+
+        if (notification.TryGetData("reward", out RewardPayload reward))
+            Debug.Log($"Reward: {reward.amount} {reward.item}");
+
+        // Or take the whole payload as one type, when the template's shape is known.
+        RewardPayload payload = notification.GetDataAs<RewardPayload>();
+    }
+}
 ```
 
 **Don't cast out of `Data` directly.** JSON round-trips into `Dictionary<string, object>` as `long` for whole numbers, `double` for decimals, and `JObject`/`JArray` for anything nested — so `(int)n.Data["level"]` throws on a perfectly ordinary payload, and nested values force `Newtonsoft.Json.Linq` types into your own code. The accessors normalise all of that.
@@ -56,10 +100,33 @@ They never throw: a missing key, a null `Data`, or a value that can't become the
 ### Unread badge
 
 ```csharp
-void OnEnable()  => FlockEvents.OnUnreadCountChanged += UpdateBadge;
-void OnDisable() => FlockEvents.OnUnreadCountChanged -= UpdateBadge;
+using Flock;
+using UnityEngine;
 
-void UpdateBadge(int count) => badgeLabel.text = count > 0 ? count.ToString() : "";
+public class MailBadge : MonoBehaviour
+{
+    private string _badge = "";
+
+    private void OnEnable()
+    {
+        FlockEvents.OnUnreadCountChanged += UpdateBadge;
+    }
+
+    private void OnDisable()
+    {
+        FlockEvents.OnUnreadCountChanged -= UpdateBadge;
+    }
+
+    private void UpdateBadge(int count)
+    {
+        _badge = count > 0 ? count.ToString() : "";
+    }
+
+    private void OnGUI()
+    {
+        GUILayout.Label("Mail " + _badge);
+    }
+}
 ```
 
 **The SDK does not poll.** These calls are metered, so the game decides when to refresh — typically on menu open or when the app regains focus. The event fires whenever a call returns a server-reported count (`GetUnreadCountAsync`, `GetSummaryAsync`, `MarkAllReadAsync`) and only when the number actually changes, so refreshing repeatedly won't flicker a badge.
@@ -71,10 +138,27 @@ void UpdateBadge(int count) => badgeLabel.text = count > 0 ? count.ToString() : 
 `FlockEvents.OnNotificationReceived` fires for each notification the SDK hasn't surfaced before, seen during an inbox or summary fetch:
 
 ```csharp
-private void OnEnable()  => FlockEvents.OnNotificationReceived += HandleNotification;
-private void OnDisable() => FlockEvents.OnNotificationReceived -= HandleNotification;
+using Flock;
+using Flock.Models;
+using UnityEngine;
 
-private void HandleNotification(Notification n) => ShowToast(n.Title, n.Body);
+public class ArrivalToasts : MonoBehaviour
+{
+    private void OnEnable()
+    {
+        FlockEvents.OnNotificationReceived += HandleNotification;
+    }
+
+    private void OnDisable()
+    {
+        FlockEvents.OnNotificationReceived -= HandleNotification;
+    }
+
+    private void HandleNotification(Notification notification)
+    {
+        Debug.Log($"New: {notification.Title}: {notification.Body}");
+    }
+}
 ```
 
 "Received" means *first seen by a read*, not the moment the server created it — same constraint as the rest of this page. It is not a poller: it rides the fetches you already make, adds no traffic, and raises each notification once, **oldest first** so a batch reads in the order it happened.
@@ -88,16 +172,31 @@ One event covers all three sources, because the payload already separates them: 
 Ask the server to deliver a dashboard-authored template to the signed-in player later.
 
 ```csharp
-ScheduledNotification scheduled = await notifications.ScheduleAsync(
-    templateName: "energy_full",         // the name as authored on the dashboard
-    delay: TimeSpan.FromHours(4),
-    variables: new Dictionary<string, object> { { "player", playerName } },
-    channels: FlockNotificationChannels.InApp | FlockNotificationChannels.Push);
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using Flock;
+using Flock.Models;
 
-await notifications.CancelScheduledAsync(scheduled);
+public static class EnergyReminder
+{
+    public static Task<ScheduledNotification> ScheduleAsync(string playerName)
+    {
+        return FlockClient.Instance.Notification.ScheduleAsync(
+            templateName: "energy_full",         // the name as authored on the dashboard
+            delay: TimeSpan.FromHours(4),
+            variables: new Dictionary<string, object> { { "player", playerName } },
+            channels: FlockNotificationChannels.InApp | FlockNotificationChannels.Push);
+    }
+
+    public static Task<ScheduledNotification> CancelAsync(ScheduledNotification scheduled)
+    {
+        return FlockClient.Instance.Notification.CancelScheduledAsync(scheduled);
+    }
+}
 ```
 
-`variables` fill the `{placeholders}` in the template's title and body. `channels` is a `[Flags]` enum; leave it `None` to use whatever channels the template itself declares. There's also an absolute overload taking a `DateTime` when you know the wall-clock time.
+`variables` fill the `{placeholders}` in the template's title and body. `channels` is a `[Flags]` enum; leave it `None` to use whatever channels the template itself declares. There's also an overload taking a UTC `DateTime` when you know the delivery time.
 
 The schedule route itself takes an ID, so the SDK resolves the name first and memoizes it for the session — scheduling the same template repeatedly costs one lookup, not one per call. A name this game doesn't have fails before anything is scheduled.
 
@@ -106,9 +205,22 @@ The schedule route itself takes an ID, so the SDK resolves the name first and me
 Templates are authored on the dashboard; the SDK reads the catalog to turn a name into an ID.
 
 ```csharp
-List<NotificationTemplate> all = await notifications.GetTemplatesAsync();
-NotificationTemplate one = await notifications.GetTemplateByNameAsync("energy_full");
-string id = await notifications.ResolveTemplateIdAsync("energy_full");   // for logging or a deep link
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using Flock;
+using Flock.Models;
+using UnityEngine;
+
+public static class Templates
+{
+    public static async Task ListAsync()
+    {
+        List<NotificationTemplate> all = await FlockClient.Instance.Notification.GetTemplatesAsync();
+        NotificationTemplate one = await FlockClient.Instance.Notification.GetTemplateByNameAsync("energy_full");
+        string id = await FlockClient.Instance.Notification.ResolveTemplateIdAsync("energy_full");   // for logging or a deep link
+        Debug.Log($"{all.Count} templates; energy_full is {one.Id} ({id})");
+    }
+}
 ```
 
 Both reads are game-scoped rather than player-scoped, so they work signed out, and they carry only `Id`, `Name` and `Category` — authoring content stays server-side. Only active templates are listed, so deactivating one on the dashboard is the kill switch.
@@ -126,22 +238,38 @@ So: nothing appears before the delivery time, a push-only schedule never touches
 Ask the server what the player has pending — this is the one that survives a reinstall and sees schedules made on another device:
 
 ```csharp
-PaginatedResponse<ScheduledNotification> pending = await notifications.GetScheduledAsync();
-foreach (ScheduledNotification s in pending.Items)
-    Debug.Log($"{s.Id} delivers at {s.DeliverAt}");
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using Flock;
+using Flock.Models;
+using UnityEngine;
 
-// Other states are available too.
-PaginatedResponse<ScheduledNotification> delivered =
-    await notifications.GetScheduledAsync(ScheduledNotificationStatuses.Delivered);
+public static class Reminders
+{
+    public static async Task ShowAsync()
+    {
+        PaginatedResponse<ScheduledNotification> pending = await FlockClient.Instance.Notification.GetScheduledAsync();
+        foreach (ScheduledNotification scheduled in pending.Items)
+            Debug.Log($"{scheduled.Id} delivers at {scheduled.DeliverAt}");
 
-// Cancels everything pending for the player, including schedules this install never made.
-int cancelled = await notifications.CancelAllScheduledAsync();
-```
+        // Other states are available too.
+        PaginatedResponse<ScheduledNotification> delivered =
+            await FlockClient.Instance.Notification.GetScheduledAsync(ScheduledNotificationStatuses.Delivered);
+        Debug.Log($"{delivered.Total} delivered");
+    }
 
-There is also a local, no-network list of what **this install** scheduled:
+    // Cancels everything pending for the player, including schedules this install never made.
+    public static Task<int> CancelAllAsync()
+    {
+        return FlockClient.Instance.Notification.CancelAllScheduledAsync();
+    }
 
-```csharp
-List<PendingSchedule> pending = notifications.GetPendingSchedules();   // local, no network
+    // What this install scheduled: on the device, no network.
+    public static List<PendingSchedule> ScheduledHere()
+    {
+        return FlockClient.Instance.Notification.GetPendingSchedules();
+    }
+}
 ```
 
 That one is bookkeeping rather than a server query: it only knows this install's own schedules and infers delivery from the clock, dropping entries once their time passes. Prefer `GetScheduledAsync` and keep this for offline reads. `CancelAllScheduledAsync` uses the server list and falls back to this one if that read fails. `ClearCache()` preserves the local list; it's state, not cache.
@@ -155,8 +283,18 @@ Push needs a **device token** issued by the OS — FCM on Android, APNs on iOS. 
 Install **`com.unity.mobile.notifications`** (Package Manager → Add package by name). That's the entire setup: the SDK's assembly definition carries a `versionDefines` entry, so `FLOCK_MOBILE_NOTIFICATIONS` is defined automatically when the package is present and the code below compiles in. Nothing to configure.
 
 ```csharp
-// Requests permission, registers with APNs, gets the token, sends it to Flock.
-DeviceToken registered = await notifications.RegisterThisDeviceAsync();
+using System.Threading.Tasks;
+using Flock;
+using Flock.Models;
+
+public static class IosPush
+{
+    // Asks the player's permission, registers with APNs, gets the token and sends it to Flock.
+    public static Task<DeviceToken> RegisterAsync()
+    {
+        return FlockClient.Instance.Notification.RegisterThisDeviceAsync();
+    }
+}
 ```
 
 Then in Xcode: enable the **Push Notifications** capability, and make sure your APNs key is configured on the backend.
@@ -170,11 +308,22 @@ An FCM token comes from Google's messaging client, which ships as the **Firebase
 1. Install `FirebaseMessaging.unitypackage` from the [Firebase Unity SDK](https://firebase.google.com/download/unity)
 2. Add your `google-services.json` from the Firebase console
 3. On Android 13+, request the `POST_NOTIFICATIONS` permission
-4. Fetch the token and hand it over:
+4. Get the token from Firebase and hand it to Flock. The Firebase call needs the Firebase package, so it is shown as a
+   comment:
 
 ```csharp
-string token = await Firebase.Messaging.FirebaseMessaging.GetTokenAsync();
-await notifications.RegisterDeviceTokenAsync(FlockDevicePlatform.Android, token);
+using System.Threading.Tasks;
+using Flock;
+using Flock.Models;
+
+public static class AndroidPush
+{
+    // token comes from Firebase: string token = await Firebase.Messaging.FirebaseMessaging.GetTokenAsync();
+    public static Task<DeviceToken> RegisterAsync(string token)
+    {
+        return FlockClient.Instance.Notification.RegisterDeviceTokenAsync(FlockDevicePlatform.Android, token);
+    }
+}
 ```
 
 You only need `firebase-messaging` — not Firebase Analytics, Auth, or anything else, and you never have to use Firebase's own notification console.
@@ -182,10 +331,31 @@ You only need `firebase-messaging` — not Firebase Analytics, Auth, or anything
 ### Either way
 
 ```csharp
-// Explicit platform, for a token sourced from somewhere the running build doesn't match.
-await notifications.RegisterDeviceTokenAsync(FlockDevicePlatform.Android, token);
+using System.Threading.Tasks;
+using Flock;
+using Flock.Models;
 
-bool deactivated = await notifications.UnregisterDeviceTokenAsync(token);
+public static class PushTokens
+{
+    // The running build's own platform; throws on a platform with no push.
+    public static Task<DeviceToken> RegisterAsync(string token)
+    {
+        return FlockClient.Instance.Notification.RegisterDeviceTokenAsync(token);
+    }
+
+    // A platform named outright, for a token from somewhere the running build doesn't match.
+    public static Task<DeviceToken> RegisterForAndroidAsync(string token)
+    {
+        return FlockClient.Instance.Notification.RegisterDeviceTokenAsync(FlockDevicePlatform.Android, token);
+    }
+
+    // Before signing out on a shared device.
+    public static async Task SignOutAsync(string token)
+    {
+        await FlockClient.Instance.Notification.UnregisterDeviceTokenAsync(token);
+        FlockClient.Instance.Authentication.Logout();
+    }
+}
 ```
 
 **Re-register whenever the OS issues a new token** — they rotate on reinstall, restore, and at the platform's discretion. Subscribe to your provider's token-refresh callback and call register again, or push quietly stops reaching that player.
@@ -214,7 +384,6 @@ Reads are snapshotted to disk and served when the server is unreachable, keyed p
 ## Limitations
 
 - **The catalog can't tell locales apart.** `GetTemplatesAsync` returns one entry per locale, all sharing a name and differing only by ID, because the client projection carries no `locale` field. Use `GetTemplateByNameAsync(name, locale)` when the locale matters.
-- **No route lists a player's pending schedules**, hence the local tracking above and its limits.
 - **Push has not yet been seen end to end from this SDK.** The backend does deliver to FCM/APNs, and registration is wired, but nobody has watched a banner arrive on a real device via Flock. Obtaining the token remains the game's job — see the platform table above.
 - **Desktop can never receive push** — see the platform table above. This is a platform constraint, not a Flock one.
 - **No player-facing notification preferences.** The preferences routes are dashboard-scoped to studio staff, so players have no opt-out through the SDK.

@@ -1,5 +1,6 @@
 using Flock.Logging;
 using System;
+using System.Collections;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
@@ -104,6 +105,10 @@ namespace Flock.Tests.Support
         // Safe to block inline: the fake always returns completed tasks, so every await resolves synchronously.
         public T Run<T>(Func<Task<T>> action) => action().GetAwaiter().GetResult();
         public void Run(Func<Task> action) => action().GetAwaiter().GetResult();
+
+        /// <summary>Yields frames until no client's token refresh is on its way, so an answer lands in the test that sent it, never in the next test's client.</summary>
+        public static IEnumerator UntilEveryRefreshIsAnswered(float seconds = 5f)
+            => FlockTestWait.Until(() => !FlockClient.AnyRefreshOnItsWay, "Every token refresh a test sent was answered before the next test began", seconds);
 
         // Unsigned JWT with just the claims the SDK reads; nonce keeps two tokens for the same player distinct.
         public static string MakeJwt(string playerId, int expiresInSeconds, string nonce = "0")

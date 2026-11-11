@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using Flock.Exceptions;
 using Flock.Interfaces;
 #if !FLOCK_NO_PLAYER
 using Flock.Models;
@@ -8,8 +9,8 @@ using Flock.Models;
 
 namespace Flock.Samples
 {
-    /// Minimal first-success sample. With a FlockBootstrap in the scene this logs the player
-    /// in with their device id, shows who they are, fires a test analytics event, and reads
+    /// Minimal first-success sample. Once Flock has initialized this logs the player in with
+    /// their device id (registering it on its first launch), shows who they are, fires a test analytics event, and reads
     /// their player data. UI is IMGUI so the sample is one script — drop it on any GameObject
     /// and press Play. Player-data writes go through your generated commands (see the docs).
     public class FlockQuickStartSample : MonoBehaviour
@@ -27,8 +28,9 @@ namespace Flock.Samples
             {
                 GUILayout.Label(
                     "Flock is not initialized.\n\n" +
-                    "Add a FlockBootstrap to the scene (Flock > Settings -> " +
-                    "\"Add Flock Bootstrap to Scene\"), fill in your FlockConfig, then press Play.");
+                    "Fill in Flock > Settings > Configuration (Api Key, Game Name, Game Version), " +
+                    "press Resolve Game Version, then press Play. With Auto-Initialize On Load off " +
+                    "(Advanced Settings), press Add to Scene on the Configuration tab first.");
                 GUILayout.EndArea();
                 return;
             }
@@ -63,15 +65,28 @@ namespace Flock.Samples
             GUILayout.EndArea();
         }
 
-        // Auth methods throw on failure — catch and surface the message.
+        // A device logs in once registered; the first launch on a device registers it. With no id passed, both use the
+        // device id Flock keeps for this install. Auth methods throw on failure.
         private async void LoginAsync()
         {
             _busy = true;
             _status = "Logging in...";
             try
             {
-                await FlockClient.Instance.Authentication.LoginWithDeviceAsync(SystemInfo.deviceUniqueIdentifier);
+                await FlockClient.Instance.Authentication.LoginWithDeviceAsync();
                 _status = "Logged in.";
+            }
+            catch (FlockException notRegistered) when (notRegistered.ErrorCode == FlockErrorCode.PlayerInvalidLoginCredentials)
+            {
+                try
+                {
+                    await FlockClient.Instance.Authentication.RegisterWithDeviceAsync();
+                    _status = "Registered this device and logged in.";
+                }
+                catch (Exception ex)
+                {
+                    _status = "Registering failed: " + ex.Message;
+                }
             }
             catch (Exception ex)
             {

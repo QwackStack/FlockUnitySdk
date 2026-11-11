@@ -156,13 +156,19 @@ namespace Flock.Providers
                 "Email login", FlockAuthMethod.Email, cancellationToken);
         }
 
-        public async Task<PlayerLoginResponse> LoginWithDeviceAsync(string deviceId,
+        /// <summary>This install's device id, made once by the SDK and kept across launches in its saved files; a reinstall usually makes a new one.</summary>
+        public string ThisDeviceId => FlockDeviceIdFile.Read(Client.Logger.LogWarning);
+
+        /// <summary>Signs in the player registered with this device id; leave <paramref name="deviceId"/> out to use <see cref="ThisDeviceId"/>.</summary>
+        /// <param name="deviceId">An id of your own, sent as it is; null uses <see cref="ThisDeviceId"/>, but an empty string is sent and the server refuses it.</param>
+        public async Task<PlayerLoginResponse> LoginWithDeviceAsync(string deviceId = null,
             CancellationToken cancellationToken = default)
         {
+            string id = deviceId ?? ThisDeviceId;
             return await ExecuteAuthAsync(
                 () => FlockHttpClient.PostAsync<PlayerLoginResponse>(
                     $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.PlayerLoginDevice}",
-                    new PlayerDeviceLoginRequest { DeviceType = SystemInfo.deviceType.ToString(), DeviceId = deviceId },
+                    new PlayerDeviceLoginRequest { DeviceType = SystemInfo.deviceType.ToString(), DeviceId = id },
                     Client.GetBaseHeaders(), cancellationToken),
                 "Device login", FlockAuthMethod.Device, cancellationToken);
         }
@@ -179,15 +185,18 @@ namespace Flock.Providers
                 "Email registration", FlockAuthMethod.Email, cancellationToken);
         }
 
+        /// <summary>Registers a new player with this device id and signs them in; leave <paramref name="deviceId"/> out to use <see cref="ThisDeviceId"/>.</summary>
+        /// <param name="deviceId">An id of your own, sent as it is; null uses <see cref="ThisDeviceId"/>, but an empty string is sent and the server refuses it.</param>
         /// <param name="name">Optional display name. <b>Server-enforced unique</b>; recommended to pass <c>null</c> until the backend returns structured error codes — see the README "Backend backlog" entry on structured registration errors.</param>
-        public async Task<PlayerLoginResponse> RegisterWithDeviceAsync(string deviceId, string name = null,
+        public async Task<PlayerLoginResponse> RegisterWithDeviceAsync(string deviceId = null, string name = null,
             CancellationToken cancellationToken = default)
         {
+            string id = deviceId ?? ThisDeviceId;
             return await ExecuteRegistrationAsync(
                 () => FlockHttpClient.PostAsync<PlayerLoginResponse>(
                     $"{Client.GetVersionedApiUrl()}/{FlockEndpoints.PlayerRegisterDevice}",
                     new PlayerDeviceRegistrationRequest
-                        { DeviceType = SystemInfo.deviceType.ToString(), DeviceId = deviceId, Name = name },
+                        { DeviceType = SystemInfo.deviceType.ToString(), DeviceId = id, Name = name },
                     Client.GetBaseHeaders(), cancellationToken),
                 "Device registration", FlockAuthMethod.Device, cancellationToken);
         }
@@ -394,13 +403,15 @@ namespace Flock.Providers
                 FlockCredentialProvider.Email, "Link email", cancellationToken);
         }
 
-        /// <summary>Attaches a device credential to the signed-in player — the "keep my guest progress" flow's counterpart.</summary>
-        public async Task<List<PlayerLinkedAccount>> LinkDeviceAsync(string deviceId, CancellationToken cancellationToken = default)
+        /// <summary>Attaches this device id to the signed-in player, so it signs them in from now on; leave <paramref name="deviceId"/> out to use <see cref="ThisDeviceId"/>.</summary>
+        /// <param name="deviceId">An id of your own, sent as it is; null uses <see cref="ThisDeviceId"/>, but an empty string is refused before anything is sent.</param>
+        public async Task<List<PlayerLinkedAccount>> LinkDeviceAsync(string deviceId = null, CancellationToken cancellationToken = default)
         {
             RequireAuthenticated();
-            RequireNotEmpty(deviceId, nameof(deviceId));
+            string id = deviceId ?? ThisDeviceId;
+            RequireNotEmpty(id, nameof(deviceId), "Leave deviceId out to link Authentication.ThisDeviceId, or pass a non-empty id of your own.");
             return await LinkAsync(FlockEndpoints.PlayerLinkDevice,
-                new PlayerLinkDeviceRequest { DeviceType = SystemInfo.deviceType.ToString(), DeviceId = deviceId },
+                new PlayerLinkDeviceRequest { DeviceType = SystemInfo.deviceType.ToString(), DeviceId = id },
                 FlockCredentialProvider.DeviceId, "Link device", cancellationToken);
         }
 

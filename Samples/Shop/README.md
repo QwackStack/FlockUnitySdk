@@ -20,8 +20,9 @@ build target through a web checkout with the game's gateway (Stripe, Tap or Moya
 
 ## Setup
 
-1. **Configure Flock**: open **Flock > Settings**, fill in your API URL, API Key, Game ID and Game Version, and click **Add
-   Flock Bootstrap to Scene**.
+1. **Configure Flock**: open **Flock > Settings** and, on the **Configuration** tab, fill in **Api Url**, **Api Key**,
+   **Game Name** and **Game Version**. No bootstrap is needed while **Auto-Initialize On Load** is on (the default, on the
+   **Advanced Settings** tab); with it off, click **Add to Scene** on the **Scene bootstrap** row of the **Setup** card.
 2. **Make a shop** in the Flock dashboard, under Shops, and give the player template that holds the wallet the tag
    `currency`.
 3. **For real-money items on a phone**, install Unity IAP 5 (`com.unity.purchasing` 5.x, Package Manager), create each item's
@@ -31,4 +32,9 @@ build target through a web checkout with the game's gateway (Stripe, Tap or Moya
    pay; to try Unity IAP's fake store in the editor on any build target, enter `google_play` or `apple_app_store` in the
    component's **Payment Provider**.
 
-Tap **Log in (device)**, then **Open the shop**.
+Tap **Log in (device)**, then **Open the shop**. The first time on a device, the sample registers it as a new player
+(Flock answers the login with `PlayerInvalidLoginCredentials` for a device it has not seen), which also signs it in.
+The sample passes no device id, so both calls use the one Flock makes on the first launch and keeps for this install
+(`Authentication.ThisDeviceId`), as the [README's Quick Start](../../README.md#quick-start) does.
+
+The [Shop guide](../../Docs~/shop.md) explains every call the sample makes, with code to copy.

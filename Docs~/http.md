@@ -6,13 +6,38 @@ Most games never need this page: every feature calls the server for you. The SDK
 calling another Qwacks service as your game, and writing a provider of your own on the same retry and error rules as the
 SDK's.
 
+The classes on this page are in the `Flock.Http` namespace (`FlockHttpClient`, `RetryHandler`, `FlockProviderBase`, the
+uploaders), with `UnityFlockLogger` in `Flock.Logging`. The examples call a made-up service at `serviceUrl` whose
+`/status` route answers with a small JSON object, read into this class of your own:
+
+```csharp
+using System;
+
+[Serializable]
+public class ServiceStatus
+{
+    public string state;
+    public int queued;
+}
+```
+
 ## Your game's identity
 
 ```csharp
-FlockClient flock = FlockClient.Instance;
-Dictionary<string, string> headers = flock.GetGameHeaders();   // your API key and Game Version ID
-string versionName = flock.GameVersion;                        // "1.0.0", as set in Flock > Settings
-string versionId = flock.GameVersionId;                        // the ID that name was resolved to
+using System.Collections.Generic;
+using Flock;
+using UnityEngine;
+
+public static class GameIdentity
+{
+    public static Dictionary<string, string> Headers()
+    {
+        FlockClient flock = FlockClient.Instance;
+        Dictionary<string, string> headers = flock.GetGameHeaders();   // your API key and Game Version ID
+        Debug.Log($"Version {flock.GameVersion} ({flock.GameVersionId})");   // as set in Flock > Settings, and its ID
+        return headers;
+    }
+}
 ```
 
 - `GetGameHeaders()` returns a new copy on every call: the headers that identify your game to a Qwacks service, its API
@@ -24,11 +49,27 @@ string versionId = flock.GameVersionId;                        // the ID that na
 ## Requests
 
 ```csharp
-// A route that answers with JSON: read it into your type.
-ServiceStatus status = await FlockHttpClient.GetAsync<ServiceStatus>($"{serviceUrl}/status", headers);
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using Flock;
+using Flock.Http;
 
-// A route with nothing to read in its answer: no type argument.
-await FlockHttpClient.PostAsync($"{serviceUrl}/reports", new { reason = "stuck" }, headers);
+public static class ServiceCalls
+{
+    // A route that answers with JSON: read it into your type.
+    public static Task<ServiceStatus> GetStatusAsync(string serviceUrl)
+    {
+        Dictionary<string, string> headers = FlockClient.Instance.GetGameHeaders();
+        return FlockHttpClient.GetAsync<ServiceStatus>($"{serviceUrl}/status", headers);
+    }
+
+    // A route with nothing to read in its answer: no type argument.
+    public static Task SendReportAsync(string serviceUrl)
+    {
+        Dictionary<string, string> headers = FlockClient.Instance.GetGameHeaders();
+        return FlockHttpClient.PostAsync($"{serviceUrl}/reports", new { reason = "stuck" }, headers);
+    }
+}
 ```
 
 - The body you pass is written as JSON. Each call is sent once: nothing is retried (see below).
@@ -42,19 +83,35 @@ await FlockHttpClient.PostAsync($"{serviceUrl}/reports", new { reason = "stuck" 
 ## Retrying the way the SDK does
 
 ```csharp
-RetryHandler retries = new RetryHandler(FlockClient.Instance.RetryPolicy, new UnityFlockLogger());
-await retries.ExecuteAsync(async () =>
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using Flock;
+using Flock.Http;
+using Flock.Logging;
+
+public static class RetriedCalls
 {
-    await FlockHttpClient.PostAsync($"{serviceUrl}/reports", new { reason = "stuck" }, headers);
-    return true;
-});
+    public static async Task SendReportAsync(string serviceUrl)
+    {
+        Dictionary<string, string> headers = FlockClient.Instance.GetGameHeaders();
+        RetryHandler retries = new RetryHandler(FlockClient.Instance.RetryPolicy, new UnityFlockLogger());
+        await retries.ExecuteAsync(async () =>
+        {
+            await FlockHttpClient.PostAsync($"{serviceUrl}/reports", new { reason = "stuck" }, headers);
+            return true;
+        });
+    }
+}
 ```
 
 - `FlockClient.Instance.RetryPolicy` is a copy of the retry settings the client was initialized with (`MaxRetries`,
   `InitialDelay`, `MaxDelay`, `BackoffMultiplier`, `UseJitter`). Changing the copy changes nothing in the client.
 - `RetryHandler` retries a timeout, a lost connection, a 5xx, a 408 and a 429, and waits as long as the server asks when
   it says (up to `MaxDelay`). It never retries a refused sign-in, a validation error, an answer it could not read or any
-  other 4xx.
+  other 4xx. Nor does it retry a 5xx whose code names one of the game's own settings: payment provider keys the server
+  cannot read (`PaymentProviderCredentialsUnreadable`) or no address for a payment provider to confirm a payment
+  (`ShopRealCurrencySettlementUnavailable`). Sending it again gets the same answer until the setting is fixed on the
+  dashboard.
 - **A call that must not happen twice** (it moves money, say) passes `retryAmbiguousFailures: false`. Then only a 408 or a
   429 is retried, since the server refused those before doing anything; a timeout or a 5xx may already have been applied,
   so it is raised rather than sent again.
@@ -63,9 +120,21 @@ await retries.ExecuteAsync(async () =>
 ## Uploading a file
 
 ```csharp
-FlockFileUploadOutcome outcome = await FlockHttpClient.UploadFileAsync(uploadUrl, filePath, "video/mp4");
-if (!outcome.IsUploaded)
-    Debug.LogWarning($"Upload failed ({outcome.Result}, status {outcome.StatusCode}): {outcome.Body}");
+using System.Threading.Tasks;
+using Flock.Http;
+using UnityEngine;
+
+public static class Uploads
+{
+    // uploadUrl is a presigned storage link your service handed out; filePath a file on disk.
+    public static async Task<bool> UploadVideoAsync(string uploadUrl, string filePath)
+    {
+        FlockFileUploadOutcome outcome = await FlockHttpClient.UploadFileAsync(uploadUrl, filePath, "video/mp4");
+        if (!outcome.IsUploaded)
+            Debug.LogWarning($"Upload failed ({outcome.Result}, status {outcome.StatusCode}): {outcome.Body}");
+        return outcome.IsUploaded;
+    }
+}
 ```
 
 - Sends the file with a `PUT`, the way a presigned storage link wants it. The file is read from disk as it is sent and is
@@ -86,9 +155,38 @@ if (!outcome.IsUploaded)
 ### Another uploader
 
 ```csharp
-FlockHttpClient.UseFileUploader(new UnityWebRequestFileUploader(TimeSpan.FromMinutes(5)));   // waits longer on a stall
-FlockHttpClient.UseFileUploader(new MyTestUploader());                                      // implements IFlockFileUploader
-FlockHttpClient.UseFileUploader(null);                                                      // back to the platform's
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+using Flock.Http;
+
+// An uploader of your own, for tests: it says every file arrived without sending anything.
+public class MyTestUploader : IFlockFileUploader
+{
+    public Task<FlockFileUploadOutcome> UploadFileAsync(string url, string filePath, string contentType, CancellationToken cancellationToken)
+    {
+        return Task.FromResult(new FlockFileUploadOutcome { Result = FlockHttpResult.Success, StatusCode = 200 });
+    }
+}
+
+public static class UploaderChoice
+{
+    public static void WaitLongerOnAStall()
+    {
+        FlockHttpClient.UseFileUploader(new UnityWebRequestFileUploader(TimeSpan.FromMinutes(5)));
+    }
+
+    public static void UseTestUploader()
+    {
+        FlockHttpClient.UseFileUploader(new MyTestUploader());
+    }
+
+    // Back to the platform's own.
+    public static void UsePlatformUploader()
+    {
+        FlockHttpClient.UseFileUploader(null);
+    }
+}
 ```
 
 `IFlockFileUploader` is the seam behind `UploadFileAsync`, kept apart from the request transport, so a transport of your
@@ -99,6 +197,11 @@ or less, it never gives up.
 ## A provider of your own
 
 ```csharp
+using System.Threading;
+using System.Threading.Tasks;
+using Flock;
+using Flock.Http;
+
 public sealed class ReportProvider : FlockProviderBase
 {
     private readonly string _serviceUrl;

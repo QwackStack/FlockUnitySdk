@@ -6,7 +6,9 @@ Every SDK call **throws on failure** — there are no result/error return types.
 
 ## Exception types
 
-All SDK exceptions derive from `FlockException` (namespace `Flock.Exceptions`).
+All SDK exceptions derive from `FlockException` (namespace `Flock.Exceptions`, with `FlockErrorCode` and `FlockErrorHints`).
+`FlockStoreException`, raised when a store did not take a real-money payment, is in `Flock.Providers` (see the
+[Shop guide](shop.md)).
 
 | Type | Thrown when |
 |------|-------------|
@@ -33,7 +35,7 @@ All SDK exceptions derive from `FlockException` (namespace `Flock.Exceptions`).
 
 ```
 Device login failed: Invalid login credentials [player.invalid_login_credentials, HTTP 400]
-Fix: This device is not registered yet. Call Authentication.RegisterWithDeviceAsync(deviceId) once to create the account, then Authentication.LoginWithDeviceAsync(deviceId) on later launches.
+Fix: This device is not registered yet. Call Authentication.RegisterWithDeviceAsync() once to create the account, then Authentication.LoginWithDeviceAsync() on later launches (both use Authentication.ThisDeviceId when no id is passed).
 ```
 
 The fix is specific to context where one code means different things: the same `player.invalid_login_credentials` on an *email* sign-in says the password was wrong instead.
@@ -45,7 +47,7 @@ Shop Item ID is empty
 Fix: Pass a Shop Item ID; this call cannot run without one.
 ```
 
-Every failure Flock's game API sends carries a code, so an answer without one came from something else — a proxy, a captive portal, another server — and the fix says so. A `request.not_found` code whose reason is a bare `Not Found` means no route answers at that address (any other reason names a record the route did not find): the API URL in Flock > Settings must be the server's address alone, such as `https://api.example.com`, with no `/v1` or other path after it.
+Every failure Flock's game API sends carries a code, so an answer without one came from something else — a proxy, a captive portal, another server — and the fix says so. A `request.not_found` code whose reason is a bare `Not Found` means no route answers at that address (any other reason names a record the route did not find): the **Api Url** in Flock > Settings must be the server's address alone, such as `https://api.example.com`, with no `/v1` or other path after it.
 
 `FlockErrorHints.For(errorCode)` returns the same next-step text for any code, if you want it in your own debug UI. **It is written for developers, not players** — it names SDK methods and dashboard steps, so write separate player-facing copy.
 
@@ -54,37 +56,75 @@ Every failure Flock's game API sends carries a code, so an answer without one ca
 ## Branching on an error
 
 ```csharp
-try
+using System.Threading.Tasks;
+using Flock;
+using Flock.Exceptions;
+using UnityEngine;
+
+public static class Purchases
 {
-    await FlockClient.Instance.Shop.PurchaseAsync(shopItemId);
-}
-catch (FlockException ex) when (ex.ErrorCode == FlockErrorCode.ShopInsufficientFunds)
-{
-    // The server declined — not enough funds.
-}
-catch (FlockException ex)
-{
-    Debug.LogError($"Purchase failed: {ex.ErrorCode} ({ex.Code}) — {ex.Message}");
+    // shopItemId is a shop item's Id (ShopItem.Id), read from a shop.
+    public static async Task BuyAsync(string shopItemId)
+    {
+        try
+        {
+            await FlockClient.Instance.Shop.PurchaseAsync(shopItemId);
+        }
+        catch (FlockException ex) when (ex.ErrorCode == FlockErrorCode.ShopInsufficientFunds)
+        {
+            // The server declined: not enough funds.
+        }
+        catch (FlockException ex)
+        {
+            Debug.LogError($"Purchase failed: {ex.ErrorCode} ({ex.Code}): {ex.Message}");
+        }
+    }
 }
 ```
 
 For the "this identity already belongs to an account" case (email/device/OAuth), use the grouping helper instead of listing each code:
 
 ```csharp
-catch (FlockException ex) when (ex.IsAlreadyRegistered())
+using System.Threading.Tasks;
+using Flock;
+using Flock.Exceptions;
+
+public static class GuestUpgrade
 {
-    // Offer sign-in instead of register.
+    // False when that email already has an account of its own: offer to sign in with it instead.
+    public static async Task<bool> AddEmailAsync(string email, string password)
+    {
+        try
+        {
+            await FlockClient.Instance.Authentication.LinkEmailAsync(email, password);
+            return true;
+        }
+        catch (FlockException ex) when (ex.IsAlreadyRegistered())
+        {
+            return false;
+        }
+    }
 }
 ```
 
 > **`RegisterWith*` will not reach that catch.** Those methods swallow the already-registered codes and return `null` instead of throwing, so test the return value rather than catching:
 >
 > ```csharp
-> FlockAuthProvider auth = FlockClient.Instance.Authentication;
+> using System.Threading.Tasks;
+> using Flock;
+> using Flock.Providers;
 >
-> // null means "this identity already has an account" — created nothing, signed in nobody.
-> if (await auth.RegisterWithDeviceAsync(deviceId) == null)
->     await auth.LoginWithDeviceAsync(deviceId);
+> public static class DeviceAccount
+> {
+>     public static async Task RegisterOrLoginAsync()
+>     {
+>         FlockAuthProvider auth = FlockClient.Instance.Authentication;
+>
+>         // null means "this identity already has an account": created nothing, signed in nobody.
+>         if (await auth.RegisterWithDeviceAsync() == null)
+>             await auth.LoginWithDeviceAsync();
+>     }
+> }
 > ```
 >
 > A *successful* register does sign the player in, so the login call is only needed on the `null` path. `IsAlreadyRegistered()` remains useful on calls that don't swallow, such as the `Link*Async` methods.
@@ -116,7 +156,33 @@ game's own keys); the receipt goes through once the keys are fixed.
 
 ## Money safety
 
-A wallet `PurchaseAsync` carries one key for every attempt, so after an answer that never came it is sent again and the server answers the repeat with the first purchase. `AddGameFundsAsync`, `ConsumeAsync` and `ConsumeOneAsync` never auto-retry ambiguous failures (a timeout may have already committed on the server): only provably-unprocessed failures (HTTP 408/429) are retried. When any of these, or a store redemption, fails without an answer that says whether it was done, the exception's `OutcomeUnknown` is true: read the wallet and inventory before offering it again. A store that did not take a real-money payment throws `FlockStoreException`, whose `Reason` says why; nothing was charged. See the [Shop guide](shop.md).
+```csharp
+using System.Threading.Tasks;
+using Flock;
+using Flock.Exceptions;
+using Flock.Models;
+using UnityEngine;
+
+public static class SafePurchase
+{
+    public static async Task BuyAsync(string shopItemId)
+    {
+        try
+        {
+            await FlockClient.Instance.Shop.PurchaseAsync(shopItemId);
+        }
+        catch (FlockException ex) when (ex.OutcomeUnknown)
+        {
+            // No answer said whether it went through: read the wallet and inventory before offering it again.
+            FlockWallet wallet = await FlockClient.Instance.Player.GetWalletAsync();
+            bool owned = await FlockClient.Instance.Shop.OwnsAsync(shopItemId);
+            Debug.Log($"Gold: {wallet.BalanceOf("Gold")}, owns the item: {owned}");
+        }
+    }
+}
+```
+
+A wallet `PurchaseAsync` carries one key for every attempt, so after an answer that never came it is sent again and the server answers the repeat with the first purchase. `AddGameFundsAsync`, `ConsumeAsync` and `ConsumeOneAsync` never auto-retry ambiguous failures (a timeout may have already committed on the server): only provably-unprocessed failures (HTTP 408/429) are retried. When any of these, or a store redemption, fails without an answer that says whether it was done, the exception's `OutcomeUnknown` is true: read the wallet and inventory before offering it again. A store that did not take a real-money payment throws `FlockStoreException`, whose `Reason` says why; nothing was charged. A web checkout that ends refunded throws it too, with `Unknown`: nothing was bought, but the player was charged and then refunded. See the [Shop guide](shop.md).
 
 ## Coded-error reference
 

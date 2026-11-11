@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 It is released with the Flock SDK, at the Flock SDK's version.
 
+## [1.103.0]
+
+### Changed
+- **The sample signs in with the Flock SDK's kept device id** (`Authentication.ThisDeviceId`) instead of
+  `SystemInfo.deviceUniqueIdentifier`, so it signs in again as the same player on every launch and on WebGL.
+
+### Documentation
+- **The feedback form has complete examples**: opening it from a button of your own (`CanOpenFeedbackForm`,
+  `OpenFeedbackForm`), and a form of your own that reads the questions from `FeedbackForm`, records each kind of answer, finds
+  problems with `FindProblems` and sends with `SendFeedbackForm`, with a table of question kinds and what sending tells you
+  (true means kept on the device; the Console lines for sent, kept to try again, refused key and refused for good).
+- **Every section that asks for a call has a compiling example**: the status, consent, upload networks, features, sessions,
+  recording, test video, playtest events and the live self-test. Each is compiled against the package in a Unity project.
+- **Corrected:** the setup checks' names, the **Protokite Api Url** label, the Android video size on a 20:9 phone (1280x576),
+  the test video states (`None` included), where each install route puts the package and the sample, which Flock settings sit
+  on **Advanced Settings**, and that a recording's upload shows only in the Console.
+
 ## [1.102.0]
 
 ### Changed

@@ -279,12 +279,23 @@ namespace Flock.Editor
             }
 
             configSerialized.Update();
-            DrawOptionalCard();
-            DrawAnalyticsCard();
-            DrawAssetCacheCard();
-            DrawRetryPolicyCard();
-            DrawMultiplayerCard();
-            DrawConfigToolsCard();
+            // Wide enough for the longest setting name, so no label is cut short.
+            float labelWidth = EditorGUIUtility.labelWidth;
+            EditorGUIUtility.labelWidth = 260f;
+            try
+            {
+                DrawOptionalCard();
+                DrawAnalyticsCard();
+                DrawAssetCacheCard();
+                DrawOfflineCacheCard();
+                DrawRetryPolicyCard();
+                DrawMultiplayerCard();
+                DrawConfigToolsCard();
+            }
+            finally
+            {
+                EditorGUIUtility.labelWidth = labelWidth;
+            }
             configSerialized.ApplyModifiedProperties();
         }
 
@@ -592,6 +603,18 @@ namespace Flock.Editor
             }
             DrawProperty("assetDownloadTimeoutSeconds");
             DrawProperty("assetDownloadRetryCount");
+            EditorGUILayout.EndVertical();
+        }
+
+        private void DrawOfflineCacheCard()
+        {
+            EditorGUILayout.BeginVertical(cardStyle);
+            GUILayout.Label("Offline Cache", sectionHeaderStyle);
+            DrawProperty("enableOfflineCache");
+            using (new EditorGUI.DisabledScope(!configSerialized.FindProperty("enableOfflineCache").boolValue))
+            {
+                DrawProperty("offlineCacheDirectory");
+            }
             EditorGUILayout.EndVertical();
         }
 

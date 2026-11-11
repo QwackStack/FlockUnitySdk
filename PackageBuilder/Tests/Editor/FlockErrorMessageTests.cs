@@ -114,6 +114,7 @@ namespace Flock.Tests
             Assert.IsNull(FlockErrorHints.For(FlockErrorCode.Unknown));
             Assert.IsNotNull(FlockErrorHints.For(FlockErrorCode.ShopInsufficientFunds));
             Assert.IsNotNull(FlockErrorHints.For(FlockErrorCode.PlayerDeviceAlreadyRegistered));
+            StringAssert.Contains("same id you registered", FlockErrorHints.For(FlockErrorCode.PlayerDeviceAlreadyRegistered), "Signs in with the kept id or the same one, never registers again");
         }
 
         [Test]

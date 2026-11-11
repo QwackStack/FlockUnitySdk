@@ -65,7 +65,7 @@ namespace Flock.Exceptions
         {
             // Auth — login never creates an account, which is the single most common first-run mistake.
             { FlockErrorCode.PlayerInvalidLoginCredentials, "No account matches these credentials. Logging in never creates an account — call the matching Authentication.RegisterWith*Async method once first." },
-            { FlockErrorCode.PlayerDeviceAlreadyRegistered, "This device already has an account. Call Authentication.LoginWithDeviceAsync(deviceId) instead of registering it again." },
+            { FlockErrorCode.PlayerDeviceAlreadyRegistered, "This device already has an account. Call Authentication.LoginWithDeviceAsync() (or with the same id you registered) instead of registering it again." },
             { FlockErrorCode.PlayerEmailAlreadyRegistered, "That email already has an account. Call Authentication.LoginWithEmailAsync(email, password), or Authentication.ForgotPasswordAsync(email) if the password is lost." },
             { FlockErrorCode.PlayerGoogleAccountAlreadyRegistered, "That Google account is already registered. Call Authentication.LoginWithGoogleAsync(idToken) instead." },
             { FlockErrorCode.PlayerAppleAccountAlreadyRegistered, "That Apple account is already registered. Call Authentication.LoginWithAppleAsync(identityToken) instead." },
@@ -84,7 +84,7 @@ namespace Flock.Exceptions
             { FlockErrorCode.PlayerGameJwkNotConfigured, "The game has no signing key configured. Set it up in the Flock dashboard before players can authenticate." },
             { FlockErrorCode.PlayerGameVersionIdRequired, "This route needs a game version. Pick one in Flock > Settings so it is baked into the build." },
             { FlockErrorCode.PlayerInvalidRegistrationRequest, "The registration was rejected. Check the fields this provider requires — Authentication.RegisterWithEmailAsync(email, password) needs both, and a blank one never reaches the server as null." },
-            { FlockErrorCode.PlayerInvalidDeviceRegistrationRequest, "The device registration was rejected. Pass a stable, non-empty device id to Authentication.RegisterWithDeviceAsync(deviceId) — the same string on every launch, or the account cannot be found again." },
+            { FlockErrorCode.PlayerInvalidDeviceRegistrationRequest, "The device registration was rejected. Leave the id out of Authentication.RegisterWithDeviceAsync() to use the SDK's kept Authentication.ThisDeviceId, or pass a stable, non-empty id of your own — the same string on every launch, or the account cannot be found again." },
             { FlockErrorCode.PlayerInvalidLinkRequest, "The link request was rejected. Every Authentication.Link*Async call takes the raw token the platform handed you, not a wrapped payload of your own." },
             { FlockErrorCode.PlayerOauthFailed, "The identity provider rejected the token. It has usually expired — fetch a fresh one from the platform immediately before calling Authentication.LoginWith*Async." },
             { FlockErrorCode.PlayerPlayerNotFound, "No player matches that id. Sign in first — most calls act on FlockClient.Instance.CurrentPlayerId." },
@@ -280,7 +280,7 @@ namespace Flock.Exceptions
             switch (method)
             {
                 case FlockAuthMethod.Device:
-                    return "This device is not registered yet. Call Authentication.RegisterWithDeviceAsync(deviceId) once to create the account, then Authentication.LoginWithDeviceAsync(deviceId) on later launches.";
+                    return "This device is not registered yet. Call Authentication.RegisterWithDeviceAsync() once to create the account, then Authentication.LoginWithDeviceAsync() on later launches (both use Authentication.ThisDeviceId when no id is passed).";
                 case FlockAuthMethod.Email:
                     return "Wrong email or password. If the account does not exist yet, call Authentication.RegisterWithEmailAsync(email, password) first — logging in never creates one.";
                 case FlockAuthMethod.Google:

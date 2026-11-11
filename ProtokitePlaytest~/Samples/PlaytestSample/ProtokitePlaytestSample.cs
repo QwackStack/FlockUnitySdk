@@ -79,17 +79,17 @@ namespace Protokite.Playtest.Samples
         private async void SignInAsync()
         {
             _signingIn = true;
-            string deviceId = SystemInfo.deviceUniqueIdentifier;
             try
             {
+                // With no id passed, both calls use the device id Flock keeps for this install.
                 try
                 {
-                    await FlockClient.Instance.Authentication.LoginWithDeviceAsync(deviceId);
+                    await FlockClient.Instance.Authentication.LoginWithDeviceAsync();
                 }
                 // A device Flock has never seen is not a player yet, so it is registered, with no name: Flock keeps names unique.
                 catch (FlockException ex) when (ex.ErrorCode == FlockErrorCode.PlayerInvalidLoginCredentials)
                 {
-                    await FlockClient.Instance.Authentication.RegisterWithDeviceAsync(deviceId);
+                    await FlockClient.Instance.Authentication.RegisterWithDeviceAsync();
                 }
                 _said = "Signed in. The playtest's session starts once its config is loaded.";
             }

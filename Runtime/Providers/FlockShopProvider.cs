@@ -403,7 +403,7 @@ namespace Flock.Providers
             return checkout;
         }
 
-        /// <summary>One of the signed-in player's purchases, read now from the server (never cached): a web checkout's purchase is pending until it is paid, failed or expired. Another player's purchase is refused with <see cref="FlockErrorCode.ShopPurchaseNotFound"/>.</summary>
+        /// <summary>One of the signed-in player's purchases, read now from the server (never cached): a web checkout's purchase is pending until it is paid, failed or expired. Another player's purchase is refused with <see cref="FlockErrorCode.ShopPurchaseNotFound"/>, and an answer about another purchase than the one asked for throws <see cref="FlockSerializationException"/>.</summary>
         public async Task<PlayerPurchase> GetPurchaseAsync(string purchaseId, CancellationToken cancellationToken = default)
         {
             RequireNotEmpty(purchaseId, "Purchase ID");
@@ -417,6 +417,9 @@ namespace Flock.Providers
                 "Get purchase", cancellationToken, actsForSignIn: reader);
             if (purchase == null || string.IsNullOrEmpty(purchase.Id) || string.IsNullOrEmpty(purchase.Status))
                 throw new FlockSerializationException("The server's answer had no purchase id or status") { Hint = FlockErrorHints.NotFlocksAnswer };
+            // An answer about another purchase says nothing of this one, so a web checkout's read tries again rather than report it.
+            if (!string.Equals(purchase.Id, purchaseId, StringComparison.Ordinal))
+                throw new FlockSerializationException("The server's answer was about another purchase than the one asked for") { Hint = FlockErrorHints.NotFlocksAnswer };
             return purchase;
         }
 

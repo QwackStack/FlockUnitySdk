@@ -110,6 +110,9 @@ namespace Flock.Providers
             }
         }
 
+        /// <summary>Deletes one snapshot, when there is one.</summary>
+        public void Delete(string scope, string key) => TryDelete(BuildPath(scope, key));
+
         public void DeleteScope(string scope)
         {
             try

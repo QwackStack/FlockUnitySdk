@@ -1,3 +1,5 @@
+using UnityEngine.TestTools;
+using System.Collections;
 using System;
 using System.Threading;
 using Flock.Auth;
@@ -15,6 +17,13 @@ namespace Flock.Tests.Editor
     // EditMode does not do.
     public class FlockRefreshTests
     {
+        // A refresh still on its way would hand its answer to the next test's client.
+        [UnityTearDown]
+        public IEnumerator EveryRefreshIsAnsweredBeforeTheNextTest()
+        {
+            yield return FlockTestClient.UntilEveryRefreshIsAnswered();
+        }
+
         private const string Path = "probe/thing";
 
         private static FlockTestSnapshotProvider Provider(FlockTestClient h) => new FlockTestSnapshotProvider(h.Client);

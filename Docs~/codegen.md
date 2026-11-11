@@ -2,70 +2,203 @@
 
 [← Back to README](../README.md)
 
-Run **Sync Schemas** from the Codegen tab in **Flock > Settings** to fetch your game's player templates and game configs from the backend and generate typed C# accessors. Output goes to `Assets/Flock/Generated/` by default; change the path on the FlockConfig asset if you want it elsewhere. Codegen deletes only what it wrote: each sync replaces the generated `.g.cs` files in the `Player/`, `Commands/`, `Configs/`, `Shops/` and `Achievements/` subfolders, and **Delete Generated Code** removes every generated file under the output folder and the folders that leaves empty. Files of your own there are kept, but don't edit the generated ones: the next sync replaces them.
+Codegen turns what you set up in the Flock dashboard (player templates, game configs, shops, achievements) into typed C#,
+so your game reads `progress.Level` instead of looking a field up by its name, and a misspelt name fails when the game
+compiles instead of when a player plays.
 
-**For designers:** each sync also writes `FlockContentCatalog.asset` into the output folder — a read-only ScriptableObject you can select in the Project view to browse every shop (items, prices, currency), game config (fields and current values), and player template (fields) in the Inspector, no code or dashboard login needed. It's regenerated on every sync, so it always mirrors the backend. (Editor-only; it's never referenced at runtime and is stripped from player builds. CI/headless syncs skip it.)
+## Running Sync Schemas
 
-What gets generated, given a player template named `PlayerProgress` and a game config named `Gameplay`:
+1. Fill in the **Configuration** tab of **Flock > Settings** first (see [Editor Configuration](../README.md#editor-configuration)):
+   codegen reads the schemas of the Game Version set there.
+2. Open the **Code Generation** tab. The **Status** card says whether code was generated, and for which Game Version.
+3. Click **Sync Schemas** on the **Actions** card. The SDK fetches your game's player templates and game configs and writes
+   the generated files into the folder named by **Generated Code Path** on the **Output Folder** card
+   (`Assets/Flock/Generated` by default). Unity then compiles them.
+
+![The Code Generation tab of Flock > Settings](images/flock-settings-code-generation.png)
+*Flock > Settings, Code Generation tab: the Status, How It Works, Output Folder (Generated Code Path) and Actions (Sync Schemas, Delete Generated Code, Open Catalog) cards.*
+
+**The generated names exist only after a sync.** Every example on this page, and every generated name in the other
+guides (`GetPlayerProgressAsync`, `FlockShopItemId`, ...), uses a stand-in dashboard: a player template `PlayerProgress`,
+a game config `Gameplay`, a shop `MainShop`, currencies `Gold` and `Gems`, achievements `FirstWin` and `TenWins`. Your
+game's names come from your own dashboard.
+
+Codegen deletes only what it wrote: each sync replaces the generated `.g.cs` files in the `Player/`, `Commands/`,
+`Configs/`, `Shops/` and `Achievements/` subfolders, and **Delete Generated Code** removes every generated file under the
+output folder and the folders that leaves empty. Files of your own there are kept, but don't edit the generated ones: the
+next sync replaces them.
+
+**For designers:** each sync also writes `FlockContentCatalog.asset` into the output folder — a read-only ScriptableObject you can select in the Project view (or with **Open Catalog**) to browse every shop (items, prices, currency), game config (fields and current values), and player template (fields) in the Inspector, no code or dashboard login needed. It's regenerated on every sync, so it always mirrors the backend. (Editor-only; it's never referenced at runtime and is stripped from player builds. Syncs from the command line skip it.)
+
+## Player templates
+
+Each player template becomes a class in `Flock.Generated.Templates` (`PlayerProgressTemplate` for a template named
+`PlayerProgress`) and a `Get<Template>Async()` method on `FlockClient.Instance.Player`. It reads the signed-in player's
+record of that template, so no id is needed, and returns **null when the player has no record** of it yet.
 
 ```csharp
-// Templates — Flock.Generated.Templates.PlayerProgressTemplate
-// No ID needed: resolves the current player's PlayerData via Client.CurrentPlayerId.
-// First call paginates and caches all of the player's PlayerData; subsequent
-// Get*Async calls (any template) hit the in-memory cache. Use Player.ClearCache()
-// after a known external mutation, or when switching player.
-PlayerProgressTemplate progress = await FlockClient.Instance.Player.GetPlayerProgressAsync();
-int level = progress.Level;
-int xp = progress.Xp;
+using System.Threading.Tasks;
+using Flock;
+using Flock.Generated.Templates;
+using Flock.Models;
+using UnityEngine;
 
-// Each generated class carries its source identity and its typed schema:
-string id = PlayerProgressTemplate.SourceId;
-string name = PlayerProgressTemplate.SourceName;
-IReadOnlyList<TypedSchema> schema = PlayerProgressTemplate.Schema;
+public static class ProgressSave
+{
+    public static async Task LevelUpAsync()
+    {
+        // null when the signed-in player has no PlayerProgress record yet.
+        PlayerProgressTemplate progress = await FlockClient.Instance.Player.GetPlayerProgressAsync();
+        if (progress == null)
+        {
+            Debug.Log("This player has no progress record yet.");
+            return;
+        }
 
-// Commands — UpdateAsync is an instance method on the template. Mutate the populated
-// POCO and call .UpdateAsync() on it directly — no extra using needed.
-progress.Level = 5;
-progress.Xp = 1200;
-PlayerData updated = await progress.UpdateAsync();
-
-// Configs — Flock.Generated.Configs.GameplayConfig
-GameplayConfig gameplay = await FlockClient.Instance.Config.GetGameplayAsync();
-float baseMoveSpeed = gameplay.BaseMoveSpeed;
-// SourceId / SourceName / Schema / SourceTag are exposed on the generated class:
-SchemaTag tag = GameplayConfig.SourceTag;
-
-// Shops — Flock.Generated.Shops. Typed shop accessor + enum-keyed Purchase / AddGameFunds.
-Shop starter = await FlockClient.Instance.Shop.GetStarterPackShopAsync();
-// Purchase / AddGameFunds take generated enums of the available ids; the UUID is resolved inside:
-PurchaseResult bought = await FlockClient.Instance.Shop.PurchaseAsync(FlockShopItemId.GemPack);
-PlayerData funded = await FlockClient.Instance.Commands.AddGameFundsAsync(FlockFundId._100, 500);
-
-// Achievements — Flock.Generated.Achievements. Enum-keyed unlock; the raw name is resolved inside.
-PlayerData unlocked = await FlockClient.Instance.Commands.UnlockAchievementAsync(FlockAchievementId.FirstWin);
-// Achievement details (from your 'achievement'-tagged game config) — looked up by the same enum:
-var firstWin = await FlockClient.Instance.Config.GetAchievementDetailsAsync(FlockAchievementId.FirstWin);
+        // Change the fields, then save them: UpdateAsync is a method of the generated class.
+        progress.Level += 1;
+        progress.Xp = 0;
+        PlayerData saved = await progress.UpdateAsync();
+        Debug.Log($"Saved record {saved.Id} ({PlayerProgressTemplate.SourceName}, template {PlayerProgressTemplate.SourceId})");
+    }
+}
 ```
 
-`UpdateAsync` is an instance method on each generated template type, so it's always available on the object — no extra `using`, and it shows in IntelliSense wherever you hold the instance. It validates `PlayerDataId` (set automatically by the matching `Get*Async`), turns the populated POCO back into a flattened DataField list via `{Template}.Schema.ToDataFieldList(this)`, and routes through `FlockCommandProvider.UpdatePlayerDataAsync`. After a write you typically want fresh reads — call `client.Player.ClearCache()` before the next `Get*Async` if you need to bypass the per-player snapshot cache.
+The first read fetches all of the player's records and keeps them in memory, so later `Get...Async` calls (any template)
+answer from memory. Call `FlockClient.Instance.Player.ClearCache()` after a change made somewhere else, or when another
+player signs in.
 
-Generated config classes have read-only properties (`{ get; private set; }`) — configs are game-wide and shouldn't be mutated client-side; mutations are admin-only on the backend.
+`UpdateAsync` checks `PlayerDataId` (set by the matching `Get...Async`), turns the object back into the record's fields
+through the class's `Schema`, and saves them with `FlockClient.Instance.Commands.UpdatePlayerDataAsync`. Each generated
+class also has `SourceId` (the template's id), `SourceName` and `Schema` (its fields).
 
-Generated shops live in `Flock.Generated.Shops`: a `Get<Shop>ShopAsync()` accessor per shop (returns the live `Shop`), plus `FlockShopItemId` / `FlockFundId` enums of the available ids and matching `PurchaseAsync(FlockShopItemId)` / `AddGameFundsAsync(FlockFundId)` extension methods. The enum-typed methods are **generated extensions**, so they only appear after a sync. `FlockFundId` lists every shop currency. Members are the currency **id** (e.g. `_100` — a leading `_` is added only when an id starts with a digit, since C# identifiers can't) because currency *names* live only on the dashboard's admin `/currency` endpoint, which the SDK's API key can't reach. `AddGameFundsAsync` sends the currency id and resolves `player_data_id` from the player's **currency wallet** — the row for the player template tagged `currency`. Codegen bakes that template's id and calls `AddGameFundsAsync(currency, amount, currencyTemplateId)`, which resolves the wallet directly. There's also a public `AddGameFundsAsync(currency, amount)` overload that resolves the `currency`-tagged template at runtime instead (same tag mechanism as `UnlockAchievement`) — both are usable. Shop **data** (prices, status) is fetched live — only identity (ids, currencies) is generated, so prices never go stale in code.
+## Game configs
 
-`FlockShopItemId` lists every item, wallet or real money: `PurchaseAsync(FlockShopItemId)` buys any of them (a real-money one through the connected `FlockStore`), `ConsumeOneAsync(FlockShopItemId)` uses one the player holds, and `ShopItemId()` gives the id for the calls that take one, such as `Shop.OwnsAsync` and `FlockStore.GetPrice`. After upgrading from 1.94.0 or earlier, sync again: a sync removes the `Shops/StoreItems/` folder 1.94.0 wrote for real-money items, and adds `ConsumeOneAsync` and the public `ShopItemId()`.
+Each game config becomes a class in `Flock.Generated.Configs` (`GameplayConfig` for a config named `Gameplay`) and a
+`Get<Config>Async()` method on `FlockClient.Instance.Config`. With a player signed in, it reads the values the server
+resolves for that player (for a gameplay or feature config: the newest patch, then the overrides of the player's segments,
+then the player's own; any other config as it reads with nobody signed in); with
+nobody signed in, the config's values for this build's Game Version, falling back to the config's own values when the
+version has no change of its own. Read a config again after the player signs in; see
+[Values for the signed-in player](game-config.md#values-for-the-signed-in-player).
 
-Generated achievements live in `Flock.Generated.Achievements`: a `FlockAchievementId` enum whose members are the fields of the player template tagged `achievement` (PascalCased; each carries a `/// <summary>raw_name</summary>` doc), plus a `UnlockAchievementAsync(FlockAchievementId)` extension on `FlockCommandProvider` that maps the enum back to the raw `achievement_name` and resolves the achievements row for you. The enum overload is **additive** — the raw-string `UnlockAchievementAsync(string)` stays public, exactly like the shop `FlockFundId` methods — but prefer the typed one: a name that doesn't match the server is then caught at compile time instead of at runtime.
+```csharp
+using System.Threading.Tasks;
+using Flock;
+using Flock.Generated.Configs;
+using UnityEngine;
 
-If you keep achievement details (display name, description, reward, etc.) in a **game config tagged `achievement`** — one config holding a list of entries, each with a `name` field — codegen wires it to the same enum: the entry's `name` is generated as `FlockAchievementId` (via a generated `JsonConverter`) instead of a raw string, and a `GetAchievementDetailsAsync(FlockAchievementId)` extension on `FlockConfigProvider` fetches that config and returns the matching entry. So you award and look up details with one enum. (The canonical `/achievement` resource is dashboard/OAuth2-only and isn't reachable by codegen's API key, which is why details live in a game config.) An entry whose `name` isn't a generated member throws on deserialize — re-sync after adding achievements.
+public static class GameplaySettings
+{
+    public static async Task ApplyAsync()
+    {
+        GameplayConfig gameplay = await FlockClient.Instance.Config.GetGameplayAsync();
+        Debug.Log($"Lives: {gameplay.MaxLives}, spawn rate: {gameplay.SpawnRate}, {gameplay.WelcomeText}");
+    }
+}
+```
 
-The generated player/shop/achievement command extensions are guarded by `#if !FLOCK_NO_PLAYER`; if you strip the player provider from an SDK build, add `FLOCK_NO_PLAYER` to your project's scripting defines too so the generated code and the runtime agree.
+Config properties are read-only (`{ get; private set; }`): the values come from the server (for a gameplay or feature
+config, resolved for the signed-in player), and the game never writes them back; only the dashboard changes a config, its
+patches and its overrides. A config with a tag also has `SourceTag`.
 
-Method names come from the template name on the backend (PascalCase). Field names follow each `TypedSchema.field_name`, also PascalCased.
+## Shops
 
-Re-run sync whenever:
-- You change the schema of a template in the dashboard
-- You change **Game Version** on the FlockConfig asset (the editor warns, and the build guard fails, if the generated `SchemasManifest.GameVersionId` doesn't match the baked version ID)
-- You add or remove templates
+Shops are generated into `Flock.Generated.Shops`: a `Get<Shop>ShopAsync()` method per shop (`GetMainShopShopAsync` for a
+shop named `MainShop`), a `FlockShopItemId` enum of every item, wallet or real money, and a `FlockFundId` enum of every
+shop currency, with methods that take them.
 
-Type mapping and headless CI (`FlockCodegenCli` Sync/Verify, drift detection) are documented in [ARCHITECTURE.md](../ARCHITECTURE.md).
+```csharp
+using System.Threading.Tasks;
+using Flock;
+using Flock.Generated.Shops;
+using Flock.Models;
+using UnityEngine;
+
+public static class TypedShop
+{
+    public static async Task ShowAsync()
+    {
+        // The shop as it is now: prices and status are always read live.
+        Shop shop = await FlockClient.Instance.Shop.GetMainShopShopAsync();
+        Debug.Log($"{shop.Name}: {shop.ShopItems.Count} items");
+    }
+
+    public static async Task BuyAndUseAsync()
+    {
+        // Any item, wallet or real money (a real-money one goes through the connected FlockStore).
+        PurchaseResult bought = await FlockClient.Instance.Shop.PurchaseAsync(FlockShopItemId.Potion);
+
+        // Use one the player holds.
+        ConsumeResult used = await FlockClient.Instance.Shop.ConsumeOneAsync(FlockShopItemId.Potion);
+
+        // The item's id, for the calls that take one.
+        bool ownsSword = await FlockClient.Instance.Shop.OwnsAsync(FlockShopItemId.Sword.ShopItemId());
+        Debug.Log($"Bought: {bought.IsPaid}, used: {used.Granted.Count} rewards, owns the sword: {ownsSword}");
+    }
+
+    // Adds currency to the player's wallet (the player template tagged "currency").
+    public static Task<PlayerData> GiveGoldAsync(int amount)
+    {
+        return FlockClient.Instance.Commands.AddGameFundsAsync(FlockFundId.Gold, amount);
+    }
+}
+```
+
+- `FlockFundId` has one member per currency code your shops' items are priced in, kept as written: letter case is not
+  changed, any character other than a letter or digit becomes `_`, and a code that starts with a digit gets a leading
+  `_` (`GOLD` gives `FlockFundId.GOLD`, `gold-coins` gives `FlockFundId.gold_coins`). `FlockFundId.Gold` above stands for
+  a currency whose code is `Gold`. The generated `AddGameFundsAsync(FlockFundId, amount)` finds the player's **wallet**, the record of the
+  player template tagged `currency`, whose id codegen saves at sync time. The string form,
+  `AddGameFundsAsync("Gold", 500)`, finds the tagged template while the game runs instead; both work.
+- Only identity (item ids and currencies) is generated. Prices and status are read live, so they never go stale in code.
+- After upgrading from 1.94.0 or earlier, sync again: a sync removes the `Shops/StoreItems/` folder 1.94.0 wrote for
+  real-money items, and adds `ConsumeOneAsync` and the public `ShopItemId()`.
+
+## Achievements
+
+Achievements are generated into `Flock.Generated.Achievements`: a `FlockAchievementId` enum whose members are the fields
+of the player template tagged `achievement` (PascalCased), and an `UnlockAchievementAsync(FlockAchievementId)` method on
+`FlockClient.Instance.Commands` that finds the player's achievements record for you.
+
+```csharp
+using System.Threading.Tasks;
+using Flock;
+using Flock.Generated.Achievements;
+using Flock.Models;
+
+public static class Achievements
+{
+    public static Task<PlayerData> WinFirstMatchAsync()
+    {
+        return FlockClient.Instance.Commands.UnlockAchievementAsync(FlockAchievementId.FirstWin);
+    }
+}
+```
+
+The string form, `UnlockAchievementAsync("first_win")`, stays public, but prefer the enum: a name that doesn't match the
+server is then caught when the game compiles instead of when it runs.
+
+If you keep achievement details (display name, description, reward, and so on) in a **game config tagged
+`achievement`** — one config holding a list of entries, each with a `name` field — codegen ties it to the same enum: each
+entry's `name` is read as a `FlockAchievementId`, and `FlockClient.Instance.Config.GetAchievementDetailsAsync(FlockAchievementId.FirstWin)`
+returns the matching entry. An entry whose `name` isn't a generated member throws when it is read: sync again after
+adding achievements.
+
+## Keeping the generated code current
+
+The generated player, shop and achievement methods are left out with `#if !FLOCK_NO_PLAYER`; if you strip the player
+provider from an SDK build, add `FLOCK_NO_PLAYER` to your project's scripting defines too, so the generated code and the
+SDK agree.
+
+Method names come from the template, config and shop names in the dashboard (PascalCase), and property names from each
+field's name, also PascalCased.
+
+Sync again whenever:
+- You change the fields of a template or config in the dashboard
+- You add or remove templates, configs, shops, items or achievements
+- You change **Game Version** in **Flock > Settings** (the editor warns, and with **Fail build if Game Version
+  unresolved** on, a build stops, while the generated code was made for another Game Version)
+
+Type mapping and syncing from the command line (`FlockCodegenCli` Sync/Verify, finding drift) are described in
+[ARCHITECTURE.md](../ARCHITECTURE.md).

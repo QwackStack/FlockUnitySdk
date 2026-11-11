@@ -65,13 +65,13 @@ namespace Flock.Editor.Codegen
                 }
             }
 
-            // Fund enum member -> currency name (distinct shop currency names).
+            // Fund enum member -> currency name (distinct game currencies the shops price in); a real-money currency is never a wallet fund.
             HashSet<string> fundMembers = new HashSet<string>();
             SortedSet<string> currencyNames = new SortedSet<string>(StringComparer.Ordinal);
             foreach (Shop shop in ordered)
                 if (shop.ShopItems != null)
                     foreach (ShopItem item in shop.ShopItems)
-                        if (item != null && !string.IsNullOrEmpty(item.Currency))
+                        if (item != null && !item.IsRealMoney && !string.IsNullOrEmpty(item.Currency))
                             currencyNames.Add(item.Currency);
 
             List<KeyValuePair<string, string>> fundByMember = new List<KeyValuePair<string, string>>();
