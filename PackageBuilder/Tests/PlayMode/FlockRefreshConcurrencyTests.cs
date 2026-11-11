@@ -16,6 +16,13 @@ namespace Flock.Tests.PlayMode
     // coroutine's finally), so a failed test can't leak the FlockClient singleton into the next one.
     public class FlockRefreshConcurrencyTests
     {
+        // A refresh still on its way would hand its answer to the next test's client.
+        [UnityTearDown]
+        public IEnumerator EveryRefreshIsAnsweredBeforeTheNextTest()
+        {
+            yield return FlockTestClient.UntilEveryRefreshIsAnswered();
+        }
+
         private FlockTestClient _h;
 
         [SetUp]

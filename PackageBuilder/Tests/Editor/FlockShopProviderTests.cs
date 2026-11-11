@@ -22,6 +22,13 @@ namespace Flock.Tests.Editor
     // Failed transaction.
     public class FlockShopProviderTests
     {
+        // A refresh still on its way would hand its answer to the next test's client.
+        [UnityTearDown]
+        public IEnumerator EveryRefreshIsAnsweredBeforeTheNextTest()
+        {
+            yield return FlockTestClient.UntilEveryRefreshIsAnswered();
+        }
+
         // ---- SHOP-01: shop/{id} answers its shop at the root, no {"result":...} envelope ----
         [Test]
         public void GetById_Success_ReturnsShop()

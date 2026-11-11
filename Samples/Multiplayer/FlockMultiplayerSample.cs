@@ -56,7 +56,8 @@ namespace Flock.Samples
 
         protected virtual void Awake()
         {
-            _deviceId = SystemInfo.deviceUniqueIdentifier;
+            // Left empty, sign-in uses the device id Flock keeps for this install.
+            _deviceId = string.Empty;
         }
 
         // A scene change gives the seat up too, so nobody waits on a player who can no longer play.
@@ -73,7 +74,7 @@ namespace Flock.Samples
             GUILayout.Space(6f);
             if (!FlockClient.IsInitialized)
             {
-                GUILayout.Label("Flock is not initialized.\n\nAdd a FlockBootstrap to the scene (Flock > Settings -> \"Add Flock Bootstrap to Scene\"), fill in your FlockConfig, then press Play.");
+                GUILayout.Label("Flock is not initialized.\n\nFill in Flock > Settings > Configuration (Api Key, Game Name, Game Version), press Resolve Game Version, then press Play. With Auto-Initialize On Load off (Advanced Settings), press Add to Scene on the Configuration tab first.");
                 GUILayout.EndArea();
                 return;
             }
@@ -93,8 +94,8 @@ namespace Flock.Samples
 
         private void DrawSignIn()
         {
-            // Two copies of a game on one computer share a device id, and so would be one player: change it in one of them.
-            GUILayout.Label("Device id (change it in a second copy on this computer):");
+            // Two copies of a game on one computer share the device id Flock keeps, and so would be one player: type another in one of them.
+            GUILayout.Label("Device id (empty uses this install's; type another in a second copy on this computer):");
             _deviceId = GUILayout.TextField(_deviceId ?? "", 64);
             if (GUILayout.Button("Sign In With This Device"))
                 _ = SignInAsync(_deviceId);
@@ -127,21 +128,23 @@ namespace Flock.Samples
                 GUILayout.Label(line);
         }
 
-        /// <summary>Signs in with a device id, registering it as a new player the first time Flock sees it.</summary>
+        /// <summary>Signs in with a device id (empty uses the one Flock keeps for this install), registering it as a new player the first time Flock sees it.</summary>
         public async Task SignInAsync(string deviceId)
         {
             Busy = true;
             Status = "Signing in...";
+            // A blank field passes no id, so Flock uses its own.
+            string id = string.IsNullOrWhiteSpace(deviceId) ? null : deviceId;
             try
             {
                 try
                 {
-                    await FlockClient.Instance.Authentication.LoginWithDeviceAsync(deviceId);
+                    await FlockClient.Instance.Authentication.LoginWithDeviceAsync(id);
                 }
                 // A device Flock has never seen is not a player yet, so it is registered, with no name: Flock keeps names unique.
                 catch (FlockException ex) when (ex.ErrorCode == FlockErrorCode.PlayerInvalidLoginCredentials)
                 {
-                    await FlockClient.Instance.Authentication.RegisterWithDeviceAsync(deviceId);
+                    await FlockClient.Instance.Authentication.RegisterWithDeviceAsync(id);
                 }
                 Status = "Signed in as " + FlockClient.Instance.CurrentPlayerId + ".";
             }

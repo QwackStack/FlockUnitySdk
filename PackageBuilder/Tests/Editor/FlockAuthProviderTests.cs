@@ -1,3 +1,5 @@
+using UnityEngine.TestTools;
+using System.Collections;
 using Flock.Logging;
 using System;
 using System.Collections.Generic;
@@ -22,6 +24,13 @@ namespace Flock.Tests.Editor
     // password-reset / email-verification / revoke / name-available methods. Hermetic — no backend.
     public class FlockAuthProviderTests
     {
+        // A refresh still on its way would hand its answer to the next test's client.
+        [UnityTearDown]
+        public IEnumerator EveryRefreshIsAnsweredBeforeTheNextTest()
+        {
+            yield return FlockTestClient.UntilEveryRefreshIsAnswered();
+        }
+
         // The test game's own sign-in (the editor keeps each game's apart).
         private static readonly string PrefAccessToken = FlockTestGame.AccessTokenPref;
         private static readonly string PrefRefreshToken = FlockTestGame.RefreshTokenPref;

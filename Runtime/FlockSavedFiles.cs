@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Text;
 #if UNITY_WEBGL && !UNITY_EDITOR
 using System.Runtime.InteropServices;
 #endif
@@ -21,6 +22,18 @@ namespace Flock
         internal static void WriteBytes(string path, byte[] bytes)
         {
             try { File.WriteAllBytes(path, bytes); }
+            finally { CopyToBrowserStorage(path); }
+        }
+
+        /// <summary>Makes a file that is not there yet and writes the text into it in one write; throws when one is already there, so of two writers exactly one makes it.</summary>
+        internal static void CreateNew(string path, string text)
+        {
+            byte[] bytes = new UTF8Encoding(false).GetBytes(text);
+            try
+            {
+                using (FileStream stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read))
+                    stream.Write(bytes, 0, bytes.Length);
+            }
             finally { CopyToBrowserStorage(path); }
         }
 

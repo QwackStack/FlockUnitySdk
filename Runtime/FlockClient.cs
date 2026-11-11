@@ -552,6 +552,16 @@ namespace Flock
             return true;
         }
 
+        /// <summary>True while any client in this process waits for the answer to a refresh it sent.</summary>
+        internal static bool AnyRefreshOnItsWay
+        {
+            get
+            {
+                lock (RefreshTokensOnTheirWay)
+                    return RefreshTokensOnTheirWay.Count > 0;
+            }
+        }
+
         // The answer still awaited for a refresh sent with this token, by any client in this process; null when there is none.
         private static Task RefreshOnItsWayWith(string refreshToken)
         {

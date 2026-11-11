@@ -152,6 +152,22 @@ namespace Flock.Tests.Editor
             }
         }
 
+        // Ids are compared letter for letter, so an answer about "PUR-1" is not one about "pur-1".
+        [TestCase("pur-2")]
+        [TestCase("PUR-1")]
+        public void GetPurchase_AnAnswerAboutAnotherPurchase_IsUnreadable(string answered)
+        {
+            FlockFakeTransport transport = Backend(FlockFakeTransport.Ok(Purchase(answered, "paid")));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+
+                FlockSerializationException unread = Assert.Throws<FlockSerializationException>(() => h.Run(() => h.Client.Shop.GetPurchaseAsync("pur-1")));
+
+                Assert.AreEqual(FlockErrorHints.NotFlocksAnswer, unread.Hint);
+            }
+        }
+
         [Test]
         public void GetPurchases_ByAStatusTheServerDoesNotHave_ReadsAsItsOwnCode_WithItsFix()
         {
@@ -289,8 +305,36 @@ namespace Flock.Tests.Editor
 
                 Assert.IsTrue(buying.IsCanceled, "Ended as cancelled: " + buying.Status);
                 Assert.AreEqual(readsAtSignOut, transport.CountTo(FlockEndpoints.ShopPurchaseById("pur-1")), "Nothing is read for a sign-in that ended.");
+                SaysAPaymentIsDeliveredUnreported(buying);
                 checkout.Dispose();
             }
+        }
+
+        [UnityTest]
+        public IEnumerator DisposingWhileWaiting_EndsTheWait_SayingAPaymentIsDeliveredUnreported()
+        {
+            FlockFakeTransport transport = Backend(FlockFakeTransport.Ok(Purchase("pur-1", "pending")));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                FlockStore checkout = Connect(h, new List<string>());
+                Task<PurchaseResult> buying = h.Client.Shop.PurchaseAsync("sword");
+                yield return Frames(h, () => transport.CountTo(FlockEndpoints.ShopPurchaseById("pur-1")) >= 1, "The checkout was read");
+
+                checkout.Dispose();
+                yield return Frames(h, () => buying.IsCompleted, "The wait ended with the connection");
+
+                Assert.IsTrue(buying.IsCanceled, "Ended as cancelled: " + buying.Status);
+                SaysAPaymentIsDeliveredUnreported(buying);
+            }
+        }
+
+        // The sign-in's search lists only open checkouts, so one paid after its wait ended is delivered and never reported.
+        private static void SaysAPaymentIsDeliveredUnreported(Task cancelled)
+        {
+            OperationCanceledException why = Assert.Catch<OperationCanceledException>(() => cancelled.GetAwaiter().GetResult());
+            StringAssert.Contains("Flock delivers it without PurchaseCompleted", why.Message);
+            StringAssert.Contains("Shop.GetPurchasesAsync(PurchaseResultStatuses.Paid)", why.Message);
         }
 
         [UnityTest]
@@ -434,6 +478,7 @@ namespace Flock.Tests.Editor
                 yield return FlockTestWait.Until(() => buying.IsCompleted, "The wait ended with Flock");
 
                 Assert.IsTrue(buying.IsCanceled);
+                SaysAPaymentIsDeliveredUnreported(buying);
             }
             finally
             {
@@ -488,8 +533,9 @@ namespace Flock.Tests.Editor
             }
         }
 
+        // The checkout's page was opened, so the wait ends unknown, saying Flock cannot deliver a payment made there.
         [UnityTest]
-        public IEnumerator AReadTheServerRefusesForGood_EndsTheWaitWithItsCode()
+        public IEnumerator ACheckoutFlockDidNotKeep_EndsTheWaitUnknown_SayingNotToPayThere()
         {
             FlockFakeTransport transport = Backend(FlockFakeTransport.Coded(404, "shop.purchase_not_found"));
             TimeSpan savedWithin = FlockWebCheckout.NewCheckoutSavedWithin;
@@ -506,7 +552,14 @@ namespace Flock.Tests.Editor
                     yield return Frames(h, () => buying.IsCompleted, "The wait ended");
                     yield return SomeFrames(h, 5);
 
-                    Assert.AreEqual(FlockErrorCode.ShopPurchaseNotFound, (FailureOf(buying) as FlockException)?.ErrorCode);
+                    FlockException notKept = FailureOf(buying) as FlockException;
+                    Assert.IsNotNull(notKept, FailureOf(buying)?.ToString());
+                    Assert.AreEqual(FlockErrorCode.ShopPurchaseNotFound, notKept.ErrorCode);
+                    Assert.IsTrue(notKept.OutcomeUnknown);
+                    Assert.AreEqual("Purchase shop item", notKept.Operation);
+                    StringAssert.Contains("Flock did not keep the web checkout it opened", notKept.Message);
+                    StringAssert.Contains("should not pay on the page", notKept.Hint);
+                    StringAssert.Contains("Buy again", notKept.Hint);
                     Assert.AreEqual(1, transport.CountTo(FlockEndpoints.ShopPurchaseById("pur-1")), "Not read again after the server's refusal.");
                     checkout.Dispose();
                 }
@@ -514,6 +567,179 @@ namespace Flock.Tests.Editor
             finally
             {
                 FlockWebCheckout.NewCheckoutSavedWithin = savedWithin;
+            }
+        }
+
+        // A proxy's 403 says nothing of the payment: the page may still be paid, so the wait ends unknown, and a restore reads the checkout again.
+        [UnityTest]
+        public IEnumerator AReadStoppedBeforeTheCheckoutEnded_EndsTheWaitUnknown_AndARestoreReadsItAgain()
+        {
+            FlockFakeTransport transport = Backend(FlockFakeTransport.Status(403, "<html>Forbidden</html>"), FlockFakeTransport.Ok(Purchase("pur-1", "paid")));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                FlockStore checkout = Connect(h, new List<string>());
+                int completed = 0;
+                checkout.PurchaseCompleted += (item, result) => completed++;
+
+                Task<PurchaseResult> buying = h.Client.Shop.PurchaseAsync("sword");
+                yield return Frames(h, () => buying.IsCompleted, "The wait ended");
+                yield return SomeFrames(h, 5);
+
+                FlockException unknown = FailureOf(buying) as FlockException;
+                Assert.IsNotNull(unknown, FailureOf(buying)?.ToString());
+                Assert.IsNotInstanceOf<FlockStoreException>(unknown, "Not \"nothing was charged\".");
+                Assert.IsTrue(unknown.OutcomeUnknown);
+                Assert.AreEqual("Purchase shop item", unknown.Operation);
+                Assert.AreEqual(403, unknown.StatusCode);
+                StringAssert.Contains("Shop.GetPurchasesAsync(PurchaseResultStatuses.Pending)", unknown.Hint);
+                Assert.AreEqual(1, transport.CountTo(FlockEndpoints.ShopPurchaseById("pur-1")), "Not read again after the refusal.");
+                Assert.AreEqual(0, completed);
+
+                transport.On(FlockEndpoints.ShopPurchases + "?", FlockFakeTransport.Ok(OpenList(Purchase("pur-1", "pending"))));
+                h.Run(() => checkout.RestoreAsync());
+                yield return Frames(h, () => completed == 1, "The checkout the restore found still open was reported once paid");
+                checkout.Dispose();
+            }
+        }
+
+        // As for any purchase no answer settled, the wallet read after it is the server's, as the fix to read it again needs.
+        [UnityTest]
+        public IEnumerator AReadStoppedBeforeTheCheckoutEnded_DropsTheCachedWallet()
+        {
+            FlockFakeTransport transport = Backend(FlockFakeTransport.Status(403, "<html>Forbidden</html>"));
+            transport.On(FlockEndpoints.PlayerTemplate, FlockFakeTransport.Ok(
+                "{\"error\":{\"code\":null},\"response\":{\"message\":null,\"code\":null},\"result\":[{\"id\":\"tpl-wallet\",\"name\":\"currencies\",\"schema\":[],\"data\":[],\"tag\":\"currency\"}]}"));
+            transport.OnSequence("player_data?page=", WalletPage(0), WalletPage(100));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                Assert.AreEqual(0, h.Run(() => h.Client.Player.GetWalletAsync()).BalanceOf("Gems"));
+                FlockStore checkout = Connect(h, new List<string>());
+
+                Task<PurchaseResult> buying = h.Client.Shop.PurchaseAsync("sword");
+                yield return Frames(h, () => buying.IsCompleted, "The wait ended");
+
+                Assert.IsTrue(buying.IsFaulted, "Ended with the read stopped: " + buying.Status);
+                Assert.AreEqual(100, h.Run(() => h.Client.Player.GetWalletAsync()).BalanceOf("Gems"), "The server's balance, not the cached 0.");
+                checkout.Dispose();
+            }
+        }
+
+        // The server's statuses are an open set: one this SDK does not know yet is read again, never taken as the end.
+        [UnityTest]
+        public IEnumerator Buy_AStatusNotKnownHere_IsReadAgain_UntilPaid()
+        {
+            FlockFakeTransport transport = Backend(FlockFakeTransport.Ok(Purchase("pur-1", "pending")), FlockFakeTransport.Ok(Purchase("pur-1", "authorized")),
+                FlockFakeTransport.Ok(Purchase("pur-1", "paid")));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                FlockStore checkout = Connect(h, new List<string>());
+
+                Task<PurchaseResult> buying = h.Client.Shop.PurchaseAsync("sword");
+                yield return Frames(h, () => buying.IsCompleted, "The purchase ended");
+
+                Assert.IsFalse(buying.IsFaulted, FailureOf(buying)?.ToString());
+                Assert.IsTrue(buying.Result.IsPaid);
+                Assert.AreEqual(3, transport.CountTo(FlockEndpoints.ShopPurchaseById("pur-1")));
+                checkout.Dispose();
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator Buy_ACheckoutRefunded_ThrowsWithReasonUnknown_AndReportsNothing()
+        {
+            FlockFakeTransport transport = Backend(FlockFakeTransport.Ok(Purchase("pur-1", "pending")), FlockFakeTransport.Ok(Purchase("pur-1", PurchaseResultStatuses.Refunded)));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                FlockStore checkout = Connect(h, new List<string>());
+                int completed = 0;
+                checkout.PurchaseCompleted += (item, result) => completed++;
+
+                Task<PurchaseResult> buying = h.Client.Shop.PurchaseAsync("sword");
+                yield return Frames(h, () => buying.IsCompleted, "The purchase ended");
+                yield return SomeFrames(h, 5);
+
+                FlockStoreException refunded = FailureOf(buying) as FlockStoreException;
+                Assert.IsNotNull(refunded, FailureOf(buying)?.ToString());
+                Assert.AreEqual(FlockStoreFailureReasons.Unknown, refunded.Reason);
+                Assert.AreEqual(2, transport.CountTo(FlockEndpoints.ShopPurchaseById("pur-1")), "Read until it ended, then no more.");
+                Assert.AreEqual(0, completed);
+                checkout.Dispose();
+            }
+        }
+
+        // An answer about another purchase is not this checkout's: it is read again rather than reported as paid.
+        [UnityTest]
+        public IEnumerator Buy_AReadAnsweringAboutAnotherPurchase_IsReadAgain_AndEndsWithItsOwn()
+        {
+            FlockFakeTransport transport = Backend(FlockFakeTransport.Ok(Purchase("pur-2", "paid")), FlockFakeTransport.Ok(Purchase("pur-1", "pending")),
+                FlockFakeTransport.Ok(Purchase("pur-1", "paid")));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                FlockStore checkout = Connect(h, new List<string>());
+                int completed = 0;
+                checkout.PurchaseCompleted += (item, result) => completed++;
+
+                Task<PurchaseResult> buying = h.Client.Shop.PurchaseAsync("sword");
+                yield return Frames(h, () => buying.IsCompleted, "The purchase ended");
+                yield return SomeFrames(h, 5);
+
+                Assert.IsFalse(buying.IsFaulted, FailureOf(buying)?.ToString());
+                Assert.AreEqual("pur-1", buying.Result.PurchaseId);
+                Assert.AreEqual(3, transport.CountTo(FlockEndpoints.ShopPurchaseById("pur-1")));
+                Assert.AreEqual(1, completed);
+                checkout.Dispose();
+            }
+        }
+
+        // A session restore can raise the sign-in event again for the same sign-in: the checkouts it saw end stay ended.
+        [UnityTest]
+        public IEnumerator ASecondSignInEventForTheSameSignIn_DoesNotReadAPaidCheckoutAgain()
+        {
+            FlockFakeTransport transport = Backend(FlockFakeTransport.Ok(Purchase("pur-1", "pending")), FlockFakeTransport.Ok(Purchase("pur-1", "paid")));
+            transport.On(FlockEndpoints.ShopPurchases + "?", FlockFakeTransport.Ok(OpenList(Purchase("pur-1", "pending"))));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                FlockStore checkout = Connect(h, new List<string>());
+                int completed = 0;
+                checkout.PurchaseCompleted += (item, result) => completed++;
+                yield return Frames(h, () => completed == 1, "The checkout found at connect was reported once paid");
+                int listed = transport.CountTo(FlockEndpoints.ShopPurchases + "?");
+
+                // The list still shows it open, as one answered before it was paid would.
+                FlockEvents.InvokeAuthenticated(new FlockAuthInfo("player-a", FlockAuthMethod.Device));
+                yield return Frames(h, () => transport.CountTo(FlockEndpoints.ShopPurchases + "?") == listed + 1, "The open checkouts were listed again");
+                yield return SomeFrames(h, 20);
+
+                Assert.AreEqual(2, transport.CountTo(FlockEndpoints.ShopPurchaseById("pur-1")), "Not read again.");
+                Assert.AreEqual(1, completed, "Reported once.");
+                checkout.Dispose();
+            }
+        }
+
+        // Infinite or too long for the client's clock: read every 3 seconds, neither at once nor never.
+        [UnityTest]
+        public IEnumerator ACheckEveryTooLongToCount_ReadsAtTheDefaultThreeSeconds()
+        {
+            FlockFakeTransport transport = Backend(FlockFakeTransport.Ok(Purchase("pur-1", "paid")));
+            using (FlockTestClient h = FlockTestClient.Create(transport))
+            {
+                h.LoginAs("player-a");
+                FlockStore checkout = h.Run(() => FlockStore.ConnectAsync(null, null, new FlockStoreOptions { OpenPaymentPage = _ => { }, CheckEvery = TimeSpan.MaxValue }, CancellationToken.None));
+                System.Diagnostics.Stopwatch since = System.Diagnostics.Stopwatch.StartNew();
+
+                Task<PurchaseResult> buying = h.Client.Shop.PurchaseAsync("sword");
+                yield return Frames(h, () => buying.IsCompleted, "Read at the default interval");
+
+                Assert.IsFalse(buying.IsFaulted, FailureOf(buying)?.ToString());
+                Assert.IsTrue(buying.Result.IsPaid);
+                Assert.GreaterOrEqual(since.Elapsed.TotalSeconds, 2.2, "The first read comes 3 seconds after, give or take a quarter.");
+                checkout.Dispose();
             }
         }
 

@@ -5,14 +5,14 @@ The Flock Unity SDK provides access to Flock's game backend services from Unity 
 ## Contents
 
 - [Features](#features)
-- [Installation](#installation)
 - [Requirements](#requirements)
+- [Installation](#installation)
 - [Setup](#setup)
   - [Editor Configuration](#editor-configuration)
-  - [Push notifications: dashboard setup](#push-notifications-dashboard-setup)
   - [Automatic Initialization](#automatic-initialization-default)
   - [Drop-in Initialization](#drop-in-initialization)
   - [Code-Based Configuration](#code-based-configuration)
+  - [Push notifications: dashboard setup](#push-notifications-dashboard-setup)
 - [Quick Start](#quick-start)
 - [Feature guides](#feature-guides)
 - [Multiplayer](#multiplayer)
@@ -28,49 +28,194 @@ The Flock Unity SDK provides access to Flock's game backend services from Unity 
 - Account flows: password reset, email verification, display-name availability check
 - Token refresh with automatic silent retry, plus a session-expired event
 - Server-side token revocation (kill a stolen refresh token — most game backends don't expose this to the client)
-- Game configuration — typed accessors generated from your schemas (via codegen)
-- Game and game version metadata (lookup by ID or name)
+- Game configuration — typed accessors generated from your schemas (via codegen), with the values resolved for the signed-in player (patches, segment and player overrides)
+- Game and game version metadata
 - Player data — read with pagination; typed player-data and template accessors via codegen
 - Shop (browse shops, items, one purchase call for every item: from the wallet, or for real money through FlockStore, the App Store or Google Play with Unity IAP 5 on a phone and a web checkout (Stripe, Tap or Moyasar) on other platforms; inventory and using items, the player's wallet, restore, redeem store purchases from your own store code, a shop sample)
 - Leaderboards — standings, the player's own rank, and an around-me slice, by board name
 - Game commands (server-side operations: update player data, add funds)
 - Player ban lookup
 - Notification inbox (list, unread count, mark read), server-side scheduling of dashboard-authored templates, and push device-token registration
-- Asset listing and lookup by ID
+- Asset listing and lookup by ID or name
 - Multiplayer — parties, matchmaking and sessions, with players connected over Netcode for GameObjects 1.x or 2.x, directly or through Flock's relay, and a new host taking over when the host leaves
 - Analytics (gameplay events, session tracking, transactions, diagnostics — no-op safe when disabled)
 - Automatic retry with exponential backoff
 - Offline-safe init (no network at startup) — plus disk-cached static content that keeps serving without network after one online session
-- JWT token management
-- Strongly typed codegen for player templates, game configs, and game commands (via the Codegen tab in **Flock > Settings**)
-- Hands-off startup — the SDK auto-initializes from your config at launch (or use the drop-in `FlockBootstrap` component, or call `Create` yourself)
-
-## Installation
-
-The SDK is distributed through the Flock website — download the latest release, then add it to your Unity project one of two ways:
-
-**Download: [github.com/QwackStack/FlockUnitySdk/releases](https://github.com/QwackStack/FlockUnitySdk/releases)**
-
-- **Import the `.unitypackage`** — double-click the downloaded file (or use **Assets > Import Package > Custom Package**) and import all items.
+- Sign-in token management
+- Strongly typed codegen for player templates, game configs, shops and achievements (the **Code Generation** tab in **Flock > Settings**)
+- Hands-off startup — the SDK initializes itself from your config at launch (or use the drop-in `FlockBootstrap` component, or call `Create` yourself)
 
 ## Requirements
 
 - **Unity 2021.3 or newer.**
-- **Newtonsoft Json for Unity** (`com.unity.nuget.newtonsoft-json`, 3.0.2+) — the SDK depends on it for serialization. Installing through the Package Manager git URL resolves this automatically; if you import the `.unitypackage` instead, add it first via **Window > Package Manager > + → Add package by name** using `com.unity.nuget.newtonsoft-json`.
+- **Newtonsoft Json for Unity** (`com.unity.nuget.newtonsoft-json`, 3.0.2 or newer) — the SDK uses it to read and write JSON.
+  An install from a Git URL adds it for you; before importing the `.unitypackage`, add it yourself: **Window > Package
+  Manager**, **+**, **Add package by name**, `com.unity.nuget.newtonsoft-json`.
 - **Netcode for GameObjects 1.x or 2.x** (`com.unity.netcode.gameobjects`) — only to connect players in multiplayer. The SDK's netcode support compiles only when it is installed; parties, matchmaking and sessions work without it.
+
+## Installation
+
+Add the SDK to your Unity project in one of two ways.
+
+**From a `.unitypackage`.** Download `FlockSDK-<version>.unitypackage` from the latest release at
+[github.com/QwackStack/FlockUnitySdk/releases](https://github.com/QwackStack/FlockUnitySdk/releases), then double-click it
+(or use **Assets > Import Package > Custom Package**) and import every item. Add Newtonsoft Json first (see
+[Requirements](#requirements)).
+
+**From a Git URL.** Open **Window > Package Manager**, click **+**, choose **Add package from git URL**, and enter:
+
+```
+https://github.com/QwackStack/FlockUnitySDK.git#v1.102.0
+```
+
+The part after `#` is the release tag; change it to the version you want. Git must be installed on your computer for this
+way. The Package Manager adds Newtonsoft Json for you, and updating the SDK is a matter of changing the tag.
 
 ## Setup
 
 ### Editor Configuration
 
-Open **Flock > Settings** in the Unity menu bar. The window is a view of the `FlockConfig` ScriptableObject — edits save straight into the asset (no separate Save step). Required values:
+Open **Flock > Settings** in the Unity menu bar. On the **Configuration** tab, the **Setup** card lists what is still
+missing; click **Create** on its **FlockConfig asset** row if your project has no `FlockConfig` asset yet. Then fill in the
+**API Credentials** card:
 
-- **API URL** — Flock API endpoint (default: `https://api-flock.qwacks.com`)
-- **API Key** — Your Flock API key
-- **Game Name** — Your game's name from the Flock dashboard
-- **Game Version** — Your game version name (the matching ID is resolved from the backend at edit time and baked into the asset, so init makes no network call)
+- **Api Url** — the Flock API address (default: `https://api-flock.qwacks.com`)
+- **Api Key** — your game's API key, from the Flock dashboard
+- **Game Name** — your game's name, as it reads in the Flock dashboard
+- **Game Version** — the name of the Game Version this build plays (for example `1.0.0`)
 
-The asset is saved to `Assets/Resources/FlockConfig.asset` so it loads in builds via `Resources.Load<FlockConfigAsset>("FlockConfig")`. The same window has a Codegen tab that runs Sync Schemas (see the [Codegen guide](Docs~/codegen.md)).
+When the four are set, the window resolves the Game Version by itself and shows its ID under **Resolved Version ID**; click
+**Resolve Game Version** to do it again. The ID is saved into the asset, so starting the SDK makes no network call.
+
+![The Flock Settings window, Configuration tab, with the API Credentials card filled in](Docs~/images/flock-settings-configuration.png)
+*Flock > Settings, Configuration tab: the Setup card at the top, the API Credentials card below it with Api Url, Api Key, Game Name and Game Version filled in, and the Resolved Version ID shown after Resolve Game Version.*
+
+The window edits `Assets/Resources/FlockConfig.asset` directly, so there is no Save button; the SDK loads that asset in a
+build. The **Code Generation** tab runs **Sync Schemas** (see the [Codegen guide](Docs~/codegen.md)), and the
+**Advanced Settings** tab holds analytics, caching, retry and multiplayer settings.
+
+### Automatic Initialization (default)
+
+The SDK starts itself — no component, no init code. **Auto-Initialize On Load** is on by default (**Advanced Settings** tab,
+**Tools** card), so the SDK initializes from `FlockConfig` before the first scene loads and restores the player's saved
+sign-in in the background. Use `FlockClient.Instance` whenever you need it.
+
+To react when the saved sign-in has been checked, subscribe to `FlockEvents.OnSessionRestored`. The restore may finish
+before your script subscribes, and only `OnInitialized` and `OnInitializationFailed` are replayed to late subscribers, so
+check `FlockClient.IsRestoringSession` too:
+
+```csharp
+using Flock;
+using UnityEngine;
+
+public class StartScreen : MonoBehaviour
+{
+    private void OnEnable()
+    {
+        FlockEvents.OnSessionRestored += HandleSessionRestored;
+
+        // The restore may already be over: then read its result now.
+        if (FlockClient.IsInitialized && !FlockClient.IsRestoringSession)
+            HandleSessionRestored(FlockClient.Instance.IsAuthenticated);
+    }
+
+    private void OnDisable()
+    {
+        FlockEvents.OnSessionRestored -= HandleSessionRestored;
+    }
+
+    private void HandleSessionRestored(bool signedIn)
+    {
+        Debug.Log(signedIn ? "Welcome back" : "Show the login screen");
+    }
+}
+```
+
+To start the SDK yourself — for example after a splash screen or once the player accepts your terms — turn
+**Auto-Initialize On Load** off and use one of the two ways below.
+
+> **Init is fail-fast.** A bad config makes `Create` throw (the automatic start catches and logs it instead of crashing
+> the game). Either way the SDK stays uninitialized and `FlockClient.Instance` throws until a successful init — so check
+> `FlockClient.IsInitialized`, read `FlockClient.InitializationError`, or handle `FlockEvents.OnInitializationFailed`.
+
+### Drop-in Initialization
+
+With **Auto-Initialize On Load** off, a `FlockBootstrap` component can start the SDK from a scene. On the **Configuration**
+tab's **Setup** card, click **Add to Scene** on the **Scene bootstrap** row (or add a `FlockBootstrap` component to a GameObject
+yourself). It holds a reference to your `FlockConfig` asset and starts the SDK in `Awake`; with **Initialize On Awake**
+off, it waits for your call:
+
+```csharp
+using System;
+using Flock;
+using UnityEngine;
+
+public class SplashScreen : MonoBehaviour
+{
+    [SerializeField] private FlockBootstrap bootstrap;   // drag the scene's FlockBootstrap here
+
+    private void OnEnable()
+    {
+        bootstrap.OnInitialized += HandleInitialized;
+        bootstrap.OnInitializationFailed += HandleInitializationFailed;
+    }
+
+    private void OnDisable()
+    {
+        bootstrap.OnInitialized -= HandleInitialized;
+        bootstrap.OnInitializationFailed -= HandleInitializationFailed;
+    }
+
+    // Call this once the splash screen is done (with Initialize On Awake off).
+    public void StartFlock()
+    {
+        bootstrap.Initialize();
+    }
+
+    private void HandleInitialized()
+    {
+        Debug.Log("Flock SDK ready");
+    }
+
+    private void HandleInitializationFailed(Exception error)
+    {
+        Debug.LogException(error);
+    }
+}
+```
+
+The component never copies values from the asset; it always reads through the reference, so editing the asset is enough
+to change what it does. Place it in a boot scene loaded once at startup, and leave **Dont Destroy On Load** on.
+
+### Code-Based Configuration
+
+For full control, turn **Auto-Initialize On Load** off and create the client yourself, **once**, at startup. After `Create`
+returns, call everything through `FlockClient.Instance` from anywhere; reading `FlockClient.Instance` before then throws a
+`FlockException`.
+
+```csharp
+using Flock;
+using Flock.Config;
+using UnityEngine;
+
+public class FlockStartup : MonoBehaviour
+{
+    private async void Awake()
+    {
+        FlockConfigAsset configAsset = Resources.Load<FlockConfigAsset>("FlockConfig");
+
+        // Synchronous, with no network call: the Game Version ID was saved into the asset by Flock > Settings.
+        FlockClient.Create(configAsset.ToInitConfig());
+
+        // Create alone does not bring back the saved sign-in; this does (and raises FlockEvents.OnSessionRestored).
+        bool signedIn = await FlockClient.Instance.Authentication.TryRestoreSessionAsync();
+        Debug.Log(signedIn ? "Welcome back" : "Show the login screen");
+    }
+}
+```
+
+`ToInitConfig()` returns a `FlockInitConfig`; change its properties (for example `EnableAssetCache`) before passing it to
+`Create` to set what the editor window does not show.
 
 ### Push notifications: dashboard setup
 
@@ -83,84 +228,67 @@ The notification **inbox** and **scheduling** need nothing beyond the settings a
 
 Until a provider reads **Configured**, device tokens register successfully and nothing is ever delivered on that platform. That is the usual cause of "push is broken" — the client reports success because registration genuinely succeeded.
 
-Scheduling also needs a **template** to schedule: author one under **Marketing > Templates** with its title, body, locale, channels, and any `{placeholders}` you fill at send time. `ScheduleAsync` takes the template's **name**.
-
-### Automatic Initialization (default)
-
-The SDK starts itself — no component, no init code. With `FlockConfig` set up (above), **Auto-Initialize On Load** is on by default, so the SDK initializes from `Assets/Resources/FlockConfig.asset` before the first scene loads and restores a saved session in the background. Just use `FlockClient.Instance` when you need it.
-
-```csharp
-using Flock;
-
-// Nothing to call at startup. Optionally react to the events (safe to subscribe anytime):
-FlockEvents.OnInitialized     += ()       => Debug.Log("Flock SDK ready");
-FlockEvents.OnSessionRestored += signedIn => Debug.Log(signedIn ? "Session resumed" : "Show login");
-```
-
-To drive init yourself — e.g. to defer past a splash screen or EULA — turn **Auto-Initialize On Load** off (Flock > Settings → Advanced Settings → Tools), then use one of the options below.
-
-> **Init is fail-fast.** A bad config makes `Create` throw (the auto-init path catches and logs it instead of crashing startup). Either way the SDK stays uninitialized and `FlockClient.Instance` throws until a successful init — so guard with `FlockClient.IsInitialized`, inspect `FlockClient.InitializationError`, or handle `FlockEvents.OnInitializationFailed`.
-
-### Drop-in Initialization
-
-Prefer a scene component (or turned auto-init off)? Click **Add Flock Bootstrap to Scene** in the editor window (or add a `FlockBootstrap` component to a GameObject yourself). The component holds a reference to your `FlockConfig` asset and calls `FlockClient.Create(asset.ToInitConfig())` in `Awake`.
-
-```csharp
-// Optional: gate init or react to result
-var bootstrap = FindObjectOfType<FlockBootstrap>();
-bootstrap.OnInitialized += () => Debug.Log("Flock SDK ready");
-bootstrap.OnInitializationFailed += ex => Debug.LogError(ex);
-
-// Or trigger init manually if you turned off "Initialize On Awake"
-bootstrap.Initialize();
-```
-
-The component never copies values from the asset — it always reads through the reference, so editing the asset (here or in the inspector) is enough to change runtime behavior. Recommended pattern: place the bootstrap in a Boot scene loaded once at startup, leave **Don't Destroy On Load** on.
-
-### Code-Based Configuration
-
-For full manual control, turn **Auto-Initialize On Load** off and create the client yourself:
-
-> **Important:** the SDK must be initialized **once** at startup before any
-> feature accesses it. After `Create` returns, call everything via
-> `FlockClient.Instance` from anywhere in your project. Accessing
-> `FlockClient.Instance` before init throws a `FlockException`.
-
-```csharp
-var configAsset = Resources.Load<FlockConfigAsset>("FlockConfig");
-
-// Create is synchronous and makes no network call. The Game Version ID was
-// resolved at edit time (Flock > Settings) and baked into FlockConfig, applied
-// to every request; init stores the singleton in FlockClient.Instance.
-FlockClient.Create(configAsset.ToInitConfig());
-
-// Raw Create does NOT resume a saved session — unlike Auto-Initialize On Load and
-// FlockBootstrap, which restore it for you. If you persist sessions, do it yourself
-// (this drives FlockClient.IsRestoringSession and FlockEvents.OnSessionRestored):
-bool signedIn = await FlockClient.Instance.Authentication.TryRestoreSessionAsync();
-
-// Use anywhere — no need to pass the client around.
-var response = await FlockClient.Instance.Authentication.LoginWithEmailAsync(email, password);
-```
+Scheduling also needs a **template** to schedule: author one under **Marketing > Templates** with its title, body, locale, channels, and any `{placeholders}` you fill at send time. `ScheduleAsync` takes the template's **name**. See the [Notifications guide](Docs~/notifications.md).
 
 ## Quick Start
 
-The shortest path from zero to reading data — initialize once at startup, log a player in, then read something back. Every feature follows the same pattern; see the [Feature guides](#feature-guides) for the full surface.
+The shortest path from zero to reading data: wait for the saved sign-in to be checked, sign the player in with this
+device (registering it the first time), then read something back. Add this component to a GameObject in your first scene
+and press Play.
 
 ```csharp
+using System.Threading.Tasks;
 using Flock;
+using Flock.Exceptions;
+using Flock.Models;
+using UnityEngine;
 
-// 1. With Auto-Initialize On Load on (the default), the SDK is already running by the time
-//    your scene starts — just use FlockClient.Instance. (Opted out? Call
-//    FlockClient.Create(Resources.Load<FlockConfigAsset>("FlockConfig").ToInitConfig()) once first.)
+public class FlockQuickStart : MonoBehaviour
+{
+    private async void Start()
+    {
+        try
+        {
+            // The SDK started itself before this scene; wait while it brings back the saved sign-in.
+            while (FlockClient.IsRestoringSession)
+                await Task.Yield();
 
-// 2. Log the player in. Auth methods throw on failure.
-await FlockClient.Instance.Authentication.LoginWithDeviceAsync("device-uuid");
+            if (!FlockClient.Instance.IsAuthenticated)
+                await SignInWithThisDeviceAsync();
 
-// 3. Read something back — call any service via FlockClient.Instance.
-var game = await FlockClient.Instance.Game.GetGameAsync();
-Debug.Log($"Signed in as {FlockClient.Instance.CurrentPlayerId}, playing {game.Name}");
+            GameSchema game = await FlockClient.Instance.Game.GetGameAsync();
+            Debug.Log($"Signed in as {FlockClient.Instance.CurrentPlayerId}, playing {game.Name}");
+        }
+        catch (FlockException ex)
+        {
+            // The message says what went wrong and, on its Fix: line, what to do.
+            Debug.LogError(ex.Message);
+        }
+    }
+
+    // With no id, both calls use the device id the SDK keeps for this install, so the same player comes back every launch.
+    private static async Task SignInWithThisDeviceAsync()
+    {
+        try
+        {
+            await FlockClient.Instance.Authentication.LoginWithDeviceAsync();
+        }
+        catch (FlockException ex) when (ex.ErrorCode == FlockErrorCode.PlayerInvalidLoginCredentials)
+        {
+            // First launch on this device: make the account, which also signs the player in.
+            await FlockClient.Instance.Authentication.RegisterWithDeviceAsync();
+        }
+    }
+}
 ```
+
+The device id is `Authentication.ThisDeviceId`: the SDK makes it the first time it is needed and keeps it in the game's
+saved files. A new one comes after a reinstall, clearing the app's data or deleting the file, and on WebGL after clearing
+the site's data, in a private window, or when the game is served from another page address; restoring a phone from a
+backup can bring the old one back. If your game already signs players in with an id of its own (such as
+`SystemInfo.deviceUniqueIdentifier`), keep passing that id, or those players get a new account; see
+[Which device id](Docs~/authentication.md#signing-a-player-in). Auth calls throw on failure, so the `catch` sees every
+problem. The `Samples/QuickStart` folder has the same steps behind buttons.
 
 ## Feature guides
 
@@ -169,12 +297,12 @@ Per-feature usage and examples live in their own guides:
 | Guide | Covers |
 |-------|--------|
 | [Authentication](Docs~/authentication.md) | Login/register for every provider, account linking/unlinking, logout, token refresh/revocation, password reset, email verification, session expiry |
-| [Game & Config](Docs~/game-config.md) | Typed game-config accessors, game/version metadata |
+| [Game & Config](Docs~/game-config.md) | Typed game-config accessors, values for the signed-in player, game/version metadata |
 | [Player Data & Game Commands](Docs~/player-data.md) | Reads, typed template accessors, update commands, funds, achievements, bans |
 | [Shop](Docs~/shop.md) | Shops, items, purchase (money-safety contract), a shop screen (wallet, owned items, what the player can afford), real-money items, store purchases, buying with real money (Unity IAP 5 on a phone, a web checkout elsewhere), player inventory |
 | [Leaderboards](Docs~/leaderboards.md) | Standings, my-rank, around-me by board name; windows, board config, score formatting |
 | [Assets](Docs~/assets.md) | Listing/lookup, typed downloads, disk cache, preloading |
-| [Notifications](Docs~/notifications.md) | Player inbox, unread badge event, scheduling a template for later, pending-schedule tracking |
+| [Notifications](Docs~/notifications.md) | Player inbox, unread badge event, scheduling a template for later, pending-schedule tracking, push device tokens |
 | [Multiplayer](Docs~/multiplayer.md) | Parties, matchmaking, sessions, connecting players over Netcode for GameObjects, Flock's relay and direct paths, host changes, other networking |
 | [Analytics](Docs~/analytics.md) | Gameplay events, sessions, transactions, diagnostics, exception capture, consent, unexpected-termination detection |
 | [SDK Events](Docs~/events.md) | The `FlockEvents` hub — lifecycle, auth, and session events |
@@ -190,44 +318,79 @@ players over Netcode for GameObjects: directly on the host's network, through Fl
 the host leaves, another player takes over.
 
 ```csharp
-FlockMultiplayerProvider multiplayer = FlockClient.Instance.Multiplayer;
+using System.Threading.Tasks;
+using Flock;
+using Flock.Providers;
+using Unity.Netcode;
+using UnityEngine;
 
-// One player hosts and reads out the code; a friend joins it.
-FlockMultiplayerSession session = await multiplayer.HostSessionAsync();
-joinCodeLabel.text = session.JoinCode;
-// ...on the friend's game: FlockMultiplayerSession session = await multiplayer.JoinSessionAsync(typedCode);
+public class PlayWithAFriend : MonoBehaviour
+{
+    // One player hosts and reads out the code.
+    public async Task HostAsync()
+    {
+        FlockMultiplayerSession session = await FlockClient.Instance.Multiplayer.HostSessionAsync();
+        Debug.Log($"Join code: {session.JoinCode}");
+        FlockNetcodeStartResult started = await session.StartNetcodeAsync(NetworkManager.Singleton);
+        Debug.Log($"Netcode: {started.Outcome}");
+    }
 
-// Both games then start the netcode: the host hosts, the friend connects.
-FlockNetcodeStartResult started = await session.StartNetcodeAsync(NetworkManager.Singleton);
+    // A friend joins with the code the host read out.
+    public async Task JoinAsync(string typedCode)
+    {
+        FlockMultiplayerSession session = await FlockClient.Instance.Multiplayer.JoinSessionAsync(typedCode);
+        FlockNetcodeStartResult started = await session.StartNetcodeAsync(NetworkManager.Singleton);
+        Debug.Log($"Netcode: {started.Outcome}");
+    }
+}
 ```
 
-Install Netcode for GameObjects 1.x or 2.x, check the dashboard's multiplayer settings, and make a queue for each mode
-your game matches players in. The [Multiplayer guide](Docs~/multiplayer.md) covers parties, matchmaking, every outcome,
-the relay and host changes; the `Samples/Multiplayer` folder has a Play With Friends and a Quick Match sample.
+Install Netcode for GameObjects 1.x or 2.x, sign the player in first, check the dashboard's multiplayer settings, and make
+a queue for each mode your game matches players in. The [Multiplayer guide](Docs~/multiplayer.md) covers parties,
+matchmaking, every outcome, the relay and host changes; the `Samples/Multiplayer` folder has a Play With Friends and a
+Quick Match sample.
 
 ## Playtesting with Protokite
 
 The **Protokite Playtest** package records play sessions, gameplay and in-game feedback for your Protokite playtests. It
 is a separate package, released with each Flock SDK version; the SDK itself never depends on it.
 
-To add it, open **Flock > Settings > Playtesting** and press **Install Protokite Playtest**. It downloads the version
-that matches your Flock SDK and imports it, with no Git needed. The same tab opens its settings, updates it when you
-update Flock, and removes it. The [step-by-step guide](https://docs.qwacks.com/protokite/unity-package) takes you
+To add it, open **Flock > Settings**, go to the **Playtesting** tab and press **Install Protokite Playtest**. It downloads
+the version that matches your Flock SDK and imports it, with no Git needed. The same tab opens its settings, updates it
+when you update Flock, and removes it. The [step-by-step guide](https://docs.qwacks.com/protokite/unity-package) takes you
 from installing it to a first playtest session, with screenshots; every setting and call is in
 [its README](ProtokitePlaytest~/README.md).
 
 ## Error handling
 
-Every SDK call throws on failure — there are no result/error return types. Server errors surface as a `FlockException` (or a subtype: `FlockAuthException`, `FlockValidationException`, `FlockNetworkException`, `FlockSerializationException`, and `FlockStoreException` for a store that did not take a payment) carrying a typed `ErrorCode` you can branch on:
+Every SDK call throws on failure — there are no result/error return types. Server errors surface as a `FlockException`
+(or a subtype: `FlockAuthException`, `FlockValidationException`, `FlockNetworkException`, `FlockSerializationException`,
+and `FlockStoreException` for a store that did not take a payment) carrying a typed `ErrorCode` you can branch on:
 
 ```csharp
-try
+using System.Threading.Tasks;
+using Flock;
+using Flock.Exceptions;
+using UnityEngine;
+
+public static class BuyButton
 {
-    await FlockClient.Instance.Shop.PurchaseAsync(shopItemId);
-}
-catch (FlockException ex) when (ex.ErrorCode == FlockErrorCode.ShopInsufficientFunds)
-{
-    // The server declined — not enough funds.
+    // shopItemId is a shop item's Id (ShopItem.Id), read from a shop.
+    public static async Task BuyAsync(string shopItemId)
+    {
+        try
+        {
+            await FlockClient.Instance.Shop.PurchaseAsync(shopItemId);
+        }
+        catch (FlockException ex) when (ex.ErrorCode == FlockErrorCode.ShopInsufficientFunds)
+        {
+            Debug.Log("Not enough currency: nothing was bought.");
+        }
+        catch (FlockException ex)
+        {
+            Debug.LogError(ex.Message);
+        }
+    }
 }
 ```
 
@@ -235,27 +398,37 @@ catch (FlockException ex) when (ex.ErrorCode == FlockErrorCode.ShopInsufficientF
 
 ```
 Device login failed: Invalid login credentials [player.invalid_login_credentials, HTTP 400]
-Fix: This device is not registered yet. Call Authentication.RegisterWithDeviceAsync(deviceId) once to create the account, then Authentication.LoginWithDeviceAsync(deviceId) on later launches.
+Fix: This device is not registered yet. Call Authentication.RegisterWithDeviceAsync() once to create the account, then Authentication.LoginWithDeviceAsync() on later launches (both use Authentication.ThisDeviceId when no id is passed).
 ```
 
-Branch on `ErrorCode`, never on message text — codes are stable, wording is not.
+Branch on `ErrorCode`, never on message text — codes are stable, wording is not. `FlockException`, `FlockErrorCode` and
+the other types are in the `Flock.Exceptions` namespace; `FlockStoreException` is in `Flock.Providers`.
 
 See the [Error handling guide](Docs~/errors.md) for the exception types, the status→exception mapping, and the full `FlockErrorCode` list.
 
 ## Offline caching
 
-Reads are snapshotted to disk and served when the server is unreachable, after at least one online session — the server is always tried first, with no TTLs. Toggle with `EnableOfflineCache` (default `true`; set `false` on WebGL — see [Platform notes](#platform-notes)). Each service exposes `ClearCache()`; bans, inventory, and purchases are never cached. See [ARCHITECTURE.md](ARCHITECTURE.md) for what refreshes when.
+Reads are saved to disk and served when the server is unreachable, after at least one online session — the server is
+always tried first, with no expiry times. Switch it with **Enable Offline Cache** (**Flock > Settings**, **Advanced
+Settings** tab, **Offline Cache** card; on by default, and on every platform until you untick it: untick it for a WebGL
+build — see [Platform notes](#platform-notes)); **Offline
+Cache Directory** sets where it is kept (empty means `Application.persistentDataPath/Flock/snapshots`). Each service has
+`ClearCache()`; bans, inventory, and purchases are never cached. See [ARCHITECTURE.md](ARCHITECTURE.md) for what
+refreshes when.
 
 ## Platform notes
 
 - **WebGL**: SDK HTTP automatically switches to `UnityWebRequest` on WebGL builds
   (`System.Net.Http.HttpClient` has no WebGL transport), so auth, read APIs, and
   analytics work online with no caller changes. The asset cache and the offline
-  snapshot cache, however, are backed by `Application.persistentDataPath`, which on
-  WebGL is IndexedDB-backed and does not support synchronous file writes
-  (`File.WriteAllBytes` will fail). Set `FlockInitConfig.EnableAssetCache = false`
-  and `FlockInitConfig.EnableOfflineCache = false` on WebGL builds — everything else
-  works online, just without the disk caches. See the "Offline caching" section.
-  The SDK's own saved files (queued analytics, session records) are copied to the browser's storage after each change, so
-  they survive a reload; two tabs of one game share that storage, and the last to save wins. A game that sets
+  cache, however, are kept under `Application.persistentDataPath`, which on
+  WebGL is stored in the browser and does not support synchronous file writes
+  (`File.WriteAllBytes` will fail). For a WebGL build, untick **Enable Asset Cache** and **Enable Offline Cache** in
+  **Flock > Settings**, **Advanced Settings** tab. A game that starts the SDK itself (see
+  [Code-Based Configuration](#code-based-configuration)) can instead set `EnableAssetCache = false` and
+  `EnableOfflineCache = false` on the `FlockInitConfig` before `Create`. Everything else works online, just without the
+  disk caches.
+  The SDK's own saved files (queued analytics, session records, the device id) are copied to the browser's storage after each change, so
+  they survive a reload; two tabs of one game share that storage, and the last to save wins (so two tabs opened on a fresh
+  install can each make a device id, and the one saved last is kept). A game that sets
   `autoSyncPersistentDataPath` in its WebGL template keeps Unity's own copying.

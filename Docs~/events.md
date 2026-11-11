@@ -4,33 +4,39 @@
 
 All SDK lifecycle events live on the static `FlockEvents` class (`using Flock;`). Key behaviors:
 
-- **Subscribe anytime** — even before `FlockClient.Create`, and `OnInitialized` / `OnInitializationFailed` are *replayed* to late subscribers, so they fire even if the SDK already auto-initialized before your script ran. Unlike `FlockClient.Instance`, the hub never throws.
+- **Subscribe anytime** — even before `FlockClient.Create`; the hub never throws, unlike `FlockClient.Instance`. Only `OnInitialized` and `OnInitializationFailed` are *replayed* to late subscribers, so they fire even if the SDK already started before your script ran. Every other event fires once, when it happens: with **Auto-Initialize On Load** on, the saved sign-in can be restored (`OnAuthenticated`, `OnSessionRestored`) before a scene script subscribes, so read the current state after subscribing too (see [Auth](#auth)).
 - **Raised on the Unity main thread** — you can touch Unity objects directly inside handlers.
-- **Logged when `EnableDebugLogs` is on** — every raise prints `[Flock SDK] OnSessionStarted fired -> 1 subscriber(s)`, so you can verify wiring straight from the console.
+- **Logged when Enable Debug Logs is on** (Flock > Settings, **Advanced Settings** tab, **Optional** card) — every raise prints `[Flock SDK] OnSessionStarted fired -> 1 subscriber(s)`, so you can verify wiring straight from the console.
 - **Cleared automatically** on `FlockClient.Shutdown()` and on play-session start (with domain reload disabled), so a leaked handler never outlives one play session. Still, subscribe in `OnEnable` and unsubscribe in `OnDisable`, and prefer method groups over lambdas (lambdas can't be unsubscribed).
 - **Isolated from your bugs** — a subscriber that throws is logged via `Debug.LogError` and never breaks the SDK or other subscribers.
 
 ```csharp
-private void OnEnable()
-{
-    FlockEvents.OnAuthenticated += HandleAuthenticated;
-    FlockEvents.OnSessionEnded += HandleSessionEnded;
-}
+using Flock;
+using UnityEngine;
 
-private void OnDisable()
+public class FlockEventLog : MonoBehaviour
 {
-    FlockEvents.OnAuthenticated -= HandleAuthenticated;
-    FlockEvents.OnSessionEnded -= HandleSessionEnded;
-}
+    private void OnEnable()
+    {
+        FlockEvents.OnAuthenticated += HandleAuthenticated;
+        FlockEvents.OnSessionEnded += HandleSessionEnded;
+    }
 
-private void HandleAuthenticated(FlockAuthInfo info)
-{
-    Debug.Log($"Signed in: {info.PlayerId} via {info.Method}");
-}
+    private void OnDisable()
+    {
+        FlockEvents.OnAuthenticated -= HandleAuthenticated;
+        FlockEvents.OnSessionEnded -= HandleSessionEnded;
+    }
 
-private void HandleSessionEnded(FlockSessionEndedArgs args)
-{
-    Debug.Log($"Session over ({args.Reason}): {args.Snapshot.DurationSeconds:F0}s");
+    private void HandleAuthenticated(FlockAuthInfo info)
+    {
+        Debug.Log($"Signed in: {info.PlayerId} via {info.Method}");
+    }
+
+    private void HandleSessionEnded(FlockSessionEndedArgs args)
+    {
+        Debug.Log($"Session over ({args.Reason}): {args.Snapshot.DurationSeconds:F0}s");
+    }
 }
 ```
 
@@ -53,6 +59,43 @@ private void HandleSessionEnded(FlockSessionEndedArgs args)
 | `OnSessionRestored` | `Action<bool>` | A persisted-session restore finished — `true` = signed in (go to game), `false` = none (show login). Also exposed as the `FlockClient.IsRestoringSession` flag for a startup spinner; fires whether or not you use `FlockBootstrap`. |
 | `OnAccountLinked` | `Action<FlockCredentialProvider>` | A credential was attached to the signed-in player via one of the `Link*Async` calls. Payload: the provider that was linked. Only fires on success. |
 | `OnAccountUnlinked` | `Action<FlockCredentialProvider>` | A credential was removed via `UnlinkAsync`. Payload: the provider that was unlinked. Only fires on success. |
+
+`OnSessionRestored` is not replayed. With **Auto-Initialize On Load** on, the restore starts before the first scene loads
+and can finish before your script subscribes, so after subscribing, read whether it is still running:
+
+```csharp
+using Flock;
+using UnityEngine;
+
+public class LoginGate : MonoBehaviour
+{
+    private void OnEnable()
+    {
+        FlockEvents.OnSessionRestored += HandleSessionRestored;
+        FlockEvents.OnLoggedOut += HandleLoggedOut;
+
+        // The restore may be over already: then act on its result now.
+        if (FlockClient.IsInitialized && !FlockClient.IsRestoringSession)
+            HandleSessionRestored(FlockClient.Instance.IsAuthenticated);
+    }
+
+    private void OnDisable()
+    {
+        FlockEvents.OnSessionRestored -= HandleSessionRestored;
+        FlockEvents.OnLoggedOut -= HandleLoggedOut;
+    }
+
+    private void HandleSessionRestored(bool signedIn)
+    {
+        Debug.Log(signedIn ? "Go to the game" : "Show the login screen");
+    }
+
+    private void HandleLoggedOut()
+    {
+        Debug.Log("Show the login screen");
+    }
+}
+```
 
 **Session** (gameplay/analytics session — distinct from auth)
 
@@ -77,14 +120,31 @@ The watermark is player-scoped state, not cache: it survives `ClearCache()`, so 
 Tell the three sources apart from the payload rather than from separate events:
 
 ```csharp
-private void HandleNotification(Notification n)
+using Flock;
+using Flock.Models;
+using UnityEngine;
+
+public class NotificationToasts : MonoBehaviour
 {
-    if (!string.IsNullOrEmpty(n.CampaignId))          // dashboard campaign
-        ShowToast(n.Title, n.Body);
-    else if (n.TryGetData("trigger_id", out string _)) // fired by a trigger
-        ShowToast(n.Title, n.Body);
-    else                                               // a reminder this game scheduled
-        ShowReminder(n.Title);
+    private void OnEnable()
+    {
+        FlockEvents.OnNotificationReceived += HandleNotification;
+    }
+
+    private void OnDisable()
+    {
+        FlockEvents.OnNotificationReceived -= HandleNotification;
+    }
+
+    private void HandleNotification(Notification notification)
+    {
+        if (!string.IsNullOrEmpty(notification.CampaignId))
+            Debug.Log($"Campaign: {notification.Title}");      // sent from a dashboard campaign
+        else if (notification.TryGetData("trigger_id", out string triggerId))
+            Debug.Log($"Trigger {triggerId}: {notification.Title}");   // fired by a trigger
+        else
+            Debug.Log($"Reminder: {notification.Title}");      // a reminder this game scheduled
+    }
 }
 ```
 
@@ -93,6 +153,29 @@ private void HandleNotification(Notification n)
 | Event | Signature | Hooks up to |
 |-------|-----------|-------------|
 | `OnConsentChanged` | `Action<bool>` | `Analytics.SetConsent(granted)` actually changing the stored value. Edge-triggered — re-setting the value it already holds raises nothing. The choice is persisted, and this fires on the change itself. |
+
+```csharp
+using Flock;
+using UnityEngine;
+
+public class ConsentToggleLabel : MonoBehaviour
+{
+    private void OnEnable()
+    {
+        FlockEvents.OnConsentChanged += HandleConsentChanged;
+    }
+
+    private void OnDisable()
+    {
+        FlockEvents.OnConsentChanged -= HandleConsentChanged;
+    }
+
+    private void HandleConsentChanged(bool granted)
+    {
+        Debug.Log(granted ? "Analytics on" : "Analytics off");
+    }
+}
+```
 
 Granting resumes analytics: if a player is signed in, `AutoStartSession` is on and no session is running, one starts. That start is fire-and-forget so `SetConsent` can stay synchronous, matching the shape of a consent toggle.
 

@@ -31,10 +31,12 @@ In Unity:
 1. Install **Netcode for GameObjects** 1.x or 2.x. Flock's netcode support is its own assembly and compiles only when one
    of them is installed. Every player of a game must use the same major version. Verified on Unity 2021.3 with Netcode
    1.14 and on Unity 6000.3 with Netcode 2.13.
-2. In **Flock > Settings**, set **Party Refresh Seconds**: how often the SDK reads the player's party in the background
-   (10 by default; 0 turns it off). In code it is `FlockInitConfig.PartyRefreshInterval`.
+2. In **Flock > Settings**, **Advanced Settings** tab, **Multiplayer** card, set **Party Refresh Seconds**: how often the
+   SDK reads the player's party in the background (10 by default; 0 turns it off). In code it is
+   `FlockInitConfig.PartyRefreshInterval`.
 3. Use one `NetworkManager` with Unity Transport, left at its default message size.
-4. Sign the player in before any multiplayer call, and make every call from the main thread. Every multiplayer event is
+4. Sign the player in before any multiplayer call (see [Authentication](authentication.md)), and make every call from the
+   main thread. Every multiplayer event is
    raised on the main thread.
 5. Scripts that use multiplayer start with `using Flock;` and `using Flock.Providers;` (add `using Flock.Exceptions;` for
    `FlockErrorCode` and `using Unity.Netcode;` for `NetworkManager`). A script in an assembly definition of its own
@@ -42,7 +44,10 @@ In Unity:
 
 The package's `Samples/Multiplayer` folder has two one-screen samples: `FlockPlayWithFriendsSample` (host, read out the
 code, a friend joins it) and `FlockQuickMatchSample` (players find each other in a queue). Add either to an empty
-GameObject and press Play in two copies of the game.
+GameObject and press Play in two copies of the game. Two copies on one computer share the device id Flock keeps, so
+type a different id in the sample's **Device id** field in one of them, or they sign in as one player.
+
+The examples below log with `Debug.Log` where your game would show something on screen.
 
 ## Which setup fits your game
 
@@ -64,15 +69,31 @@ Dashboard: nothing beyond the multiplayer settings. One player hosts and reads o
 Players who share the host's network connect to it directly, so no packet leaves the network.
 
 ```csharp
-// The host's game.
-FlockMultiplayerSession session = await FlockClient.Instance.Multiplayer.HostSessionAsync(4);
-joinCodeLabel.text = session.JoinCode;
-await session.StartNetcodeAsync(NetworkManager.Singleton);
+using System.Threading.Tasks;
+using Flock;
+using Flock.Providers;
+using Unity.Netcode;
+using UnityEngine;
 
-// Each other player's game, with the code the host read out.
-FlockMultiplayerSession joined = await FlockClient.Instance.Multiplayer.JoinSessionAsync(typedCode);
-FlockNetcodeStartResult started = await joined.StartNetcodeAsync(NetworkManager.Singleton);
-// started.ThroughRelay is false for a player on the host's network.
+public static class LocalCoop
+{
+    // The host's game: up to 4 players.
+    public static async Task HostAsync()
+    {
+        FlockMultiplayerSession session = await FlockClient.Instance.Multiplayer.HostSessionAsync(4);
+        Debug.Log($"Join code: {session.JoinCode}");
+        await session.StartNetcodeAsync(NetworkManager.Singleton);
+    }
+
+    // Each other player's game, with the code the host read out.
+    public static async Task JoinAsync(string typedCode)
+    {
+        FlockMultiplayerSession joined = await FlockClient.Instance.Multiplayer.JoinSessionAsync(typedCode);
+        FlockNetcodeStartResult started = await joined.StartNetcodeAsync(NetworkManager.Singleton);
+        // ThroughRelay is false for a player on the host's network.
+        Debug.Log($"{started.Outcome}, through the relay: {started.ThroughRelay}");
+    }
+}
 ```
 
 To keep every game off the relay (a LAN-only game, or a network that must not reach the internet), pass
@@ -94,11 +115,23 @@ For friends who play match after match together, make them a [party](#parties) f
 Dashboard: one queue per mode under **Multiplayer → Matchmaking**, with its smallest and largest match.
 
 ```csharp
-FlockMatchmakingResult found = await FlockClient.Instance.Multiplayer.FindMatchAsync("casual-1v1");
-if (found.IsMatched && found.Session != null)
-    await found.Session.StartNetcodeAsync(NetworkManager.Singleton);   // the player who waited longest hosts
-else
-    ShowMessage("No match: " + found.Outcome);
+using System.Threading.Tasks;
+using Flock;
+using Flock.Providers;
+using Unity.Netcode;
+using UnityEngine;
+
+public static class QuickMatch
+{
+    public static async Task FindAsync()
+    {
+        FlockMatchmakingResult found = await FlockClient.Instance.Multiplayer.FindMatchAsync("casual-1v1");
+        if (found.IsMatched && found.Session != null)
+            await found.Session.StartNetcodeAsync(NetworkManager.Singleton);   // the player who waited longest hosts
+        else
+            Debug.Log("No match: " + found.Outcome);
+    }
+}
 ```
 
 ### Friends matched together
@@ -107,14 +140,42 @@ Dashboard: a queue whose largest match holds the whole party. The friends form a
 leader searches for all of them; every member's game hears the result.
 
 ```csharp
-party.SearchEnded += async result =>
-{
-    if (result.IsMatched && result.Session != null)
-        await result.Session.StartNetcodeAsync(NetworkManager.Singleton);
-};
+using System.Threading.Tasks;
+using Flock;
+using Flock.Providers;
+using Unity.Netcode;
+using UnityEngine;
 
-if (party.IsLeader)
-    await party.FindMatchAsync("squads");
+public class SquadSearch : MonoBehaviour
+{
+    private FlockParty _party;
+
+    // Every member's game, once it holds the party.
+    public void Follow(FlockParty party)
+    {
+        _party = party;
+        _party.SearchEnded += HandleSearchEnded;
+    }
+
+    private void OnDestroy()
+    {
+        if (_party != null)
+            _party.SearchEnded -= HandleSearchEnded;
+    }
+
+    // The leader's game starts the search for everyone.
+    public async Task SearchAsync()
+    {
+        if (_party.IsLeader)
+            await _party.FindMatchAsync("squads");
+    }
+
+    private async void HandleSearchEnded(FlockMatchmakingResult result)
+    {
+        if (result.IsMatched && result.Session != null)
+            await result.Session.StartNetcodeAsync(NetworkManager.Singleton);
+    }
+}
 ```
 
 Have every member's game call `GetMyPartyAsync` once it is running, so a "Same game version only" queue knows its build.
@@ -125,7 +186,23 @@ Start the netcode with `Always` on every game, the host's included: every packet
 game learns another's IP address. Each packet takes the relay's extra hop.
 
 ```csharp
-await session.StartNetcodeAsync(NetworkManager.Singleton, new FlockNetcodeOptions { Relay = FlockRelayUse.Always });
+using System.Threading.Tasks;
+using Flock.Providers;
+using Unity.Netcode;
+
+public static class RelayChoice
+{
+    public static Task<FlockNetcodeStartResult> StartThroughTheRelayAsync(FlockMultiplayerSession session)
+    {
+        return session.StartNetcodeAsync(NetworkManager.Singleton, new FlockNetcodeOptions { Relay = FlockRelayUse.Always });
+    }
+
+    // A LAN-only game: nobody goes through the relay.
+    public static Task<FlockNetcodeStartResult> StartOnThisNetworkOnlyAsync(FlockMultiplayerSession session)
+    {
+        return session.StartNetcodeAsync(NetworkManager.Singleton, new FlockNetcodeOptions { Relay = FlockRelayUse.Never });
+    }
+}
 ```
 
 ### Steam, Epic Online Services or your own networking
@@ -139,28 +216,88 @@ A party is a group of friends who play together: one leader and up to 63 others,
 lasts until its players leave it, across games and launches. A player is in one party at a time.
 
 ```csharp
-FlockMultiplayerProvider multiplayer = FlockClient.Instance.Multiplayer;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using Flock;
+using Flock.Providers;
+using UnityEngine;
 
-// The party from last time, or a new one: 2 to 64 players, 4 when not given.
-FlockParty party = await multiplayer.GetMyPartyAsync()
-    ?? await multiplayer.CreatePartyAsync(4, new Dictionary<string, object> { ["mode"] = "coop" });
-inviteCodeLabel.text = party.InviteCode;
+public class PartyScreen : MonoBehaviour
+{
+    private FlockParty _party;
 
-party.MembersChanged += () => ShowMembers(party.Members);   // in the order they joined
-party.LeaderChanged += () => leaderControls.SetActive(party.IsLeader);
-party.Ended += reason => ShowMainMenu(reason);
+    // The party from last time, or a new one: 2 to 64 players, 4 when not given.
+    public async Task OpenAsync()
+    {
+        FlockMultiplayerProvider multiplayer = FlockClient.Instance.Multiplayer;
+        FlockParty party = await multiplayer.GetMyPartyAsync()
+            ?? await multiplayer.CreatePartyAsync(4, new Dictionary<string, object> { ["mode"] = "coop" });
+        Follow(party);
+        Debug.Log($"Invite code: {party.InviteCode}");
+    }
 
-// A friend's game joins with the code; letter case does not matter.
-FlockParty joined = await multiplayer.JoinPartyAsync(typedCode);
-if (joined.TryGetSetting("mode", out string mode))
-    ShowMode(mode);
+    // A friend's game joins with the code; letter case does not matter.
+    public async Task JoinAsync(string typedCode)
+    {
+        FlockParty joined = await FlockClient.Instance.Multiplayer.JoinPartyAsync(typedCode);
+        if (joined.TryGetSetting("mode", out string mode))
+            Debug.Log($"Mode: {mode}");
+        Follow(joined);
+    }
 
-// The leader manages the party; anyone can leave it.
-await party.UpdateAsync(settings: new Dictionary<string, object> { ["mode"] = "hard" });   // replaces all settings
-await party.KickAsync(playerId);
-await party.MakeLeaderAsync(playerId);
-await party.DisbandAsync();
-await party.LeaveAsync();   // when the leader leaves, the first of the others leads
+    // The leader manages the party.
+    public async Task ManageAsync(string playerId)
+    {
+        await _party.UpdateAsync(settings: new Dictionary<string, object> { ["mode"] = "hard" });   // replaces all settings
+        await _party.KickAsync(playerId);
+        await _party.MakeLeaderAsync(playerId);
+    }
+
+    public Task DisbandAsync()
+    {
+        return _party.DisbandAsync();
+    }
+
+    // Anyone can leave; when the leader leaves, the first of the others leads.
+    public Task LeaveAsync()
+    {
+        return _party.LeaveAsync();
+    }
+
+    private void Follow(FlockParty party)
+    {
+        _party = party;
+        _party.MembersChanged += HandleMembersChanged;
+        _party.LeaderChanged += HandleLeaderChanged;
+        _party.Ended += HandleEnded;
+    }
+
+    private void OnDestroy()
+    {
+        if (_party == null)
+            return;
+        _party.MembersChanged -= HandleMembersChanged;
+        _party.LeaderChanged -= HandleLeaderChanged;
+        _party.Ended -= HandleEnded;
+    }
+
+    // In the order they joined.
+    private void HandleMembersChanged()
+    {
+        foreach (FlockPartyMember member in _party.Members)
+            Debug.Log(member.PlayerId);
+    }
+
+    private void HandleLeaderChanged()
+    {
+        Debug.Log(_party.IsLeader ? "You lead the party" : $"{_party.LeaderPlayerId} leads the party");
+    }
+
+    private void HandleEnded(FlockPartyEndReason reason)
+    {
+        Debug.Log($"Party over: {reason}");
+    }
+}
 ```
 
 The SDK reads the party every Party Refresh Seconds and after each change your game makes, and raises `MembersChanged`
@@ -183,24 +320,81 @@ hosting or joining another session gives up the one held. When the host leaves, 
 host.
 
 ```csharp
-// 2 to 16 seats (the game's setting when not given), and the game's own data, set once.
-FlockMultiplayerSession session = await multiplayer.HostSessionAsync(4, new Dictionary<string, object> { ["map"] = "crypt" });
-joinCodeLabel.text = session.JoinCode;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using Flock;
+using Flock.Providers;
+using UnityEngine;
 
-// A friend's game joins with the code; letter case does not matter.
-FlockMultiplayerSession joined = await multiplayer.JoinSessionAsync(typedCode);
-joined.TryGetData("map", out string map);
+public class SessionScreen : MonoBehaviour
+{
+    private FlockMultiplayerSession _session;
 
-session.PlayersChanged += () => ShowPlayers(session.Players);   // seated longest first
-session.HostChanged += OnHostChanged;   // start the netcode again: see "When the host changes"
-session.Ended += reason => BackToLobby(reason);
+    // 2 to 16 seats (the game's setting when not given), and the game's own data, set once.
+    public async Task HostAsync()
+    {
+        FlockMultiplayerSession session = await FlockClient.Instance.Multiplayer.HostSessionAsync(
+            4, new Dictionary<string, object> { ["map"] = "crypt" });
+        Follow(session);
+        Debug.Log($"Join code: {session.JoinCode}");
+    }
 
-await session.LeaveAsync();                // anyone
-await session.EndAsync();                  // the host only: ends it for everyone
-await session.MakeHostAsync(otherPlayer);  // the host only: hands hosting over
+    // A friend's game joins with the code; letter case does not matter.
+    public async Task JoinAsync(string typedCode)
+    {
+        FlockMultiplayerSession joined = await FlockClient.Instance.Multiplayer.JoinSessionAsync(typedCode);
+        if (joined.TryGetData("map", out string map))
+            Debug.Log($"Map: {map}");
+        Follow(joined);
+    }
 
-// After the game restarts, find the seat the player still holds (null when seated nowhere).
-FlockMultiplayerSession held = await multiplayer.GetMySessionAsync();
+    // After the game restarts, find the seat the player still holds (null when seated nowhere).
+    public async Task FindMySeatAsync()
+    {
+        FlockMultiplayerSession held = await FlockClient.Instance.Multiplayer.GetMySessionAsync();
+        if (held != null)
+            Follow(held);
+    }
+
+    public Task LeaveAsync() => _session.LeaveAsync();                          // anyone
+    public Task EndAsync() => _session.EndAsync();                              // the host only: ends it for everyone
+    public Task HandOverAsync(string playerId) => _session.MakeHostAsync(playerId);   // the host only
+
+    private void Follow(FlockMultiplayerSession session)
+    {
+        _session = session;
+        _session.PlayersChanged += HandlePlayersChanged;
+        _session.HostChanged += HandleHostChanged;
+        _session.Ended += HandleEnded;
+    }
+
+    private void OnDestroy()
+    {
+        if (_session == null)
+            return;
+        _session.PlayersChanged -= HandlePlayersChanged;
+        _session.HostChanged -= HandleHostChanged;
+        _session.Ended -= HandleEnded;
+    }
+
+    // Seated longest first.
+    private void HandlePlayersChanged()
+    {
+        foreach (FlockMultiplayerSessionPlayer player in _session.Players)
+            Debug.Log(player.PlayerId);
+    }
+
+    // Start the netcode again: see "When the host changes".
+    private void HandleHostChanged()
+    {
+        Debug.Log($"{_session.HostPlayerId} hosts now");
+    }
+
+    private void HandleEnded(string reason)
+    {
+        Debug.Log($"Session over: {reason}");
+    }
+}
 ```
 
 A session takes only players on the host's Game Version unless the host passes `sameVersionOnly: false`; a player on
@@ -232,25 +426,46 @@ Flock makes a match and seats the players in a session. A party is matched as on
 matched in the order they search. A search that ends without a match is an outcome, not an exception.
 
 ```csharp
-CancellationTokenSource searching = new CancellationTokenSource();
-cancelButton.onClick.AddListener(searching.Cancel);
-try
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+using Flock;
+using Flock.Exceptions;
+using Flock.Providers;
+using UnityEngine;
+
+public class MatchSearch : MonoBehaviour
 {
-    FlockMatchmakingResult found = await multiplayer.FindMatchAsync("coop-4", null, searching.Token);
-    if (found.IsMatched && found.Session != null)
-        await PlayAsync(found.Session);
-    else if (found.Outcome == FlockMatchmakingOutcome.Expired)
-        ShowMessage("Nobody found in 5 minutes. Search again?");
-    else
-        ShowMessage("The search stopped.");
-}
-catch (OperationCanceledException)
-{
-    ShowMessage("Search cancelled.");   // the search is cancelled on the server too
-}
-catch (FlockException ex) when (ex.ErrorCode == FlockErrorCode.MatchmakingQueueNotFound)
-{
-    ShowMessage("No queue is named coop-4.");
+    private CancellationTokenSource _searching;
+
+    public async Task SearchAsync()
+    {
+        _searching = new CancellationTokenSource();
+        try
+        {
+            FlockMatchmakingResult found = await FlockClient.Instance.Multiplayer.FindMatchAsync("coop-4", null, _searching.Token);
+            if (found.IsMatched && found.Session != null)
+                Debug.Log($"Matched with {found.PlayerIds.Count - 1} others");   // start the netcode with found.Session
+            else if (found.Outcome == FlockMatchmakingOutcome.Expired)
+                Debug.Log("Nobody found in 5 minutes. Search again?");
+            else
+                Debug.Log("The search stopped.");
+        }
+        catch (OperationCanceledException)
+        {
+            Debug.Log("Search cancelled.");   // the search is cancelled on the server too
+        }
+        catch (FlockException ex) when (ex.ErrorCode == FlockErrorCode.MatchmakingQueueNotFound)
+        {
+            Debug.Log("No queue is named coop-4.");
+        }
+    }
+
+    // A Cancel button calls this.
+    public void Cancel()
+    {
+        _searching?.Cancel();
+    }
 }
 ```
 
@@ -258,17 +473,49 @@ Search as a party: the leader's game starts the search, and every member's game 
 the result in one place. `SearchEnded` is raised on every member's game, the leader's included.
 
 ```csharp
-party.SearchStarted += () => ShowSearching();
-party.SearchEnded += result =>
-{
-    if (result.IsMatched && result.Session != null)
-        _ = PlayAsync(result.Session);
-    else
-        ShowLobby();
-};
+using System.Threading.Tasks;
+using Flock.Providers;
+using UnityEngine;
 
-if (party.IsLeader)
-    await party.FindMatchAsync("coop-4");
+public class PartySearch : MonoBehaviour
+{
+    private FlockParty _party;
+
+    // Every member's game, once it holds the party.
+    public void Follow(FlockParty party)
+    {
+        _party = party;
+        _party.SearchStarted += HandleSearchStarted;
+        _party.SearchEnded += HandleSearchEnded;
+    }
+
+    private void OnDestroy()
+    {
+        if (_party == null)
+            return;
+        _party.SearchStarted -= HandleSearchStarted;
+        _party.SearchEnded -= HandleSearchEnded;
+    }
+
+    public async Task SearchAsync()
+    {
+        if (_party.IsLeader)
+            await _party.FindMatchAsync("coop-4");
+    }
+
+    private void HandleSearchStarted()
+    {
+        Debug.Log("Searching...");
+    }
+
+    private void HandleSearchEnded(FlockMatchmakingResult result)
+    {
+        if (result.IsMatched && result.Session != null)
+            Debug.Log("Matched");   // start the netcode with result.Session
+        else
+            Debug.Log("Back to the lobby");
+    }
+}
 ```
 
 The SDK checks a search every 3 seconds. `FlockMatchmakingOptions.Attributes` passes your own data with a search;
@@ -297,26 +544,37 @@ host and says where to reach it. On a player it waits for that (up to 60 seconds
 connects, and proves the player's seat.
 
 ```csharp
-FlockNetcodeStartResult started = await session.StartNetcodeAsync(NetworkManager.Singleton);
-switch (started.Outcome)
+using System.Threading.Tasks;
+using Flock.Providers;
+using Unity.Netcode;
+using UnityEngine;
+
+public static class Connect
 {
-    case FlockNetcodeStartOutcome.Restarted:
-        return;   // a newer start on this NetworkManager took over
-    case FlockNetcodeStartOutcome.StartedAsHost:
-        ShowMessage("Hosting. Code: " + session.JoinCode);
-        break;
-    case FlockNetcodeStartOutcome.Connected:
-        ShowMessage(started.ThroughRelay ? "Connected through Flock's relay." : "Connected.");
-        break;
-    case FlockNetcodeStartOutcome.Refused:
-        ShowMessage("The host refused you: " + started.RefusedReason);
-        break;
-    case FlockNetcodeStartOutcome.RelayFailed:
-        ShowMessage("The relay could not be used: " + started.RelayFailureReason);
-        break;
-    default:
-        ShowMessage("Could not connect: " + started.Outcome);
-        break;
+    public static async Task StartAsync(FlockMultiplayerSession session)
+    {
+        FlockNetcodeStartResult started = await session.StartNetcodeAsync(NetworkManager.Singleton);
+        switch (started.Outcome)
+        {
+            case FlockNetcodeStartOutcome.Restarted:
+                return;   // a newer start on this NetworkManager took over
+            case FlockNetcodeStartOutcome.StartedAsHost:
+                Debug.Log("Hosting. Code: " + session.JoinCode);
+                break;
+            case FlockNetcodeStartOutcome.Connected:
+                Debug.Log(started.ThroughRelay ? "Connected through Flock's relay." : "Connected.");
+                break;
+            case FlockNetcodeStartOutcome.Refused:
+                Debug.Log("The host refused you: " + started.RefusedReason);
+                break;
+            case FlockNetcodeStartOutcome.RelayFailed:
+                Debug.Log("The relay could not be used: " + started.RelayFailureReason);
+                break;
+            default:
+                Debug.Log("Could not connect: " + started.Outcome);
+                break;
+        }
+    }
 }
 ```
 
@@ -351,7 +609,23 @@ host's network or through a port forwarded to the host, and a player on another 
 | `Never` | Nobody. Players reach the host on its network, or on a port forwarded to it. |
 
 ```csharp
-await session.StartNetcodeAsync(NetworkManager.Singleton, new FlockNetcodeOptions { Relay = FlockRelayUse.Always });
+using System.Threading.Tasks;
+using Flock.Providers;
+using Unity.Netcode;
+
+public static class RelayChoice
+{
+    public static Task<FlockNetcodeStartResult> StartThroughTheRelayAsync(FlockMultiplayerSession session)
+    {
+        return session.StartNetcodeAsync(NetworkManager.Singleton, new FlockNetcodeOptions { Relay = FlockRelayUse.Always });
+    }
+
+    // A LAN-only game: nobody goes through the relay.
+    public static Task<FlockNetcodeStartResult> StartOnThisNetworkOnlyAsync(FlockMultiplayerSession session)
+    {
+        return session.StartNetcodeAsync(NetworkManager.Singleton, new FlockNetcodeOptions { Relay = FlockRelayUse.Never });
+    }
+}
 ```
 
 With `WhenNeeded`, once the host has let a relayed player in, the two learn where each other can be reached (from the
@@ -396,23 +670,45 @@ The host started by `StartNetcodeAsync` lets in only players whose seat Flock co
 by their connection, never by what a player's game sends:
 
 ```csharp
-string playerId = session.PlayerForConnection(clientId);   // on the host
+using Flock.Providers;
+
+public static class Connections
+{
+    // On the host: the Flock player behind a netcode connection.
+    public static string PlayerOf(FlockMultiplayerSession session, ulong clientId)
+    {
+        return session.PlayerForConnection(clientId);
+    }
+}
 ```
 
 Add your own check after Flock's, such as a ban list or a team limit:
 
 ```csharp
-FlockNetcodeOptions options = new FlockNetcodeOptions
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using Flock.Providers;
+using Unity.Netcode;
+
+public static class HostWithBanList
 {
-    ApproveJoiningPlayer = (player, response) =>
+    // bannedPlayers holds the Flock player ids your game refuses.
+    public static Task<FlockNetcodeStartResult> StartAsync(FlockMultiplayerSession session, HashSet<string> bannedPlayers)
     {
-        if (bannedPlayers.Contains(player.PlayerId))
+        FlockNetcodeOptions options = new FlockNetcodeOptions
         {
-            response.Approved = false;
-            response.Reason = "banned";
-        }
-    },
-};
+            ApproveJoiningPlayer = (player, response) =>
+            {
+                if (bannedPlayers.Contains(player.PlayerId))
+                {
+                    response.Approved = false;
+                    response.Reason = "banned";
+                }
+            },
+        };
+        return session.StartNetcodeAsync(NetworkManager.Singleton, options);
+    }
+}
 ```
 
 A refused player's `RefusedReason` is one of `FlockNetcodeRefusedReason`'s: `no_join_token`, `join_token_invalid`,
@@ -428,15 +724,43 @@ again: the new host hosts, and the others join it. Do the same on `RelayLost`, r
 working.
 
 ```csharp
-session.HostChanged += StartAgain;
-session.RelayLost += reason => StartAgain();
+using Flock.Providers;
+using Unity.Netcode;
+using UnityEngine;
 
-async void StartAgain()
+public class HostChanges : MonoBehaviour
 {
-    if (session.HasEnded)
-        return;
-    NetworkManager.Singleton.Shutdown();
-    await session.StartNetcodeAsync(NetworkManager.Singleton);   // waits for the shutdown to finish
+    private FlockMultiplayerSession _session;
+
+    // Call once the netcode has started for this session.
+    public void Follow(FlockMultiplayerSession session)
+    {
+        _session = session;
+        _session.HostChanged += StartAgain;
+        _session.RelayLost += HandleRelayLost;
+    }
+
+    private void OnDestroy()
+    {
+        if (_session == null)
+            return;
+        _session.HostChanged -= StartAgain;
+        _session.RelayLost -= HandleRelayLost;
+    }
+
+    private void HandleRelayLost(string reason)
+    {
+        Debug.Log($"Relay lost: {reason}");
+        StartAgain();
+    }
+
+    private async void StartAgain()
+    {
+        if (_session.HasEnded)
+            return;
+        NetworkManager.Singleton.Shutdown();
+        await _session.StartNetcodeAsync(NetworkManager.Singleton);   // waits for the shutdown to finish
+    }
 }
 ```
 
@@ -450,17 +774,39 @@ Games on Steam, Epic Online Services or their own networking still use Flock's p
 check, and publish and read the connection themselves:
 
 ```csharp
-// The host says how to reach it: a kind of its own and the values it needs, under 4 KB.
-await session.PublishConnectionAsync("steam", new Dictionary<string, object> { ["lobby"] = lobbyId.ToString() });
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using Flock.Providers;
+using UnityEngine;
 
-// A player waits for it; null when the time passes or the session ends.
-FlockMultiplayerSessionConnection connection = await session.WaitForConnectionAsync(TimeSpan.FromSeconds(60));
+public static class OwnNetworking
+{
+    // The host says how to reach it: a kind of its own and the values it needs, under 4 KB.
+    public static Task PublishAsync(FlockMultiplayerSession session, ulong lobbyId)
+    {
+        return session.PublishConnectionAsync("steam", new Dictionary<string, object> { ["lobby"] = lobbyId.ToString() });
+    }
 
-// The player proves its seat with a token, good for 60 seconds, sent over your own networking.
-FlockMultiplayerSessionJoinToken token = await session.RequestJoinTokenAsync();
+    // A player waits for it (null when the time passes or the session ends), then asks for a join token.
+    public static async Task<string> JoinAsync(FlockMultiplayerSession session)
+    {
+        FlockMultiplayerSessionConnection connection = await session.WaitForConnectionAsync(TimeSpan.FromSeconds(60));
+        if (connection == null || !connection.TryGetValue("lobby", out string lobby))
+            return null;
+        Debug.Log($"Joining lobby {lobby}");
 
-// The host checks it and learns who the player is; a bad token throws MultiplayerInvalidJoinToken.
-string joiningPlayerId = await session.VerifyJoinTokenAsync(tokenFromPlayer);
+        // The player proves its seat with this token, good for 60 seconds, sent over your own networking.
+        FlockMultiplayerSessionJoinToken token = await session.RequestJoinTokenAsync();
+        return token.Token;
+    }
+
+    // The host checks a token a player sent and learns who it is; a bad token throws MultiplayerInvalidJoinToken.
+    public static Task<string> CheckAsync(FlockMultiplayerSession session, string tokenFromPlayer)
+    {
+        return session.VerifyJoinTokenAsync(tokenFromPlayer);
+    }
+}
 ```
 
 `PublishDirectConnectionAsync(port)` publishes this device's own address, and a player's

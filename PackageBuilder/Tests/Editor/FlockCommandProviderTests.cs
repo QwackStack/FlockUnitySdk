@@ -1,3 +1,5 @@
+using UnityEngine.TestTools;
+using System.Collections;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -18,6 +20,13 @@ namespace Flock.Tests.Editor
     // trigger-wiring rows (CMD-19..22) are deferred to their own slices.
     public class FlockCommandProviderTests
     {
+        // A refresh still on its way would hand its answer to the next test's client.
+        [UnityTearDown]
+        public IEnumerator EveryRefreshIsAnsweredBeforeTheNextTest()
+        {
+            yield return FlockTestClient.UntilEveryRefreshIsAnswered();
+        }
+
         private static DataField Field(string name, string value, string type = "string")
             => new DataField { FieldName = name, Value = value, Type = type };
 

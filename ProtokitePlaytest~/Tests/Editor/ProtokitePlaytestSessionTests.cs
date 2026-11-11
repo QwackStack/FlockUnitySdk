@@ -77,6 +77,13 @@ namespace Protokite.Playtest.Tests
             }
         }
 
+        // Tests renew one player's same refresh token, and a new client waits for an earlier client's renewal of it, so each answer lands in its own test.
+        [UnityTearDown]
+        public IEnumerator EveryRefreshIsAnsweredBeforeTheNextTest()
+        {
+            yield return FlockTestClient.UntilEveryRefreshIsAnswered();
+        }
+
         private static string Stamp(string path) => File.Exists(path) ? File.GetLastWriteTimeUtc(path).Ticks + ":" + File.ReadAllText(path) : "none";
 
         private static FlockFakeTransport Transport(FlockHttpResponse start, string config = Config)

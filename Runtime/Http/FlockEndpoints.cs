@@ -52,6 +52,7 @@ namespace Flock.Http
         public const string GameConfigVersion = "game_config/version";
         public static string GameConfigById(string configId) => $"game_config/{configId}";
         public static string GameConfigByName(string name) => $"game_config/by-name/{Uri.EscapeDataString(name)}";
+        public static string GameConfigForMeByName(string name) => $"game_config/me/by-name/{Uri.EscapeDataString(name)}";
         public static string GameConfigPlayerFeatures(string playerId) => $"game_config/player/{playerId}/features";
         public const string GamePatch = "game_patch";
         public static string GamePatchById(string configId) => $"game_patch/{configId}";

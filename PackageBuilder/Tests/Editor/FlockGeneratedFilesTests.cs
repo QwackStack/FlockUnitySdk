@@ -179,6 +179,20 @@ namespace Flock.Tests.Editor
             Assert.IsFalse(Directory.Exists(Path.Combine(shops, OldStoreItems)), "No assembly of its own for real-money items.");
         }
 
+        // A wallet holds game currencies only, so a real-money item's currency (SAR) is no fund to grant.
+        [Test]
+        public void FundIds_HoldGameCurrenciesOnly_NeverARealMoneyItemsCurrency()
+        {
+            string shops = Path.Combine(_root, "Shops");
+
+            ShopEmitter.Emit(ShopWith(Potion, GemPack), new List<PlayerTemplateSchema>(), shops);
+
+            string catalog = File.ReadAllText(Path.Combine(shops, "FlockShopCatalog.g.cs"));
+            StringAssert.Contains("public enum FlockFundId", catalog);
+            StringAssert.Contains("Gold", catalog.Substring(catalog.IndexOf("public enum FlockFundId", StringComparison.Ordinal)));
+            StringAssert.DoesNotContain("SAR", catalog, "A real-money currency is not a FlockFundId member.");
+        }
+
         // 1.94.0 wrote real-money items into an assembly of their own; left behind, it would call a store method that is gone.
         [Test]
         public void ASync_RemovesTheStoreItemsAssemblyAnEarlierVersionWrote()

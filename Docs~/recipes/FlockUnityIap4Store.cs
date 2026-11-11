@@ -1,6 +1,9 @@
 // Unity IAP 4.x with Flock: every purchase is held unfinished until Flock has delivered it, then confirmed.
 // Copy this file into a game that uses Unity IAP 4.x; Unity IAP 5 games use FlockStore instead.
 // Compiled against Unity IAP 4.15.1 in the SDK's CI.
+// Setup: install Unity IAP 4.x (com.unity.purchasing), enter each item's store product id on its shop item in the Flock
+// dashboard, sign the player in, then: FlockUnityIap4Store store = new FlockUnityIap4Store(); await store.InitializeAsync();
+// and store.Buy(productId) from your buy button.
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;

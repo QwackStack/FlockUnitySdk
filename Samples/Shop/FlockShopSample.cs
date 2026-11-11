@@ -97,18 +97,18 @@ namespace Flock.Samples
             }
         }
 
-        // A device signs in once registered; the first launch on a device registers it.
+        // A device signs in once registered; the first launch on a device registers it. With no id passed, both use the device
+        // id Flock keeps for this install.
         private async Task SignInAsync()
         {
-            string deviceId = SystemInfo.deviceUniqueIdentifier;
             try
             {
-                await FlockClient.Instance.Authentication.LoginWithDeviceAsync(deviceId);
+                await FlockClient.Instance.Authentication.LoginWithDeviceAsync();
                 Say("Logged in.");
             }
             catch (FlockException notRegistered) when (notRegistered.ErrorCode == FlockErrorCode.PlayerInvalidLoginCredentials)
             {
-                await FlockClient.Instance.Authentication.RegisterWithDeviceAsync(deviceId);
+                await FlockClient.Instance.Authentication.RegisterWithDeviceAsync();
                 Say("Registered this device and logged in.");
             }
         }

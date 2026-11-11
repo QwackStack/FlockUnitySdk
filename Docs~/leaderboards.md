@@ -6,14 +6,26 @@ A board is a **projection over a player-data field**, configured in the dashboar
 call and none is needed: write the field the board reads and the player moves up it.
 
 ```csharp
-// This is how a score is "submitted" — the board projects over the field.
-PlayerData written = await FlockClient.Instance.Commands.UpdatePlayerDataFieldAsync("player-data-id", "score", 9999);
+using System.Threading.Tasks;
+using Flock;
+using Flock.Models;
+using UnityEngine;
 
-// The write succeeded; a board can still turn the new score away.
-foreach (LeaderboardRefusal refusal in written.LeaderboardRefusals)
+public static class ScoreSubmit
 {
-    if (refusal.Reason == LeaderboardRefusalReasons.GainLimit && refusal.Retryable)
-        Debug.Log($"{refusal.LeaderboardName} takes it again in {refusal.RetryAfterSeconds} s");
+    // playerDataId is the id of the player's record that holds the "score" field the board reads.
+    public static async Task SubmitAsync(string playerDataId, int score)
+    {
+        // This is how a score is "submitted": the board reads the field.
+        PlayerData written = await FlockClient.Instance.Commands.UpdatePlayerDataFieldAsync(playerDataId, "score", score);
+
+        // The write succeeded; a board can still turn the new score away.
+        foreach (LeaderboardRefusal refusal in written.LeaderboardRefusals)
+        {
+            if (refusal.Reason == LeaderboardRefusalReasons.GainLimit && refusal.Retryable)
+                Debug.Log($"{refusal.LeaderboardName} takes it again in {refusal.RetryAfterSeconds} s");
+        }
+    }
 }
 ```
 
@@ -26,17 +38,29 @@ Boards are addressed by **name** — the name you gave the board in the dashboar
 read API.
 
 ```csharp
-// Ranked page. Open to signed-out players.
-Standings top = await FlockClient.Instance.Leaderboard.GetStandingsAsync("weekly_high_scores", page: 1, limit: 20);
+using System.Threading.Tasks;
+using Flock;
+using Flock.Models;
+using UnityEngine;
 
-foreach (StandingEntry entry in top.Items)
-    Debug.Log($"#{entry.Rank} {entry.PlayerName} — {entry.Score}");
+public static class HighScores
+{
+    public static async Task ShowAsync()
+    {
+        // A ranked page. Signed-out players can read it too.
+        Standings top = await FlockClient.Instance.Leaderboard.GetStandingsAsync("weekly_high_scores", page: 1, limit: 20);
+        foreach (StandingEntry entry in top.Items)
+            Debug.Log($"#{entry.Rank} {entry.PlayerName}: {entry.Score}");
 
-// The signed-in player's placement. Rank and Score are null when they have no entry yet.
-PlayerRank mine = await FlockClient.Instance.Leaderboard.GetMyRankAsync("weekly_high_scores");
+        // The signed-in player's place. Rank and Score are null when they have no entry yet.
+        PlayerRank mine = await FlockClient.Instance.Leaderboard.GetMyRankAsync("weekly_high_scores");
+        Debug.Log(mine.Rank.HasValue ? $"You are #{mine.Rank}" : "You are not ranked yet");
 
-// A "you are here" slice: the 5 entries either side of the player.
-Standings around = await FlockClient.Instance.Leaderboard.GetAroundMeAsync("weekly_high_scores", neighbours: 5);
+        // A "you are here" slice: the 5 entries either side of the player.
+        Standings around = await FlockClient.Instance.Leaderboard.GetAroundMeAsync("weekly_high_scores", neighbours: 5);
+        Debug.Log($"{around.Items.Count} entries around you, of {around.Total}");
+    }
+}
 ```
 
 `Standings.Total` is the board's full entry count, not the size of `Items`.
@@ -47,10 +71,23 @@ Standings around = await FlockClient.Instance.Leaderboard.GetAroundMeAsync("week
 itself:
 
 ```csharp
-Leaderboard board = await FlockClient.Instance.Leaderboard.GetByNameAsync("best_lap");
+using System.Threading.Tasks;
+using Flock;
+using Flock.Models;
+using UnityEngine;
 
-string heading = board.IsHigherBetter ? "High scores" : "Best times";
-string display = board.FormatScore(mine.Score);   // "" when the player is unranked
+public static class LapBoard
+{
+    public static async Task ShowMyLapAsync()
+    {
+        Leaderboard board = await FlockClient.Instance.Leaderboard.GetByNameAsync("best_lap");
+        PlayerRank mine = await FlockClient.Instance.Leaderboard.GetMyRankAsync("best_lap");
+
+        string heading = board.IsHigherBetter ? "High scores" : "Best times";
+        string display = board.FormatScore(mine.Score);   // "" when the player is unranked
+        Debug.Log($"{heading}: {display}");
+    }
+}
 ```
 
 | Member | Values | Meaning |
@@ -73,13 +110,36 @@ one.
 The `window` parameter is a window **key**, not the board's `WindowType`. `never`/`weekly`/`seasonal`
 describe how a board buckets and are never sent.
 
-```csharp
-FlockLeaderboardWindow.Current              // default — the live window (all-time / this week / this season)
-FlockLeaderboardWindow.Season("season-id")  // one finished season on a seasonal board
-FlockLeaderboardWindow.Period("2026-W31")   // a raw period key on a weekly board
+| Window | Reads |
+|---|---|
+| `FlockLeaderboardWindow.Current` | The default: the live window (all time, this week or this season). |
+| `FlockLeaderboardWindow.Season(seasonId)` | One finished season of a seasonal board. |
+| `FlockLeaderboardWindow.Period("2026-W31")` | One period of a weekly board, by its key. |
 
-Standings lastSeason = await FlockClient.Instance.Leaderboard.GetStandingsAsync(
-    "weekly_high_scores", FlockLeaderboardWindow.Season("season-id"));
+```csharp
+using System.Threading.Tasks;
+using Flock;
+using Flock.Models;
+
+public static class PastStandings
+{
+    // seasonId is the id of a finished season of the board.
+    public static Task<Standings> LastSeasonAsync(string seasonId)
+    {
+        return FlockClient.Instance.Leaderboard.GetStandingsAsync("season_ladder", FlockLeaderboardWindow.Season(seasonId));
+    }
+
+    public static Task<Standings> WeekAsync(string periodKey)
+    {
+        return FlockClient.Instance.Leaderboard.GetStandingsAsync("weekly_high_scores", FlockLeaderboardWindow.Period(periodKey));
+    }
+
+    // A Country-scoped board, for one country.
+    public static Task<Standings> InCountryAsync(string countryCode)
+    {
+        return FlockClient.Instance.Leaderboard.GetStandingsAsync("weekly_high_scores", country: countryCode);
+    }
+}
 ```
 
 `country` filters a `Country`-scoped board to one country code; omit it for the whole board.

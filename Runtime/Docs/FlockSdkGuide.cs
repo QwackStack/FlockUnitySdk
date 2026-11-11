@@ -58,10 +58,10 @@ game's page on the Flock dashboard:
 These are saved into Assets/Resources/FlockConfig.asset.";
 
         public const string Setup =
-@"1. Fill in Configuration above.
-2. Click 'Add Flock Bootstrap to Scene'. This drops in a GameObject that starts
-   the SDK automatically when the game runs — put it in your first/boot scene.
-3. Re-sync from the Codegen tab in Flock > Settings whenever you change player templates or game config
+@"1. Fill in Configuration above and press Resolve Game Version.
+2. Nothing else is needed to start the SDK: Auto-Initialize On Load (Advanced Settings) starts it
+   when the game runs. With that off, press Add to Scene on the Configuration tab instead.
+3. Press Sync Schemas on the Code Generation tab whenever you change player templates or game config
    on the dashboard, or change Game Version, to regenerate the typed C# accessors.
 4. Done — the SDK is ready to use (see Quick Start below, and the full
    documentation for everything else).";
@@ -69,15 +69,19 @@ These are saved into Assets/Resources/FlockConfig.asset.";
         public const string Quickstart =
 @"The shortest path once Configuration is filled in:
 
-  // Easiest: click 'Add Flock Bootstrap to Scene' above — it initializes the SDK for you.
-  // Or initialize once at startup in code (synchronous, no network):
-  FlockClient.Create(flockConfig.ToInitConfig());
-
-  // Log a player in — auth methods throw on failure.
-  await FlockClient.Instance.Authentication.LoginWithDeviceAsync(""device-uuid"");
+  // The SDK starts on its own (Auto-Initialize On Load). Log a player in; a new
+  // device registers first; with no id the SDK uses its kept ThisDeviceId. Auth methods throw on failure.
+  try
+  {
+      await FlockClient.Instance.Authentication.LoginWithDeviceAsync();
+  }
+  catch (FlockException e) when (e.ErrorCode == FlockErrorCode.PlayerInvalidLoginCredentials)
+  {
+      await FlockClient.Instance.Authentication.RegisterWithDeviceAsync();
+  }
 
   // Read anything via FlockClient.Instance.
-  var game = await FlockClient.Instance.Game.GetGameAsync();
+  Game game = await FlockClient.Instance.Game.GetGameAsync();
 
 Everything else — shop, player data, leaderboards, codegen, assets, offline cache,
 events — is in the full documentation.";

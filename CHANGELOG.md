@@ -6,6 +6,84 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+### Fixed
+
+- **A web checkout whose read stopped before it ended no longer reads as a known outcome.** A read the server refused for good
+  (a 401 that renewing the sign-in did not fix, a proxy's 403, any other refusal) ended `Shop.PurchaseAsync` with the read's own
+  failure, and the checkout was counted as ended, while the player could still pay its page. The call now ends with a
+  `FlockException` with `OutcomeUnknown` set (the read's code and status kept, its failure the inner exception), whose fix says to
+  read `Shop.GetPurchasesAsync(PurchaseResultStatuses.Pending)` or call `FlockStore.RestoreAsync` before offering the item again,
+  and a restore or the next sign-in reads the checkout again. A checkout this client opened that the server still does not know
+  30 seconds later says Flock did not keep it, so the player should not pay on that page and should buy again.
+- **A web checkout's purchase in a status this SDK does not know is read again.** Every status other than pending or paid ended
+  the purchase as "nothing was bought"; it now ends only when paid, failed, expired or refunded (refunded with the reason
+  `Unknown`, as before), since the server can add statuses.
+- **`Shop.GetPurchaseAsync` refuses an answer about another purchase than the one asked for** (`FlockSerializationException`,
+  ids compared letter for letter), so a web checkout reads its purchase again rather than reporting another one as paid.
+- **The texts no longer promise that a web checkout paid after its wait ended is reported at the next sign-in or connect.** The
+  sign-in's search lists only the checkouts still open, so one paid meanwhile, or after `FlockStore.Dispose`, is delivered by
+  Flock without `PurchaseCompleted`. The cancellations of a sign-out and of `Dispose` (which now carries a message too), the
+  `FlockStore` documentation and the shop guide say to refresh the wallet and inventory after each sign-in, or read
+  `Shop.GetPurchasesAsync(PurchaseResultStatuses.Paid)`.
+- **A second sign-in event for the same sign-in (a session restore after connecting) no longer forgets which checkouts ended**,
+  so a list of open checkouts answered before one was paid cannot read and report it again; the list is forgotten only when the
+  sign-in changes.
+- **`FlockStoreOptions.CheckEvery` set to `TimeSpan.MaxValue`, or too long for the client's clock to count to, reads every 3
+  seconds.** It read at once or never, or failed the purchase after its checkout opened.
+
+### Added
+
+- **`Authentication.ThisDeviceId`: a device id the SDK keeps.** Made once and kept in the SDK's saved files
+  (`persistentDataPath/Flock/device_id.txt`, browser storage on WebGL) the first time it is needed, so a game no longer makes
+  and saves one itself; a new one comes after a reinstall, clearing the app's data or deleting the file (on WebGL, clearing
+  the site's data, a private window or another page address). `LoginWithDeviceAsync`, `RegisterWithDeviceAsync` and `LinkDeviceAsync` take the id as an optional first
+  parameter: leave it out to use `ThisDeviceId`, or pass an id of your own, sent as it is (an empty string is not the same as
+  leaving it out: the sign-in and registration calls send it and the server refuses it; `LinkDeviceAsync` refuses it before
+  sending). **A game that already signs players
+  in with an id of its own must keep passing it**, or those players get a new account. The samples now use the kept id.
+
+### Changed
+
+- **Config reads give a signed-in player the values Flock resolves for them.** With a player signed in, a config read (the
+  generated `GetXxxAsync()` accessors) of a gameplay or feature config returns the newest patch with the overrides of the
+  segments the player is in and the player's own overrides (other configs read as before), held for the sign-in once the
+  server answers (with no answer, the player's saved or the game-wide values, and the player's read again after 30 seconds)
+  and kept per player for offline with the offline cache on. With nobody signed in the values are the game-wide ones, as
+  before, so a game that reads config before sign-in reads it again after. When the server has no Game Version for the read
+  (the build sends none and none is recorded for the player), the values are the game-wide ones, with one warning saying so.
+- **`FlockFundId` lists game currencies only.** A real-money item's currency (USD, SAR) became a member, so
+  `AddGameFundsAsync(FlockFundId.USD, …)` compiled for a currency no wallet holds; the next Sync Schemas leaves those out. The
+  Code Generation tab's drift check now notices an item becoming real money, so a project whose fund ids went stale is asked to
+  sync once; a catalog with no real-money item keeps its hash.
+- **Flock > Settings > Advanced Settings has an Offline Cache card** with **Enable Offline Cache** and **Offline Cache
+  Directory**, beside Asset Cache. They were only in the FlockConfig asset's Inspector, so a game started by Auto-Initialize On
+  Load could not find the switch the WebGL notes ask it to turn off.
+- **The Advanced Settings tab shows every setting's name in full.** Its label column was Unity's default 150 points, which cut
+  names such as "Analytics Require Explicit Consent" short; it is 260 points there now.
+- **The Quick Start sample registers a device on its first launch.** It only logged in, so its first press on a new device
+  failed with `player.invalid_login_credentials`; it now logs in and, on that code, registers the device, as the Shop and
+  Multiplayer samples do. The Quick Start and Multiplayer samples' "not initialized" text and the in-editor Getting Started
+  guide name the window's real buttons (**Add to Scene**, **Sync Schemas**, the **Code Generation** tab), say no bootstrap is
+  needed while Auto-Initialize On Load is on, and the guide's sign-in registers a new device.
+
+### Documentation
+
+- **Every C# example compiles against this version.** Each block of the README, `Docs~/` and the sample READMEs is compiled
+  against the package in a Unity project (as are the docs site's Unity examples); every block has its `using` lines, explicit
+  types and no names it does not define. Generated names come from one example catalog.
+- **Sign-in examples register a new device.** The README's Quick Start and the authentication guide log in and register on
+  `PlayerInvalidLoginCredentials`, using the device id the SDK keeps (`Authentication.ThisDeviceId`).
+- **Editor steps show the editor.** Screenshots of the Configuration, Code Generation and Advanced Settings tabs (taken from
+  the editor, with a placeholder key); labels as the window draws them (**Game Name**, not "Game ID"; **Add to Scene**;
+  **Sync Schemas**; **Generated Code Path**).
+- **Corrected:** the ban example (`GetBanAsync` never returns null: read `IsBanned`), the asset cache folder
+  (`persistentDataPath/Flock/flock_assets`), the analytics transaction defaults and what revoking consent does, which events are
+  replayed to a late subscriber (only `OnInitialized` and `OnInitializationFailed`), how `FlockFundId` members are named, what
+  `RefreshTokenAsync` does with no saved sign-in, and the WebGL advice (untick Enable Asset Cache and Enable Offline Cache in
+  Advanced Settings).
+
 ## [1.102.0]
 
 No changes to the Flock SDK: this version is released together with the Protokite Playtest package's Powered by Qwacks mark on the

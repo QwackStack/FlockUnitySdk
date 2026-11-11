@@ -5,8 +5,8 @@ reported to your Protokite playtest.
 
 It asks the player what the playtest may collect, runs one Protokite session per launch, records the game's screen on 64-bit
 Windows and Android and uploads it to that session, sends performance and scene events through the Flock SDK, and shows your playtest's
-feedback form. In the editor it checks your setup, records test videos and runs a live self-test. A sample shows every call a
-game can make.
+feedback form. In the editor it checks your setup, records test videos and runs a live self-test. A sample puts the calls a
+game makes most on one screen.
 
 > **Setting it up for the first time?** The step-by-step guide, with screenshots, is at
 > [docs.qwacks.com/protokite/unity-package](https://docs.qwacks.com/protokite/unity-package). This README is the full reference.
@@ -16,10 +16,13 @@ game can make.
 You need the **Flock SDK** in your project first, at the **same version** as this package.
 
 **One click (recommended).** Open **Flock > Settings**, go to the **Playtesting** tab and press **Install Protokite
-Playtest**. It downloads the version that matches your Flock SDK and imports it. No Git needed.
+Playtest**. It downloads the version that matches your Flock SDK and imports it into `Assets/ProtokitePlaytest`. No Git
+needed. Once Unity has compiled it, the tab shows the version installed and where, with **Open Playtest Settings**, **Check
+Playtest Setup** and **Remove**. Pictures of the tab before and after:
+[docs.qwacks.com/protokite/unity-package#step-1-install-the-package](https://docs.qwacks.com/protokite/unity-package#step-1-install-the-package).
 
 **From the release page.** Download `ProtokitePlaytest-<version>.unitypackage` from the same GitHub release as your
-Flock SDK and double-click it.
+Flock SDK and double-click it. It imports into `Assets/ProtokitePlaytest`, as the one-click install does.
 
 **With Package Manager.** **Window > Package Manager > + > Add package from git URL**, then:
 
@@ -27,7 +30,18 @@ Flock SDK and double-click it.
 https://github.com/QwackStack/FlockUnitySDK.git?path=/ProtokitePlaytest~#v<version>
 ```
 
-Use the same `<version>` as your Flock SDK. This route needs Git installed on your machine.
+Use the same `<version>` as your Flock SDK. This route needs Git installed on your machine. The package then sits in
+Package Manager's own folder, `Packages/com.protokite.playtest`, shown in the Project window as **Packages > Protokite
+Playtest**, and you change its version in Package Manager.
+
+Whichever way you install it, the folder holds `Runtime/`, `Editor/` and `Samples/PlaytestSample/` (see [The sample](#the-sample)).
+
+**Which version is installed.** Flock's **Playtesting** tab reads `Installed: version …, in …`; a package added through
+Package Manager also shows its version in Package Manager.
+
+**A game with assembly definitions of its own.** The package's code is the assembly `Protokite.Playtest`. Scripts outside
+any assembly definition see it already; a script inside one of your own assembly definitions needs `Protokite.Playtest` added
+to that definition's **Assembly Definition References** (select the `.asmdef`, add it, press **Apply**).
 
 ## Switch it on
 
@@ -38,8 +52,11 @@ Use the same `<version>` as your Flock SDK. This route needs Git installed on yo
    page's SDK block shows. The editor finds the playtest's version through Flock and shows it under **Resolved Version ID**.
    **Leave it empty and a build joins your game's newest playtest**, whichever is newest in Protokite when it starts.
 
-The Protokite API URL is filled in for you (`https://api-protokite.qwacks.com`); change it only to point at a local
-Protokite, such as `http://localhost:8020`. Your Flock API key is used as it is, and your Flock **Game Version** stays your
+A picture of the settings is at
+[docs.qwacks.com/protokite/unity-package#step-2-point-the-build-at-the-playtest](https://docs.qwacks.com/protokite/unity-package#step-2-point-the-build-at-the-playtest).
+
+**Protokite Api Url** is filled in for you with Protokite's address, `https://api-protokite.qwacks.com`. Leave it as it is,
+unless you run a Protokite server of your own. Your Flock API key is used as it is, and your Flock **Game Version** stays your
 game's own: only the playtest's requests to Protokite carry the playtest's version, so everything you set up in Flock under
 your Game Version (player templates, configs, the shop) keeps working in a playtest build.
 
@@ -55,18 +72,33 @@ your Game Version (player templates, configs, the shop) keeps working in a playt
   the middle of one. The one exception keeps earlier projects as they were: a Flock **Game Version** that is a playtest's own
   name, `pt-<test id>`, still joins that playtest. Fill in Playtest ID to choose.
 
+**Three ways to choose the playtest; use one.** A filled-in **Playtest ID** joins that playtest: use it for a playtest you
+send to players. An empty Playtest ID joins the game's newest playtest: handy while you try things out with one playtest at a
+time. An empty Playtest ID with a `pt-<test id>` **Game Version** is the way before 1.68.0, kept so earlier projects still
+work; the whole game then runs under the playtest's version, so a new project uses the Playtest ID instead.
+
 ## Check your setup
 
 **Protokite > Playtest > Setup Checks And Test Video** (or **Check Playtest Setup** on Flock's Playtesting tab) checks what
 a build of this project needs for a playtest, and says what to change for each check that fails, with a button that opens
-the place to change it:
+the place to change it (**Open Playtest Settings**, **Open Flock Settings**, **Open Build Settings**, **Resolve Playtest
+ID**, or **Set Game Version To pt-...**). A picture of the window is at
+[docs.qwacks.com/protokite/unity-package#step-3-check-your-setup](https://docs.qwacks.com/protokite/unity-package#step-3-check-your-setup).
 
-| Check | Passes when |
+The window shows four checks: the switch, the URL, which playtest a build joins, and video. The three rows about which playtest
+are alternatives, and only the one that matches your settings is shown.
+
+| The window says, when it passes | When |
 |---|---|
-| Playtesting | the playtest settings exist and **Playtesting Enabled** is on |
-| Protokite API URL | it is an http or https address with a host and no spaces, by the same rule the game uses |
-| Which playtest | **Playtest ID** is resolved to a playtest's version; or, with it empty, the build joins the game's newest playtest (passes, and says so), or the one a `pt-<test id>` Game Version names |
-| Video | the build target is 64-bit Windows, x64, or Android with **Record Video On Android** on |
+| Playtesting is turned on | the playtest settings exist and **Playtesting Enabled** is on |
+| Protokite API URL is usable | **Protokite Api Url** is an http or https address with a host and no spaces, by the same rule the game uses |
+| Playtest ID chooses this build's playtest | **Playtest ID** is resolved to a playtest's version |
+| The game's newest playtest | **Playtest ID** is empty, so a build joins the game's newest playtest |
+| Game Version is a playtest's version | **Playtest ID** is empty and Flock's **Game Version** is a playtest's name, `pt-<test id>`, resolved to the ID a build sends |
+| Players built for this platform record video | the build target is 64-bit Windows (x64), or Android with **Record Video On Android** on |
+
+A check that fails says so in its own words instead, such as "Playtesting is turned off", "Playtest ID is not resolved yet"
+or "Players built for WebGL record no video", with what to change under it.
 
 - **Paste an ID into Playtest ID, never into Game Version.** Flock resolves Game Version by name: an ID pasted into Game
   Version resolves to nothing, so a build keeps sending the ID resolved before. With Playtest ID empty and such an ID in Game
@@ -94,8 +126,8 @@ logged once, as a warning that says what to change, and `ProtokitePlaytest.Descr
 | Status | Meaning |
 |---|---|
 | `TurnedOff` | Playtesting is switched off, or the project has no playtest settings |
-| `ProtokiteApiUrlMissing` | The Protokite API URL is empty |
-| `ProtokiteApiUrlUnusable` | The Protokite API URL is not an http or https address, or has a space in it |
+| `ProtokiteApiUrlMissing` | **Protokite Api Url** is empty |
+| `ProtokiteApiUrlUnusable` | **Protokite Api Url** is not an http or https address, or has a space in it |
 | `WaitingForFlock` | Everything is set; the Flock SDK has not started yet |
 | `FetchingPlaytestConfig` | Asking Protokite for this build's playtest |
 | `PlaytestNotLinked` | Protokite has no playtest for this build: none for the version it asks for, or, with Playtest ID empty, none in the game at all |
@@ -110,6 +142,48 @@ logged once, as a warning that says what to change, and `ProtokitePlaytest.Descr
 
 A refusal (`PlaytestNotLinked`, `ProtokiteRefusedApiKey`, `PlaytestConfigForAnotherVersion`) is not asked again until the Flock SDK
 is started again (or the game relaunched), since the answer would be the same.
+
+To react to the status in your game, for a debug overlay or to hide what only makes sense in a playtest, read it each frame
+and act when it changes:
+
+```csharp
+using Protokite.Playtest;
+using UnityEngine;
+
+public class PlaytestStatusLog : MonoBehaviour
+{
+    private ProtokitePlaytestStatus? _lastStatus;
+
+    private void Update()
+    {
+        ProtokitePlaytestStatus status = ProtokitePlaytest.Status;
+        if (status == _lastStatus)
+            return;
+        _lastStatus = status;
+
+        // The same words the playtest logs, for a debug overlay or your own log.
+        Debug.Log($"Playtest status: {status}. {ProtokitePlaytest.Describe(status)}");
+
+        switch (status)
+        {
+            case ProtokitePlaytestStatus.Ready:
+                Debug.Log("Playtest " + ProtokitePlaytest.Config.TestId + " is running.");
+                break;
+            case ProtokitePlaytestStatus.WaitingForPlayerConsent:
+                Debug.Log("The consent question is on screen: keep your own menus closed until it is answered.");
+                break;
+            case ProtokitePlaytestStatus.TurnedOff:
+            case ProtokitePlaytestStatus.PlayerRefusedPlaytest:
+                Debug.Log("Nothing is collected in this launch.");
+                break;
+        }
+    }
+}
+```
+
+Add it to any GameObject in your first scene. The Console then shows one line each time the status changes, for example
+`Playtest status: WaitingForFlock. Playtesting is set up and waiting for the Flock SDK to initialize.`, then `FetchingPlaytestConfig`,
+then `WaitingForPlayerConsent` or `Ready`.
 
 ## The player's consent
 
@@ -136,14 +210,62 @@ debug facts as `playtest_consent` (`video_and_play_data`, `video_only`, `play_da
 |---|---|---|
 | Ask The Player For Playtest Consent | on | Put the question, and collect nothing until it is answered; on a phone that records, the question about upload networks follows (below). Turn it off only where players were asked another way, or for a test run with nobody to answer; everything the playtest turns on is then collected, and each session says nobody was asked |
 
+A picture of the question is at
+[docs.qwacks.com/protokite/unity-package#step-5-press-play](https://docs.qwacks.com/protokite/unity-package#step-5-press-play).
+
+Your game can show the answer and take the question over from its own menus:
+
 ```csharp
-ProtokitePlaytest.PlaytestConsent                 // the answer in force
-ProtokitePlaytest.PlayersConsentAnswer            // what the player answered on this machine, NotAnswered until they do
-ProtokitePlaytest.Describe(answer)                // one sentence saying what an answer lets the playtest collect
-ProtokitePlaytest.SetPlaytestConsent(choice)      // your own menu answers it; NotAnswered asks again
-ProtokitePlaytest.AskForPlaytestConsent()         // put the question on screen again, to change the answer
-ProtokitePlaytest.IsConsentQuestionOpen
+using Protokite.Playtest;
+using UnityEngine;
+
+public class MyPlaytestPrivacyMenu : MonoBehaviour
+{
+    // Show what the playtest may collect, in the playtest's own words.
+    public void ShowCurrentAnswer()
+    {
+        ProtokitePlaytestConsentChoice inForce = ProtokitePlaytest.PlaytestConsent;
+        Debug.Log("In force: " + inForce + ". " + ProtokitePlaytest.Describe(inForce));
+        Debug.Log("What the player answered on this device: " + ProtokitePlaytest.PlayersConsentAnswer);
+    }
+
+    // A button in your own menu answers for the player.
+    public void AnswerScreenOnly()
+    {
+        if (!ProtokitePlaytest.SetPlaytestConsent(ProtokitePlaytestConsentChoice.VideoOnly))
+            Debug.LogWarning("The answer could not be saved, so nothing is collected; the Console says why.");
+    }
+
+    // Forget the answer: the playtest puts its question again.
+    public void ForgetTheAnswer()
+    {
+        ProtokitePlaytest.SetPlaytestConsent(ProtokitePlaytestConsentChoice.NotAnswered);
+    }
+
+    // Put the playtest's own question on screen again, so the player can change their answer.
+    public void AskAgain()
+    {
+        if (!ProtokitePlaytest.AskForPlaytestConsent())
+            Debug.Log("The question could not be put: " + ProtokitePlaytest.Describe(ProtokitePlaytest.Status));
+    }
+
+    private void Update()
+    {
+        // Leave the screen to the playtest's question while it is open.
+        if (ProtokitePlaytest.IsConsentQuestionOpen)
+            return;
+        // Your menu's own input goes here.
+    }
+}
 ```
+
+- `PlaytestConsent` is the answer in force: the player's, or with none `NotAnswered` in a build that asks and
+  `VideoAndPlayData` in one that does not. `PlayersConsentAnswer` is only what the player answered on this device.
+- The answers are `VideoAndPlayData`, `VideoOnly`, `PlayDataOnly`, `Nothing`, and `NotAnswered`, which forgets the answer so
+  the question is put again.
+- `SetPlaytestConsent` applies the answer at once and logs `[Protokite Playtest]` with what the answer lets the playtest
+  collect and where it is kept. It returns false, and collects nothing, when the answer could not be saved.
+- `AskForPlaytestConsent` returns false when no playtest is loaded, as there is nothing to ask about.
 
 - **Taking the screen back deletes this launch's recording**, rather than keeping it for a later launch to send. One already
   uploading goes on.
@@ -175,17 +297,88 @@ that has already said it can record no video is not asked. Recordings earlier la
 still be put. Asking the consent question again (`AskForPlaytestConsent`) puts this one again after an answer that lets the
 screen be recorded. Nothing is asked on Windows, and nothing waits there.
 
+A picture of the question is at
+[docs.qwacks.com/protokite/unity-features#on-a-phone-which-networks-recordings-upload-on](https://docs.qwacks.com/protokite/unity-features#on-a-phone-which-networks-recordings-upload-on).
+Your game can show the answer and change it from its own settings screen:
+
 ```csharp
-ProtokitePlaytest.PlayersUploadNetworkAnswer         // WiFiOnly, WiFiAndMobileData, or NotAnswered (uploads on any network)
-ProtokitePlaytest.SetPlaytestUploadNetwork(choice)   // your own menu answers it; NotAnswered asks again on a phone
+using Protokite.Playtest;
+using UnityEngine;
+
+public class MyUploadNetworkSetting : MonoBehaviour
+{
+    // The player's answer, for your own settings screen.
+    public string CurrentAnswer()
+    {
+        switch (ProtokitePlaytest.PlayersUploadNetworkAnswer)
+        {
+            case ProtokitePlaytestUploadNetworkChoice.WiFiOnly: return "Recordings upload on Wi-Fi only";
+            case ProtokitePlaytestUploadNetworkChoice.WiFiAndMobileData: return "Recordings upload on Wi-Fi or mobile data";
+            default: return "Not answered: recordings upload on any network";
+        }
+    }
+
+    // Your settings screen's toggle answers for the player.
+    public void SetWiFiOnly(bool wifiOnly)
+    {
+        ProtokitePlaytestUploadNetworkChoice choice = wifiOnly
+            ? ProtokitePlaytestUploadNetworkChoice.WiFiOnly
+            : ProtokitePlaytestUploadNetworkChoice.WiFiAndMobileData;
+        if (!ProtokitePlaytest.SetPlaytestUploadNetwork(choice))
+            Debug.LogWarning("The answer holds for this launch but could not be kept; the next launch asks again.");
+    }
+}
 ```
+
+The answer applies at once, and the Console says what it allows. `SetPlaytestUploadNetwork(ProtokitePlaytestUploadNetworkChoice.NotAnswered)`
+forgets it, so a phone build that asks puts the question again.
 
 ## What the playtest turns on
 
-`ProtokitePlaytest.Config` is the loaded config (null until `Ready`): the playtest's `TestId`, its feature switches and
-its feedback form (`Form`, null when the playtest has none). Check a feature with
-`ProtokitePlaytest.IsFeatureEnabled(ProtokitePlaytestFeatures.VideoRecording)`; a feature the config does not mention is off,
-and so is one the player's answer does not allow (a feature this build does not know needs the answer that allows everything).
+`ProtokitePlaytest.Config` is the loaded config, and null unless the status is `Ready`: the playtest's `TestId`, its feature
+switches (`Features`) and its feedback form (`Form`, null when the playtest has none). The feedback form itself is there
+earlier: `ProtokitePlaytest.FeedbackForm` and **F9** already work while the status is `WaitingForPlayerConsent` or
+`PlayerRefusedPlaytest`, since the form is the player's own message (see [The feedback form](#the-feedback-form)).
+
+Check a feature with `ProtokitePlaytest.IsFeatureEnabled`, and one of `ProtokitePlaytestFeatures.VideoRecording`,
+`HeavyAnalytics` or `ExceptionCapturing`. It is true only when the playtest turns the feature on **and** the player's answer
+allows it; a feature the config does not mention is off (and one this build does not know needs the answer that allows
+everything):
+
+```csharp
+using Protokite.Playtest;
+using UnityEngine;
+
+public class RecordingIndicator : MonoBehaviour
+{
+    [SerializeField] private GameObject _recordingIcon;   // a small "REC" icon in your HUD
+
+    private void Update()
+    {
+        // True only when the playtest turns video on and the player let their screen be recorded.
+        _recordingIcon.SetActive(ProtokitePlaytest.IsFeatureEnabled(ProtokitePlaytestFeatures.VideoRecording));
+    }
+
+    public void LogWhatThisPlaytestCollects()
+    {
+        ProtokitePlaytestConfig config = ProtokitePlaytest.Config;
+        if (config == null)
+        {
+            Debug.Log("No playtest is running: " + ProtokitePlaytest.Describe(ProtokitePlaytest.Status));
+            return;
+        }
+        Debug.Log("Playtest " + config.TestId
+            + ": video " + ProtokitePlaytest.IsFeatureEnabled(ProtokitePlaytestFeatures.VideoRecording)
+            + ", play data " + ProtokitePlaytest.IsFeatureEnabled(ProtokitePlaytestFeatures.HeavyAnalytics)
+            + ", exceptions " + ProtokitePlaytest.IsFeatureEnabled(ProtokitePlaytestFeatures.ExceptionCapturing)
+            + ", feedback form " + (config.Form != null));
+    }
+}
+```
+
+Drag your HUD's icon onto **Recording Icon** in the Inspector. The icon shows from the moment the playtest is loaded and the
+player's answer lets the screen be recorded; `LogWhatThisPlaytestCollects` logs a line such as
+`Playtest 01J…: video True, play data True, exceptions True, feedback form True`.
 
 ## The feedback form
 
@@ -224,25 +417,144 @@ sends **whatever their consent answer**, "nothing" included; it never opens over
 | Feedback Form Footer Logo | empty | Empty, the form shows Powered by Qwacks at its bottom left, on the row of Close and Send. One small image of your own drawn there instead, in its own shape; on a narrow screen it is drawn smaller, never the buttons. Import it like the logos above |
 | Feedback Form Footer Logo Height | 22 | How tall the footer logo is drawn, from 12 to 48 points at a 1280x720 screen |
 
-```csharp
-ProtokitePlaytest.CanOpenFeedbackForm            // a form to open: leave your "give feedback" button out when false
-ProtokitePlaytest.OpenFeedbackForm()             // and CloseFeedbackForm(), IsFeedbackFormOpen
-ProtokitePlaytest.CanSendTheRecording            // and StopRecordingAndSendIt(), what the form's recording button does
-```
+### Open it from your own button
 
-A game drawing a form of its own reads the questions from `ProtokitePlaytest.FeedbackForm` and sends the answers through the
-same checking and keeping:
+F9 works with no code. To open the form from a button of your own, show the button only while there is a form to open, and
+call `OpenFeedbackForm` when it is pressed:
 
 ```csharp
-ProtokitePlaytestFormAnswers answers = new ProtokitePlaytestFormAnswers();
-answers.SetRating("rating", 4);
-answers.SetChosenOption("category", "Bug");
-answers.SetText("title", "Fell through the floor");
-answers.SetChecked("contact", false);
-foreach (ProtokitePlaytestFormProblem problem in answers.FindProblems(ProtokitePlaytest.FeedbackForm))
-    Debug.Log(problem.FieldId + ": " + problem.Message);
-ProtokitePlaytest.SendFeedbackForm(answers);   // false, with a warning, when there are problems
+using Protokite.Playtest;
+using UnityEngine;
+using UnityEngine.UI;
+
+public class FeedbackButton : MonoBehaviour
+{
+    [SerializeField] private Button _feedbackButton;
+
+    private void Update()
+    {
+        // Show the button only while there is a form to open.
+        _feedbackButton.gameObject.SetActive(ProtokitePlaytest.CanOpenFeedbackForm && !ProtokitePlaytest.IsFeedbackFormOpen);
+    }
+
+    // Wire this to the button's On Click.
+    public void OpenFeedback()
+    {
+        if (!ProtokitePlaytest.OpenFeedbackForm())
+            Debug.Log("The feedback form cannot open now: no form, the consent question is up, or one is already open.");
+    }
+}
 ```
+
+- `CanOpenFeedbackForm` is true once a playtest with a published form has loaded, whatever the player's consent answer. It
+  is false with no playtest, with a playtest that publishes no form, and before the playtest has loaded.
+- `OpenFeedbackForm()` returns false when there is no form, one is already open, the consent question is on screen, or nothing
+  can be drawn (batch mode, no graphics). `CloseFeedbackForm()` closes it without sending and keeps what was typed.
+- `CanSendTheRecording` and `StopRecordingAndSendIt()` are what the form's recording button does, for a button of your own.
+
+### A form of your own
+
+A game that draws its own form reads the questions from `ProtokitePlaytest.FeedbackForm` and sends the answers through the
+same checking and keeping as the built-in form. Each answer is recorded by the question's `Id`, so read the ids from the form
+rather than typing them: the studio can change the questions in Protokite without a new build.
+
+```csharp
+using System.Collections.Generic;
+using Protokite.Playtest;
+using UnityEngine;
+
+public class MyFeedbackScreen : MonoBehaviour
+{
+    private readonly ProtokitePlaytestFormAnswers _answers = new ProtokitePlaytestFormAnswers();
+
+    // 1. Read the questions the studio published.
+    public void ShowQuestions()
+    {
+        ProtokitePlaytestForm form = ProtokitePlaytest.FeedbackForm;
+        if (form == null)
+        {
+            Debug.Log("No form: the playtest has none, or it has not loaded.");
+            return;
+        }
+        Debug.Log(form.Title + ": " + form.Description);
+        foreach (ProtokitePlaytestFormField field in form.Fields)
+        {
+            string required = field.Required ? " (required)" : "";
+            Debug.Log($"{field.Id}: {field.Label}{required} [{field.Type}] {field.HelpText}");
+            if (field.Type == ProtokitePlaytestFormFieldTypes.Select)
+                Debug.Log("  options: " + string.Join(", ", field.Options));
+        }
+    }
+
+    // 2. Record an answer for each kind of question, by the field's Id.
+    public void Answer(ProtokitePlaytestFormField field, string text, int stars, bool ticked, string chosen)
+    {
+        switch (field.Type)
+        {
+            case ProtokitePlaytestFormFieldTypes.Rating:
+                _answers.SetRating(field.Id, stars);            // 1 to 5; 0 is sent as unanswered (Remove takes it back)
+                break;
+            case ProtokitePlaytestFormFieldTypes.Checkbox:
+                _answers.SetChecked(field.Id, ticked);          // unticked is an answer too
+                break;
+            case ProtokitePlaytestFormFieldTypes.Select:
+                _answers.SetChosenOption(field.Id, chosen);     // one of field.Options, letter for letter
+                break;
+            default:
+                _answers.SetText(field.Id, text);               // text, textarea, and any kind this package does not know
+                break;
+        }
+    }
+
+    // 3. Find problems before sending, then send.
+    public bool Send()
+    {
+        IReadOnlyList<ProtokitePlaytestFormProblem> problems = _answers.FindProblems(ProtokitePlaytest.FeedbackForm);
+        foreach (ProtokitePlaytestFormProblem problem in problems)
+            Debug.Log(problem.FieldId + ": " + problem.Message);   // show each next to its question
+        if (problems.Count > 0)
+            return false;
+
+        // True: the answers are kept on this device and sent in the background (the Console says when Protokite took them).
+        bool kept = ProtokitePlaytest.SendFeedbackForm(_answers);
+        if (kept)
+            _answers.Clear();
+        return kept;
+    }
+}
+```
+
+| Question kind (`field.Type`) | Constant | Record it with | Read it back with |
+|---|---|---|---|
+| One line of text | `ProtokitePlaytestFormFieldTypes.Text` | `SetText(id, text)` | `GetText(id)` |
+| Many lines of text | `ProtokitePlaytestFormFieldTypes.TextArea` | `SetText(id, text)` | `GetText(id)` |
+| A rating from 1 to 5 | `ProtokitePlaytestFormFieldTypes.Rating` | `SetRating(id, stars)`; 0 is sent as unanswered | `GetRating(id)`, 0 when unanswered |
+| One of the options | `ProtokitePlaytestFormFieldTypes.Select` | `SetChosenOption(id, option)`, one of `field.Options`; "" is sent as unanswered | `GetText(id)` |
+| A checkbox | `ProtokitePlaytestFormFieldTypes.Checkbox` | `SetChecked(id, ticked)` | `IsChecked(id)` |
+| A kind this package does not know yet | its own `field.Type` text | `SetText(id, text)` | `GetText(id)` |
+
+`IsAnswered(id)` says whether anything was recorded for a question, a rating of 0 or an empty option included
+(they are sent as unanswered, yet `IsAnswered` stays true); `Remove(id)` takes an answer back entirely and `Clear()` empties them all. An answer
+under an id the form does not have is left out when sending, not refused, so a typo loses that answer quietly: take ids from
+`form.Fields`.
+
+**Finding problems.** `FindProblems(form)` checks the answers the way Protokite does and returns one problem per question
+(`FieldId`, and a `Message` to show beside it): "This one is needed." for a required question left empty, "Choose a rating
+from 1 to 5." and "Choose one of the options given.". An empty list means Protokite would take the form.
+
+**What sending tells you.** `SendFeedbackForm` returns **true when the answers are kept on this device**, not when Protokite has
+them: sending happens in the background, and nothing is lost if the game closes or the network drops meanwhile. It returns
+false, with a warning in the Console, when no playtest with a form is loaded, no answers were given, `FindProblems` is not
+empty, or the answers could not be kept. What happens next shows only in the Console:
+
+| Console line | What it means | What to do |
+|---|---|---|
+| `[Protokite Playtest] A feedback form was sent to Protokite (stored as …)` | Protokite has the answers | Nothing |
+| `… could not be sent now (HTTP …), so the waiting forms are kept and tried again when the network comes back or in 2 minutes` | No network, or Protokite could not take it now | Nothing: it is sent later, or by a later launch |
+| `Protokite refused this build's Flock API key when sending a feedback form (HTTP 401)` | The build's API key is wrong | Check **Api Key** in **Flock > Settings > Configuration**; the forms are sent by a later launch with the right key |
+| `A feedback form kept at … was refused by Protokite (HTTP 422 …): … It is deleted.` | Protokite refused that form for good (HTTP 422 or 404), so sending it again would be refused again | Read Protokite's reason in the line, which names the question when Protokite names one, and check the form in Protokite |
+
+A game cannot wait for the answer from Protokite: there is no event or result for it, only these lines.
 
 Forms waiting to be sent are kept in `ProtokitePlaytest/FeedbackForms` under the game's persistent data folder, one file each,
 with no API key in them. In the editor, **Open Feedback Form** in **Protokite > Playtest > Setup Checks And Test Video** opens it
@@ -250,22 +562,81 @@ in Play Mode.
 
 ## Sessions
 
-Each launch runs **one** Protokite session. It starts once the playtest's config is loaded, the player's answer lets it collect
-something, and a Flock session has reached
-the server, which happens when a player signs in with **Analytics Enabled** and **Analytics Auto Start Session** on in
-**Flock > Settings** (or when you call `StartSessionAsync`), and consent given when **Analytics Require Explicit Consent** is
-on. The playtest never signs a player in. Signing out and in, a new Flock session or restarting Flock never start a second
-one. The session ends when the game quits; quitting waits up to 3 seconds for Protokite to take the end.
-`ProtokitePlaytest.PlaytestSessionId` is its id once it has started.
+A Protokite session is one launch of the game, as it shows on the playtest's **Sessions** page in Protokite. Each launch runs
+**one**. It starts once the playtest's config is loaded, the player's answer lets it collect something, and a Flock session
+(the Flock SDK's own record of a play session) has reached the server. That happens when a player signs in with **Analytics
+Enabled** and **Analytics Auto Start Session** on (both in **Flock > Settings > Advanced Settings**, the second under
+**Analytics Settings**), or when you call `FlockClient.Instance.Analytics.StartSessionAsync()`, and once consent is given
+when **Analytics Require Explicit Consent** is on. Signing out and in, a new Flock session or restarting Flock never start a
+second one. The session ends when the game quits; quitting waits up to 3 seconds for Protokite to take the end.
+`ProtokitePlaytest.PlaytestSessionId` is its id once it has started, and null before.
 
-**Who is playing.** The package makes a device id once and keeps it in `ProtokitePlaytest/device_id.txt` under the game's
-persistent data folder. A game with Steam sends the Steam id instead, before the session starts:
+**The playtest never signs a player in**, so your game must. A game with no sign-in screen of its own can sign in with this
+device, registering it the first time:
 
 ```csharp
-ProtokitePlaytest.SetSteamId(SteamUser.GetSteamID().ToString(), SteamFriends.GetPersonaName());
+using System;
+using Flock;
+using Flock.Exceptions;
+using UnityEngine;
+
+public class SignInWithThisDevice : MonoBehaviour
+{
+    private async void Start()
+    {
+        // The Flock SDK starts by itself with Auto-Initialize On Load on, or with a FlockBootstrap in the scene.
+        if (!FlockClient.IsInitialized || FlockClient.Instance.IsAuthenticated)
+            return;
+        // With no id, both calls use the device id the Flock SDK keeps for this install.
+        try
+        {
+            try
+            {
+                await FlockClient.Instance.Authentication.LoginWithDeviceAsync();
+            }
+            // A device Flock has never seen has no account yet: register it, which also signs it in.
+            catch (FlockException ex) when (ex.ErrorCode == FlockErrorCode.PlayerInvalidLoginCredentials)
+            {
+                await FlockClient.Instance.Authentication.RegisterWithDeviceAsync();
+            }
+            Debug.Log("Signed in as player " + FlockClient.Instance.CurrentPlayerId + ". The playtest's session starts next.");
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning("Sign-in failed: " + ex.Message);
+        }
+    }
+}
 ```
 
-An id that is empty, longer than 64 characters or holds whitespace is refused (not trimmed), and the device id is sent.
+Add it to a GameObject in your first scene. With no id passed, the Flock SDK makes a device id on the first launch and
+keeps it, so every launch signs in as the same player; a game that already signs players in with an id of its own passes
+that id instead. Once signed in, the Console shows
+`[Protokite Playtest] Protokite session … started for this launch`.
+
+**Who is playing.** The package makes a device id of its own once (not the one Flock signs in with) and keeps it in
+`ProtokitePlaytest/device_id.txt` under the game's persistent data folder. A game with Steam sends the Steam id instead, before the session starts. This needs the
+[Steamworks.NET](https://github.com/rlabrecque/Steamworks.NET) package, with Steam running:
+
+```csharp
+using Protokite.Playtest;
+using Steamworks;   // the Steamworks.NET package
+using UnityEngine;
+
+public class PlaytestSteamName : MonoBehaviour
+{
+    // Call once Steam is running, before your game signs the player in to Flock.
+    public void UseSteamId()
+    {
+        string steamId = SteamUser.GetSteamID().ToString();
+        if (!ProtokitePlaytest.SetSteamId(steamId, SteamFriends.GetPersonaName()))
+            Debug.Log("Steam id not used: the session has already started, or the id was refused; the Console says which.");
+    }
+}
+```
+
+An id that is empty, longer than 64 characters or holds whitespace is refused (not trimmed), and the device id is sent. One set
+after the session has started changes nothing for this launch.
 
 When a player is signed in to Flock, the session start also carries their sign-in, renewed first if it has run out or has a
 minute or less left, so Protokite can link the session to the player's Qwacks Community account. Nothing else is needed from
@@ -281,7 +652,8 @@ When the playtest's config turns **heavy_analytics** on, the playtest sends even
 filed under the category `playtest` (`ProtokitePlaytestEvents.Category`):
 
 - **`performance_window`**, for every ten seconds of play: `window_seconds`, `frames`, `median_frame_time_ms`,
-  `frame_time_95th_percentile_ms`, `frame_time_99th_percentile_ms`, `hitches` (frames that took the hitch threshold or longer),
+  `frame_time_95th_percentile_ms`, `frame_time_99th_percentile_ms` (the time 95 or 99 frames in 100 stay within, so the slowest
+  frames show), `hitches` (frames slow enough to see as a stutter: those that took the hitch threshold or longer),
   `hitch_threshold_ms`, `memory_used_mb` and `memory_peak_mb` (the process's memory now, and the most it used since measuring
   started; left out where the platform does not report them), and `map` (the active scene, however it became active). A frame
   time is the real time from one frame's Update to the next, so slow motion or a paused game is measured as the frames the
@@ -296,20 +668,36 @@ turned heavy analytics on are not reported.
 **The game's own events** go on the same timeline, with the same category:
 
 ```csharp
-ProtokitePlaytest.RecordPlaytestEvent("boss_fight_started", new Dictionary<string, object> { { "boss", "hydra" } });
+using System.Collections.Generic;
+using Protokite.Playtest;
+using UnityEngine;
+
+public class BossFightEvents : MonoBehaviour
+{
+    // Call when the fight starts: it lands on the session's timeline beside the performance windows.
+    public void OnBossFightStarted(string bossName)
+    {
+        bool queued = ProtokitePlaytest.RecordPlaytestEvent("boss_fight_started",
+            new Dictionary<string, object> { { "boss", bossName } });
+        if (!queued)
+            Debug.Log("Not recorded: no playtest is measuring play data right now.");
+    }
+}
 ```
 
-It answers true when the event was queued, can be called from any thread, and sends only while heavy analytics runs, which
-starts once the playtest's config has loaded: an event recorded earlier in the launch answers false and is not kept. The two
-names the playtest sends itself are refused.
+`RecordPlaytestEvent` answers true when the event was queued, can be called from any thread, and sends only while heavy
+analytics runs, which starts once the playtest's config has loaded: an event recorded earlier in the launch answers false and
+is not kept. The two names the playtest sends itself, `performance_window` and `level_loaded`, are refused. The event shows in
+Flock under **Dashboards > Game Metrics**, in the `playtest` category, once the Flock SDK has sent it.
 
 | Setting | Default | |
 |---|---|---|
 | Hitch Frame Time Ms | 60 | A frame that takes this many milliseconds or longer is counted as a hitch |
 
-Heavy analytics needs the Flock SDK's **Analytics Enabled** (Flock > Settings): with it off, nothing is measured and the log
-says so once. The events are Flock events like any other, so they wait for a signed-in player and follow the Flock SDK's
-analytics consent. They also share its offline queue (**Analytics Max Cached Events**, 1000 by default, oldest dropped first):
+Heavy analytics needs the Flock SDK's **Analytics Enabled** (**Flock > Settings > Advanced Settings**): with it off, nothing is
+measured and the log says so once. The events are Flock events like any other, so they wait for a signed-in player and follow
+the Flock SDK's analytics consent. They also share its offline queue (**Analytics Max Cached Events**, on the same tab under
+**Analytics Settings**, 1000 by default, oldest dropped first):
 six windows a minute fill it in under three hours offline, so raise it for playtests played offline. The playtest calls the
 Flock SDK's analytics, so it cannot be used with a Flock SDK exported without Analytics, and the Playtesting tab will not
 install it there.
@@ -327,10 +715,27 @@ their way from the graphics card, and those the encoder has not handed back) is 
 while it is away keeps every frame recorded before. On a phone the encoder is given back to the phone meanwhile, and the first
 frame after the return starts a new stream on a keyframe in the same file.
 
+There is nothing to call: it records by itself. `ProtokitePlaytest.IsRecordingVideo` is true while this launch's recording
+captures (a test video does not count). A game that ends play on its own schedule, such as a demo's last level, can stop the
+recording for good, and it then uploads like any finished recording:
+
 ```csharp
-ProtokitePlaytest.IsRecordingVideo       // this launch's recording is capturing (a test video does not count)
-ProtokitePlaytest.StopVideoRecording()   // stop it for good, for a game ending play on its own schedule; it uploads as any finished recording
+using Protokite.Playtest;
+using UnityEngine;
+
+public class EndOfDemo : MonoBehaviour
+{
+    // Call when your demo's last level ends: the recording stops for good and uploads like any finished one.
+    public void OnDemoFinished()
+    {
+        if (ProtokitePlaytest.StopVideoRecording())
+            Debug.Log("The playtest's recording stopped; it uploads once its file is finished.");
+    }
+}
 ```
+
+`StopVideoRecording` returns false when nothing is recording. The Console then logs what the recording holds and, once it is
+uploaded, that it was.
 
 ### Test videos
 
@@ -351,24 +756,78 @@ room for a later recording deletes it; the window shows where it went.
 - A playtest collecting play data in the same Play session measures the test video's cost with the game's.
 - On 64-bit Windows and Android, as video recording is; on a phone, from code (below).
 
+A picture of the window in Play Mode is at
+[docs.qwacks.com/protokite/unity-features#trying-it-in-the-editor](https://docs.qwacks.com/protokite/unity-features#trying-it-in-the-editor).
+
 A game can record one itself, a debug menu's "record a clip" button for instance. It records in Play Mode or a player; in the editor
 outside Play Mode it is refused, with the reason:
 
 ```csharp
-if (!ProtokitePlaytest.RecordTestVideo(30.0, out string whyNot))
-    Debug.Log("No test video: " + whyNot);
-ProtokitePlaytest.TestVideoState         // WaitingToStart, Recording, Finishing, Finished or NotRecorded
-ProtokitePlaytest.FinishedTestVideoPath  // the finished file, once written
-ProtokitePlaytest.TestVideoProblem       // why it was not recorded
+using Protokite.Playtest;
+using UnityEngine;
+
+public class RecordAClipButton : MonoBehaviour
+{
+    private ProtokitePlaytestTestVideoState _lastState;
+
+    // Wire this to a debug menu's "Record a clip" button.
+    public void RecordAClip()
+    {
+        if (!ProtokitePlaytest.RecordTestVideo(30.0, out string whyNot))
+            Debug.Log("No test video: " + whyNot);
+    }
+
+    private void Update()
+    {
+        // None, WaitingToStart, Recording, Finishing, then Finished or NotRecorded.
+        ProtokitePlaytestTestVideoState state = ProtokitePlaytest.TestVideoState;
+        if (state == _lastState)
+            return;
+        _lastState = state;
+        if (state == ProtokitePlaytestTestVideoState.Finished)
+            Debug.Log("Test video saved to " + ProtokitePlaytest.FinishedTestVideoPath);
+        else if (state == ProtokitePlaytestTestVideoState.NotRecorded)
+            Debug.Log("Test video not recorded: " + ProtokitePlaytest.TestVideoProblem);
+    }
+}
 ```
 
+`TestVideoState` is `None` until a test video is asked for, then `WaitingToStart`, `Recording`, `Finishing`, and last `Finished`
+(`FinishedTestVideoPath` is the file) or `NotRecorded` (`TestVideoProblem` says why). Once the 30 seconds are recorded and the
+file is finished, the Console shows where it is.
+
 ### Uploading
+
+**Uploads are automatic**: there is no call to make, and no event or result a game can read about them. They show in the
+Console only, as `[Protokite Playtest]` lines saying when an upload starts, when it is done, and why a recording was kept.
 
 A recording is uploaded to its Protokite session once its file is finished (it reached its length or size limit, or the game
 stopped it) and the session has started, whichever comes second. It is sent straight from disk, never whole in memory, and
 counts as uploaded only when the storage accepts the file itself: Protokite marks a session as having a recording as soon as
 it hands out a link, which is not the same thing. A failed upload is tried once more with a fresh link. An uploaded
 recording is deleted from disk; one that was not is kept, with its session, and the log says why.
+
+A player who wants their recording sent now, rather than at its length limit or the next launch, presses **Upload your
+recording** on the feedback form. A button of your own does the same. Show it only while `CanSendTheRecording` is true: it
+is false when no session has started for the recording, and a press then would stop the recording and send nothing.
+
+```csharp
+using Protokite.Playtest;
+using UnityEngine;
+
+public class SendMyRecordingButton : MonoBehaviour
+{
+    private void OnGUI()
+    {
+        // Shown only while there is a recording with a session to send it to.
+        if (ProtokitePlaytest.CanSendTheRecording && GUILayout.Button("Send my recording"))
+            ProtokitePlaytest.StopRecordingAndSendIt();
+    }
+}
+```
+
+The Console then shows `[Protokite Playtest] The player asked for their recording to be sent.`, and the upload lines once the
+file is finished.
 
 Nothing is uploaded while the game quits: a recording still going then, or an upload the quit interrupts, is kept and sent by
 the next launch. When a launch starts, the recordings earlier launches kept go once the folders below are gone through and
@@ -451,7 +910,7 @@ therefore records with the Windows settings.
 | Setting | Default | |
 |---|---|---|
 | Record Video On Android | on | Off: Android players record no video and never ask the phone for its encoders; everything else in the playtest still runs. Read as the game starts: turned on later in a launch, it takes effect from the next one |
-| Android Video Long Side | 1280 | The longer side of the video, whichever way the phone is held: on a 20:9 phone, a game held sideways records at 1280x592 and one held upright at 592x1280. A smaller screen is not enlarged, and each side is rounded down to a multiple of 16 |
+| Android Video Long Side | 1280 | The longer side of the video, whichever way the phone is held: on a 20:9 phone, a game held sideways records at 1280x576 and one held upright at 576x1280. A smaller screen is not enlarged, and each side is rounded down to a multiple of 16 |
 | Android Video Frames Per Second | 15 | 30 doubles the phone's encoding work and the frames copied from the screen (measured) |
 | Android Video Bitrate Kbps | 1500 | Held as a constant rate where the phone's encoder says it takes one (1,520 kbps measured against 1,500 asked); on an encoder that does not, a busy picture can run over (26% measured in the phone's default mode) |
 | Android Allow Software Encoder | off | On: a phone with no hardware H.264 encoder records with Android's software encoder on the processor instead, which costs frame rate and battery (about 6.5 times the hardware encoder's processor time, measured) |
@@ -476,8 +935,18 @@ logged once.
 
 ## The sample
 
-`Samples/PlaytestSample/ProtokitePlaytestSample.cs` puts every call above on one screen: add it to a GameObject and press Play.
-Its README lists which button makes which call.
+The sample is one component, `ProtokitePlaytestSample` (in `Samples/PlaytestSample/ProtokitePlaytestSample.cs`), that draws a
+panel of buttons over the Game view in Play Mode. It is installed with the package:
+
+- One-click install or the `.unitypackage`: `Assets/ProtokitePlaytest/Samples/PlaytestSample/`.
+- Package Manager: **Packages > Protokite Playtest > Samples > PlaytestSample** in the Project window.
+
+To use it, set the playtest up as above, create an empty GameObject in a scene, press **Add Component** in the Inspector, type
+**Protokite Playtest Sample** and pick it, then press **Play**. It signs in with this device, and shows the status, the playtest
+and its session, the features on, the consent answer and the question, the upload network answer, a Steam id, a playtest
+event, the recording, the feedback form (opened, sent from code and closed from code) and a test video. It does not set the
+upload network (`SetPlaytestUploadNetwork`, above) or run the live self-test (below). Its README lists which button makes
+which call.
 
 ## Live self-test
 
@@ -486,12 +955,40 @@ must refuse, and a refusal only counts when Protokite gave the status that check
 development builds; a release build refuses it. It sends each refused request once, through a client of its own with no
 retries, so the refusals it provokes change nothing in the running game.
 
-Run it in Play Mode from **Run Live Self-Test** in **Protokite > Playtest > Setup Checks And Test Video**, or from code:
+Run it in Play Mode from **Run Live Self-Test** in **Protokite > Playtest > Setup Checks And Test Video** (a picture is at
+[docs.qwacks.com/protokite/unity-features#trying-it-in-the-editor](https://docs.qwacks.com/protokite/unity-features#trying-it-in-the-editor)),
+or from code, from a development build's debug menu for instance:
 
 ```csharp
-ProtokitePlaytestSelfTestReport report = await ProtokitePlaytestSelfTest.RunAsync();
-Debug.Log($"{report.Passed} passed, {report.Failed} failed, {report.Skipped} skipped");
+using Protokite.Playtest;
+using UnityEngine;
+
+public class RunPlaytestSelfTest : MonoBehaviour
+{
+    // Wire this to a development build's debug menu, once a player is signed in.
+    public async void RunIt()
+    {
+        if (ProtokitePlaytestSelfTest.IsRunning)
+            return;
+        ProtokitePlaytestSelfTestReport report = await ProtokitePlaytestSelfTest.RunAsync();
+        if (report.NotRunBecause != null)
+        {
+            Debug.LogWarning("The self-test did not run: " + report.NotRunBecause);
+            return;
+        }
+        foreach (ProtokitePlaytestSelfTestStep step in report.Steps)
+        {
+            if (step.Outcome != ProtokitePlaytestSelfTestOutcome.Passed)
+                Debug.Log($"{step.Outcome}: {step.Name} - {step.Detail}");
+        }
+        Debug.Log($"Self-test {report.RunId}: {report.Passed} passed, {report.Failed} failed, {report.Skipped} skipped. All passed: {report.AllRunStepsPassed}");
+    }
+}
 ```
+
+`NotRunBecause` says why nothing ran (a release build, another self-test under way, or the Flock SDK not running). Each step
+has a `Name`, an `Outcome` (`Passed`, `Failed` or `Skipped`) and a `Detail`; `AllRunStepsPassed` is true when it ran, nothing
+failed and at least one step passed.
 
 - **Sign a player in first.** It signs nobody in, and the playtest's session starts only once the game's own sign-in has.
 - **Run it in a Play or launch of its own.** It stops this launch's recording to upload it. It sends a filled-in form for this

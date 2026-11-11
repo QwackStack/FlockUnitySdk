@@ -24,7 +24,7 @@ namespace Flock.Providers
         /// <summary>On a web checkout, opens the gateway's payment page; null opens it with <c>Application.OpenURL</c>. On WebGL a browser may block a tab opened after an answer from the network, so a web game can show a button here whose click opens the page.</summary>
         public Action<string> OpenPaymentPage { get; set; }
 
-        /// <summary>On a web checkout, how often a checkout waiting for its payment is read; 3 seconds when left at zero.</summary>
+        /// <summary>On a web checkout, how often a checkout waiting for its payment is read; 3 seconds when left at zero, negative or infinite (<see cref="TimeSpan.MaxValue"/>).</summary>
         public TimeSpan CheckEvery { get; set; }
     }
 
@@ -181,7 +181,7 @@ namespace Flock.Providers
         void StopListening();
     }
 
-    /// <summary>The game's way to pay real money, the same on every platform: connect it once at start, and <c>Shop.PurchaseAsync</c> buys real-money items through it. On a phone it is the store, through Unity IAP 5: the store charges the player, Flock checks the purchase with the store and delivers the item, and the store's purchase is finished only once Flock delivered; a purchase Flock refused stays unfinished, so the store hands it back at the next launch, where it is sent again once the player is signed in. Everywhere else it is a web checkout through the game's gateway (Stripe, Tap or Moyasar, connected in the Flock dashboard): the purchase opens the gateway's payment page in the browser and waits until it is paid, failed or expired, and a checkout left open when the game closed is found again at the player's next sign-in.</summary>
+    /// <summary>The game's way to pay real money, the same on every platform: connect it once at start, and <c>Shop.PurchaseAsync</c> buys real-money items through it. On a phone it is the store, through Unity IAP 5: the store charges the player, Flock checks the purchase with the store and delivers the item, and the store's purchase is finished only once Flock delivered; a purchase Flock refused stays unfinished, so the store hands it back at the next launch, where it is sent again once the player is signed in. Everywhere else it is a web checkout through the game's gateway (Stripe, Tap or Moyasar, connected in the Flock dashboard): the purchase opens the gateway's payment page in the browser and waits until it is paid, failed or expired, and a checkout left open when the game closed is found again at the player's next sign-in while it is still open; one paid meanwhile is delivered by Flock without <see cref="PurchaseCompleted"/>, so refresh the wallet and inventory after each sign-in.</summary>
     public sealed class FlockStore : IDisposable, IFlockStoreCheckout
     {
         /// <summary>Raised for every real-money purchase Flock delivers: one bought just now, one the store or the gateway was waiting to be paid for (a web checkout whose wait the game cancelled included), one left unfinished at an earlier launch or found open at a sign-in, and one a restore sent again (not the finished purchases <see cref="RestoreAsync"/> lists). Refresh the wallet and inventory here. The item is null when a web checkout's item can no longer be read. Raised on the main thread.</summary>
@@ -513,7 +513,7 @@ namespace Flock.Providers
                 ? StoreReceipt.FromAppleAppStore("0")
                 : StoreReceipt.FromGooglePlay(productId, "flock-setup-check");
 
-        /// <summary>Stops listening to the store, the web checkouts and sign-ins; <c>Shop.PurchaseAsync</c> no longer buys real-money items through it, and one still waiting ends as cancelled. A web checkout paid afterwards is still delivered by the server, and found again at the next connect.</summary>
+        /// <summary>Stops listening to the store, the web checkouts and sign-ins; <c>Shop.PurchaseAsync</c> no longer buys real-money items through it, and one still waiting ends as cancelled. A web checkout paid afterwards is still delivered by Flock, without <see cref="PurchaseCompleted"/>: refresh the wallet and inventory after each sign-in, or read <c>Shop.GetPurchasesAsync(PurchaseResultStatuses.Paid)</c>.</summary>
         public void Dispose()
         {
             if (_disposed)

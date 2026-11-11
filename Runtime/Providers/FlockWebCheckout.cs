@@ -25,6 +25,8 @@ namespace Flock.Providers
         }
 
         private static readonly TimeSpan DefaultCheckEvery = TimeSpan.FromSeconds(3);
+        // Longer than the client's clock can count to once jittered: TimeSpan.MaxValue, the infinite one, among them.
+        private static readonly TimeSpan LongestCheckEvery = TimeSpan.FromTicks(long.MaxValue / 2);
         // The server saves a new checkout just after answering (0.36 s measured), so one opened here may read as not found for this long.
         internal static TimeSpan NewCheckoutSavedWithin = TimeSpan.FromSeconds(30);
 
@@ -35,6 +37,8 @@ namespace Flock.Providers
         private readonly Dictionary<string, Watch> _watches = new Dictionary<string, Watch>();
         // Purchases this sign-in saw end, so a list of open checkouts answered before one ended does not read and report it again.
         private readonly HashSet<string> _ended = new HashSet<string>();
+        // The sign-in _ended holds the purchases of: a second sign-in event for the same sign-in keeps them.
+        private int _endedSignIn;
         // Items a purchase call is buying now, so a second call for one is refused rather than opening two checkouts.
         private readonly HashSet<string> _buying = new HashSet<string>();
         // The client this connection was made under: once another takes its place, the connection no longer acts.
@@ -46,6 +50,7 @@ namespace Flock.Providers
             _client = client;
             _options = options;
             _paid = paid;
+            _endedSignIn = client.SignInNumber;
         }
 
         // Listens to sign-ins from now on, and reads the signed-in player's checkouts still open until they end.
@@ -101,7 +106,7 @@ namespace Flock.Providers
             }
         }
 
-        // Stops reading checkouts and listening to sign-ins; a purchase still waiting ends as cancelled. A checkout paid afterwards is still delivered by the server, and found again at the next connect.
+        // Stops reading checkouts and listening to sign-ins; a purchase still waiting ends as cancelled. A checkout paid afterwards is still delivered by the server, unreported.
         public void Dispose()
         {
             if (_disposed)
@@ -114,12 +119,16 @@ namespace Flock.Providers
             foreach (Watch watch in new List<Watch>(_watches.Values))
             {
                 watch.Call.Stop();
-                watch.Done?.TrySetCanceled();
+                watch.Done?.TrySetException(new OperationCanceledException("FlockStore was disposed, or Flock shut down, while the checkout was waited for. " + PaidMeanwhile));
             }
             _watches.Clear();
         }
 
-        private TimeSpan CheckEvery => _options.CheckEvery > TimeSpan.Zero ? _options.CheckEvery : DefaultCheckEvery;
+        // A checkout paid after its wait ended: the sign-in's search lists only open checkouts, so it is never reported, only delivered.
+        private const string PaidMeanwhile = "If the player pays it, Flock delivers it without PurchaseCompleted: refresh the wallet and inventory after each sign-in, or read Shop.GetPurchasesAsync(PurchaseResultStatuses.Paid).";
+
+        // Zero, negative (Timeout.InfiniteTimeSpan included) or too long to count to reads every 3 seconds.
+        private TimeSpan CheckEvery => _options.CheckEvery > TimeSpan.Zero && _options.CheckEvery <= LongestCheckEvery ? _options.CheckEvery : DefaultCheckEvery;
 
         private void OpenPaymentPage(string paymentUrl)
         {
@@ -164,9 +173,10 @@ namespace Flock.Providers
             }
         }
 
+        // Not saved yet, pending, or a status this SDK does not know (the server's set can grow): read again.
         private void HandleRead(Watch watch, PlayerPurchase purchase)
         {
-            if (purchase == null || purchase.IsPending)
+            if (purchase == null || !HasEnded(purchase.Status))
                 return;
             watch.Call.Stop();
             Forget(watch);
@@ -187,12 +197,42 @@ namespace Flock.Providers
             });
         }
 
-        // A read the server refused for good (another player's or an unknown purchase) ends the wait with its reason.
+        private static bool HasEnded(string status)
+            => status == PurchaseResultStatuses.Paid || status == PurchaseResultStatuses.Failed
+               || status == PurchaseResultStatuses.Expired || status == PurchaseResultStatuses.Refunded;
+
+        // A read stopped before its checkout ended (a 401 renewing the sign-in did not fix, a proxy's 403): its page may still be paid, so a restore reads it again and the wait ends unknown.
         private void HandleStopped(Watch watch, Exception failure)
         {
             Forget(watch);
-            _ended.Add(watch.PurchaseId);
-            watch.Done?.TrySetException(failure);
+            if (watch.Done == null || watch.Done.Task.IsCompleted)
+                return;
+            // As for any purchase no answer settled, the next wallet and inventory reads ask the server.
+            _client.Shop.ForgetPlayerDataAfterPayment();
+            watch.Done.TrySetException(MayStillBePaid(watch, failure));
+        }
+
+        // The read's code and status are kept, and the read's own failure is the inner exception.
+        private static FlockException MayStillBePaid(Watch watch, Exception failure)
+        {
+            FlockException read = failure as FlockException;
+            // Past the time a new checkout takes to be saved, not found means the server never kept the checkout this client opened.
+            bool notKept = watch.SinceOpened != null && read != null && read.ErrorCode == FlockErrorCode.ShopPurchaseNotFound;
+            string what = notKept
+                ? "Flock did not keep the web checkout it opened, so a payment on its page cannot be delivered"
+                : "The web checkout could no longer be read before it ended, so whether the player paid is unknown";
+            if (!string.IsNullOrEmpty(read?.ServerMessage))
+                what += $" (the server said: {read.ServerMessage})";
+            return new FlockException(what, failure)
+            {
+                Code = read?.Code,
+                StatusCode = read?.StatusCode,
+                Operation = "Purchase shop item",
+                OutcomeUnknown = true,
+                Hint = notKept
+                    ? "The player should not pay on the page that opened: Flock has no purchase to deliver it to. Buy again to open a new checkout."
+                    : "The checkout's page may still be paid, and Flock delivers it if it is. Before offering the item again, read Shop.GetPurchasesAsync(PurchaseResultStatuses.Pending), or call FlockStore.RestoreAsync, which reads the open checkouts again and reports one paid through PurchaseCompleted."
+            };
         }
 
         private void HandlePaid(Watch watch, PlayerPurchase purchase)
@@ -234,17 +274,21 @@ namespace Flock.Providers
                 _watches.Remove(watch.PurchaseId);
         }
 
-        // A sign-in that ended takes its waits and reads with it: a wait ends as cancelled, and a checkout still open is found again at that player's next sign-in.
+        // A sign-in that ended takes its waits and reads with it: a wait ends as cancelled, and a checkout still open at that player's next sign-in is found again.
         private void EndWhatTheLastSignInStarted()
         {
-            _ended.Clear();
+            if (_endedSignIn != _client.SignInNumber)
+            {
+                _ended.Clear();
+                _endedSignIn = _client.SignInNumber;
+            }
             foreach (Watch watch in new List<Watch>(_watches.Values))
             {
                 if (watch.Call.SignInNumber == _client.SignInNumber && watch.Call.IsRunning)
                     continue;
                 watch.Call.Stop();
                 Forget(watch);
-                watch.Done?.TrySetException(new OperationCanceledException("The player signed out or changed while the checkout was waited for; once paid it is reported at their next sign-in"));
+                watch.Done?.TrySetException(new OperationCanceledException("The player signed out or changed while the checkout was waited for. " + PaidMeanwhile));
             }
         }
 

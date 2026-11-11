@@ -46,7 +46,7 @@ namespace Flock.Editor.Codegen
                 AppendFields(sb, c.Schema);
             }
 
-            // Shops: id/name plus each item's id/name/currency — exactly the fields the generated shop
+            // Shops: id/name plus each item's id/name/currency and real-money flag — exactly the fields the generated shop
             // accessors and FlockShopItemId/FlockFundId enums depend on, so a backend change reads as drift.
             IEnumerable<Shop> shops =
                 (snapshot.Shops ?? new List<Shop>())
@@ -69,6 +69,9 @@ namespace Flock.Editor.Codegen
                     AppendString(sb, item.Id);
                     AppendString(sb, item.Name);
                     AppendString(sb, item.Currency);
+                    // Only when set, so a catalog with no real-money item hashes as it did before the flag counted.
+                    if (item.IsRealMoney)
+                        sb.Append("|real_money");
                 }
                 sb.Append(']');
             }

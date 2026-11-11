@@ -117,6 +117,41 @@ namespace Flock.Tests
             Assert.AreEqual(h1, h2);
         }
 
+        // A shop with two items priced in game currencies; realMoneyItemId names the item the server marks as real money, if any.
+        private static FlockSchemaSnapshot ShopSnapshot(string realMoneyItemId = null)
+            => new FlockSchemaSnapshot
+            {
+                GameVersionId = "v1",
+                Shops = new List<Shop>
+                {
+                    new Shop
+                    {
+                        Id = "s1", Name = "Gem Shop",
+                        ShopItems = new List<ShopItem>
+                        {
+                            new ShopItem { Id = "i1", Name = "Sword", Currency = "gold", IsRealMoney = realMoneyItemId == "i1" },
+                            new ShopItem { Id = "i2", Name = "Gems pack", Currency = "gems", IsRealMoney = realMoneyItemId == "i2" },
+                        }
+                    }
+                }
+            };
+
+        [Test]
+        public void ACatalogWithNoRealMoneyItem_HashesAsBefore()
+        {
+            // Pinned before the real-money marker was added, so projects with no real-money item see no drift.
+            Assert.AreEqual("e8324576ab1586401a618482b3394e9e2ad7b3a73bbff2bcf026d1fbda9db943", SchemaHasher.ComputeContentHash(ShopSnapshot()));
+        }
+
+        [Test]
+        public void AnItemBecomingRealMoney_ChangesHash()
+        {
+            // Real-money currencies are left out of FlockFundId, so the flip changes the generated code.
+            Assert.AreNotEqual(SchemaHasher.ComputeContentHash(ShopSnapshot()), SchemaHasher.ComputeContentHash(ShopSnapshot("i2")));
+            // SHA-256 of "S2:s18:Gem Shop[I2:i15:Sword4:goldI2:i29:Gems pack4:gems|real_money]", hashed outside the hasher.
+            Assert.AreEqual("bfd7661e7733ae9fe0205818af0f68ee0e0043f1074a23cad29177dd6ae26e9f", SchemaHasher.ComputeContentHash(ShopSnapshot("i2")));
+        }
+
         [Test]
         public void DistinctFieldSplit_DoesNotAlias()
         {
