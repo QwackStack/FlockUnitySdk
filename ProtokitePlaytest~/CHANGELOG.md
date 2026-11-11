@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 It is released with the Flock SDK, at the Flock SDK's version.
 
-## [Unreleased]
+## [1.103.0]
 
 ### Changed
 - **The sample signs in with the Flock SDK's kept device id** (`Authentication.ThisDeviceId`) instead of
