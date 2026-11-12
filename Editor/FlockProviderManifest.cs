@@ -100,6 +100,7 @@ namespace Flock.Editor
                 {
                     "Runtime/Providers/Analytics/FlockAnalyticsProvider.cs",
                     "Runtime/Providers/Analytics/NullAnlayticProvider.cs",
+                    "Runtime/Providers/Analytics/FlockGameplayEvents.cs",
                     "Runtime/Interfaces/IAnalyticProvider.cs",
                 },
                 DependsOn = new string[0],

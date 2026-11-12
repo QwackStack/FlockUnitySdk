@@ -251,6 +251,88 @@ namespace Flock.Tests.Editor
             }
         }
 
+        // The store's dialog outcomes only the device sees, recorded as store_purchase; sent at once (no queue) to read them back.
+        private static List<JObject> StorePurchaseEvents(FlockFakeTransport transport) =>
+            transport.AllTo(FlockEndpoints.AnalyticsEvents)
+                .SelectMany(r => (JArray)JObject.Parse(r.JsonBody)["events"])
+                .Cast<JObject>()
+                .Where(e => (string)e["event_name"] == "store_purchase")
+                .ToList();
+
+        [TestCase(FlockStoreFailureReasons.Cancelled, "cancelled")]
+        [TestCase(FlockStoreFailureReasons.PaymentDeclined, "failed")]
+        public void Buy_TheStoresDialogEndsIt_RecordsStorePurchaseWithItsOutcome(string reason, string outcome)
+        {
+            FakeStore store = new FakeStore();
+            FlockFakeTransport transport = Backend(FlockFakeTransport.Ok(Delivered));
+            transport.Default(request => FlockFakeTransport.Ok("{\"ok\":true}"));
+            using (FlockTestClient h = FlockTestClient.Create(transport, config =>
+            {
+                config.AnalyticsConfig.SendDefaultEvents = true;
+                config.AnalyticsConfig.CacheFailedEvents = false;
+            }))
+            {
+                h.SetReachable(true);
+                h.LoginAs("player-a");
+                Connect(h, store);
+                store.OnBuy = productId => store.Fail(productId, reason, "closed or refused");
+
+                Assert.Throws<FlockStoreException>(() => h.Run(() => h.Client.Shop.PurchaseAsync("gems")));
+
+                JObject sent = StorePurchaseEvents(transport).Single();
+                Assert.AreEqual("store", (string)sent["event_category"]);
+                Assert.AreEqual("player-a", (string)sent["player_id"]);
+                Assert.AreEqual(outcome, (string)sent["properties"]["outcome"]);
+                Assert.AreEqual(PaymentProviders.GooglePlay, (string)sent["properties"]["store"]);
+                Assert.AreEqual("gems", (string)sent["properties"]["item_id"]);
+                Assert.AreEqual(Gems, (string)sent["properties"]["product_id"]);
+            }
+        }
+
+        [Test]
+        public void Buy_TheStoreDefersIt_RecordsDeferred_AndAPaidOneRecordsNothingSinceTheServerDoes()
+        {
+            FakeStore store = new FakeStore();
+            FlockFakeTransport transport = Backend(FlockFakeTransport.Ok(Delivered));
+            transport.Default(request => FlockFakeTransport.Ok("{\"ok\":true}"));
+            using (FlockTestClient h = FlockTestClient.Create(transport, config =>
+            {
+                config.AnalyticsConfig.SendDefaultEvents = true;
+                config.AnalyticsConfig.CacheFailedEvents = false;
+            }))
+            {
+                h.SetReachable(true);
+                h.LoginAs("player-a");
+                Connect(h, store);
+
+                store.OnBuy = productId => store.Defer(productId);
+                h.Run(() => h.Client.Shop.PurchaseAsync("gems"));
+                store.OnBuy = productId => store.Pay(productId, "token-2");
+                h.Run(() => h.Client.Shop.PurchaseAsync("sword"));
+
+                CollectionAssert.AreEqual(new[] { "deferred" }, StorePurchaseEvents(transport).Select(e => (string)e["properties"]["outcome"]).ToArray());
+            }
+        }
+
+        [Test]
+        public void Buy_WithSendDefaultEventsOff_RecordsNoStorePurchase()
+        {
+            FakeStore store = new FakeStore();
+            FlockFakeTransport transport = Backend(FlockFakeTransport.Ok(Delivered));
+            transport.Default(request => FlockFakeTransport.Ok("{\"ok\":true}"));
+            using (FlockTestClient h = FlockTestClient.Create(transport, config => config.AnalyticsConfig.CacheFailedEvents = false))
+            {
+                h.SetReachable(true);
+                h.LoginAs("player-a");
+                Connect(h, store);
+                store.OnBuy = productId => store.Fail(productId, FlockStoreFailureReasons.Cancelled, "closed");
+
+                Assert.Throws<FlockStoreException>(() => h.Run(() => h.Client.Shop.PurchaseAsync("gems")));
+
+                Assert.AreEqual(0, StorePurchaseEvents(transport).Count);
+            }
+        }
+
         [Test]
         public void Buy_StoreDeclines_ThrowsTheStoresReason_AndItsWords()
         {

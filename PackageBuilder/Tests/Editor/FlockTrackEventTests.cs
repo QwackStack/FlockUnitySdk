@@ -22,8 +22,7 @@ namespace Flock.Tests.Editor
     /// <summary>The public gameplay-events call, and the diagnostics calls kept apart from it: what each sends, where, and what it refuses.</summary>
     public class FlockTrackEventTests
     {
-        private const string ConsentGrantedKey = "flock_analytics_consent";
-        private const string ConsentSetKey = "flock_analytics_consent_set";
+        private IDisposable _consentAside;
 
         private string _runFolder;
         private string _folder;
@@ -32,6 +31,7 @@ namespace Flock.Tests.Editor
         [SetUp]
         public void SetUp()
         {
+            _consentAside = FlockTestClient.SetConsentAnswerAside();
             // A folder of this test's own: the run-wide one holds queues earlier tests' launches left.
             _runFolder = FlockAnalyticsLaunches.FolderForTesting;
             _folder = Path.Combine(Path.GetTempPath(), "flock_track_event_" + Guid.NewGuid().ToString("N"));
@@ -44,8 +44,8 @@ namespace Flock.Tests.Editor
             _h?.Dispose();
             _h = null;
             FlockAnalyticsLaunches.FolderForTesting = _runFolder;
-            PlayerPrefs.DeleteKey(ConsentGrantedKey);
-            PlayerPrefs.DeleteKey(ConsentSetKey);
+            _consentAside?.Dispose();
+            _consentAside = null;
             if (Directory.Exists(_folder))
                 Directory.Delete(_folder, true);
         }
@@ -145,6 +145,20 @@ namespace Flock.Tests.Editor
             Flush();
 
             CollectionAssert.AreEqual(new[] { "Session_Started" }, SentEvents(transport).Select(e => (string)e["event_name"]).ToArray());
+        }
+
+        [Test]
+        public void TheEventTheSdkRecordsWhenASessionEndsIsRefusedWithAWarning()
+        {
+            FlockFakeTransport transport = Start();
+            _h.LoginAs("player-a");
+
+            Assert.IsFalse(_h.Client.Analytics.TrackEvent("session_end"), "The SDK records it; a second one would count each session twice");
+            Assert.IsTrue(_h.Logger.Warnings.Exists(line => line.Contains("'session_end' is reserved")), string.Join(" | ", _h.Logger.Warnings));
+            Assert.IsTrue(_h.Client.Analytics.TrackEvent("Session_End"), "Matched exactly, as the SDK sends it");
+            Flush();
+
+            CollectionAssert.AreEqual(new[] { "Session_End" }, SentEvents(transport).Select(e => (string)e["event_name"]).ToArray());
         }
 
         [Test]
@@ -268,6 +282,7 @@ namespace Flock.Tests.Editor
 
             Assert.IsTrue(recorded);
             CollectionAssert.AreEqual(new[] { "from_a_worker" }, SentEvents(transport).Select(e => (string)e["event_name"]).ToArray());
+            Assert.AreEqual(SystemInfo.deviceModel, (string)SentEvents(transport)[0]["properties"]["flock_device_model"], "The flock_ parameters off the main thread too");
         }
 
         [Test]

@@ -61,6 +61,9 @@ namespace Flock.Config
         [Tooltip("Track FPS metrics")]
         public bool analyticsTrackFps = true;
 
+        [Tooltip("Record the SDK's own analytics events (session_end, app_open, first_launch, store_purchase). Off records none of them; your own events still carry the flock_ parameters.")]
+        public bool analyticsSendDefaultEvents = true;
+
         [Tooltip("FPS sample interval in seconds")]
         public float analyticsFpsSampleInterval = 1f;
 
@@ -165,6 +168,7 @@ namespace Flock.Config
                 BounceThresholdSeconds = analyticsBounceThreshold,
                 PersistSessionOnDisk = analyticsPersistSession,
                 TrackFps = analyticsTrackFps,
+                SendDefaultEvents = analyticsSendDefaultEvents,
                 FpsSampleIntervalSeconds = analyticsFpsSampleInterval,
                 RequireExplicitConsent = analyticsRequireExplicitConsent,
                 CaptureExceptions = analyticsCaptureExceptions,

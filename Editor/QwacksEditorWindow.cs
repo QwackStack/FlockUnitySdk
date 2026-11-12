@@ -545,6 +545,7 @@ namespace Flock.Editor
                     DrawProperty("analyticsBounceThreshold");
                     DrawProperty("analyticsPersistSession");
                     DrawProperty("analyticsTrackFps");
+                    DrawProperty("analyticsSendDefaultEvents");
                     DrawProperty("analyticsFpsSampleInterval");
 
                     GUILayout.Space(4);

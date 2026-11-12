@@ -6,6 +6,52 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 
+## [1.104.0]
+
+### Added
+
+- **The SDK records a `session_end` gameplay event when a session ends** (category `session`), so a custom dashboard can chart
+  sessions by how they ended: `reason` (`quit`, `timeout`, `sign_out`, `player_changed`, `restarted`, `ended_by_the_game`, or
+  `unexpected_exit` for a session a launch left open, recorded at the next launch), `duration_seconds`, `screens_viewed` and
+  `is_bounce`. It is queued and sent like the game's own `TrackEvent` events, needs consent, and is credited to the player
+  whose session it was. Until now the SDK recorded no gameplay event of its own. `TrackEvent("session_end")` is refused with
+  a warning, as `session_started` is, so a game's own event of that name does not count each session twice; give it another
+  name.
+
+- **Default events and parameters.** The SDK also records `app_open` (each start, or when consent is given later in it), `first_launch` (once for each game on a device), `app_update`
+  (`previous_app_version`, a start on another app version), `screen_view` (`screen_name`, each `RecordScreenView`; screen
+  views were only counted before) and
+  `store_purchase` (`outcome` cancelled, failed or deferred in the store's own dialog; `store`, `item_id`, `product_id`), and
+  `session_end` also carries `session_number`, `is_first_session`, `pause_count`, `average_fps` and `min_fps`. Every analytics
+  event, the game's own included, carries `flock_platform`, `flock_os`, `flock_device_model`, `flock_app_version`,
+  `flock_sdk_version`, `flock_language` and, during a session, `flock_session_number`; a property the game set keeps its value.
+  **Analytics Send Default Events** (`FlockAnalyticsConfig.SendDefaultEvents`, on by default) turns the SDK's own events off;
+  `TrackEvent` refuses their names.
+
+- **Typed calls for the tracking plan's common events** on `Analytics`: `TrackLevelStart`, `TrackLevelComplete`,
+  `TrackLevelFail`, `TrackCheckpoint`, `TrackTutorialStep`, `TrackSettingsChange`, `TrackMatchStart` and
+  `TrackMatchComplete`, sending `level_start`, `level_complete`, `level_fail`, `checkpoint_start`, `tutorial_step`,
+  `settings_change`, `match_start` and `match_complete` with the plan's property names. Every argument is optional and one
+  left out is not sent; `extraProperties` adds more, a named argument winning over the same key. `FlockMatchResult` holds
+  `Win`, `Loss` and `Draw`. Each is a `TrackEvent` underneath, so Send Default Events does not turn them off.
+
+### Fixed
+
+- **A session a launch left open (a crash, or the system closing the app) is judged for bounce** when the next launch ends it;
+  it always reached the server as not a bounce. Its saved record is written again once the session outlasts Analytics Bounce
+  Threshold, so a crash a little later is not taken for a bounce.
+- **A session no longer starts for a sign-in that ended while the SDK was reporting earlier launches** (it logged "Player must
+  be authenticated for analytics" and ran a session nobody owned).
+- **A session end the session-end queue could not save is sent before the next session starts**: the next session's record
+  replaced the one it was kept in, so it never reached the server.
+- **A session's length reaches the server rounded to whole seconds**, not cut: 0.9 s was sent as 0.
+- **A session registered from the session-end queue is not registered a second time** when ending it then fails and is
+  retried: the server id was never written into the queued record while it was being sent, so each retry opened another
+  session on the server.
+- **A stay in the background of exactly Analytics Session Timeout seconds ends the session**, as the setting says; it needed
+  longer.
+- **A screen view with no name is not counted** in the session's screens, and a warning says why.
+
 ## [1.103.0]
 
 ### Fixed

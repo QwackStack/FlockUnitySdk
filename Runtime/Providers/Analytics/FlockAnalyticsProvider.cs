@@ -38,8 +38,16 @@ namespace Flock.Providers
         private string _currentPlayerId;
         private bool _heartbeatInFlight;
         private bool _registrationInFlight;
+        // An end the session-end queue could not save; sent before the next session's record replaces the one it was kept in.
+        private FlockSessionSnapshot _endNotSpooled;
         private readonly FlockConsentStore _consentStore = new FlockConsentStore();
         private bool _hasConsent;
+        // This launch's device, read once on the main thread: every event's flock_ parameters come from it.
+        private readonly FlockDeviceInfo _launchDevice;
+        // app_open and first_launch are recorded once a launch, at start or when consent is given later.
+        private bool _launchEventsRecorded;
+        // Launch events with nowhere to wait (no event queue) and nobody signed in yet: kept until someone signs in.
+        private readonly List<AnalyticsEventRequest> _launchEventsWaitingForSignIn = new List<AnalyticsEventRequest>();
 
         /// <summary>Tracks crashes in the editor too, where a stopped Play session is no crash; for tests of the launch's crash marker.</summary>
         internal static bool TrackTerminationInTheEditorForTesting;
@@ -92,7 +100,103 @@ namespace Flock.Providers
                 _lifecycle.OnQuit += HandleLaunchQuit;
                 _lifecycle.OnDisabled += HandleLifecycleDisabled;
             }
+
+            _launchDevice = FlockDeviceInfo.Capture();
+            RecordLaunchEvents();
         }
+
+        // app_open once a launch, first_launch once for this game on this device; credited to the next sign-in like any early event.
+        private void RecordLaunchEvents()
+        {
+            if (_launchEventsRecorded || !_hasConsent || !_config.SendDefaultEvents)
+                return;
+            _launchEventsRecorded = true;
+            RecordLaunchEvent(FlockDefaultEvents.AppOpen);
+            if (PlayerPrefs.GetInt(FirstLaunchRecordedPref, 0) == 0)
+                RecordLaunchEvent(FlockDefaultEvents.FirstLaunch);
+
+            // app_update when this game's app version differs from the one it last started with here; the first start only remembers it.
+            string lastVersion = PlayerPrefs.GetString(LastAppVersionPref, null);
+            if (string.IsNullOrEmpty(lastVersion))
+                RememberAppVersion();
+            else if (lastVersion != _launchDevice.AppVersion)
+                RecordLaunchEvent(FlockDefaultEvents.AppUpdate, new Dictionary<string, object> { { "previous_app_version", lastVersion } });
+        }
+
+        private string FirstLaunchRecordedPref => FlockDefaultEvents.FirstLaunchRecordedPrefFor(Client.InitConfig.GameKey);
+        private string LastAppVersionPref => FlockDefaultEvents.LastAppVersionPrefFor(Client.InitConfig.GameKey);
+
+        private void RememberAppVersion()
+        {
+            PlayerPrefs.SetString(LastAppVersionPref, _launchDevice.AppVersion ?? "");
+            PlayerPrefs.Save();
+        }
+
+        private void RecordLaunchEvent(string eventName, Dictionary<string, object> properties = null)
+        {
+            AnalyticsEventRequest request = NewDefaultEvent(eventName, FlockDefaultEvents.AppCategory, properties ?? new Dictionary<string, object>());
+            if (_eventCache == null && string.IsNullOrEmpty(Client.CurrentPlayerId))
+            {
+                _launchEventsWaitingForSignIn.Add(request);
+                return;
+            }
+            if (QueueOrSendOnce(request, CurrentSessionNumber))
+                NoteRecorded(eventName);
+        }
+
+        // At sign-in: the launch events that had nowhere to wait go out for the player who signed in.
+        private void RecordLaunchEventsWaitingForSignIn(string playerId)
+        {
+            if (_launchEventsWaitingForSignIn.Count == 0)
+                return;
+            List<AnalyticsEventRequest> waiting = new List<AnalyticsEventRequest>(_launchEventsWaitingForSignIn);
+            _launchEventsWaitingForSignIn.Clear();
+            if (!_hasConsent)
+                return;
+            foreach (AnalyticsEventRequest request in waiting)
+            {
+                request.PlayerId = playerId;
+                if (QueueOrSendOnce(request, CurrentSessionNumber))
+                    NoteRecorded(request.EventName);
+            }
+        }
+
+        // first_launch and app_update are marked only once they went out or were queued, so a launch that lost one tries again.
+        private void NoteRecorded(string eventName)
+        {
+            if (eventName == FlockDefaultEvents.AppUpdate)
+            {
+                RememberAppVersion();
+                return;
+            }
+            if (eventName != FlockDefaultEvents.FirstLaunch)
+                return;
+            PlayerPrefs.SetInt(FirstLaunchRecordedPref, 1);
+            PlayerPrefs.Save();
+        }
+
+        /// <summary>One of the SDK's own events, behind consent and Send Default Events; true once queued or sent.</summary>
+        internal bool RecordDefaultEvent(string eventName, string category, Dictionary<string, object> properties)
+        {
+            if (!_hasConsent || !_config.SendDefaultEvents)
+                return false;
+            return QueueOrSendOnce(NewDefaultEvent(eventName, category, properties), CurrentSessionNumber);
+        }
+
+        private AnalyticsEventRequest NewDefaultEvent(string eventName, string category, Dictionary<string, object> properties)
+        {
+            return new AnalyticsEventRequest
+            {
+                PlayerId = Client.CurrentPlayerId ?? FlockConstant.DummyUserID,
+                EventName = eventName,
+                EventCategory = category,
+                SessionId = CurrentSessionId,
+                Timestamp = DateTime.UtcNow.ToString("o"),
+                Properties = properties
+            };
+        }
+
+        private int? CurrentSessionNumber => _session != null && _session.IsActive ? _session.SessionNumber : (int?)null;
 
         private IEventCache<T> TryCreateCache<T>(FlockClient client, string subfolder, bool enabled, Func<T, string> sendTogetherKey = null) where T : class
         {
@@ -138,6 +242,8 @@ namespace Flock.Providers
             {
                 Client.Logger.LogInfo("Analytics consent granted");
                 _terminationTracker.BeginTracking();
+                // Nothing was recorded before consent; this launch's app_open and first_launch are recorded now.
+                RecordLaunchEvents();
 
                 if (Client.IsAuthenticated && _config.AutoStartSession && (_session == null || !_session.IsActive))
                     ResumeSessionOnConsentGranted();
@@ -198,6 +304,7 @@ namespace Flock.Providers
                 return;
 
             string newPlayerId = Client.CurrentPlayerId ?? FlockConstant.DummyUserID;
+            int signIn = Client.SignInNumber;
 
             if (_initialized && _currentPlayerId != newPlayerId)
             {
@@ -207,7 +314,7 @@ namespace Flock.Providers
                 {
                     if (_session.IsActive)
                     {
-                        FlockSessionSnapshot oldSnapshot = _session.End(FlockSessionEndReason.Restarted);
+                        FlockSessionSnapshot oldSnapshot = _session.End(FlockSessionEndReason.Restarted, FlockSessionEndEvent.PlayerChanged);
                         if (oldSnapshot != null)
                             await DeliverSessionEndAsync(oldSnapshot, cancellationToken);
                     }
@@ -242,6 +349,15 @@ namespace Flock.Providers
             _session.OnQuitFlush -= HandleQuitFlush;
             _session.OnQuitFlush += HandleQuitFlush;
 
+            // Before any await: a flush in between would send the placeholder's events, which the server refuses with their batch.
+            if (_eventCache != null && Client.IsAuthenticated)
+            {
+                _eventCache.Rewrite(
+                    evt => evt.PlayerId == FlockConstant.DummyUserID, evt => evt.PlayerId = newPlayerId);
+            }
+            if (Client.IsAuthenticated)
+                RecordLaunchEventsWaitingForSignIn(newPlayerId);
+
             await ReportWhatEndedLaunchesLeftAsync(cancellationToken);
 
             // Deliver unconfirmed ends from previous runs before a new session registers.
@@ -252,16 +368,9 @@ namespace Flock.Providers
                 await FlushSessionEndsAsync(cancellationToken);
             }
 
-            if (_config.AutoStartSession)
+            // Not for a sign-in that ended while the earlier launches were reported: nobody would own the session.
+            if (_config.AutoStartSession && Client.IsAuthenticated && Client.SignInNumber == signIn)
                 await StartSessionAsync(cancellationToken);
-
-            // Reattribute events that were queued under the "Default" placeholder (tracked
-            // before login completed) to the real player ID, then flush.
-            if (_eventCache != null && Client.IsAuthenticated)
-            {
-                _eventCache.Rewrite(
-                    evt => evt.PlayerId == FlockConstant.DummyUserID, evt => evt.PlayerId = newPlayerId);
-            }
 
             // What was captured before sign-in waits in the log queue until now.
             FlushCacheInBackground();
@@ -396,6 +505,9 @@ namespace Flock.Providers
                 return null;
             }
 
+            // The next session's record replaces the one an unspooled end was kept in, so that end goes out first.
+            await DeliverEndNotSpooledAsync(cancellationToken);
+
             // Deliver the previous session's end before the new one registers.
             if (_session.IsActive)
             {
@@ -409,6 +521,21 @@ namespace Flock.Providers
 
             string serverId = await TryRegisterSessionAsync(cancellationToken);
             return serverId ?? localId;
+        }
+
+        private async Task DeliverEndNotSpooledAsync(CancellationToken cancellationToken)
+        {
+            FlockSessionSnapshot unspooled = _endNotSpooled;
+            _endNotSpooled = null;
+            if (unspooled == null)
+                return;
+
+            if (_sessionEndCache?.Enqueue(unspooled) != null)
+            {
+                await FlushSessionEndsAsync(cancellationToken);
+                return;
+            }
+            await TrySendSessionEndAsync(unspooled, cancellationToken);
         }
 
         // Non-fatal registration: on failure the session continues locally and the
@@ -502,9 +629,18 @@ namespace Flock.Providers
             if (!ConsentGiven())
                 return;
 
+            // The session decides what counts; this only tells the developer why one did not.
+            if (string.IsNullOrWhiteSpace(screenName))
+            {
+                Client.Logger.LogWarning("Screen view not counted: a screen view needs the screen's name.");
+                return;
+            }
+
+            RecordDefaultEvent(FlockDefaultEvents.ScreenView, FlockDefaultEvents.ScreenCategory,
+                new Dictionary<string, object> { { "screen_name", screenName } });
+
             if (_session == null || !_session.IsActive)
                 return;
-
             _session.RecordScreenView(screenName);
 
             Client.Logger.LogDebug($"Screen view recorded: {screenName}");
@@ -546,7 +682,8 @@ namespace Flock.Providers
                 EventCategory = eventCategory,
                 SessionId = CurrentSessionId,
                 Timestamp = DateTime.UtcNow.ToString("o"),
-                Properties = properties ?? new Dictionary<string, object>()
+                // A copy: the flock_ parameters are added to it, never to the game's own dictionary.
+                Properties = properties != null ? new Dictionary<string, object>(properties) : new Dictionary<string, object>()
             };
 
             try
@@ -559,6 +696,14 @@ namespace Flock.Providers
                 return false;
             }
 
+            return QueueOrSendOnce(request, CurrentSessionNumber);
+        }
+
+        // Queued on disk; with no queue, or a write that failed, sent once while someone is signed in. Every event gets the flock_ parameters.
+        private bool QueueOrSendOnce(AnalyticsEventRequest request, int? sessionNumber, FlockDeviceInfo device = null)
+        {
+            FlockDefaultEvents.AddParameters(request.Properties, device ?? _launchDevice, sessionNumber);
+            string eventName = request.EventName;
             if (_eventCache?.Enqueue(request) != null)
             {
                 Client.Logger.LogDebug($"Event queued: {eventName}");
@@ -578,6 +723,17 @@ namespace Flock.Providers
             return true;
         }
 
+        // The session_end event, for the player whose session it was; quietly nothing without consent. True once recorded.
+        private bool RecordSessionEndEvent(FlockSessionSnapshot snapshot, string reason)
+        {
+            if (!_hasConsent || !_config.SendDefaultEvents || snapshot == null || snapshot.EndEventRecorded)
+                return false;
+
+            string playerId = snapshot.PlayerId ?? Client.CurrentPlayerId ?? FlockConstant.DummyUserID;
+            // The session's own device and versions: a session recovered after an update ran on the older build.
+            return QueueOrSendOnce(FlockSessionEndEvent.Build(snapshot, reason, playerId), snapshot.SessionNumber, snapshot.DeviceInfo);
+        }
+
         // Why the server would store an event wrongly or fail its whole batch; null when it can be recorded.
         private static string WhyEventCannotBeRecorded(string eventName, string eventCategory)
         {
@@ -587,6 +743,8 @@ namespace Flock.Providers
                 return $"its name has {eventName.Length} characters and its category {eventCategory?.Length ?? 0}, and the server stores at most {MaxEventNameLength} and {MaxEventCategoryLength}. Name: '{eventName.Substring(0, Math.Min(eventName.Length, MaxEventNameLength))}'.";
             if (string.Equals(eventName, ReservedSessionStartedEvent, StringComparison.Ordinal))
                 return $"'{ReservedSessionStartedEvent}' is reserved; the server records it when a session starts.";
+            if (FlockDefaultEvents.IsTheSdks(eventName))
+                return $"'{eventName}' is reserved; the SDK records it itself (Send Default Events). Give the game's own event another name.";
             return null;
         }
 
@@ -1139,6 +1297,10 @@ namespace Flock.Providers
             // The launch goes on after a session ends, and its crash marker with it; only a clean quit or shutdown clears it.
             _terminationTracker.NoteSessionEnded();
 
+            // Recorded whatever happens to the end itself; the session marks a record it keeps, so no launch records it again.
+            if (RecordSessionEndEvent(snapshot, _session.EndingReason))
+                _session.ReportEndEventRecorded();
+
             if (_sessionEndCache == null)
                 return;
 
@@ -1146,8 +1308,9 @@ namespace Flock.Providers
             string handle = _sessionEndCache.Enqueue(snapshot);
             if (string.IsNullOrEmpty(handle))
             {
-                Client.Logger.LogError($"Session end {snapshot.SessionId} was NOT spooled — recovering it on the next launch instead.");
+                Client.Logger.LogError($"Session end {snapshot.SessionId} was NOT spooled — trying again before the next session starts, else on the next launch.");
                 _session.ReportEndSpoolFailed();
+                _endNotSpooled = snapshot;
                 return;
             }
 
@@ -1174,13 +1337,14 @@ namespace Flock.Providers
         // Returns false when the end could not reach the spool, so the ended launch is kept for a later one.
         private async Task<bool> RecoverOrphanedSessionAsync(string sessionStatePath, CancellationToken cancellationToken)
         {
-            FlockSessionSnapshot orphaned = FlockSession.ReadOrphanedSession(sessionStatePath, Client.Logger);
+            FlockSessionSnapshot orphaned = FlockSession.ReadOrphanedSession(sessionStatePath, Client.Logger, _config.BounceThresholdSeconds);
             if (orphaned == null)
                 return true;
 
             if (_sessionEndCache == null)
             {
                 FlockSession.DeleteRecord(sessionStatePath, Client.Logger);
+                RecordSessionEndEvent(orphaned, FlockSessionEndEvent.UnexpectedExit);
                 await TrySendSessionEndAsync(orphaned, cancellationToken);
                 return true;
             }
@@ -1192,6 +1356,7 @@ namespace Flock.Providers
                 return false;
             }
             FlockSession.DeleteRecord(sessionStatePath, Client.Logger);
+            RecordSessionEndEvent(orphaned, FlockSessionEndEvent.UnexpectedExit);
             Client.Logger.LogDebug($"Orphaned session end spooled: {orphaned.SessionId}");
             return true;
         }
@@ -1337,7 +1502,8 @@ namespace Flock.Providers
                             BuildSessionStartRequest(snapshot), cancellationToken).ConfigureAwait(FlockWaiting.ResumeOnCallersThread);
 
                         string localSessionId = snapshot.SessionId;
-                        _sessionEndCache.Rewrite(
+                        // This batch is being sent, so a plain rewrite would skip the record and a retry would register the session again.
+                        _sessionEndCache.RewriteWhileSending(
                             record => record.SessionId == localSessionId && string.IsNullOrEmpty(record.ServerSessionId),
                             record => record.ServerSessionId = serverSessionId);
 
@@ -1416,7 +1582,7 @@ namespace Flock.Providers
         {
             SessionEndRequest request = new SessionEndRequest
             {
-                DurationSeconds = (int)snapshot.DurationSeconds,
+                DurationSeconds = FlockSessionEndEvent.WholeSeconds(snapshot.DurationSeconds),
                 ScreensViewed = snapshot.ScreensViewed,
                 IsBounce = snapshot.IsBounce,
                 EndedAt = (snapshot.EndTimeUtc ?? DateTime.UtcNow).ToString("o")

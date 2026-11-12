@@ -58,6 +58,9 @@ namespace Flock.Analytics
 
         internal bool IsActive => _active;
 
+        /// <summary>Why the session that is ending ended, as the session_end event names it; set before OnSessionEnded runs.</summary>
+        internal string EndingReason { get; private set; }
+
         internal float ElapsedSeconds
         {
             get
@@ -99,9 +102,16 @@ namespace Flock.Analytics
 
         // Set from inside OnSessionEnded when the handler could not persist the end durably.
         private bool _endSpoolFailed;
+        // Set from inside OnSessionEnded when the session_end event was recorded.
+        private bool _endEventRecorded;
+        // The live record is saved once the session outlasts the bounce threshold, so a recovered one is judged on that.
+        private bool _savedPastBounceThreshold;
 
         /// <summary>Called by the end handler when spooling failed, so End() keeps the live marker.</summary>
         internal void ReportEndSpoolFailed() => _endSpoolFailed = true;
+
+        /// <summary>Called by the end handler once the session_end event is recorded, so a record left behind says so.</summary>
+        internal void ReportEndEventRecorded() => _endEventRecorded = true;
         // Quit-only: requests a best-effort delivery attempt before the process dies.
         internal event Action<FlockSessionSnapshot> OnQuitFlush;
 
@@ -114,7 +124,7 @@ namespace Flock.Analytics
         }
 
         // Reads the live-session record a launch that has ended left, whatever this launch's own settings say.
-        internal static FlockSessionSnapshot ReadOrphanedSession(string stateFilePath, IFlockLogger logger)
+        internal static FlockSessionSnapshot ReadOrphanedSession(string stateFilePath, IFlockLogger logger, float bounceThresholdSeconds = 0f)
         {
             string json;
             try
@@ -137,6 +147,8 @@ namespace Flock.Analytics
                     // Not deleted here: the caller spools the end durably, then deletes.
                     recovered.IsActive = false;
                     recovered.EndTimeUtc = recovered.LastHeartbeatUtc ?? recovered.StartTimeUtc;
+                    // Its length is what the last saved record held, so a bounce is judged on that.
+                    recovered.IsBounce = recovered.DurationSeconds < bounceThresholdSeconds;
                     logger.LogWarning($"Recovering orphaned session: {recovered.SessionId}");
                     return recovered;
                 }
@@ -177,6 +189,7 @@ namespace Flock.Analytics
             _pauseCount = 0;
             _lastHeartbeatTime = Time.realtimeSinceStartup;
             _lastFlushTime = Time.realtimeSinceStartup;
+            _savedPastBounceThreshold = false;
 
             _frameCount = 0;
             _fpsAccumulator = 0f;
@@ -216,7 +229,7 @@ namespace Flock.Analytics
             SaveState();
         }
 
-        internal FlockSessionSnapshot End(FlockSessionEndReason reason)
+        internal FlockSessionSnapshot End(FlockSessionEndReason reason, string endingReason = null)
         {
             if (!_active)
             {
@@ -238,10 +251,16 @@ namespace Flock.Analytics
 
             FlockSessionSnapshot snapshot = TakeSnapshot();
             snapshot.IsBounce = snapshot.DurationSeconds < _config.BounceThresholdSeconds;
+            EndingReason = endingReason ?? FlockSessionEndEvent.ReasonName(reason);
 
             // Spool-before-clear: only drop the live marker once the handler says it persisted the end.
             _endSpoolFailed = false;
+            _endEventRecorded = false;
             OnSessionEnded?.Invoke(snapshot);
+
+            // Before the delete: a record that outlives it (a failed spool, a failed delete) must not get a second event.
+            if (_endEventRecorded)
+                MarkRecordEndEventRecorded(snapshot);
 
             if (_endSpoolFailed)
                 _logger.LogError($"Session end {SessionId} was not spooled — keeping the live marker for next-launch recovery.");
@@ -298,11 +317,11 @@ namespace Flock.Analytics
 
         internal void RecordScreenView(string screenName)
         {
-            if (!_active)
+            if (!_active || string.IsNullOrWhiteSpace(screenName))
                 return;
 
             _screensViewed++;
-            if (!string.IsNullOrEmpty(screenName) && _screenNames.Count < MaxTrackedScreenNames)
+            if (_screenNames.Count < MaxTrackedScreenNames)
             {
                 _screenNames.Add(screenName);
                 if (_screenNames.Count == MaxTrackedScreenNames)
@@ -362,10 +381,16 @@ namespace Flock.Analytics
 
 
 
-        private void HandleTick()
+        internal void HandleTick()
         {
             if (!_active || _isPaused)
                 return;
+
+            if (!_savedPastBounceThreshold && ElapsedSeconds >= _config.BounceThresholdSeconds)
+            {
+                _savedPastBounceThreshold = true;
+                SaveState();
+            }
 
             float dt = Time.unscaledDeltaTime;
 
@@ -434,9 +459,9 @@ namespace Flock.Analytics
 
                 float pausedDuration = Time.realtimeSinceStartup - _pausedAtRealtime;
 
-                if (pausedDuration > _config.SessionTimeoutSeconds)
+                if (pausedDuration >= _config.SessionTimeoutSeconds)
                 {
-                    _logger.LogInfo(Invariant($"Session timeout exceeded ({pausedDuration:F0}s > {_config.SessionTimeoutSeconds:F0}s). New session required."));
+                    _logger.LogInfo(Invariant($"Session timed out: {pausedDuration:F0}s in the background, the timeout is {_config.SessionTimeoutSeconds:F0}s. A new session starts."));
 
                     FlockSessionSnapshot snapshot = End(FlockSessionEndReason.Timeout);
                     if (snapshot != null)
@@ -493,6 +518,25 @@ namespace Flock.Analytics
             catch (Exception ex)
             {
                 _logger.LogWarning($"Failed to persist session state: {ex.Message}");
+            }
+        }
+
+        // The open record, kept recoverable, with its event marked recorded; nothing when the session is not kept on disk.
+        private void MarkRecordEndEventRecorded(FlockSessionSnapshot ended)
+        {
+            if (!_config.PersistSessionOnDisk || string.IsNullOrEmpty(_stateFilePath) || !File.Exists(_stateFilePath))
+                return;
+
+            try
+            {
+                FlockSessionSnapshot record = JsonConvert.DeserializeObject<FlockSessionSnapshot>(JsonConvert.SerializeObject(ended));
+                record.IsActive = true;
+                record.EndEventRecorded = true;
+                FlockTemporaryFiles.Save(_stateFilePath, JsonConvert.SerializeObject(record));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning($"Failed to mark the session's end event as recorded: {ex.Message}");
             }
         }
 

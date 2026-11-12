@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 It is released with the Flock SDK, at the Flock SDK's version.
 
+## [1.104.0]
+
+No changes to the Protokite Playtest package: this version is released together with the Flock SDK's default analytics events and typed calls.
+
 ## [1.103.0]
 
 ### Changed

@@ -35,6 +35,9 @@ namespace Flock.Analytics
         // Used for retag-after-auth flows where user ID was defaulted due to auth failure.
         void Rewrite(Func<T, bool> shouldRewrite, Action<T> setAuthID);
 
+        // Rewrite for the sender of the batch under way: entries that batch holds are rewritten too, so a retry reads the change.
+        void RewriteWhileSending(Func<T, bool> shouldRewrite, Action<T> mutate);
+
         // Drains the cache one batch at a time via the supplied sender. With a flush already running it returns at once,
         // or, asked to wait, waits for that flush and then sends what is left. Reports what this call sent and what the
         // server refused; a flush left to one already running reports nothing.

@@ -31,19 +31,21 @@ itself sets the same values on `FlockInitConfig.AnalyticsConfig` (a `FlockAnalyt
 using System.Collections.Generic;
 using Flock;
 
-public static class ProgressEvents
+public static class BossEvents
 {
     // False when the event was refused (a warning in the console says why).
-    public static bool LevelComplete(int level, double seconds, int stars)
+    public static bool BossDefeated(string boss, double seconds, int hitsTaken)
     {
         Dictionary<string, object> properties = new Dictionary<string, object>
         {
-            { "level", level }, { "time", seconds }, { "stars", stars }
+            { "boss", boss }, { "seconds", seconds }, { "hits_taken", hitsTaken }
         };
-        return FlockClient.Instance.Analytics.TrackEvent("level_complete", properties, eventCategory: "progress");
+        return FlockClient.Instance.Analytics.TrackEvent("boss_defeated", properties, eventCategory: "gameplay");
     }
 }
 ```
+
+For the tracking plan's common events, use the typed calls below rather than typing their names.
 
 - Safe offline and from any thread. Each call writes one file, so record what happened (a level completed), not every
   frame. Properties keep their keys and JSON types, 64-bit numbers included.
@@ -51,11 +53,53 @@ public static class ProgressEvents
   without a player it knows.
 - Refused with `false` and a warning: an empty name, a name over `FlockAnalyticsProvider.MaxEventNameLength` (200)
   characters or a category over `MaxEventCategoryLength` (100) (the server cannot store either, and would fail every event
-  sent with it), `session_started` (the server records it itself when a session starts), or properties that cannot be
+  sent with it), `session_started` (the server records it itself when a session starts), the SDK's own event names
+  (`session_end`, `app_open`, `first_launch`, `app_update`, `store_purchase`, `screen_view`; see [Default events](#default-events-and-parameters)), or properties that cannot be
   written as JSON. Without consent it is refused quietly.
 - With **Analytics Cache Failed Events** off (`CacheFailedEvents` in code) there is no queue: the event is sent once, straight away, while a player is signed in, and
   dropped otherwise.
-- The SDK records no gameplay events of its own, so the Game Metrics dashboards show only what your game tracks.
+
+## Tracking plan events
+
+Typed calls for the events the dashboard's tracking plan suggests most often, with its event names, categories and property
+names, so the plan ticks them off and its suggested dashboards chart them:
+
+```csharp
+using Flock;
+
+public static class PlanEvents
+{
+    public static void LevelWon(int level, int score, int seconds, int stars)
+    {
+        FlockClient.Instance.Analytics.TrackLevelComplete(level: level, score: score, durationSeconds: seconds, stars: stars);
+    }
+
+    public static void MatchOver(string mode, bool won, int kills)
+    {
+        FlockClient.Instance.Analytics.TrackMatchComplete(mode: mode,
+            result: won ? FlockMatchResult.Win : FlockMatchResult.Loss, kills: kills);
+    }
+}
+```
+
+| Call | Event | Category | Properties |
+|---|---|---|---|
+| `TrackLevelStart` | `level_start` | `gameplay` | `level`, `difficulty` |
+| `TrackLevelComplete` | `level_complete` | `gameplay` | `level`, `score`, `duration_seconds`, `stars` |
+| `TrackLevelFail` | `level_fail` | `gameplay` | `level`, `reason`, `duration_seconds` |
+| `TrackCheckpoint` | `checkpoint_start` | `gameplay` | `level`, `checkpoint` |
+| `TrackTutorialStep` | `tutorial_step` | `ui` | `step`, `step_name` |
+| `TrackSettingsChange` | `settings_change` | `ui` | `setting`, `value` |
+| `TrackMatchStart` | `match_start` | `gameplay` | `mode`, `map`, `team_size` |
+| `TrackMatchComplete` | `match_complete` | `gameplay` | `mode`, `result`, `score`, `duration_seconds`, `kills` |
+
+- Every argument is optional; one you leave out is not sent. Pass more properties in `extraProperties`; a named argument
+  wins over the same key there, and your dictionary is not changed.
+- `result` takes `FlockMatchResult.Win`, `Loss` or `Draw`, or a word of your own.
+- Each is a `TrackEvent` underneath: the same consent, queue, refusals and `false` return. They are your game's events, so
+  **Analytics Send Default Events** does not turn them off.
+- Any other event in your plan (`zone_enter`, `hand_complete`, `scenario_start`, …) goes through `TrackEvent` with the
+  plan's name and properties.
 
 ## Diagnostics
 
@@ -190,7 +234,7 @@ public static class SessionsAndTransactions
         });
     }
 
-    // Screen views stay on the device and are counted into the session's ScreensViewed.
+    // Recorded as a screen_view event (Send Default Events) and counted into the session's ScreensViewed.
     public static void ShowMainMenu()
     {
         FlockClient.Instance.Analytics.RecordScreenView("MainMenu");
@@ -203,6 +247,45 @@ server has the session, the SDK's own local id until then (the one `FlockEvents.
 `FlockClient.Instance.ServerSessionId` is only ever the server's: null until the session's start has reached the server
 (offline, for one), and null again once the session has ended. Read `ServerSessionId` when another service must name the
 session, and read it again later while it is null; there is no event for its arrival.
+
+## Default events and parameters
+
+With no code, every game gets the SDK's own events, so a custom dashboard has data from the first launch. They are queued and
+sent like your own `TrackEvent` events and need consent. Turn off **Analytics Send Default Events** (Flock > Settings,
+**Advanced Settings** tab, **Analytics Settings** foldout; `FlockAnalyticsConfig.SendDefaultEvents` in code) to record none of
+them. What the server handles (achievements unlocked, sign-ups and sign-ins, matchmaking, paid purchases) Flock records on the
+server, not here.
+
+| Event | Category | When | Properties |
+|---|---|---|---|
+| `app_open` | `app` | Each time the SDK starts, or when consent is given later in that launch (credited to the next player who signs in) | the parameters below |
+| `first_launch` | `app` | The first start of this game on this device | the parameters below |
+| `app_update` | `app` | A start on another app version than the one this game last started with on this device | `previous_app_version` |
+| `screen_view` | `screen` | Each `RecordScreenView` call that names a screen | `screen_name` |
+| `session_end` | `session` | A session ends | below |
+| `store_purchase` | `store` | The store's own dialog cancels, fails or defers a purchase (`Shop.PurchaseAsync` through `FlockStore`); a paid one is recorded by the server | `outcome` (`cancelled`, `failed`, `deferred`), `store`, `item_id`, `product_id` |
+
+`TrackEvent` refuses these names, so a game's own event of the same name does not count twice; give it another name.
+
+**Parameters on every event.** Every analytics event, your own included, carries `flock_platform`, `flock_os`,
+`flock_device_model`, `flock_app_version`, `flock_sdk_version` and `flock_language` (the device's language), and `flock_session_number` while a session runs. A property
+your event already sets under one of these names keeps your value. They stay when Send Default Events is off. A
+`session_end` for a session a crashed launch left open carries the versions that launch ran, not the updated ones.
+
+**The `session_end` event.** It is credited to the player whose session it was. Its properties:
+
+| Property | Value |
+|---|---|
+| `reason` | `quit`, `timeout` (in the background for **Analytics Session Timeout** seconds or more), `sign_out` (signed out, or the sign-in could not be renewed), `player_changed` (another player signed in), `restarted` (a new session replaced it), `ended_by_the_game` (`EndSessionAsync`), or `unexpected_exit` (the game closed without ending it, a crash or the system closing the app; recorded at the next launch) |
+| `duration_seconds` | The session's length without its time in the background, in whole seconds, rounded |
+| `screens_viewed` | How many `RecordScreenView` calls named a screen (one with no name is not counted) |
+| `is_bounce` | Shorter than **Analytics Bounce Threshold** seconds |
+| `session_number`, `is_first_session` | The session's number on this device, and whether it is the first |
+| `pause_count` | How many times the game went to the background |
+| `average_fps`, `min_fps` | The frame rate, when **Analytics Track Fps** sampled any |
+
+The session itself reaches the server's session reports as before, with the same length, screens and bounce. An
+`unexpected_exit` session's length is what its last saved record held, saved every **Analytics Heartbeat Interval** seconds.
 
 ## Consent
 

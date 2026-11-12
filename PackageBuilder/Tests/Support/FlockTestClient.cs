@@ -24,7 +24,9 @@ namespace Flock.Tests.Support
         // What the editor itself has saved under these keys, put back when this client goes: running the suite in an
         // open editor would otherwise sign the developer's Play Mode player out and forget their consent answer.
         private static readonly string[] DevelopersPrefs =
-            { PrefAccessToken, PrefRefreshToken, PrefAuthMethod, "flock_analytics_consent", "flock_analytics_consent_set" };
+            { PrefAccessToken, PrefRefreshToken, PrefAuthMethod, "flock_analytics_consent", "flock_analytics_consent_set",
+              Flock.Analytics.FlockDefaultEvents.FirstLaunchRecordedPrefFor(FlockTestGame.Key),
+              Flock.Analytics.FlockDefaultEvents.LastAppVersionPrefFor(FlockTestGame.Key) };
         private SavedPrefs _developersPrefs;
 
         public FlockClient Client { get; }
@@ -49,6 +51,29 @@ namespace Flock.Tests.Support
             TokenStore = config.TokenStore;
         }
 
+        private static readonly string[] ConsentPrefs = { "flock_analytics_consent", "flock_analytics_consent_set" };
+
+        /// <summary>Removes this machine's saved consent answer for a test; disposing puts the developer's own answer back.</summary>
+        public static IDisposable SetConsentAnswerAside()
+        {
+            SavedPrefs saved = SavedPrefs.Take(ConsentPrefs);
+            foreach (string key in ConsentPrefs)
+                PlayerPrefs.DeleteKey(key);
+            return new ConsentAnswerAside(saved);
+        }
+
+        private sealed class ConsentAnswerAside : IDisposable
+        {
+            private SavedPrefs _saved;
+            public ConsentAnswerAside(SavedPrefs saved) => _saved = saved;
+
+            public void Dispose()
+            {
+                _saved?.PutBack(ConsentPrefs);
+                _saved = null;
+            }
+        }
+
         // `tweak` lets a test override the config (e.g. pin a fixed snapshot dir for a relaunch test).
         public static FlockTestClient Create(FlockFakeTransport transport, Action<FlockInitConfig> tweak = null)
         {
@@ -60,6 +85,8 @@ namespace Flock.Tests.Support
             {
                 PersistSessionOnDisk = false,
                 AutoStartSession = false,
+                // The SDK's own events (app_open at every Create) stay out of tests that count events; their own tests turn them on.
+                SendDefaultEvents = false,
                 HeartbeatIntervalSeconds = 0f,
                 EventBufferFlushIntervalSeconds = 0f
             };
