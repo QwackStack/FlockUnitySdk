@@ -16,8 +16,7 @@ namespace Flock.Tests.Editor
     /// <summary>The session record: the session_end event the SDK records, and what the session's end sends the server.</summary>
     public class FlockSessionEndEventTests
     {
-        private const string ConsentGrantedKey = "flock_analytics_consent";
-        private const string ConsentSetKey = "flock_analytics_consent_set";
+        private IDisposable _consentAside;
         private const string ServerSessionId = "01K5SERVERSESSION00000001";
 
         private string _runFolder;
@@ -31,6 +30,7 @@ namespace Flock.Tests.Editor
         [SetUp]
         public void SetUp()
         {
+            _consentAside = FlockTestClient.SetConsentAnswerAside();
             _runFolder = FlockAnalyticsLaunches.FolderForTesting;
             _folder = Path.Combine(Path.GetTempPath(), "flock_session_end_" + Guid.NewGuid().ToString("N"));
             FlockAnalyticsLaunches.FolderForTesting = _folder;
@@ -44,8 +44,8 @@ namespace Flock.Tests.Editor
             _h?.Dispose();
             _h = null;
             FlockAnalyticsLaunches.FolderForTesting = _runFolder;
-            PlayerPrefs.DeleteKey(ConsentGrantedKey);
-            PlayerPrefs.DeleteKey(ConsentSetKey);
+            _consentAside?.Dispose();
+            _consentAside = null;
             if (Directory.Exists(_folder))
                 Directory.Delete(_folder, true);
         }

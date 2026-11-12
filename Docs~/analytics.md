@@ -31,19 +31,21 @@ itself sets the same values on `FlockInitConfig.AnalyticsConfig` (a `FlockAnalyt
 using System.Collections.Generic;
 using Flock;
 
-public static class ProgressEvents
+public static class BossEvents
 {
     // False when the event was refused (a warning in the console says why).
-    public static bool LevelComplete(int level, double seconds, int stars)
+    public static bool BossDefeated(string boss, double seconds, int hitsTaken)
     {
         Dictionary<string, object> properties = new Dictionary<string, object>
         {
-            { "level", level }, { "time", seconds }, { "stars", stars }
+            { "boss", boss }, { "seconds", seconds }, { "hits_taken", hitsTaken }
         };
-        return FlockClient.Instance.Analytics.TrackEvent("level_complete", properties, eventCategory: "progress");
+        return FlockClient.Instance.Analytics.TrackEvent("boss_defeated", properties, eventCategory: "gameplay");
     }
 }
 ```
+
+For the tracking plan's common events, use the typed calls below rather than typing their names.
 
 - Safe offline and from any thread. Each call writes one file, so record what happened (a level completed), not every
   frame. Properties keep their keys and JSON types, 64-bit numbers included.
@@ -56,6 +58,48 @@ public static class ProgressEvents
   written as JSON. Without consent it is refused quietly.
 - With **Analytics Cache Failed Events** off (`CacheFailedEvents` in code) there is no queue: the event is sent once, straight away, while a player is signed in, and
   dropped otherwise.
+
+## Tracking plan events
+
+Typed calls for the events the dashboard's tracking plan suggests most often, with its event names, categories and property
+names, so the plan ticks them off and its suggested dashboards chart them:
+
+```csharp
+using Flock;
+
+public static class PlanEvents
+{
+    public static void LevelWon(int level, int score, int seconds, int stars)
+    {
+        FlockClient.Instance.Analytics.TrackLevelComplete(level: level, score: score, durationSeconds: seconds, stars: stars);
+    }
+
+    public static void MatchOver(string mode, bool won, int kills)
+    {
+        FlockClient.Instance.Analytics.TrackMatchComplete(mode: mode,
+            result: won ? FlockMatchResult.Win : FlockMatchResult.Loss, kills: kills);
+    }
+}
+```
+
+| Call | Event | Category | Properties |
+|---|---|---|---|
+| `TrackLevelStart` | `level_start` | `gameplay` | `level`, `difficulty` |
+| `TrackLevelComplete` | `level_complete` | `gameplay` | `level`, `score`, `duration_seconds`, `stars` |
+| `TrackLevelFail` | `level_fail` | `gameplay` | `level`, `reason`, `duration_seconds` |
+| `TrackCheckpoint` | `checkpoint_start` | `gameplay` | `level`, `checkpoint` |
+| `TrackTutorialStep` | `tutorial_step` | `ui` | `step`, `step_name` |
+| `TrackSettingsChange` | `settings_change` | `ui` | `setting`, `value` |
+| `TrackMatchStart` | `match_start` | `gameplay` | `mode`, `map`, `team_size` |
+| `TrackMatchComplete` | `match_complete` | `gameplay` | `mode`, `result`, `score`, `duration_seconds`, `kills` |
+
+- Every argument is optional; one you leave out is not sent. Pass more properties in `extraProperties`; a named argument
+  wins over the same key there, and your dictionary is not changed.
+- `result` takes `FlockMatchResult.Win`, `Loss` or `Draw`, or a word of your own.
+- Each is a `TrackEvent` underneath: the same consent, queue, refusals and `false` return. They are your game's events, so
+  **Analytics Send Default Events** does not turn them off.
+- Any other event in your plan (`zone_enter`, `hand_complete`, `scenario_start`, …) goes through `TrackEvent` with the
+  plan's name and properties.
 
 ## Diagnostics
 

@@ -23,6 +23,7 @@ namespace Flock.Tests.Editor
     {
         private const string ConsentGrantedKey = "flock_analytics_consent";
         private const string ConsentSetKey = "flock_analytics_consent_set";
+        private IDisposable _consentAside;
 
         private string _root;
         private string _runFolder;
@@ -36,8 +37,7 @@ namespace Flock.Tests.Editor
             // by the next test's SDK, like any launch's.
             _runFolder = FlockAnalyticsLaunches.FolderForTesting;
             FlockAnalyticsLaunches.FolderForTesting = Path.Combine(_root, "sdk");
-            PlayerPrefs.DeleteKey(ConsentGrantedKey);
-            PlayerPrefs.DeleteKey(ConsentSetKey);
+            _consentAside = FlockTestClient.SetConsentAnswerAside();
         }
 
         [TearDown]
@@ -51,8 +51,8 @@ namespace Flock.Tests.Editor
             if (FlockClient.IsInitialized)
                 FlockClient.Shutdown();
             FlockAnalyticsLaunches.FolderForTesting = _runFolder;
-            PlayerPrefs.DeleteKey(ConsentGrantedKey);
-            PlayerPrefs.DeleteKey(ConsentSetKey);
+            _consentAside?.Dispose();
+            _consentAside = null;
             if (Directory.Exists(_root))
                 Directory.Delete(_root, true);
         }

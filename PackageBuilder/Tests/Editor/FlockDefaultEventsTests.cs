@@ -15,8 +15,7 @@ namespace Flock.Tests.Editor
     /// <summary>The flock_ parameters on every analytics event, app_open and first_launch, and the Send Default Events opt-out.</summary>
     public class FlockDefaultEventsTests
     {
-        private const string ConsentGrantedKey = "flock_analytics_consent";
-        private const string ConsentSetKey = "flock_analytics_consent_set";
+        private IDisposable _consentAside;
 
         private string _runFolder;
         private string _folder;
@@ -37,8 +36,7 @@ namespace Flock.Tests.Editor
             _savedLastVersion = PlayerPrefs.HasKey(LastVersionPref) ? PlayerPrefs.GetString(LastVersionPref) : null;
             PlayerPrefs.DeleteKey(LastVersionPref);
             // A consent answer saved on this machine beats Require Explicit Consent.
-            PlayerPrefs.DeleteKey(ConsentGrantedKey);
-            PlayerPrefs.DeleteKey(ConsentSetKey);
+            _consentAside = FlockTestClient.SetConsentAnswerAside();
         }
 
         [TearDown]
@@ -48,8 +46,8 @@ namespace Flock.Tests.Editor
                 client.Dispose();
             _clients.Clear();
             FlockAnalyticsLaunches.FolderForTesting = _runFolder;
-            PlayerPrefs.DeleteKey(ConsentGrantedKey);
-            PlayerPrefs.DeleteKey(ConsentSetKey);
+            _consentAside?.Dispose();
+            _consentAside = null;
             if (_savedFirstLaunch != 0)
                 PlayerPrefs.SetInt(FirstLaunchPref, _savedFirstLaunch);
             else

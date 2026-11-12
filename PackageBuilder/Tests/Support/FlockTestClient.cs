@@ -51,6 +51,29 @@ namespace Flock.Tests.Support
             TokenStore = config.TokenStore;
         }
 
+        private static readonly string[] ConsentPrefs = { "flock_analytics_consent", "flock_analytics_consent_set" };
+
+        /// <summary>Removes this machine's saved consent answer for a test; disposing puts the developer's own answer back.</summary>
+        public static IDisposable SetConsentAnswerAside()
+        {
+            SavedPrefs saved = SavedPrefs.Take(ConsentPrefs);
+            foreach (string key in ConsentPrefs)
+                PlayerPrefs.DeleteKey(key);
+            return new ConsentAnswerAside(saved);
+        }
+
+        private sealed class ConsentAnswerAside : IDisposable
+        {
+            private SavedPrefs _saved;
+            public ConsentAnswerAside(SavedPrefs saved) => _saved = saved;
+
+            public void Dispose()
+            {
+                _saved?.PutBack(ConsentPrefs);
+                _saved = null;
+            }
+        }
+
         // `tweak` lets a test override the config (e.g. pin a fixed snapshot dir for a relaunch test).
         public static FlockTestClient Create(FlockFakeTransport transport, Action<FlockInitConfig> tweak = null)
         {

@@ -22,8 +22,7 @@ namespace Flock.Tests.Editor
     /// <summary>The public gameplay-events call, and the diagnostics calls kept apart from it: what each sends, where, and what it refuses.</summary>
     public class FlockTrackEventTests
     {
-        private const string ConsentGrantedKey = "flock_analytics_consent";
-        private const string ConsentSetKey = "flock_analytics_consent_set";
+        private IDisposable _consentAside;
 
         private string _runFolder;
         private string _folder;
@@ -32,6 +31,7 @@ namespace Flock.Tests.Editor
         [SetUp]
         public void SetUp()
         {
+            _consentAside = FlockTestClient.SetConsentAnswerAside();
             // A folder of this test's own: the run-wide one holds queues earlier tests' launches left.
             _runFolder = FlockAnalyticsLaunches.FolderForTesting;
             _folder = Path.Combine(Path.GetTempPath(), "flock_track_event_" + Guid.NewGuid().ToString("N"));
@@ -44,8 +44,8 @@ namespace Flock.Tests.Editor
             _h?.Dispose();
             _h = null;
             FlockAnalyticsLaunches.FolderForTesting = _runFolder;
-            PlayerPrefs.DeleteKey(ConsentGrantedKey);
-            PlayerPrefs.DeleteKey(ConsentSetKey);
+            _consentAside?.Dispose();
+            _consentAside = null;
             if (Directory.Exists(_folder))
                 Directory.Delete(_folder, true);
         }

@@ -28,6 +28,13 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
   **Analytics Send Default Events** (`FlockAnalyticsConfig.SendDefaultEvents`, on by default) turns the SDK's own events off;
   `TrackEvent` refuses their names.
 
+- **Typed calls for the tracking plan's common events** on `Analytics`: `TrackLevelStart`, `TrackLevelComplete`,
+  `TrackLevelFail`, `TrackCheckpoint`, `TrackTutorialStep`, `TrackSettingsChange`, `TrackMatchStart` and
+  `TrackMatchComplete`, sending `level_start`, `level_complete`, `level_fail`, `checkpoint_start`, `tutorial_step`,
+  `settings_change`, `match_start` and `match_complete` with the plan's property names. Every argument is optional and one
+  left out is not sent; `extraProperties` adds more, a named argument winning over the same key. `FlockMatchResult` holds
+  `Win`, `Loss` and `Draw`. Each is a `TrackEvent` underneath, so Send Default Events does not turn them off.
+
 ### Fixed
 
 - **A session a launch left open (a crash, or the system closing the app) is judged for bounce** when the next launch ends it;
