@@ -25,7 +25,8 @@ namespace Flock.Tests.Support
         // open editor would otherwise sign the developer's Play Mode player out and forget their consent answer.
         private static readonly string[] DevelopersPrefs =
             { PrefAccessToken, PrefRefreshToken, PrefAuthMethod, "flock_analytics_consent", "flock_analytics_consent_set",
-              Flock.Analytics.FlockDefaultEvents.FirstLaunchRecordedPrefFor(FlockTestGame.Key) };
+              Flock.Analytics.FlockDefaultEvents.FirstLaunchRecordedPrefFor(FlockTestGame.Key),
+              Flock.Analytics.FlockDefaultEvents.LastAppVersionPrefFor(FlockTestGame.Key) };
         private SavedPrefs _developersPrefs;
 
         public FlockClient Client { get; }

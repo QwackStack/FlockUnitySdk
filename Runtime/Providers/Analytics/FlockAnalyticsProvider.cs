@@ -114,13 +114,27 @@ namespace Flock.Providers
             RecordLaunchEvent(FlockDefaultEvents.AppOpen);
             if (PlayerPrefs.GetInt(FirstLaunchRecordedPref, 0) == 0)
                 RecordLaunchEvent(FlockDefaultEvents.FirstLaunch);
+
+            // app_update when this game's app version differs from the one it last started with here; the first start only remembers it.
+            string lastVersion = PlayerPrefs.GetString(LastAppVersionPref, null);
+            if (string.IsNullOrEmpty(lastVersion))
+                RememberAppVersion();
+            else if (lastVersion != _launchDevice.AppVersion)
+                RecordLaunchEvent(FlockDefaultEvents.AppUpdate, new Dictionary<string, object> { { "previous_app_version", lastVersion } });
         }
 
         private string FirstLaunchRecordedPref => FlockDefaultEvents.FirstLaunchRecordedPrefFor(Client.InitConfig.GameKey);
+        private string LastAppVersionPref => FlockDefaultEvents.LastAppVersionPrefFor(Client.InitConfig.GameKey);
 
-        private void RecordLaunchEvent(string eventName)
+        private void RememberAppVersion()
         {
-            AnalyticsEventRequest request = NewDefaultEvent(eventName, FlockDefaultEvents.AppCategory, new Dictionary<string, object>());
+            PlayerPrefs.SetString(LastAppVersionPref, _launchDevice.AppVersion ?? "");
+            PlayerPrefs.Save();
+        }
+
+        private void RecordLaunchEvent(string eventName, Dictionary<string, object> properties = null)
+        {
+            AnalyticsEventRequest request = NewDefaultEvent(eventName, FlockDefaultEvents.AppCategory, properties ?? new Dictionary<string, object>());
             if (_eventCache == null && string.IsNullOrEmpty(Client.CurrentPlayerId))
             {
                 _launchEventsWaitingForSignIn.Add(request);
@@ -147,8 +161,14 @@ namespace Flock.Providers
             }
         }
 
+        // first_launch and app_update are marked only once they went out or were queued, so a launch that lost one tries again.
         private void NoteRecorded(string eventName)
         {
+            if (eventName == FlockDefaultEvents.AppUpdate)
+            {
+                RememberAppVersion();
+                return;
+            }
             if (eventName != FlockDefaultEvents.FirstLaunch)
                 return;
             PlayerPrefs.SetInt(FirstLaunchRecordedPref, 1);
@@ -609,13 +629,18 @@ namespace Flock.Providers
             if (!ConsentGiven())
                 return;
 
-            if (_session == null || !_session.IsActive)
-                return;
-
             // The session decides what counts; this only tells the developer why one did not.
             if (string.IsNullOrWhiteSpace(screenName))
+            {
                 Client.Logger.LogWarning("Screen view not counted: a screen view needs the screen's name.");
+                return;
+            }
 
+            RecordDefaultEvent(FlockDefaultEvents.ScreenView, FlockDefaultEvents.ScreenCategory,
+                new Dictionary<string, object> { { "screen_name", screenName } });
+
+            if (_session == null || !_session.IsActive)
+                return;
             _session.RecordScreenView(screenName);
 
             Client.Logger.LogDebug($"Screen view recorded: {screenName}");

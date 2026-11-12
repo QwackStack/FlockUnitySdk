@@ -23,6 +23,8 @@ namespace Flock.Tests.Editor
         private readonly List<FlockTestClient> _clients = new List<FlockTestClient>();
         private int _savedFirstLaunch;
         private static readonly string FirstLaunchPref = FlockDefaultEvents.FirstLaunchRecordedPrefFor(FlockTestGame.Key);
+        private static readonly string LastVersionPref = FlockDefaultEvents.LastAppVersionPrefFor(FlockTestGame.Key);
+        private string _savedLastVersion;
 
         [SetUp]
         public void SetUp()
@@ -32,6 +34,8 @@ namespace Flock.Tests.Editor
             FlockAnalyticsLaunches.FolderForTesting = _folder;
             _savedFirstLaunch = PlayerPrefs.GetInt(FirstLaunchPref, 0);
             PlayerPrefs.DeleteKey(FirstLaunchPref);
+            _savedLastVersion = PlayerPrefs.HasKey(LastVersionPref) ? PlayerPrefs.GetString(LastVersionPref) : null;
+            PlayerPrefs.DeleteKey(LastVersionPref);
             // A consent answer saved on this machine beats Require Explicit Consent.
             PlayerPrefs.DeleteKey(ConsentGrantedKey);
             PlayerPrefs.DeleteKey(ConsentSetKey);
@@ -50,6 +54,10 @@ namespace Flock.Tests.Editor
                 PlayerPrefs.SetInt(FirstLaunchPref, _savedFirstLaunch);
             else
                 PlayerPrefs.DeleteKey(FirstLaunchPref);
+            if (_savedLastVersion != null)
+                PlayerPrefs.SetString(LastVersionPref, _savedLastVersion);
+            else
+                PlayerPrefs.DeleteKey(LastVersionPref);
             if (Directory.Exists(_folder))
                 Directory.Delete(_folder, true);
         }
@@ -95,6 +103,7 @@ namespace Flock.Tests.Editor
             Assert.AreEqual(SystemInfo.deviceModel, (string)properties["flock_device_model"]);
             Assert.AreEqual(Application.version, (string)properties["flock_app_version"]);
             Assert.AreEqual(FlockSdkVersion.Current, (string)properties["flock_sdk_version"]);
+            Assert.AreEqual(Application.systemLanguage.ToString(), (string)properties["flock_language"]);
             Assert.IsNull(properties["flock_session_number"], "No session runs, so no session number");
             Assert.AreEqual(3, (int)properties["level"]);
             Assert.AreEqual(2, mine.Count, "The game's own dictionary is never changed");
@@ -178,6 +187,84 @@ namespace Flock.Tests.Editor
         }
 
         [Test]
+        public void TheFirstStartRemembersTheAppVersionWithoutAnUpdate()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            FlockTestClient h = Start(transport);
+            h.LoginAs("player-a");
+            h.Run(() => h.Client.Analytics.InitializeAsync(CancellationToken.None));
+            Flush(h);
+
+            Assert.IsFalse(Sent(transport).Any(e => (string)e["event_name"] == "app_update"));
+            Assert.AreEqual(Application.version, PlayerPrefs.GetString(LastVersionPref));
+        }
+
+        [Test]
+        public void AStartOnAnotherAppVersionRecordsAppUpdateOnceWithThePreviousVersion()
+        {
+            PlayerPrefs.SetString(LastVersionPref, "0.0.1-older");
+            FlockFakeTransport first = new FlockFakeTransport();
+            FlockTestClient h = Start(first);
+            h.LoginAs("player-a");
+            h.Run(() => h.Client.Analytics.InitializeAsync(CancellationToken.None));
+            Flush(h);
+
+            JObject update = Sent(first).Single(e => (string)e["event_name"] == "app_update");
+            Assert.AreEqual("app", (string)update["event_category"]);
+            Assert.AreEqual("0.0.1-older", (string)update["properties"]["previous_app_version"]);
+            Assert.AreEqual(Application.version, (string)update["properties"]["flock_app_version"]);
+            Assert.AreEqual(Application.version, PlayerPrefs.GetString(LastVersionPref), "Remembered once recorded");
+            h.Dispose();
+            _clients.Remove(h);
+            PlayerPrefs.SetString(LastVersionPref, Application.version);
+
+            FlockFakeTransport second = new FlockFakeTransport();
+            FlockTestClient again = Start(second);
+            again.LoginAs("player-a");
+            again.Run(() => again.Client.Analytics.InitializeAsync(CancellationToken.None));
+            Flush(again);
+            Assert.IsFalse(Sent(second).Any(e => (string)e["event_name"] == "app_update"), "Once an update");
+        }
+
+        [Test]
+        public void AScreenViewIsRecordedAsScreenViewAndCountedInTheSession()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            FlockTestClient h = Start(transport, config => config.AnalyticsConfig.AutoStartSession = true);
+            h.LoginAs("player-a");
+            h.Run(() => h.Client.Analytics.InitializeAsync(CancellationToken.None));
+
+            h.Client.Analytics.RecordScreenView("MainMenu");
+            h.Client.Analytics.RecordScreenView(" ");
+            Flush(h);
+
+            JObject view = Sent(transport).Single(e => (string)e["event_name"] == "screen_view");
+            Assert.AreEqual("screen", (string)view["event_category"]);
+            Assert.AreEqual("MainMenu", (string)view["properties"]["screen_name"]);
+            Assert.AreEqual(h.Client.Session.SessionNumber, (int)view["properties"]["flock_session_number"]);
+            Assert.AreEqual(1, h.Client.Session.ScreensViewed, "Still counted in the session; one with no name is neither");
+        }
+
+        [Test]
+        public void WithSendDefaultEventsOffAScreenViewIsOnlyCounted()
+        {
+            FlockFakeTransport transport = new FlockFakeTransport();
+            FlockTestClient h = Start(transport, config =>
+            {
+                config.AnalyticsConfig.SendDefaultEvents = false;
+                config.AnalyticsConfig.AutoStartSession = true;
+            });
+            h.LoginAs("player-a");
+            h.Run(() => h.Client.Analytics.InitializeAsync(CancellationToken.None));
+
+            h.Client.Analytics.RecordScreenView("MainMenu");
+            Flush(h);
+
+            Assert.IsFalse(Sent(transport).Any(e => (string)e["event_name"] == "screen_view"));
+            Assert.AreEqual(1, h.Client.Session.ScreensViewed);
+        }
+
+        [Test]
         public void ASessionRecoveredAfterAnUpdateCarriesTheVersionsItRanOn()
         {
             FlockLaunchFolder ended = FlockLaunchFolder.Create(FlockTestGame.LaunchesFolderIn(_folder));
@@ -222,6 +309,8 @@ namespace Flock.Tests.Editor
 
         [TestCase("app_open")]
         [TestCase("first_launch")]
+        [TestCase("app_update")]
+        [TestCase("screen_view")]
         [TestCase("store_purchase")]
         [TestCase("session_end")]
         public void TheSdksOwnEventNamesAreRefusedToTheGame(string name)

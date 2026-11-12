@@ -18,11 +18,13 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
   a warning, as `session_started` is, so a game's own event of that name does not count each session twice; give it another
   name.
 
-- **Default events and parameters.** The SDK also records `app_open` (each start, or when consent is given later in it), `first_launch` (once for each game on a device) and
+- **Default events and parameters.** The SDK also records `app_open` (each start, or when consent is given later in it), `first_launch` (once for each game on a device), `app_update`
+  (`previous_app_version`, a start on another app version), `screen_view` (`screen_name`, each `RecordScreenView`; screen
+  views were only counted before) and
   `store_purchase` (`outcome` cancelled, failed or deferred in the store's own dialog; `store`, `item_id`, `product_id`), and
   `session_end` also carries `session_number`, `is_first_session`, `pause_count`, `average_fps` and `min_fps`. Every analytics
   event, the game's own included, carries `flock_platform`, `flock_os`, `flock_device_model`, `flock_app_version`,
-  `flock_sdk_version` and, during a session, `flock_session_number`; a property the game set keeps its value.
+  `flock_sdk_version`, `flock_language` and, during a session, `flock_session_number`; a property the game set keeps its value.
   **Analytics Send Default Events** (`FlockAnalyticsConfig.SendDefaultEvents`, on by default) turns the SDK's own events off;
   `TrackEvent` refuses their names.
 

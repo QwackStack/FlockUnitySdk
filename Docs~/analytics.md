@@ -52,7 +52,7 @@ public static class ProgressEvents
 - Refused with `false` and a warning: an empty name, a name over `FlockAnalyticsProvider.MaxEventNameLength` (200)
   characters or a category over `MaxEventCategoryLength` (100) (the server cannot store either, and would fail every event
   sent with it), `session_started` (the server records it itself when a session starts), the SDK's own event names
-  (`session_end`, `app_open`, `first_launch`, `store_purchase`; see [Default events](#default-events-and-parameters)), or properties that cannot be
+  (`session_end`, `app_open`, `first_launch`, `app_update`, `store_purchase`, `screen_view`; see [Default events](#default-events-and-parameters)), or properties that cannot be
   written as JSON. Without consent it is refused quietly.
 - With **Analytics Cache Failed Events** off (`CacheFailedEvents` in code) there is no queue: the event is sent once, straight away, while a player is signed in, and
   dropped otherwise.
@@ -190,7 +190,7 @@ public static class SessionsAndTransactions
         });
     }
 
-    // Screen views stay on the device and are counted into the session's ScreensViewed.
+    // Recorded as a screen_view event (Send Default Events) and counted into the session's ScreensViewed.
     public static void ShowMainMenu()
     {
         FlockClient.Instance.Analytics.RecordScreenView("MainMenu");
@@ -216,13 +216,15 @@ server, not here.
 |---|---|---|---|
 | `app_open` | `app` | Each time the SDK starts, or when consent is given later in that launch (credited to the next player who signs in) | the parameters below |
 | `first_launch` | `app` | The first start of this game on this device | the parameters below |
+| `app_update` | `app` | A start on another app version than the one this game last started with on this device | `previous_app_version` |
+| `screen_view` | `screen` | Each `RecordScreenView` call that names a screen | `screen_name` |
 | `session_end` | `session` | A session ends | below |
 | `store_purchase` | `store` | The store's own dialog cancels, fails or defers a purchase (`Shop.PurchaseAsync` through `FlockStore`); a paid one is recorded by the server | `outcome` (`cancelled`, `failed`, `deferred`), `store`, `item_id`, `product_id` |
 
-`TrackEvent` refuses these four names, so a game's own event of the same name does not count twice; give it another name.
+`TrackEvent` refuses these names, so a game's own event of the same name does not count twice; give it another name.
 
 **Parameters on every event.** Every analytics event, your own included, carries `flock_platform`, `flock_os`,
-`flock_device_model`, `flock_app_version` and `flock_sdk_version`, and `flock_session_number` while a session runs. A property
+`flock_device_model`, `flock_app_version`, `flock_sdk_version` and `flock_language` (the device's language), and `flock_session_number` while a session runs. A property
 your event already sets under one of these names keeps your value. They stay when Send Default Events is off. A
 `session_end` for a session a crashed launch left open carries the versions that launch ran, not the updated ones.
 
