@@ -24,7 +24,8 @@ namespace Flock.Tests.Support
         // What the editor itself has saved under these keys, put back when this client goes: running the suite in an
         // open editor would otherwise sign the developer's Play Mode player out and forget their consent answer.
         private static readonly string[] DevelopersPrefs =
-            { PrefAccessToken, PrefRefreshToken, PrefAuthMethod, "flock_analytics_consent", "flock_analytics_consent_set" };
+            { PrefAccessToken, PrefRefreshToken, PrefAuthMethod, "flock_analytics_consent", "flock_analytics_consent_set",
+              Flock.Analytics.FlockDefaultEvents.FirstLaunchRecordedPrefFor(FlockTestGame.Key) };
         private SavedPrefs _developersPrefs;
 
         public FlockClient Client { get; }
@@ -60,6 +61,8 @@ namespace Flock.Tests.Support
             {
                 PersistSessionOnDisk = false,
                 AutoStartSession = false,
+                // The SDK's own events (app_open at every Create) stay out of tests that count events; their own tests turn them on.
+                SendDefaultEvents = false,
                 HeartbeatIntervalSeconds = 0f,
                 EventBufferFlushIntervalSeconds = 0f
             };

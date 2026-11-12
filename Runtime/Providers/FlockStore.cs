@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Threading;
 using System.Threading.Tasks;
+using Flock.Analytics;
 using Flock.Config;
 using Flock.Exceptions;
 using Flock.Models;
@@ -837,7 +838,29 @@ namespace Flock.Providers
         private void HandleDeferred(FlockStoreOrder order)
         {
             if (order.ProductId != null && _buying.TryGetValue(order.ProductId, out Buying buying))
+            {
+                RecordStorePurchase(FlockDefaultEvents.Deferred, buying, order.ProductId);
                 buying.Done.TrySetResult(new PurchaseResult { ItemType = buying.Item.Type, Status = PurchaseResultStatuses.Pending });
+            }
+        }
+
+        // What only the device sees: the store's dialog cancelled, failed or deferred a purchase. A paid one is the server's to record.
+        // Only for a dialog this sign-in opened: a callback before it opened, or after its sign-in ended, is not this attempt's.
+        private void RecordStorePurchase(string outcome, Buying buying, string productId)
+        {
+            if (buying.SignIn == null || _client == null || buying.SignIn != _client.SignInNumber)
+                return;
+            ShopItem item = buying.Item;
+            Dictionary<string, object> properties = new Dictionary<string, object>
+            {
+                { "outcome", outcome },
+                { "store", PaymentProvider },
+                { "item_id", item?.Id },
+                { "product_id", productId }
+            };
+#if !FLOCK_NO_ANALYTICS
+            (_client?.Analytics as FlockAnalyticsProvider)?.RecordDefaultEvent(FlockDefaultEvents.StorePurchase, FlockDefaultEvents.StoreCategory, properties);
+#endif
         }
 
         private void HandleFailed(FlockStoreFailure failure)
@@ -845,6 +868,7 @@ namespace Flock.Providers
             if (failure.ProductId == null || !_buying.TryGetValue(failure.ProductId, out Buying buying))
                 return;
             string reason = failure.Reason ?? FlockStoreFailureReasons.Unknown;
+            RecordStorePurchase(reason == FlockStoreFailureReasons.Cancelled ? FlockDefaultEvents.Cancelled : FlockDefaultEvents.Failed, buying, failure.ProductId);
             string words = reason == FlockStoreFailureReasons.Cancelled ? "The player cancelled the purchase in the store's dialog" : "The store did not take the payment: " + failure.Text;
             buying.Done.TrySetException(new FlockStoreException(reason, words) { Hint = FixFor(reason), Operation = "Purchase shop item" });
         }

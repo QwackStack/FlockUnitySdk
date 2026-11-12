@@ -62,6 +62,10 @@ namespace Flock.Analytics
         [JsonProperty("is_bounce")]
         public bool IsBounce { get; set; }
 
+        /// <summary>The session_end event was recorded when it ended; a launch that finds the record open again records none.</summary>
+        [JsonProperty("end_event_recorded")]
+        internal bool EndEventRecorded { get; set; }
+
         [JsonProperty("is_first_session")]
         public bool IsFirstSession { get; set; }
     }

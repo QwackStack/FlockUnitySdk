@@ -186,7 +186,9 @@ namespace Protokite.Playtest.Tests
                 "frame_time_99th_percentile_ms", "hitches", "hitch_threshold_ms", "memory_used_mb", "memory_peak_mb" };
             if (!string.IsNullOrEmpty(scene))
                 expected.Add("map");
-            CollectionAssert.AreEquivalent(expected, properties.Properties().Select(p => p.Name), "These names and no others; the session's own figures are the Flock SDK's");
+            CollectionAssert.AreEquivalent(expected, properties.Properties().Select(p => p.Name).Where(name => !name.StartsWith("flock_")),
+                "These names and no others; the session's own figures are the Flock SDK's");
+            Assert.IsNotNull(properties["flock_sdk_version"], "The Flock SDK adds its flock_ parameters to every event");
             if (!string.IsNullOrEmpty(scene))
                 Assert.AreEqual(scene, (string)properties["map"], "The scene playing when heavy analytics started");
         }

@@ -16,6 +16,9 @@ namespace Flock.Analytics
         public float BounceThresholdSeconds { get; set; } = 10f;
         public bool PersistSessionOnDisk { get; set; } = true;
         public bool TrackFps { get; set; } = true;
+
+        /// <summary>The SDK's own events (session_end, app_open, first_launch, store_purchase); off records none of them. The flock_ parameters stay on every event.</summary>
+        public bool SendDefaultEvents { get; set; } = true;
         public float FpsSampleIntervalSeconds { get; set; } = 1f;
 
         /// <summary>Reports the game's exceptions on their own, from every thread and from start-up; a manual LogDiagnosticException records either way.</summary>

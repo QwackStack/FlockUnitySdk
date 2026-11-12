@@ -148,6 +148,20 @@ namespace Flock.Tests.Editor
         }
 
         [Test]
+        public void TheEventTheSdkRecordsWhenASessionEndsIsRefusedWithAWarning()
+        {
+            FlockFakeTransport transport = Start();
+            _h.LoginAs("player-a");
+
+            Assert.IsFalse(_h.Client.Analytics.TrackEvent("session_end"), "The SDK records it; a second one would count each session twice");
+            Assert.IsTrue(_h.Logger.Warnings.Exists(line => line.Contains("'session_end' is reserved")), string.Join(" | ", _h.Logger.Warnings));
+            Assert.IsTrue(_h.Client.Analytics.TrackEvent("Session_End"), "Matched exactly, as the SDK sends it");
+            Flush();
+
+            CollectionAssert.AreEqual(new[] { "Session_End" }, SentEvents(transport).Select(e => (string)e["event_name"]).ToArray());
+        }
+
+        [Test]
         public void PropertiesThatCannotBeWrittenAsJsonAreRefusedWithoutThrowing()
         {
             FlockFakeTransport transport = Start();
@@ -268,6 +282,7 @@ namespace Flock.Tests.Editor
 
             Assert.IsTrue(recorded);
             CollectionAssert.AreEqual(new[] { "from_a_worker" }, SentEvents(transport).Select(e => (string)e["event_name"]).ToArray());
+            Assert.AreEqual(SystemInfo.deviceModel, (string)SentEvents(transport)[0]["properties"]["flock_device_model"], "The flock_ parameters off the main thread too");
         }
 
         [Test]

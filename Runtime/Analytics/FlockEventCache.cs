@@ -149,9 +149,14 @@ namespace Flock.Analytics
                 Interlocked.Decrement(ref _pendingCount);
         }
 
-        public void Rewrite(Func<T, bool> shouldRewrite, Action<T> setAuthID)
+        public void Rewrite(Func<T, bool> shouldRewrite, Action<T> mutate) => Rewrite(shouldRewrite, mutate, false);
+
+        // Only the batch's own sender may touch its entries: a success deletes them after, a failure keeps them as rewritten.
+        public void RewriteWhileSending(Func<T, bool> shouldRewrite, Action<T> mutate) => Rewrite(shouldRewrite, mutate, true);
+
+        private void Rewrite(Func<T, bool> shouldRewrite, Action<T> mutate, bool includeTheBatchBeingSent)
         {
-            if (shouldRewrite == null || setAuthID == null)
+            if (shouldRewrite == null || mutate == null)
                 return;
 
             int rewritten = 0;
@@ -163,14 +168,14 @@ namespace Flock.Analytics
                 {
                     try
                     {
-                        if (_inFlightPaths != null && _inFlightPaths.Contains(path))
+                        if (!includeTheBatchBeingSent && _inFlightPaths != null && _inFlightPaths.Contains(path))
                             continue;
 
                         T evt = JsonConvert.DeserializeObject<T>(File.ReadAllText(path));
                         if (evt == null || !shouldRewrite(evt))
                             continue;
 
-                        setAuthID(evt);
+                        mutate(evt);
 
                         // Replaced only while it is still there, so a rewrite never brings back an entry erased meanwhile.
                         FlockTemporaryFiles.Replace(path, JsonConvert.SerializeObject(evt));
