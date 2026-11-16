@@ -187,18 +187,26 @@ then `WaitingForPlayerConsent` or `Ready`.
 
 ## The player's consent
 
-Before a playtest build collects anything, it asks its player what the playtest may collect: **the screen and play data**,
-**the screen only**, **play data only**, or **nothing**. Nothing is recorded, measured or sent, and no Protokite session is
-started, until they answer, and **nothing** reads like **Playtesting Enabled** off, except that a feedback form the player
-sends themselves still goes: it is their own message, not something the playtest collects. The question says in its own words
-that it is the playtest's, separate from any privacy or analytics choice the game asks about: it does not change the Flock
-SDK's analytics consent, and exceptions the Flock SDK captures are the Flock SDK's, whatever the answer.
+Before a playtest build collects anything, it asks its player *Help the developers improve this game?*, under the Qwacks
+logo, with two answers:
+**Yes, help the developers** (the screen and play data) or **Not now** (nothing). Nothing is recorded, measured or sent, and
+no Protokite session is started, until they answer, and **Not now** reads like **Playtesting Enabled** off, except that a
+feedback form the player sends themselves still goes: it is their own message, not something the playtest collects. **Not now**
+is kept like any other answer, so the player is not asked again unless the game calls `AskForPlaytestConsent` (or forgets the
+answer with `SetPlaytestConsent(NotAnswered)`, or **Forget This Machine's Answer** in the editor). The screen
+alone, or play data alone, is not offered on the question; a game's own screen can still give either with
+`SetPlaytestConsent`.
+
+A **What's collected?** link under the question opens a pop-up over it that explains what is recorded and collected, who gets
+it, and what **Not now** means, and says the question is the playtest's own, separate from any privacy or analytics choice the
+game asks about. **Back** shuts the pop-up; no answer is taken while it is open. The answer does not change the Flock SDK's
+analytics consent, and exceptions the Flock SDK captures are the Flock SDK's, whatever the answer.
 
 The question is drawn over the game once this build's playtest has loaded, with UI Toolkit built from code: nothing to
 import, and no EventSystem of the game's needed; it works with the Input Manager, the Input System or both. It is answered
 with the mouse: while it is on screen the cursor is shown and free, and it goes back to how the game had it once the player
 answers. No answer is selected when it appears, so the game's own Submit key (Space, by default) presses nothing, and a
-press in its first half second is ignored. A game that locks the cursor again every frame puts each click at the screen's
+press in its first half second, or in the half second after the pop-up shuts, is ignored. A game that locks the cursor again every frame puts each click at the screen's
 centre, so no click is taken as an answer there and a warning says so: stop locking it while `IsConsentQuestionOpen`.
 
 The answer is kept in `ProtokitePlaytest/playtest_consent.json` under the game's persistent data folder and used by every

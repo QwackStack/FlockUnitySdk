@@ -169,6 +169,123 @@ namespace Protokite.Playtest.Tests
             }
         }
 
+        private static VisualElement WhatIsCollectedOnScreen()
+            => ProtokitePlaytest.ConsentQuestionForTesting?.panel?.visualTree.Q<VisualElement>(ProtokitePlaytestConsentQuestionView.WhatIsCollectedName);
+
+        private static Button ButtonInPanel(string name)
+        {
+            Button button = ProtokitePlaytest.ConsentQuestionForTesting.panel.visualTree.Q<Button>(name);
+            Assert.IsNotNull(button, "A button named " + name);
+            return button;
+        }
+
+        [UnityTest]
+        public IEnumerator WhatIsCollectedOpensOnTopAndTheAnswersUnderItTakeNoPress()
+        {
+            yield return ReadTheQuestion();
+            Assert.IsNull(WhatIsCollectedOnScreen(), "Precondition: shut until asked for");
+            Press(ButtonInPanel(ProtokitePlaytestConsentQuestionView.WhatIsCollectedLinkName));
+            yield return null;
+
+            VisualElement popUp = WhatIsCollectedOnScreen();
+            Assert.IsNotNull(popUp, "The link opens the pop-up");
+            Assert.AreSame(popUp, popUp.focusController?.focusedElement, "The pop-up holds focus, not its Back button, so the game's Submit key presses nothing");
+            Assert.Greater(popUp.layout.height, 50f, "Laid out on screen");
+            Rect back = ButtonInPanel(ProtokitePlaytestConsentQuestionView.BackName).worldBound;
+            Assert.LessOrEqual(back.yMax, popUp.panel.visualTree.worldBound.yMax, "Back stays on screen, the parts above it scrolling instead");
+            string said = string.Join(" ", popUp.Query<Label>().ToList().ConvertAll(label => label.text));
+            foreach (ProtokitePlaytestConsentQuestionView.Collected part in ProtokitePlaytestConsentQuestionView.WhatIsCollected)
+                StringAssert.Contains(part.Explanation, said);
+
+            Press(ButtonFor(ProtokitePlaytestConsentChoice.VideoAndPlayData));
+            Click(ButtonFor(ProtokitePlaytestConsentChoice.Nothing));
+            yield return null;
+            yield return null;
+            Assert.IsTrue(ProtokitePlaytest.IsConsentQuestionOpen, "An answer under the pop-up is not taken");
+            Assert.AreEqual(ProtokitePlaytestConsentChoice.NotAnswered, ProtokitePlaytest.PlaytestConsent);
+            Assert.IsNotNull(WhatIsCollectedOnScreen(), "Still open");
+            Assert.IsEmpty(_heardWhileOnScreen, "Opening the pop-up logged: " + string.Join(" | ", _heardWhileOnScreen));
+        }
+
+        [UnityTest]
+        public IEnumerator BackShutsThePopUpAndAnAnswerStraightAfterIsNotTaken()
+        {
+            yield return ReadTheQuestion();
+            Press(ButtonInPanel(ProtokitePlaytestConsentQuestionView.WhatIsCollectedLinkName));
+            yield return null;
+            Press(ButtonInPanel(ProtokitePlaytestConsentQuestionView.BackName));
+            yield return null;
+            VisualElement question = ProtokitePlaytest.ConsentQuestionForTesting;
+            Assert.IsNull(WhatIsCollectedOnScreen(), "Back shuts the pop-up");
+            Assert.AreSame(question, question.focusController?.focusedElement, "The question holds focus again, no answer selected");
+
+            // A second click on Back lands on the answer under it.
+            Press(ButtonFor(ProtokitePlaytestConsentChoice.Nothing));
+            yield return null;
+            Assert.IsTrue(ProtokitePlaytest.IsConsentQuestionOpen, "A press the moment the pop-up shuts is not an answer");
+            Assert.AreEqual(ProtokitePlaytestConsentChoice.NotAnswered, ProtokitePlaytest.PlaytestConsent);
+
+            yield return ReadTheQuestion();
+            Press(ButtonFor(ProtokitePlaytestConsentChoice.Nothing));
+            yield return Until(() => !ProtokitePlaytest.IsConsentQuestionOpen, "Answered once read");
+            Assert.AreEqual(ProtokitePlaytestConsentChoice.Nothing, ProtokitePlaytest.PlaytestConsent);
+        }
+
+        [UnityTest]
+        public IEnumerator AnAnswerGivenInCodeWhileThePopUpIsOpenTakesThePanelAway()
+        {
+            yield return ReadTheQuestion();
+            Press(ButtonInPanel(ProtokitePlaytestConsentQuestionView.WhatIsCollectedLinkName));
+            yield return null;
+            Assert.IsNotNull(WhatIsCollectedOnScreen(), "Precondition: open");
+            ProtokitePlaytest.SetPlaytestConsent(ProtokitePlaytestConsentChoice.Nothing);
+            yield return Until(() => !ProtokitePlaytest.IsConsentQuestionOpen, "The panel closes with its pop-up");
+            Assert.IsTrue(ProtokitePlaytest.AskForPlaytestConsent());
+            yield return null;
+            Assert.IsNull(WhatIsCollectedOnScreen(), "Asked again, the question opens without the pop-up");
+        }
+
+        [UnityTest]
+        public IEnumerator AClickTooSoonLeavesNothingTheSubmitKeyCouldPress()
+        {
+            yield return ReadTheQuestion();
+            Press(ButtonFor(ProtokitePlaytestConsentChoice.Nothing));
+            yield return Until(() => !ProtokitePlaytest.IsConsentQuestionOpen, "Precondition: answered");
+
+            // Put again and clicked at once, as a player still firing at the game would; then the player jumps with Submit.
+            Assert.IsTrue(ProtokitePlaytest.AskForPlaytestConsent());
+            yield return null;
+            Click(ButtonFor(ProtokitePlaytestConsentChoice.VideoAndPlayData));
+            yield return ReadTheQuestion();
+            VisualElement question = ProtokitePlaytest.ConsentQuestionForTesting;
+            Focusable focused = question.focusController?.focusedElement;
+            Assert.IsFalse(focused is Button, "The refused click left no answer focused, but " + (focused as VisualElement)?.name + " is");
+            if (focused is VisualElement target)
+            {
+                using (NavigationSubmitEvent submit = NavigationSubmitEvent.GetPooled())
+                {
+                    submit.target = target;
+                    target.SendEvent(submit);
+                }
+            }
+            yield return null;
+            Assert.IsTrue(ProtokitePlaytest.IsConsentQuestionOpen, "Submit after a refused click answers nothing");
+            Assert.AreEqual(ProtokitePlaytestConsentChoice.Nothing, ProtokitePlaytest.PlaytestConsent);
+        }
+
+        [UnityTest]
+        public IEnumerator TheQwacksLogoIsCentredAboveTheHeading()
+        {
+            yield return null;
+            VisualElement question = ProtokitePlaytest.ConsentQuestionForTesting;
+            Image logo = question.Q<Image>(ProtokitePlaytestConsentQuestionView.QwacksLogoName);
+            Assert.IsNotNull(logo, "The package carries the logo, so the question draws it");
+            Assert.AreSame(logo, question[0], "It is the first thing on the question, above the heading");
+            Assert.IsNotNull(logo.image, "With its image");
+            Assert.AreEqual(48f, logo.layout.width, 1.5f, "At its own size, give or take the panel's scaling");
+            Assert.AreEqual(question.layout.width / 2f, logo.layout.center.x, 1f, "Centred");
+        }
+
         [UnityTest]
         public IEnumerator TheQuestionIsDrawnWithNoThemeWarningAndNothingThrown()
         {
@@ -265,7 +382,7 @@ namespace Protokite.Playtest.Tests
         {
             // The question from set-up frees the cursor while it is open, so it is answered first.
             yield return ReadTheQuestion();
-            Press(ButtonFor(ProtokitePlaytestConsentChoice.PlayDataOnly));
+            Press(ButtonFor(ProtokitePlaytestConsentChoice.Nothing));
             yield return Until(() => !ProtokitePlaytest.IsConsentQuestionOpen, "Precondition: answered");
 
             // A panel opened while the game had confined the cursor, whose objects then went with its launch (a Play Mode session ending).
@@ -289,7 +406,7 @@ namespace Protokite.Playtest.Tests
         public IEnumerator APressTheMomentTheQuestionAppearsIsNotAnAnswer()
         {
             yield return ReadTheQuestion();
-            Press(ButtonFor(ProtokitePlaytestConsentChoice.PlayDataOnly));
+            Press(ButtonFor(ProtokitePlaytestConsentChoice.Nothing));
             yield return Until(() => !ProtokitePlaytest.IsConsentQuestionOpen, "Precondition: answered");
 
             // Put again, and pressed at once, as a player still clicking at the game would.
@@ -298,7 +415,7 @@ namespace Protokite.Playtest.Tests
             yield return null;
             yield return null;
             Assert.IsTrue(ProtokitePlaytest.IsConsentQuestionOpen, "A press before the player could have read the question is not an answer");
-            Assert.AreEqual(ProtokitePlaytestConsentChoice.PlayDataOnly, ProtokitePlaytest.PlaytestConsent);
+            Assert.AreEqual(ProtokitePlaytestConsentChoice.Nothing, ProtokitePlaytest.PlaytestConsent);
 
             yield return ReadTheQuestion();
             Press(ButtonFor(ProtokitePlaytestConsentChoice.VideoAndPlayData));
@@ -326,7 +443,7 @@ namespace Protokite.Playtest.Tests
             Assert.IsTrue(Cursor.visible);
 
             yield return ReadTheQuestion();
-            Press(ButtonFor(ProtokitePlaytestConsentChoice.VideoOnly));
+            Press(ButtonFor(ProtokitePlaytestConsentChoice.Nothing));
             yield return Until(() => !ProtokitePlaytest.IsConsentQuestionOpen, "Answered");
             Assert.AreEqual(CursorLockMode.Confined, Cursor.lockState, "Put back as the game had it");
             Assert.IsFalse(Cursor.visible);
