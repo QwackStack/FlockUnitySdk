@@ -183,13 +183,13 @@ namespace Protokite.Playtest.Tests
         {
             List<UIDocument> before = PanelsOnScreen();
             Assert.AreEqual(1, before.Count, "Precondition: the consent question's one panel");
-            yield return AnswerConsent(ProtokitePlaytestConsentChoice.VideoOnly);
+            yield return AnswerConsent(ProtokitePlaytestConsentChoice.VideoAndPlayData);
             yield return Until(() => QuestionOnScreen() == NetworkQuestionName, "The question about networks follows");
             Assert.IsTrue(ProtokitePlaytest.IsConsentQuestionOpen, "The panel stays open between the two questions");
             List<UIDocument> after = PanelsOnScreen();
             Assert.AreEqual(1, after.Count);
             Assert.AreSame(before[0], after[0], "The same panel, its question changed: a new one would take the freed cursor for the game's own");
-            Assert.AreEqual(ProtokitePlaytestConsentChoice.VideoOnly, ProtokitePlaytest.PlayersConsentAnswer, "The consent answer is saved at once");
+            Assert.AreEqual(ProtokitePlaytestConsentChoice.VideoAndPlayData, ProtokitePlaytest.PlayersConsentAnswer, "The consent answer is saved at once");
 
             VisualElement question = ProtokitePlaytest.ConsentQuestionForTesting;
             StringAssert.Contains(ProtokitePlaytestUploadNetworkQuestionView.Heading, question.Q<Label>().text);
@@ -207,6 +207,21 @@ namespace Protokite.Playtest.Tests
             Assert.AreEqual(ProtokitePlaytestUploadNetworkChoice.WiFiOnly, ProtokitePlaytest.PlayersUploadNetworkAnswer);
             StringAssert.Contains("\"playtest_upload_network\":\"wifi_only\"", File.ReadAllText(_answers.UploadNetworkFilePath));
             Assert.IsEmpty(_heardWhileOnScreen, "Changing question logged: " + string.Join(" | ", _heardWhileOnScreen));
+        }
+
+        [UnityTest]
+        public IEnumerator TheQuestionAboutNetworksReplacesTheConsentQuestionWithItsPopUp()
+        {
+            yield return ReadTheQuestion();
+            Press(ButtonNamed(ProtokitePlaytestConsentQuestionView.WhatIsCollectedLinkName));
+            yield return null;
+            VisualElement root = ProtokitePlaytest.ConsentQuestionForTesting.panel.visualTree;
+            Assert.IsNotNull(root.Q<VisualElement>(ProtokitePlaytestConsentQuestionView.WhatIsCollectedName), "Precondition: the pop-up is open");
+
+            ProtokitePlaytest.SetPlaytestConsent(ProtokitePlaytestConsentChoice.VideoAndPlayData);
+            yield return Until(() => QuestionOnScreen() == NetworkQuestionName, "The question about networks follows on the same panel");
+            Assert.IsNull(root.Q<VisualElement>(ProtokitePlaytestConsentQuestionView.WhatIsCollectedName), "The consent question's pop-up goes with it");
+            Assert.IsTrue(ProtokitePlaytest.ConsentQuestionForTesting.enabledSelf, "The question about networks takes presses");
         }
 
         [UnityTest]
@@ -230,7 +245,7 @@ namespace Protokite.Playtest.Tests
         [UnityTest]
         public IEnumerator AnAnswerThatDoesNotLetTheScreenBeRecordedClosesThePanel()
         {
-            yield return AnswerConsent(ProtokitePlaytestConsentChoice.PlayDataOnly);
+            yield return AnswerConsent(ProtokitePlaytestConsentChoice.Nothing);
             yield return Until(() => !ProtokitePlaytest.IsConsentQuestionOpen, "Nothing is recorded, so nothing is asked about uploading it");
             Assert.AreEqual(ProtokitePlaytestUploadNetworkChoice.NotAnswered, ProtokitePlaytest.PlayersUploadNetworkAnswer);
         }
@@ -238,7 +253,7 @@ namespace Protokite.Playtest.Tests
         [UnityTest]
         public IEnumerator AskingAgainPutsBothQuestionsAndTheAnswersBeforeHoldUntilChanged()
         {
-            yield return AnswerConsent(ProtokitePlaytestConsentChoice.VideoOnly);
+            yield return AnswerConsent(ProtokitePlaytestConsentChoice.VideoAndPlayData);
             yield return Until(() => QuestionOnScreen() == NetworkQuestionName, "The question about networks follows");
             yield return ReadTheQuestion();
             Press(ButtonNamed(ProtokitePlaytestUploadNetworkQuestionView.ButtonName(ProtokitePlaytestUploadNetworkChoice.WiFiAndMobileData)));

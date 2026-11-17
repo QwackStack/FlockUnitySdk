@@ -105,17 +105,14 @@ namespace Protokite.Playtest.Tests
         }
 
         [Test]
-        public void TheQuestionOffersEachAnswerOnceInOrderAndSaysItIsThePlaytestsOwn()
+        public void TheQuestionOffersEverythingThenNothingAndItsPopUpSaysItIsThePlaytestsOwn()
         {
-            CollectionAssert.AreEqual(new[]
-                {
-                    ProtokitePlaytestConsentChoice.VideoAndPlayData, ProtokitePlaytestConsentChoice.VideoOnly,
-                    ProtokitePlaytestConsentChoice.PlayDataOnly, ProtokitePlaytestConsentChoice.Nothing
-                },
+            CollectionAssert.AreEqual(new[] { ProtokitePlaytestConsentChoice.VideoAndPlayData, ProtokitePlaytestConsentChoice.Nothing },
                 Array.ConvertAll(ProtokitePlaytestConsentQuestionView.Options, option => option.Choice));
-            StringAssert.Contains("separate from any privacy or analytics choice the game itself asks you about", ProtokitePlaytestConsentQuestionView.Introduction);
-            StringAssert.Contains("A feedback report you choose to send still reaches the studio",
-                Array.Find(ProtokitePlaytestConsentQuestionView.Options, option => option.Choice == ProtokitePlaytestConsentChoice.Nothing).Explanation);
+            string whatIsCollected = string.Join(" ", Array.ConvertAll(ProtokitePlaytestConsentQuestionView.WhatIsCollected, part => part.Title + " " + part.Explanation));
+            StringAssert.Contains("does not change any privacy choice the game asks you about", whatIsCollected);
+            StringAssert.Contains("Feedback you choose to send still reaches the developers", whatIsCollected);
+            StringAssert.Contains("Frame rate, memory and the levels you load", whatIsCollected, "Says what play data is");
         }
 
         // The file

@@ -25,6 +25,9 @@ namespace Protokite.Playtest
         internal static readonly Color OptionChosenColour = new Color(0.22f, 0.36f, 0.62f, 1f);
         internal static readonly Color OptionBorderColour = new Color(0.25f, 0.29f, 0.36f, 1f);
         internal static readonly Color OptionFocusBorderColour = new Color(0.55f, 0.68f, 0.95f, 1f);
+        internal static readonly Color AccentColour = new Color(0.98f, 0.76f, 0.18f, 1f);
+        internal static readonly Color AccentHighlightColour = new Color(1f, 0.85f, 0.42f, 1f);
+        internal static readonly Color AccentTextColour = new Color(0.07f, 0.08f, 0.10f, 1f);
         private static readonly Color CardColour = new Color(0.04f, 0.05f, 0.07f, 0.97f);
         private static readonly Color ScreenDimColour = new Color(0f, 0f, 0f, 0.6f);
 
@@ -34,6 +37,7 @@ namespace Protokite.Playtest
         private readonly bool _cursorVisibleBefore;
         private bool _freedTheCursor;
         private int _frameTheGameLockedTheCursorAgain = int.MinValue / 2;
+        private VisualElement _onTopLayer;
 
         private ProtokitePlaytestPanel(GameObject host, PanelSettings panelSettings, VisualElement root, VisualElement card)
         {
@@ -89,15 +93,7 @@ namespace Protokite.Playtest
             root.style.unityFontDefinition = new StyleFontDefinition(FontDefinition.FromFont(BuiltInFont()));
             root.style.color = TextColour;
 
-            VisualElement card = new VisualElement { name = "protokite-panel-card" };
-            card.style.width = 640;
-            card.style.maxWidth = Length.Percent(92);
-            card.style.backgroundColor = CardColour;
-            card.style.paddingLeft = 28;
-            card.style.paddingRight = 28;
-            card.style.paddingTop = 24;
-            card.style.paddingBottom = 24;
-            SetRadius(card.style, 8);
+            VisualElement card = NewCard("protokite-panel-card", 640);
             root.Add(card);
             return new ProtokitePlaytestPanel(host, panelSettings, root, card);
         }
@@ -105,14 +101,60 @@ namespace Protokite.Playtest
         /// <summary>Shows this view in place of the one before, with the view itself focused and no button in it.</summary>
         // A focused button would be pressed by a game's own Submit key (Space, in Unity's default input), so a player jumping at the
         // game would answer unread. With nothing focused, keys reach no element at all, so the view holds focus: a keyboard or pad
-        // player's first move goes to an answer.
+        // player's first move goes to the view's first button.
         internal void Show(VisualElement view)
         {
+            RemoveOnTop();
             Card.Clear();
             Card.Add(view);
             View = view;
             view.focusable = true;
             view.Focus();
+        }
+
+        /// <summary>Shows a pop-up over the view, which takes no press and no focus until <see cref="CloseOnTop"/>; the pop-up itself holds focus, as a view does.</summary>
+        internal void ShowOnTop(VisualElement popUp)
+        {
+            RemoveOnTop();
+            _onTopLayer = new VisualElement { name = "protokite-panel-on-top" };
+            _onTopLayer.style.position = Position.Absolute;
+            _onTopLayer.style.left = 0;
+            _onTopLayer.style.top = 0;
+            _onTopLayer.style.right = 0;
+            _onTopLayer.style.bottom = 0;
+            _onTopLayer.style.backgroundColor = ScreenDimColour;
+            _onTopLayer.style.justifyContent = Justify.Center;
+            _onTopLayer.style.alignItems = Align.Center;
+            VisualElement card = NewCard("protokite-panel-on-top-card", 560);
+            // Kept on screen, so a pop-up that scrolls its middle keeps its own way out in sight.
+            card.style.maxHeight = Length.Percent(92);
+            // Opaque, so the question's answers do not show through it.
+            card.style.backgroundColor = new Color(CardColour.r, CardColour.g, CardColour.b, 1f);
+            popUp.style.flexShrink = 1;
+            card.Add(popUp);
+            _onTopLayer.Add(card);
+            Root.Add(_onTopLayer);
+            View.SetEnabled(false);
+            popUp.focusable = true;
+            popUp.Focus();
+        }
+
+        /// <summary>Takes the pop-up away and gives the view its presses and focus back.</summary>
+        internal void CloseOnTop()
+        {
+            if (!RemoveOnTop())
+                return;
+            View.SetEnabled(true);
+            View.Focus();
+        }
+
+        private bool RemoveOnTop()
+        {
+            if (_onTopLayer == null)
+                return false;
+            _onTopLayer.RemoveFromHierarchy();
+            _onTopLayer = null;
+            return true;
         }
 
         /// <summary>
@@ -170,9 +212,13 @@ namespace Protokite.Playtest
             return (choice, press) =>
             {
                 if (Time.realtimeSinceStartupAsDouble - shownAt < SecondsBeforeAnAnswerCounts)
+                {
+                    RefusePress(press);
                     return;
+                }
                 if ((press is IPointerEvent || press is IMouseEvent) && theGameKeepsTheCursorLocked())
                 {
+                    RefusePress(press);
                     pressIgnoredForALockedCursor();
                     return;
                 }
@@ -180,29 +226,66 @@ namespace Protokite.Playtest
             };
         }
 
-        /// <summary>A question's heading and introduction, its answers, and a footnote, as one view.</summary>
-        internal static VisualElement QuestionView(string name, string heading, string introduction, IEnumerable<Button> answers, string footnote)
+        /// <summary>A refused press leaves nothing focused: the press already focused its button, which the game's Submit key would then press.</summary>
+        internal static void RefusePress(EventBase press) => (press.target as Focusable)?.Blur();
+
+        /// <summary>A question's heading and introduction, an optional link under it, its answers, and an optional footnote, as one view.</summary>
+        internal static VisualElement QuestionView(string name, string heading, string introduction, IEnumerable<Button> answers, string footnote, Button link = null)
         {
             VisualElement view = new VisualElement { name = name };
             view.Add(Text(heading, 22, TextColour, bold: true));
 
             Label introductionLabel = Text(introduction, 13, HelpColour);
             introductionLabel.style.marginTop = 8;
-            introductionLabel.style.marginBottom = 18;
+            introductionLabel.style.marginBottom = link == null ? 18 : 4;
             view.Add(introductionLabel);
+            if (link != null)
+            {
+                link.style.marginBottom = 18;
+                view.Add(link);
+            }
 
             foreach (Button answer in answers)
                 view.Add(answer);
 
-            Label footnoteLabel = Text(footnote, 12, HelpColour);
-            footnoteLabel.style.marginTop = 6;
-            view.Add(footnoteLabel);
+            if (footnote != null)
+            {
+                Label footnoteLabel = Text(footnote, 12, HelpColour);
+                footnoteLabel.style.marginTop = 6;
+                view.Add(footnoteLabel);
+            }
             return view;
         }
 
-        /// <summary>An answer as a button, found by its name: its title over its explanation, with a look of its own for hover and focus.</summary>
-        internal static Button AnswerButton(string name, string title, string explanation, System.Action<EventBase> pressed)
+        /// <summary>A button drawn as a link: its words alone, in the accent colour, underlined while focused.</summary>
+        internal static Button LinkButton(string name, string words, System.Action pressed)
         {
+            Button link = new Button(pressed) { name = name, text = words };
+            link.style.alignSelf = Align.FlexStart;
+            link.style.fontSize = 13;
+            link.style.color = AccentColour;
+            link.style.backgroundColor = Color.clear;
+            link.style.marginLeft = 0;
+            link.style.marginRight = 0;
+            link.style.marginTop = 0;
+            link.style.paddingLeft = 0;
+            link.style.paddingRight = 0;
+            link.style.paddingTop = 0;
+            link.style.paddingBottom = 1;
+            SetBorder(link.style, 0, AccentColour);
+            link.RegisterCallback<PointerEnterEvent>(_ => link.style.color = AccentHighlightColour);
+            link.RegisterCallback<PointerLeaveEvent>(_ => link.style.color = AccentColour);
+            link.RegisterCallback<FocusInEvent>(_ => link.style.borderBottomWidth = 1);
+            link.RegisterCallback<FocusOutEvent>(_ => link.style.borderBottomWidth = 0);
+            return link;
+        }
+
+        /// <summary>An answer as a button, found by its name: its title over its explanation (none when null), with a look of its own for hover and focus; filled in the accent colour when it is the answer offered first.</summary>
+        internal static Button AnswerButton(string name, string title, string explanation, System.Action<EventBase> pressed, bool offeredFirst = false)
+        {
+            Color resting = offeredFirst ? AccentColour : OptionColour;
+            Color highlighted = offeredFirst ? AccentHighlightColour : OptionHighlightColour;
+            Color border = offeredFirst ? AccentColour : OptionBorderColour;
             Button button = new Button { name = name, text = "" };
             // With the press that made it, so a mouse press is told from a key or pad press.
             button.clickable.clickedWithEventInfo += pressed;
@@ -216,23 +299,26 @@ namespace Protokite.Playtest
             button.style.paddingRight = 14;
             button.style.paddingTop = 11;
             button.style.paddingBottom = 11;
-            button.style.backgroundColor = OptionColour;
-            SetBorder(button.style, 1, OptionBorderColour);
+            button.style.backgroundColor = resting;
+            SetBorder(button.style, 1, border);
             SetRadius(button.style, 6);
 
-            Label titleLabel = Text(title, 15, TextColour, bold: true);
+            Label titleLabel = Text(title, 15, offeredFirst ? AccentTextColour : TextColour, bold: true);
             titleLabel.pickingMode = PickingMode.Ignore;
-            Label explanationLabel = Text(explanation, 12, HelpColour);
-            explanationLabel.pickingMode = PickingMode.Ignore;
-            explanationLabel.style.marginTop = 3;
             button.Add(titleLabel);
-            button.Add(explanationLabel);
+            if (explanation != null)
+            {
+                Label explanationLabel = Text(explanation, 12, HelpColour);
+                explanationLabel.pickingMode = PickingMode.Ignore;
+                explanationLabel.style.marginTop = 3;
+                button.Add(explanationLabel);
+            }
 
             // No theme gives hover or focus a look, so the button gives itself one.
-            button.RegisterCallback<PointerEnterEvent>(_ => button.style.backgroundColor = OptionHighlightColour);
-            button.RegisterCallback<PointerLeaveEvent>(_ => button.style.backgroundColor = OptionColour);
+            button.RegisterCallback<PointerEnterEvent>(_ => button.style.backgroundColor = highlighted);
+            button.RegisterCallback<PointerLeaveEvent>(_ => button.style.backgroundColor = resting);
             button.RegisterCallback<FocusInEvent>(_ => SetBorder(button.style, 2, OptionFocusBorderColour));
-            button.RegisterCallback<FocusOutEvent>(_ => SetBorder(button.style, 1, OptionBorderColour));
+            button.RegisterCallback<FocusOutEvent>(_ => SetBorder(button.style, 1, border));
             return button;
         }
 
@@ -268,6 +354,20 @@ namespace Protokite.Playtest
             style.borderRightColor = colour;
             style.borderTopColor = colour;
             style.borderBottomColor = colour;
+        }
+
+        private static VisualElement NewCard(string name, float width)
+        {
+            VisualElement card = new VisualElement { name = name };
+            card.style.width = width;
+            card.style.maxWidth = Length.Percent(92);
+            card.style.backgroundColor = CardColour;
+            card.style.paddingLeft = 28;
+            card.style.paddingRight = 28;
+            card.style.paddingTop = 24;
+            card.style.paddingBottom = 24;
+            SetRadius(card.style, 8);
+            return card;
         }
 
         // A copy of the package's asset with its empty theme: on Unity 2021.3 settings made in code warn the moment they exist, and an empty theme made in code throws (measured).

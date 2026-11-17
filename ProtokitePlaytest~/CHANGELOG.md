@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 It is released with the Flock SDK, at the Flock SDK's version.
 
+## [1.105.0]
+
+### Changed
+- **The consent question is shorter**: *Help the developers improve this game?* with **Yes, help the developers** (the screen
+  and play data) and **Not now** (nothing, kept like any other answer). The screen alone and play data alone are no longer
+  offered on it; `SetPlaytestConsent` still gives either from a game's own screen.
+
+### Added
+- **The Qwacks logo** at the top of the consent question, centred above its heading (`ProtokitePlaytestQwacksLogo.png` in the
+  package's `Resources`).
+- **A "What's collected?" link** under the question opens a pop-up over it explaining what is recorded and collected, who
+  gets it, what **Not now** means, and that the question is separate from the game's own privacy choice. **Back** shuts it; no
+  answer is taken while it is open, nor in the half second after it shuts.
+
+### Fixed
+- **A press the question refuses no longer leaves its button focused**: a click in the question's first half second, or while
+  the game holds the cursor locked, focused the answer under it, and the game's Submit key (Space) then gave that answer. This
+  also covers the question about upload networks.
+
 ## [1.104.0]
 
 No changes to the Protokite Playtest package: this version is released together with the Flock SDK's default analytics events and typed calls.

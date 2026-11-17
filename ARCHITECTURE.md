@@ -196,8 +196,9 @@ script.
   game that locks it again, gives the game's cursor back when closed (not an ended launch's), and is drawn only while playing,
   not in batch mode, with graphics. The panel's `DeliberateAnswers`, `AnswerButton` and `QuestionView` build every question:
   a press in the first half second is ignored (`SecondsBeforeAnAnswerCounts`, read by the form too), and a mouse press while
-  the game keeps the cursor locked. **ProtokitePlaytestConsentQuestionView**: the words and the four buttons from one options
-  table the tests read too. **ProtokitePlaytestUploadNetworkQuestionView**: the phone's second question, shown in the same panel
+  the game keeps the cursor locked. **ProtokitePlaytestConsentQuestionView**: the words, the two buttons (yes, everything; not
+  now, nothing) and the "What's collected?" pop-up (`ProtokitePlaytestPanel.ShowOnTop`, the question disabled under it) from
+  tables the tests read too. **ProtokitePlaytestUploadNetworkQuestionView**: the phone's second question, shown in the same panel
   after a consent answer that lets the screen be recorded (`UpdateConsentQuestion` picks the question due, so the cursor the panel
   freed stays free between them), with the megabytes a minute at the recording's bitrate. **Forget This Machine's Answer** in the
   setup window (editor) forgets both saved answers. **ProtokitePlaytestFormView**: the

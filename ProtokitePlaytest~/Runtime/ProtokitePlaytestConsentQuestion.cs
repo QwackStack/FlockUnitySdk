@@ -163,8 +163,7 @@ namespace Protokite.Playtest
             _questionOnScreen = wanted;
             if (wanted == PlaytestQuestion.Consent)
             {
-                panel.Show(ProtokitePlaytestConsentQuestionView.Build(choice => SetPlaytestConsent(choice), () => panel.TheGameKeepsTheCursorLocked,
-                    WarnThatTheGameHoldsTheCursorLocked));
+                panel.Show(ProtokitePlaytestConsentQuestionView.Build(panel, choice => SetPlaytestConsent(choice), WarnThatTheGameHoldsTheCursorLocked));
                 Debug.Log(LogPrefix + "The playtest's consent question is on screen; nothing is collected until the player answers it.");
             }
             else
