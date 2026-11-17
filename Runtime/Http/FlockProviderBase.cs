@@ -226,6 +226,8 @@ namespace Flock.Http
             CancellationToken cancellationToken,
             int? actsForSignIn = null) where T : class
         {
+            // A saved answer served offline never reaches the headers, which refuse for an ended local player.
+            Client.RefuseIfEnded();
             FlockSnapshotStore store = Client.SnapshotStore;
             if (store == null)
                 return await ExecuteAsync(operation, context, cancellationToken, actsForSignIn: actsForSignIn);

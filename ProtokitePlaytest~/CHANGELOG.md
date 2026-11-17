@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 It is released with the Flock SDK, at the Flock SDK's version.
 
+## [1.106.0]
+
+No changes to the playtest: this version is released together with the Flock SDK's local players.
+
 ## [1.105.0]
 
 ### Changed

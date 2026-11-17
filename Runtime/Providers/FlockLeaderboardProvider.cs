@@ -182,7 +182,7 @@ namespace Flock.Providers
         private void RequireAuthenticated()
         {
             if (!Client.IsAuthenticated)
-                throw new FlockAuthException("No player is signed in") { Hint = FlockErrorHints.SignInFirst };
+                throw Client.NoPlayerSignedIn();
         }
 
         // Player-scoped so one player's cached placement can't be served to the next player on a shared device.

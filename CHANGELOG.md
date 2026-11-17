@@ -5,6 +5,25 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [1.106.0]
+
+### Added
+
+- **Local players: several players signed in at once on one machine**, for couch and booth games.
+  `FlockClient.Instance.AddLocalPlayer()` returns a `FlockLocalPlayer` with its own `Authentication`, `Player`, `Commands` and
+  `Leaderboard`, over a sign-in of its own kept in memory only, so one player signing in never changes who another's calls act
+  for. Until now a game signing two players in turn could have the first player's "my data" read sent after the second
+  sign-in, and the first player's score written to the second player's row. A local player's sign-ins are raised on its own
+  `OnAuthenticated`, `OnTokenRefreshed`, `OnAuthExpired`, `OnLoggedOut`, `OnAccountLinked` and `OnAccountUnlinked`, not on
+  `FlockEvents`, and analytics stays with the main player.
+- **`FlockClient.Instance.RemoveLocalPlayer(player)`** signs the player out on this machine and ends them: every later call
+  through them, a retry waiting to go out and a sign-in answered afterwards included, throws a `FlockAuthException` saying so,
+  with a fix naming `AddLocalPlayer` (a board's configuration or a player template already read is still answered from memory). `FlockClient.Shutdown()` ends every local player, and their calls then say Flock was shut down.
+- **A local sign-in as a player already signed in on this machine is refused** with `FlockErrorCode.FlockPlayerAlreadySignedIn`
+  (`flock.player_already_signed_in`) and its fix. The server keeps one sign-in per player, so the sign-in already here is
+  handed the new tokens and keeps working. The other way round, the main player signing in as a player a local player holds goes
+  through and ends that local player, whose later calls say so, with a fix.
+
 ## [1.105.0]
 
 No changes to the Flock SDK: this version is released together with the Protokite Playtest package's shorter consent

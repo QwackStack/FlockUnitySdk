@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Threading.Tasks;
 using NUnit.Framework;
 
 namespace Flock.Tests.Support
@@ -15,5 +16,8 @@ namespace Flock.Tests.Support
                 yield return null;
             Assert.IsTrue(done(), what);
         }
+
+        /// <summary>Yields frames until <paramref name="task"/> has finished, whatever its outcome.</summary>
+        public static IEnumerator UntilDone(Task task, float seconds = 10f) => Until(() => task.IsCompleted, "The call finished.", seconds);
     }
 }

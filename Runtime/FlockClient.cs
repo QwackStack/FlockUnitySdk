@@ -62,6 +62,28 @@ namespace Flock
         // Set by Shutdown: an answer this client gets afterwards keeps no sign-in and announces nothing to the next client's listeners.
         private bool _shutDown;
 
+        // A local player's client: the client that added it, and the player it serves; both null on the main client.
+        private readonly FlockClient _mainClient;
+        private FlockLocalPlayer _localPlayer;
+        // The local players this main client added and has not ended.
+        private readonly List<FlockLocalPlayer> _localPlayers = new List<FlockLocalPlayer>();
+        // Why this local player's client ended, and how to carry on; null while it serves.
+        private string _endedCause;
+        private string _endedFix;
+        // The tokens this sign-in held before another sign-in here as the same player handed it theirs: tried once if the handed-over
+        // refresh token is refused, as the server may have taken the two sign-ins in the other order.
+        private StoredTokens _tokensBeforeHandover;
+        // The refresh token this main client held when it shut down, which its saved sign-in keeps for the next start.
+        private string _refreshTokenWhenShutDown;
+
+        internal const string LocalPlayerRemovedCause = "This local player was removed with RemoveLocalPlayer()";
+        internal const string LocalPlayerEndedByShutdownCause = "Flock was shut down, which ended this local player";
+        internal const string LocalPlayerSignedInAsTheMainPlayerCause = "This local player was ended because the main player signed in as the same player.";
+        private const string LocalPlayerSignedInAsTheMainPlayerFix = "Sign each player in once on a machine: use the main player for them, or add a new local player and sign them in as someone else.";
+        private const string LocalPlayerEndedFix = "Add a new one with FlockClient.Instance.AddLocalPlayer() and sign them in again (after a shutdown, once FlockClient.Create has run).";
+        private const string LocalPlayerNotSignedInFix = "Sign this local player in first, through their own Authentication: LoginWithDeviceAsync(), LoginWithEmailAsync() "
+            + "or a register call. A local player has no saved sign-in to restore.";
+
         // Every refresh token a client in this process sent and has no answer for yet, never logged: the server takes each one once,
         // so a client restarted while the one before it waits for an answer sends the same token only after that answer.
         private static readonly Dictionary<string, Task> RefreshTokensOnTheirWay = new Dictionary<string, Task>(StringComparer.Ordinal);
@@ -81,6 +103,7 @@ namespace Flock
             _instance?._multiplayer?.StopForShutdown();
 #endif
             _instance?.StopRepeatingCalls();
+            _instance?.EndLocalPlayers(LocalPlayerEndedByShutdownCause);
             _instance = null;
             IsRestoringSession = false;
             InitializationError = null;
@@ -215,7 +238,9 @@ namespace Flock
             _instance._multiplayer?.StopForShutdown();
 #endif
             _instance.StopRepeatingCalls();
+            _instance.EndLocalPlayers(LocalPlayerEndedByShutdownCause);
             _instance._shutDown = true;
+            _instance._refreshTokenWhenShutDown = _instance._refreshToken;
             _instance.EndSignIn(FlockSessionEndReason.Quit, deleteSavedSignIn: false);
             // A restore under way was this client's; the next client's own restore sets it again.
             IsRestoringSession = false;
@@ -282,6 +307,209 @@ namespace Flock
                 _analytics = new NullAnalyticsProvider(this);
             }
 #endif
+        }
+
+        // A local player's client: the main client's config, retries and saved answers, but tokens held in memory only, its own
+        // events, and only the player's own surfaces. Never the instance, so it reconfigures nothing shared.
+        private FlockClient(FlockClient mainClient)
+        {
+            _mainClient = mainClient;
+            _initConfig = mainClient._initConfig;
+            _logger = mainClient._logger;
+            _retryHandler = mainClient._retryHandler;
+            _snapshotStore = mainClient._snapshotStore;
+#if !FLOCK_NO_PLAYER
+            _playerData = new PlayerProvider(this);
+#endif
+#if !FLOCK_NO_COMMANDS
+            _commands = new FlockCommandProvider(this);
+#endif
+#if !FLOCK_NO_LEADERBOARD
+            _leaderboard = new FlockLeaderboardProvider(this);
+#endif
+            _authentication = new FlockAuthProvider(this);
+        }
+
+        /// <summary>
+        /// Adds a player who signs in beside the others on this machine, for couch and booth games. Returned signed out: sign them
+        /// in through its <see cref="FlockLocalPlayer.Authentication"/>, then use its Player, Commands and Leaderboard as you use
+        /// this client's. Kept in memory only; its sign-ins are raised on its own events, not on <see cref="FlockEvents"/>.
+        /// Throws a <see cref="FlockException"/> on a client that was shut down.
+        /// </summary>
+        public FlockLocalPlayer AddLocalPlayer()
+        {
+            if (_shutDown)
+                throw new FlockException("This FlockClient was shut down, so it cannot add a local player")
+                {
+                    Hint = "Add local players through FlockClient.Instance once FlockClient.Create has run."
+                };
+            FlockClient client = new FlockClient(this);
+            FlockLocalPlayer player = new FlockLocalPlayer(client);
+            client._localPlayer = player;
+#if !FLOCK_NO_COMMANDS
+            client._commands.SubscribeFlushTriggers();
+#endif
+            _localPlayers.Add(player);
+            return player;
+        }
+
+        /// <summary>
+        /// Signs <paramref name="localPlayer"/> out on this machine and ends them: every later call through them fails with a
+        /// <see cref="FlockAuthException"/> saying so, with a fix. Raises their <see cref="FlockLocalPlayer.OnLoggedOut"/> if they
+        /// were signed in. A player already removed, added before a shutdown, or null is refused with a <see cref="FlockValidationException"/>.
+        /// </summary>
+        public void RemoveLocalPlayer(FlockLocalPlayer localPlayer)
+        {
+            if (localPlayer == null || !_localPlayers.Remove(localPlayer))
+                throw new FlockValidationException("That local player is not one of this client's: it was already removed, or Flock was shut down since it was added")
+                {
+                    Hint = "Remove each local player once. After FlockClient.Create, add and sign in the players again."
+                };
+            bool wasSignedIn = localPlayer.Client.IsAuthenticated;
+            localPlayer.Client.EndLocalPlayer(LocalPlayerRemovedCause);
+            if (wasSignedIn)
+                localPlayer.RaiseLoggedOut();
+        }
+
+        /// <summary>The local players this client added and has not ended yet.</summary>
+        internal IReadOnlyList<FlockLocalPlayer> LocalPlayers => _localPlayers;
+
+        /// <summary>The local player this client serves; null on the main client.</summary>
+        internal FlockLocalPlayer LocalPlayer => _localPlayer;
+
+        /// <summary>True on a local player's client.</summary>
+        internal bool IsLocalPlayer => _localPlayer != null;
+
+        // The main player signed in as a player a local player holds: the server's one sign-in for that player is now the main player's,
+        // so the local player ends here, with nothing sent (a revoke would end the main sign-in).
+        internal void EndLocalPlayersSignedInAsTheMainPlayer()
+        {
+            string playerId = CurrentPlayerId;
+            foreach (FlockLocalPlayer player in _localPlayers.FindAll(p => p.Client.IsAuthenticated && p.Client.CurrentPlayerId == playerId))
+            {
+                _localPlayers.Remove(player);
+                player.Client.EndLocalPlayer(LocalPlayerSignedInAsTheMainPlayerCause, LocalPlayerSignedInAsTheMainPlayerFix);
+                player.RaiseLoggedOut();
+            }
+        }
+
+        private void EndLocalPlayers(string cause)
+        {
+            foreach (FlockLocalPlayer player in _localPlayers)
+                player.Client.EndLocalPlayer(cause);
+            _localPlayers.Clear();
+        }
+
+        // Ends this local player's client: the sign-in goes, a reply still on its way keeps nothing, and every later call refuses.
+        private void EndLocalPlayer(string cause, string fix = LocalPlayerEndedFix)
+        {
+            _endedCause = cause;
+            _endedFix = fix;
+            _shutDown = true;
+#if !FLOCK_NO_COMMANDS
+            // The game's frames hold the flush triggers, which would keep this player alive for good.
+            _commands?.UnsubscribeFlushTriggers();
+#endif
+            EndSignIn(FlockSessionEndReason.Logout, deleteSavedSignIn: false);
+        }
+
+        // The failure every call through an ended local player gives.
+        private FlockAuthException EndedFailure() => new FlockAuthException(_endedCause) { Hint = _endedFix };
+
+        /// <summary>The failure a call needing a signed-in player gives when there is none: an ended local player says why, and one not signed in yet is told to sign in through its own Authentication.</summary>
+        internal FlockAuthException NoPlayerSignedIn()
+        {
+            if (_endedCause != null)
+                return EndedFailure();
+            return new FlockAuthException("No player is signed in") { Hint = IsLocalPlayer ? LocalPlayerNotSignedInFix : FlockErrorHints.SignInFirst };
+        }
+
+        /// <summary>Throws the ended failure once this local player has ended; a write queued offline would otherwise be kept for no one.</summary>
+        internal void RefuseIfEnded()
+        {
+            if (_endedCause != null)
+                throw EndedFailure();
+        }
+
+        // The client on this machine signed in as playerId, other than asking: the main client or a local player's; null when none.
+        private FlockClient ClientSignedInAs(string playerId, FlockClient asking)
+        {
+            if (this != asking && IsAuthenticated && CurrentPlayerId == playerId)
+                return this;
+            foreach (FlockLocalPlayer player in _localPlayers)
+                if (player.Client != asking && player.Client.IsAuthenticated && player.Client.CurrentPlayerId == playerId)
+                    return player.Client;
+            return null;
+        }
+
+        // A local player's sign-in as a player already signed in here: the server keeps one refresh token per player and this answer
+        // has just replaced it, so the sign-in already here takes the new tokens and this one is refused.
+        private void RefuseAPlayerAlreadySignedInHere(string accessToken, string refreshToken)
+        {
+            string playerId;
+            try
+            {
+                playerId = JwtTokenParser.Parse(accessToken).PlayerId;
+            }
+            catch (Exception)
+            {
+                return; // StoreTokens refuses it, with its own cause.
+            }
+            FlockClient holder = _mainClient.ClientSignedInAs(playerId, this);
+            if (holder == null)
+            {
+                // Answered after Flock was shut down holding this player: the sign-in saved for the next start had its token replaced.
+                _mainClient.SaveWhereTheSentSignInIsStillSaved(playerId, _mainClient._refreshTokenWhenShutDown, accessToken, refreshToken);
+                return;
+            }
+            holder._tokensBeforeHandover = new StoredTokens { AccessToken = holder._accessToken, RefreshToken = holder._refreshToken };
+            holder.StoreTokens(accessToken, refreshToken);
+            holder._refreshGeneration++;
+            _logger.LogInfo($"Player {playerId} is already signed in on this machine; that sign-in carries on with the new tokens");
+            RefuseIfEnded();
+            throw new FlockAuthException($"Player {playerId} is already signed in on this machine, so this local player was not signed in")
+            {
+                Code = "flock.player_already_signed_in",
+                Hint = FlockErrorHints.For(FlockErrorCode.FlockPlayerAlreadySignedIn)
+            };
+        }
+
+        // Every sign-in, sign-out and refresh event goes to the local player's own events on a local player's client.
+        internal void AnnounceAuthenticated(FlockAuthInfo info)
+        {
+            if (IsLocalPlayer) _localPlayer.RaiseAuthenticated(info);
+            else FlockEvents.InvokeAuthenticated(info);
+        }
+
+        internal void AnnounceLoggedOut()
+        {
+            if (IsLocalPlayer) _localPlayer.RaiseLoggedOut();
+            else FlockEvents.InvokeLoggedOut();
+        }
+
+        internal void AnnounceAccountLinked(FlockCredentialProvider provider)
+        {
+            if (IsLocalPlayer) _localPlayer.RaiseAccountLinked(provider);
+            else FlockEvents.InvokeAccountLinked(provider);
+        }
+
+        internal void AnnounceAccountUnlinked(FlockCredentialProvider provider)
+        {
+            if (IsLocalPlayer) _localPlayer.RaiseAccountUnlinked(provider);
+            else FlockEvents.InvokeAccountUnlinked(provider);
+        }
+
+        private void AnnounceTokenRefreshed()
+        {
+            if (IsLocalPlayer) _localPlayer.RaiseTokenRefreshed();
+            else FlockEvents.InvokeTokenRefreshed();
+        }
+
+        private void AnnounceAuthExpired()
+        {
+            OnSessionExpired?.Invoke();
+            if (IsLocalPlayer) _localPlayer.RaiseAuthExpired();
+            else FlockEvents.InvokeAuthExpired();
         }
 
         internal IFlockLogger Logger => _logger;
@@ -395,6 +623,8 @@ namespace Flock
 
         internal Dictionary<string, string> GetBaseHeaders()
         {
+            // Every request and every retry takes its headers here, so an ended local player sends nothing more.
+            RefuseIfEnded();
             Dictionary<string, string> headers = new Dictionary<string, string>(_initConfig.GetBaseHeaders());
             if (!string.IsNullOrEmpty(_accessToken))
                 headers["Authorization"] = $"Bearer {_accessToken}";
@@ -475,6 +705,7 @@ namespace Flock
             }
 
             TaskCompletionSource<bool> answered = new TaskCompletionSource<bool>();
+            bool triedTheTokensBeforeAHandover = false;
             lock (RefreshTokensOnTheirWay)
                 RefreshTokensOnTheirWay[sentRefreshToken] = answered.Task;
             try
@@ -497,31 +728,39 @@ namespace Flock
                     return false;
                 }
 
+                if (WasHandedNewerTokens(sentRefreshToken))
+                {
+                    _refreshGeneration++;
+                    AnnounceTokenRefreshed();
+                    return true;
+                }
+
                 if (response == null || string.IsNullOrEmpty(response.AccessToken))
                 {
                     ClearTokens();
-                    OnSessionExpired?.Invoke();
-                    FlockEvents.InvokeAuthExpired();
+                    AnnounceAuthExpired();
                     return false;
                 }
 
                 StoreTokens(response.AccessToken, response.RefreshToken);
+                _tokensBeforeHandover = null;
                 _refreshGeneration++;
                 _logger.LogInfo("Token refresh successful");
-                FlockEvents.InvokeTokenRefreshed();
+                AnnounceTokenRefreshed();
                 return true;
             }
             catch (FlockAuthException e)
             {
                 if (IsSignInOver(signInNumber))
                     return false;
-                if (!mayTakeTheSavedSignIn || !TakeANewerSavedSignIn(playerId, sentRefreshToken))
+                if (!WasHandedNewerTokens(sentRefreshToken) && TakeTheTokensHeldBeforeAHandover(sentRefreshToken))
+                    triedTheTokensBeforeAHandover = true;
+                else if (!WasHandedNewerTokens(sentRefreshToken) && (!mayTakeTheSavedSignIn || !TakeANewerSavedSignIn(playerId, sentRefreshToken)))
                 {
                     _logger.LogWarning("Token refresh failed: session expired");
                     _logger.LogException(e);
                     ClearTokens();
-                    OnSessionExpired?.Invoke();
-                    FlockEvents.InvokeAuthExpired();
+                    AnnounceAuthExpired();
                     return false;
                 }
             }
@@ -539,7 +778,21 @@ namespace Flock
                 answered.TrySetResult(true);
             }
 
+            if (triedTheTokensBeforeAHandover)
+                return await SendRefreshAsync(signInNumber, playerId, _refreshToken, mayTakeTheSavedSignIn: false, cancellationToken);
             return await CarryOnWithTheSavedSignInAsync(signInNumber, playerId, cancellationToken);
+        }
+
+        // The tokens held before a handover, taken back once the handed-over refresh token was refused; false when there are none.
+        private bool TakeTheTokensHeldBeforeAHandover(string sentRefreshToken)
+        {
+            StoredTokens before = _tokensBeforeHandover;
+            _tokensBeforeHandover = null;
+            if (before == null || string.Equals(before.RefreshToken, sentRefreshToken, StringComparison.Ordinal))
+                return false;
+            StoreTokens(before.AccessToken, before.RefreshToken);
+            _logger.LogInfo("The tokens handed over were refused; trying the ones this sign-in held before");
+            return true;
         }
 
         // The same sign-in carries on with the saved pair taken; one whose access token has run out is renewed once more, never taken again.
@@ -548,7 +801,7 @@ namespace Flock
             if (IsTokenExpired)
                 return await SendRefreshAsync(signInNumber, playerId, _refreshToken, mayTakeTheSavedSignIn: false, cancellationToken);
             _refreshGeneration++;
-            FlockEvents.InvokeTokenRefreshed();
+            AnnounceTokenRefreshed();
             return true;
         }
 
@@ -590,7 +843,7 @@ namespace Flock
             if (saved == null || string.IsNullOrEmpty(sentRefreshToken) || !string.Equals(saved.RefreshToken, sentRefreshToken, StringComparison.Ordinal)
                 || !IsSavedFor(saved, playerId))
                 return;
-            ITokenStore store = _initConfig.TokenStore;
+            ITokenStore store = TokenStore;
             try
             {
                 store.Save(accessToken, refreshToken);
@@ -617,6 +870,9 @@ namespace Flock
             }
         }
 
+        // A local player's sign-in as this player handed over newer tokens while the refresh was on its way; the server holds only those.
+        private bool WasHandedNewerTokens(string sentRefreshToken) => !string.Equals(_refreshToken, sentRefreshToken, StringComparison.Ordinal);
+
         // True, and logged, when the sign-in a refresh was sent for has ended.
         private bool IsSignInOver(int signInNumber)
         {
@@ -632,7 +888,8 @@ namespace Flock
         // A shutdown keeps the saved sign-in for the next Create; a sign-out or an expired sign-in deletes it.
         private void EndSignIn(FlockSessionEndReason reason, bool deleteSavedSignIn)
         {
-            _logger.LogInfo(deleteSavedSignIn ? "Clearing authentication tokens" : "Letting go of this client's tokens; the saved sign-in stays");
+            _logger.LogInfo(deleteSavedSignIn ? "Clearing authentication tokens"
+                : IsLocalPlayer ? "Ending this local player's sign-in" : "Letting go of this client's tokens; the saved sign-in stays");
 
             if (_session != null && _session.IsActive)
             {
@@ -646,6 +903,7 @@ namespace Flock
             _accessToken = null;
             _refreshToken = null;
             _tokenClaims = null;
+            _tokensBeforeHandover = null;
             _signInNumber++;
 
             if (deleteSavedSignIn)
@@ -676,6 +934,10 @@ namespace Flock
         /// </summary>
         internal void SetTokens(string accessToken, string refreshToken)
         {
+            // Before the ended check: the answer replaced the server's refresh token even when it came after this player ended.
+            if (IsLocalPlayer)
+                RefuseAPlayerAlreadySignedInHere(accessToken, refreshToken);
+            RefuseIfEnded();
             // A sign-in answered after Shutdown would overwrite the saved sign-in the next Create restores, and be announced to its listeners.
             if (_shutDown)
                 throw new FlockException("Flock was shut down before the server answered, so the player is not signed in")
@@ -683,6 +945,7 @@ namespace Flock
                     Hint = "Sign the player in again once Flock is initialized again (FlockClient.Create), through FlockClient.Instance."
                 };
             StoreTokens(accessToken, refreshToken);
+            _tokensBeforeHandover = null;
             _signInNumber++;
         }
 
@@ -716,9 +979,12 @@ namespace Flock
             PersistTokens();
         }
 
+        // A local player's sign-in is kept in memory only.
+        private ITokenStore TokenStore => IsLocalPlayer ? null : _initConfig.TokenStore;
+
         internal StoredTokens LoadPersistedTokens()
         {
-            ITokenStore store = _initConfig.TokenStore;
+            ITokenStore store = TokenStore;
             if (store == null) return null;
             try
             {
@@ -735,7 +1001,7 @@ namespace Flock
 
         private void PersistTokens()
         {
-            ITokenStore store = _initConfig.TokenStore;
+            ITokenStore store = TokenStore;
             if (store == null) return;
             try
             {
@@ -758,7 +1024,7 @@ namespace Flock
 
         private void ClearPersistedTokens()
         {
-            ITokenStore store = _initConfig.TokenStore;
+            ITokenStore store = TokenStore;
             if (store == null) return;
             try
             {

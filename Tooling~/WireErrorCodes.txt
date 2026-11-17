@@ -275,3 +275,7 @@ shop.production_version_immutable
 shop.purchase_not_refundable
 shop.webhook_payload_unreadable
 shop.webhook_signature_invalid
+
+[sdk]
+# Codes the SDK raises itself and the server never sends; each needs a member and a hint like a wire code.
+flock.player_already_signed_in

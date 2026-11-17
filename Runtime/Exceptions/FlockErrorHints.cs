@@ -152,6 +152,8 @@ namespace Flock.Exceptions
             { FlockErrorCode.PlayerInventoryAlreadyUsed, "That inventory entry has already been consumed — each one is spendable once. Re-read Shop.GetPlayerInventoryAsync before offering it again." },
             { FlockErrorCode.PlayerInventoryInventoryEntryNotFound, "No inventory entry by that id in this game, or, while a player is signed in, the entry is another player's, which the server answers the same way. Shop.ConsumeAsync takes the signed-in player's own entry id — a PurchaseResult.Inventory.Id — not the shop item id." },
 
+            { FlockErrorCode.FlockPlayerAlreadySignedIn, "Sign each player in once on a machine: use the main player or the local player already signed in as them, or remove that local player first. The sign-in already here keeps working." },
+
             // Player-scoped calls that name an id. Each provider differs on how the signed-in player is addressed.
             { FlockErrorCode.AnalyticsPlayerNotFound, "The analytics call named a player the backend does not have. Sessions follow sign-in — start one only after an Authentication.LoginWith*Async call has returned." },
             { FlockErrorCode.GameConfigPlayerNotFound, "No player matches that id. Player-scoped config reads act on the signed-in player — sign in first, then check FlockClient.Instance.CurrentPlayerId." },
