@@ -288,7 +288,8 @@ the site's data, in a private window, or when the game is served from another pa
 backup can bring the old one back. If your game already signs players in with an id of its own (such as
 `SystemInfo.deviceUniqueIdentifier`), keep passing that id, or those players get a new account; see
 [Which device id](Docs~/authentication.md#signing-a-player-in). Auth calls throw on failure, so the `catch` sees every
-problem. The `Samples/QuickStart` folder has the same steps behind buttons.
+problem. The `Samples/QuickStart` folder has the same steps behind buttons. For a booth where players type a name after
+each match, `Samples/BoothLeaderboard` records every time as its own entry, like `Ahmed#0042`.
 
 ## Feature guides
 

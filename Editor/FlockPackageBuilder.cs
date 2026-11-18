@@ -39,7 +39,8 @@ namespace Flock.Editor
         private const string StagingRuntimeRsp = StagingRoot + "Runtime/csc.rsp";
         private const string StagingEditorRsp = StagingRoot + "Editor/csc.rsp";
         // The samples whose code reads the FLOCK_NO_<ID> defines.
-        private static readonly string[] StagingSampleRsps = { StagingRoot + "Samples/QuickStart/csc.rsp", StagingRoot + "Samples/Shop/csc.rsp" };
+        private static readonly string[] StagingSampleRsps = { StagingRoot + "Samples/QuickStart/csc.rsp", StagingRoot + "Samples/Shop/csc.rsp",
+            StagingRoot + "Samples/BoothLeaderboard/csc.rsp" };
         private const string PackageName = "com.flock.sdk";
 
         // SDK-maintainer-only files. Excluded from every build regardless of provider

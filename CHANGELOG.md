@@ -5,6 +5,18 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [1.107.0]
+
+### Added
+
+- **A booth leaderboard sample** (`Samples/BoothLeaderboard`, component `FlockBoothLeaderboard`): after a match each player types
+  a name, and `RecordTimeAsync(typedName, elapsedSeconds)` records the time as a new entry named after them and a four-digit
+  code, like `Ahmed#0042`, and returns that entry name for a prize claim. Every time is its own entry, so a second "Ahmed" never
+  overwrites the first, and booths on several machines share one board: the server refuses an entry name already taken, and the
+  sample picks a new code (up to five tries). Each time signs a local player in, writes the time and removes the player, so two
+  times recorded together never act for each other. `FastestTimesAsync(count)` reads the board. Its README gives the dashboard
+  setup: a `MatchTime` template (gameplay, float `ElapsedSeconds`) and a `FastestMatchTime` board (duration, lower, best).
+
 ## [1.106.0]
 
 ### Added

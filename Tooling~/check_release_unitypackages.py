@@ -32,7 +32,7 @@ PACKAGES = {
                      "Editor/FlockPlaytestInstaller.cs", "Editor/FlockModelPreservation.cs",
                      "Samples/QuickStart/FlockQuickStartSample.cs", "Samples/Multiplayer/FlockMultiplayerSample.cs",
                      "Samples/Multiplayer/FlockPlayWithFriendsSample.cs", "Samples/Multiplayer/FlockQuickMatchSample.cs",
-                     "Samples/Shop/FlockShopSample.cs"],
+                     "Samples/Shop/FlockShopSample.cs", "Samples/BoothLeaderboard/FlockBoothLeaderboard.cs"],
         "forbidden": [("Protokite", "the playtest is a package of its own"),
                       ("Tests/", "tests stay in the repository"),
                       ("PackageBuilder/", "the SDK's tests stay in the repository"),

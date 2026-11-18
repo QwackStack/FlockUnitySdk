@@ -8,7 +8,8 @@
         "UnityEngine.TestRunner",
         "UnityEditor.TestRunner",
         "Unity.Newtonsoft.Json",
-        "Flock.Shop.UnityIap"
+        "Flock.Shop.UnityIap",
+        "Flock.Samples.BoothLeaderboard"
     ],
     "includePlatforms": [
         "Editor"
