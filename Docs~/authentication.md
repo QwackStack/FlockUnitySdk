@@ -2,7 +2,7 @@
 
 [← Back to README](../README.md)
 
-All auth methods live on `FlockClient.Instance.Authentication`. A login or register returns a `PlayerLoginResponse` (the
+All auth methods live on `FlockClient.Instance.Authentication`, and on each local player's own `Authentication` ([Local players](#local-players)). A login or register returns a `PlayerLoginResponse` (the
 player's id and tokens), and the SDK keeps the tokens itself, so you rarely need to read them. Auth methods throw on
 failure; they never return an error value.
 
@@ -372,6 +372,76 @@ public class FlockStartupWithMyTokenStore : MonoBehaviour
     }
 }
 ```
+
+## Local players
+
+For couch and booth games, several players can be signed in at once on one machine. `FlockClient.Instance.AddLocalPlayer()`
+returns a `FlockLocalPlayer`, signed out, with its own `Authentication`, `Player`, `Commands` and `Leaderboard`: these four
+surfaces' calls, acting for that player alone. Everything else (the shop, config, notifications, multiplayer, analytics) stays
+with the main player.
+
+```csharp
+using System.Threading.Tasks;
+using Flock;
+using Flock.Exceptions;
+using Flock.Models;
+
+public static class BoothScore
+{
+    // Signs a typed name in as its own player, saves their score on their own row, then ends them.
+    public static async Task SaveAsync(string name, string matchScoreTemplateId, int score)
+    {
+        FlockLocalPlayer player = FlockClient.Instance.AddLocalPlayer();
+        string deviceId = "typed-name:" + name.Trim().ToLowerInvariant();
+        try
+        {
+            try
+            {
+                await player.Authentication.LoginWithDeviceAsync(deviceId);
+            }
+            catch (FlockException ex) when (ex.ErrorCode == FlockErrorCode.PlayerInvalidLoginCredentials)
+            {
+                // No player has this device id yet. Null: another booth made it just now, so sign in to it.
+                if (await player.Authentication.RegisterWithDeviceAsync(deviceId, name.Trim()) == null)
+                    await player.Authentication.LoginWithDeviceAsync(deviceId);
+            }
+
+            PlayerData row = await player.Player.GetMyDataByTemplateAsync(matchScoreTemplateId);
+            await player.Commands.UpdatePlayerDataFieldAsync(row.Id, "Score", score);
+        }
+        finally
+        {
+            // Removed whatever happened, so a failed sign-in or write does not leave the player added.
+            FlockClient.Instance.RemoveLocalPlayer(player);
+        }
+    }
+}
+```
+
+- **The same name saved twice at once meets the refusal below**: in the sample, two saves for one name running together sign
+  that player in twice, and the second throws `FlockErrorCode.FlockPlayerAlreadySignedIn`. Let saves for the same name take turns.
+- **One player never changes who another's calls act for**, however their calls interleave, and the player signed in through
+  `FlockClient.Instance.Authentication` is not affected.
+- **The sign-in is kept in memory only**: sign them in again on the next launch, and `TryRestoreSessionAsync` on a local player
+  returns false. Their cached answers and the writes queued while offline are still saved, per player, as the main player's are.
+  A write queued when the player is removed goes out the next time that player signs in on this machine.
+- **Their events are their own.** `OnAuthenticated`, `OnTokenRefreshed`, `OnAuthExpired`, `OnLoggedOut`, `OnAccountLinked`
+  and `OnAccountUnlinked` are raised on the `FlockLocalPlayer`, not on `FlockEvents`, and analytics stays with the main player.
+- **Who they are.** `player.PlayerId` and `player.IsSignedIn`.
+- **A local player cannot sign in as a player already signed in here.** A local player signing in as the main player or
+  another local player is refused with a `FlockAuthException` whose `ErrorCode` is
+  `FlockErrorCode.FlockPlayerAlreadySignedIn` (`flock.player_already_signed_in`), and the sign-in already here keeps working.
+  The server keeps one sign-in per player, so the refused attempt has replaced it; the SDK hands the new tokens to the sign-in
+  already here. The other way round, the main player signing in as a player a local player holds goes through, and that local
+  player is ended (nothing is sent to the server, whose one sign-in for the player is now the main player's): their
+  `OnLoggedOut` is raised and their later calls throw a `FlockAuthException` saying the main player signed in as the same
+  player. A local player signed in as someone else is not affected.
+- **Removing ends them.** `FlockClient.Instance.RemoveLocalPlayer(player)` signs the player out on this machine, like
+  `Logout()`, and raises their `OnLoggedOut` if they were signed in. A request already on its way finishes; every later call
+  through them throws a `FlockAuthException` saying the player was removed, with a fix naming `AddLocalPlayer` (except a board's
+  configuration or a player template already read, which is answered from memory), and a retry waiting to go out
+  is not sent. Removing a player twice throws a `FlockValidationException`. `FlockClient.Shutdown()` ends
+  every local player.
 
 ## Token Revocation
 

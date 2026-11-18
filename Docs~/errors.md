@@ -186,7 +186,7 @@ A wallet `PurchaseAsync` carries one key for every attempt, so after an answer t
 
 ## Coded-error reference
 
-`FlockErrorCode` mirrors the backend's `detail.code` set. The member name is the wire code PascalCased (`shop.insufficient_funds` → `ShopInsufficientFunds`). Unrecognized codes parse to `Unknown` while the raw string stays on `Code`.
+`FlockErrorCode` mirrors the backend's `detail.code` set, plus the `flock.*` codes the SDK raises itself. The member name is the wire code PascalCased (`shop.insufficient_funds` → `ShopInsufficientFunds`). Unrecognized codes parse to `Unknown` while the raw string stays on `Code`.
 
 | Enum member | Wire code |
 |-------------|-----------|
@@ -195,6 +195,7 @@ A wallet `PurchaseAsync` carries one key for every attempt, so after an answer t
 | `AnalyticsPlayerNotFound` | `analytics.player_not_found` |
 | `AnalyticsSessionNotFound` | `analytics.session_not_found` |
 | `AssetAssetNotFound` | `asset.asset_not_found` |
+| `FlockPlayerAlreadySignedIn` | `flock.player_already_signed_in` |
 | `GameGameNotFound` | `game.game_not_found` |
 | `GameInvalidApiKey` | `game.invalid_api_key` |
 | `GameMissingApiKey` | `game.missing_api_key` |

@@ -2,7 +2,7 @@
 
 [← Back to README](../README.md)
 
-All SDK lifecycle events live on the static `FlockEvents` class (`using Flock;`). Key behaviors:
+All SDK lifecycle events live on the static `FlockEvents` class (`using Flock;`); a local player's sign-in events are raised on that `FlockLocalPlayer` instead ([Local players](authentication.md#local-players)). Key behaviors:
 
 - **Subscribe anytime** — even before `FlockClient.Create`; the hub never throws, unlike `FlockClient.Instance`. Only `OnInitialized` and `OnInitializationFailed` are *replayed* to late subscribers, so they fire even if the SDK already started before your script ran. Every other event fires once, when it happens: with **Auto-Initialize On Load** on, the saved sign-in can be restored (`OnAuthenticated`, `OnSessionRestored`) before a scene script subscribes, so read the current state after subscribing too (see [Auth](#auth)).
 - **Raised on the Unity main thread** — you can touch Unity objects directly inside handlers.

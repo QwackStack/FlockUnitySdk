@@ -220,6 +220,8 @@ namespace Flock.Providers
         {
             RequireNotEmpty(playerTemplateId, "Player Template ID");
             string playerId = Client.CurrentPlayerId;
+            if (string.IsNullOrEmpty(playerId) && Client.IsLocalPlayer)
+                throw Client.NoPlayerSignedIn();
             RequireNotEmpty(playerId, "Signed-in player's id", FlockErrorHints.SignInFirst);
 
             Dictionary<string, PlayerData> byTemplate = await GetOrFetchByTemplateAsync(playerId, cancellationToken);

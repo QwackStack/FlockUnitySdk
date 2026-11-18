@@ -469,13 +469,18 @@ namespace Flock.Tests.PlayMode
                     if (IgnoresUdp || (IgnoresUdpOverIpv4 && socket == _socket))
                         continue;
                 }
-                catch (SocketException failure) when (failure.SocketErrorCode == SocketError.ConnectionReset)
+                catch (SocketException failure) when (failure.SocketErrorCode == SocketError.ConnectionReset || failure.SocketErrorCode == SocketError.ConnectionRefused)
                 {
+                    // An earlier answer met a closed port: Windows says reset, Linux refused.
                     continue;
                 }
-                catch (SocketException)
+                catch (SocketException failure)
                 {
-                    return;
+                    if (_stopped)
+                        return;
+                    // Any other error while running (an interrupted receive on Linux) must not leave the relay silent for the rest of the test.
+                    UnityEngine.Debug.LogWarning($"Fake relay server: a receive failed ({failure.SocketErrorCode}); serving on.");
+                    continue;
                 }
                 catch (ObjectDisposedException)
                 {

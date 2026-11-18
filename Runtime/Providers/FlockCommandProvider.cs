@@ -141,7 +141,10 @@ namespace Flock.Providers
             _wasReachable = IsServerReachable();
             behaviour.OnTick += HandleTick;
             behaviour.OnFocus += HandleFocus;
-            FlockEvents.OnAuthenticated += HandleAuthenticated;
+            if (Client.IsLocalPlayer)
+                Client.LocalPlayer.OnAuthenticated += HandleAuthenticated;
+            else
+                FlockEvents.OnAuthenticated += HandleAuthenticated;
             _flushTriggersHooked = true;
         }
 
@@ -155,7 +158,10 @@ namespace Flock.Providers
                 FlockBehaviour.Instance.OnTick -= HandleTick;
                 FlockBehaviour.Instance.OnFocus -= HandleFocus;
             }
-            FlockEvents.OnAuthenticated -= HandleAuthenticated;
+            if (Client.IsLocalPlayer)
+                Client.LocalPlayer.OnAuthenticated -= HandleAuthenticated;
+            else
+                FlockEvents.OnAuthenticated -= HandleAuthenticated;
             _flushTriggersHooked = false;
         }
 
@@ -315,6 +321,7 @@ namespace Flock.Providers
         private async Task<PlayerData> SendOrQueueAsync(string path, object request, string context,
             List<DataField> overlay, Func<PlayerData> applyToCachedRow, CancellationToken cancellationToken)
         {
+            Client.RefuseIfEnded();
             EnsureQueueLoaded();
             bool reachable = IsServerReachable();
             if (!reachable || _pendingWrites.Count > 0)

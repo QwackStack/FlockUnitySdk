@@ -18,6 +18,9 @@ namespace Flock.Exceptions
         // asset.*
         AssetAssetNotFound,                         // asset.asset_not_found
 
+        // flock.* — raised by the SDK itself, never sent by the server
+        FlockPlayerAlreadySignedIn,                 // flock.player_already_signed_in
+
         // game.* (InvalidApiKey and MissingApiKey come from the API key check every /v1 route makes first)
         GameGameNotFound,                           // game.game_not_found
         GameInvalidApiKey,                          // game.invalid_api_key

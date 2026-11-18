@@ -30,8 +30,10 @@ namespace Flock.Providers
 
                 Client.SetTokens(response.AccessToken, response.RefreshToken);
                 Client.Logger.LogInfo($"{context} successful for player: {Client.CurrentPlayerId}");
+                if (!Client.IsLocalPlayer)
+                    Client.EndLocalPlayersSignedInAsTheMainPlayer();
 
-                FlockEvents.InvokeAuthenticated(new FlockAuthInfo(Client.CurrentPlayerId, method));
+                Client.AnnounceAuthenticated(new FlockAuthInfo(Client.CurrentPlayerId, method));
 
                 await TryInitializeAnalyticsAsync(cancellationToken);
 
@@ -90,8 +92,10 @@ namespace Flock.Providers
         /// <summary>Resumes a persisted session (refreshing an expired token), toggling <see cref="FlockClient.IsRestoringSession"/> and raising <see cref="FlockEvents.OnSessionRestored"/>. Returns true if signed in afterward.</summary>
         public async Task<bool> TryRestoreSessionAsync(CancellationToken cancellationToken = default)
         {
-            // A client that has shut down leaves the flag and the event to the client running now, whose listeners they reach.
-            if (!Client.HasShutDown)
+            // A client that has shut down leaves the flag and the event to the client running now, whose listeners they reach; a
+            // local player has no saved sign-in, and the flag and the event are the main player's.
+            bool announces = !Client.HasShutDown && !Client.IsLocalPlayer;
+            if (announces)
                 FlockClient.IsRestoringSession = true;
             bool restored = false;
             try
@@ -100,7 +104,8 @@ namespace Flock.Providers
             }
             finally
             {
-                if (!Client.HasShutDown)
+                // Checked again: a shutdown during the restore leaves the flag and the event to the next client.
+                if (announces && !Client.HasShutDown)
                 {
                     FlockClient.IsRestoringSession = false;
                     FlockEvents.InvokeSessionRestored(restored);
@@ -140,7 +145,7 @@ namespace Flock.Providers
             }
 
             Client.Logger.LogInfo($"Restored session for PlayerId: {Client.CurrentPlayerId}");
-            FlockEvents.InvokeAuthenticated(new FlockAuthInfo(Client.CurrentPlayerId, FlockAuthMethod.SessionRestore));
+            Client.AnnounceAuthenticated(new FlockAuthInfo(Client.CurrentPlayerId, FlockAuthMethod.SessionRestore));
             await TryInitializeAnalyticsAsync(cancellationToken);
             return true;
         }
@@ -460,7 +465,7 @@ namespace Flock.Providers
             Client.Logger.LogInfo($"Unlinked {wire} from player: {Client.CurrentPlayerId}");
             // Answered after Shutdown: the next client's listeners would hear of another client's player.
             if (!Client.HasShutDown)
-                FlockEvents.InvokeAccountUnlinked(provider);
+                Client.AnnounceAccountUnlinked(provider);
             return accounts;
         }
 
@@ -485,7 +490,7 @@ namespace Flock.Providers
             Client.Logger.LogInfo($"{context} succeeded for player: {Client.CurrentPlayerId}");
             // Answered after Shutdown: the next client's listeners would hear of another client's player.
             if (!Client.HasShutDown)
-                FlockEvents.InvokeAccountLinked(provider);
+                Client.AnnounceAccountLinked(provider);
             return accounts;
         }
 
@@ -501,7 +506,7 @@ namespace Flock.Providers
         private void RequireAuthenticated()
         {
             if (!Client.IsAuthenticated)
-                throw new FlockAuthException("No player is signed in") { Hint = FlockErrorHints.SignInFirst };
+                throw Client.NoPlayerSignedIn();
         }
 
         /// <summary>
@@ -513,7 +518,7 @@ namespace Flock.Providers
             bool wasAuthenticated = Client.IsAuthenticated;
             Client.ClearTokens();
             if (wasAuthenticated)
-                FlockEvents.InvokeLoggedOut();
+                Client.AnnounceLoggedOut();
         }
     }
 }

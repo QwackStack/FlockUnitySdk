@@ -296,7 +296,7 @@ Per-feature usage and examples live in their own guides:
 
 | Guide | Covers |
 |-------|--------|
-| [Authentication](Docs~/authentication.md) | Login/register for every provider, account linking/unlinking, logout, token refresh/revocation, password reset, email verification, session expiry |
+| [Authentication](Docs~/authentication.md) | Login/register for every provider, account linking/unlinking, logout, token refresh/revocation, password reset, email verification, session expiry, local players (several signed in at once) |
 | [Game & Config](Docs~/game-config.md) | Typed game-config accessors, values for the signed-in player, game/version metadata |
 | [Player Data & Game Commands](Docs~/player-data.md) | Reads, typed template accessors, update commands, funds, achievements, bans |
 | [Shop](Docs~/shop.md) | Shops, items, purchase (money-safety contract), a shop screen (wallet, owned items, what the player can afford), real-money items, store purchases, buying with real money (Unity IAP 5 on a phone, a web checkout elsewhere), player inventory |
