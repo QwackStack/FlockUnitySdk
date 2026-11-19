@@ -62,6 +62,9 @@ namespace Protokite.Playtest
         // The game's end once sent, until the game is told how it went: quitting waits for it.
         private static Task _gamesEnd;
 
+        /// <summary>Raised on the main thread when a Protokite session opens (true, once Protokite has answered its start with an id) and when it closes (false, as its end is sent). Not raised for a start that failed, or while the game quits.</summary>
+        public static event Action<string, bool> PlaytestSessionChanged;
+
         /// <summary>Where the device id is kept, when a test sets one; the game's persistent data folder otherwise.</summary>
         internal static string DeviceIdFilePathForTesting;
 
@@ -202,7 +205,27 @@ namespace Protokite.Playtest
             Task end = SendTheEnd(_sessionApiUrl, _sessionHeaders, _sessionRetryPolicy, _playtestSessionId, CancellationToken.None);
             _gamesEnd = end;
             _ = TellTheGameHowItsEndWentAsync(end, _playtestSessionId, _launch);
+            TellTheGameTheSessionChanged(_playtestSessionId, false);
             Refresh();
+        }
+
+        // A handler that throws is logged, and the others still hear.
+        private static void TellTheGameTheSessionChanged(string sessionId, bool started)
+        {
+            Action<string, bool> handlers = PlaytestSessionChanged;
+            if (handlers == null)
+                return;
+            foreach (Delegate handler in handlers.GetInvocationList())
+            {
+                try
+                {
+                    ((Action<string, bool>)handler)(sessionId, started);
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogException(ex);
+                }
+            }
         }
 
         private static async Task TellTheGameHowItsEndWentAsync(Task end, string sessionId, int launch)
@@ -397,6 +420,7 @@ namespace Protokite.Playtest
                 SaveSessionBesideRecording();
                 GiveTheHeldRecordingsThisSession();
                 Debug.Log(LogPrefix + $"Protokite session {sessionId} started for this launch, with the player's {(sentSteamId ? "Steam id" : "device id")} and Flock session {flockSessionId}.");
+                TellTheGameTheSessionChanged(sessionId, true);
                 // A recording that finished before its session started goes now.
                 UploadThisLaunchsRecordingWhenReady();
             }

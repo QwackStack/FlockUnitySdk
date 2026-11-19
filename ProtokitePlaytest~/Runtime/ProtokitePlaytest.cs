@@ -230,6 +230,7 @@ namespace Protokite.Playtest
             _selfTest = null;
             // Handlers of the last Play's objects, which domain reload off would otherwise keep calling.
             RecordingUploadChanged = null;
+            PlaytestSessionChanged = null;
             _statusLastReported = null;
             _stateAtLastRefresh = null;
         }

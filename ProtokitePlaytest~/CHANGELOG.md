@@ -19,6 +19,9 @@ It is released with the Flock SDK, at the Flock SDK's version.
 - **`ProtokitePlaytest.EndPlaytestSession(ended)`** ends the session during play: a recording still running stops, is
   uploaded to this session, and the end goes once the upload has an answer (at once while the player's Wi-Fi only answer holds
   the upload back; the recording is kept and sent on Wi-Fi). `ended(bool, string)` hears whether Protokite took the end.
+- **`ProtokitePlaytest.PlaytestSessionChanged(string sessionId, bool started)`**, an event raised on the main thread when
+  Protokite starts a session (`true`) and as a session's end is sent (`false`); not for a start that failed, nor while the game
+  quits.
 - **A launch can hold several sessions and recordings, one at a time.** After an end, `StartPlaytestSession` starts another;
   after a stop, `StartVideoRecording` records again. Each recording goes to the session open while it recorded, never a later
   one; recordings made while no session is open are all kept and go to the next session started. One that uploaded is deleted before the next starts; one that

@@ -1550,6 +1550,55 @@ namespace Protokite.Playtest.Tests
         }
 
         [UnityTest]
+        public IEnumerator TheGameHearsEachSessionOpenAndCloseButNotAQuitsEnd()
+        {
+            List<string> heard = new List<string>();
+            ProtokitePlaytest.PlaytestSessionChanged += (sessionId, started) => heard.Add(sessionId + (started ? " opened" : " closed"));
+            ProtokitePlaytest.PlaytestSessionChanged += (sessionId, started) => throw new InvalidOperationException("the game's session handler broke");
+            using (FlockTestClient flock = StartFlock(TwoSessionsTransport()))
+            {
+                ProtokitePlaytest.Refresh();
+                Frames(1);
+                LogAssert.Expect(LogType.Exception, new Regex("the game's session handler broke"));
+                yield return TheSessionStarts(flock);
+                Assert.AreEqual(new List<string> { "pk-1 opened" }, heard, "Once Protokite answered, with its id");
+                Assert.AreEqual("pk-1", ProtokitePlaytest.PlaytestSessionId, "Already readable inside the update");
+
+                LogAssert.Expect(LogType.Exception, new Regex("the game's session handler broke"));
+                Assert.IsTrue(ProtokitePlaytest.EndPlaytestSession());
+                Assert.AreEqual(1, heard.Count, "Not closed while its recording uploads");
+                yield return TheEndIsSent(flock, 1);
+                Assert.AreEqual(new List<string> { "pk-1 opened", "pk-1 closed" }, heard);
+
+                LogAssert.Expect(LogType.Exception, new Regex("the game's session handler broke"));
+                Assert.IsTrue(ProtokitePlaytest.StartPlaytestSession());
+                yield return Settled(() => ProtokitePlaytest.SessionState == ProtokitePlaytestSessionState.Started, 5f, "The second session started");
+                ProtokitePlaytest.HandleGameQuitting();
+                Assert.AreEqual(new List<string> { "pk-1 opened", "pk-1 closed", "pk-2 opened" }, heard, "The quit's own end raises nothing");
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator AFailedStartRaisesNothing()
+        {
+            List<string> heard = new List<string>();
+            ProtokitePlaytest.PlaytestSessionChanged += (sessionId, started) => heard.Add(sessionId);
+            FlockFakeTransport transport = new FlockFakeTransport()
+                .On(StartRoute, FlockFakeTransport.Status(500, "{}"))
+                .On(ConfigRoute, FlockFakeTransport.Ok(Config(true)))
+                .On(FlockSessionRoute, FlockFakeTransport.Ok("{\"session_id\":\"" + ServerSessionId + "\"}"));
+            using (FlockTestClient flock = StartFlock(transport))
+            {
+                ProtokitePlaytest.Refresh();
+                LogAssert.Expect(LogType.Warning, new Regex("No Protokite session was started"));
+                StartAFlockSession(flock);
+                yield return Settled(() => ProtokitePlaytest.SessionState != ProtokitePlaytestSessionState.Starting, 5f, "The start settled");
+                Assert.AreEqual(ProtokitePlaytestSessionState.StartFailed, ProtokitePlaytest.SessionState, "Precondition: it failed");
+                Assert.IsEmpty(heard);
+            }
+        }
+
+        [UnityTest]
         public IEnumerator WithTheSettingOnTheSessionAndRecordingStartOnceALaunch()
         {
             using (FlockTestClient flock = StartFlock(TwoSessionsTransport()))

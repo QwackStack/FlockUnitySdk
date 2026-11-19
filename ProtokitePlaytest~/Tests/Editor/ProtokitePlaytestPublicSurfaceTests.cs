@@ -66,6 +66,12 @@ namespace Protokite.Playtest.Tests
                 ProtokitePlaytest.RecordingUploadChanged -= heard;
             },
             ["PlaytestSessionId"] = () => Assert.IsNull(ProtokitePlaytest.PlaytestSessionId),
+            ["PlaytestSessionChanged"] = () =>
+            {
+                Action<string, bool> heard = (sessionId, started) => Assert.Fail("No session opens before Flock starts");
+                ProtokitePlaytest.PlaytestSessionChanged += heard;
+                ProtokitePlaytest.PlaytestSessionChanged -= heard;
+            },
             ["StartPlaytestSession()"] = () =>
             {
                 LogAssert.Expect(LogType.Warning, new Regex("No Protokite session was started: the playtest is not ready. Playtesting is set up and waiting for the Flock SDK"));
