@@ -224,6 +224,7 @@ namespace Protokite.Playtest
         /// </summary>
         private static void WithdrawThisLaunchsRecording()
         {
+            LetGoOfTheHeldRecordings(true);
             if (_recordingRun == null || ThisLaunchsUploadIsUnderWayOrDone())
                 return;
             if (!_recordingRun.ForgetSession(out string error))
@@ -242,7 +243,7 @@ namespace Protokite.Playtest
         {
             bool deleted = _recordingRun.DeleteEverything();
             // Let go either way: its session is gone, so a later launch deletes what is left rather than upload it.
-            _recordingRun = null;
+            ForgetThisLaunchsRecordingRun();
             if (deleted)
                 Debug.Log(LogPrefix + "The player asked for the screen not to be recorded, so what this launch recorded was deleted instead of uploaded.");
             else

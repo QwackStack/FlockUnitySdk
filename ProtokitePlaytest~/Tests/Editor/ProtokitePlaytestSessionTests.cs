@@ -713,7 +713,7 @@ namespace Protokite.Playtest.Tests
             {
                 StartAFlockSession(flock);
                 yield return TheStartSettles();
-                LogAssert.Expect(LogType.Warning, new Regex("after this launch's Protokite session started"));
+                LogAssert.Expect(LogType.Warning, new Regex("after this Protokite session started"));
                 Assert.IsFalse(ProtokitePlaytest.SetSteamId("76561198000000001"));
             }
         }

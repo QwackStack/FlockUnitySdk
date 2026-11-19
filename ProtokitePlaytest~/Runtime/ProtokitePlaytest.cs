@@ -161,6 +161,7 @@ namespace Protokite.Playtest
             UploadEarlierRecordingsWhenReady(running);
             UploadThisLaunchsRecordingWhenReady();
             StopUploadsTheNetworkNoLongerAllows();
+            EndTheSessionOnceItsRecordingIsSent();
             SendWaitingFormsWhenDue(running);
 
             // Nothing to do when neither the Flock client nor the playtest's state has changed since the last frame, unless a
@@ -188,7 +189,7 @@ namespace Protokite.Playtest
                 StartPlaytestConfigFetch(running, settings);
             }
 
-            // One session per launch: whatever became of it, a later sign-in or Flock session never starts another.
+            // One session at a time, and only one wanted: the setting's once a launch or the game's call. A later sign-in or Flock session never starts another.
             if (StatusFor(settings, running != null, consent, _configState, _playtestNoLongerCollecting) == ProtokitePlaytestStatus.Ready)
                 StartPlaytestSessionWhenAllowed(running, settings.ProtokiteApiUrl);
 
@@ -227,6 +228,8 @@ namespace Protokite.Playtest
             ResetUploadNetworkForNewLaunch();
             ResetFormsForNewLaunch();
             _selfTest = null;
+            // Handlers of the last Play's objects, which domain reload off would otherwise keep calling.
+            RecordingUploadChanged = null;
             _statusLastReported = null;
             _stateAtLastRefresh = null;
         }

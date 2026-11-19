@@ -174,10 +174,12 @@ namespace Protokite.Playtest
             if (_saidUploadsWaitForWiFi)
                 return;
             _saidUploadsWaitForWiFi = true;
-            string onWhat = CurrentNetwork() == NetworkReachability.NotReachable ? "on no network" : "on mobile data";
-            Debug.Log(LogPrefix + $"Recordings wait on this device before they upload: the player chose Wi-Fi only, and the device is {onWhat}. " +
-                      "They upload once it is on Wi-Fi, in this launch or a later one.");
+            Debug.Log(LogPrefix + "Recordings wait on this device before they upload: " + WhyUploadsWait() + " They upload once it is on Wi-Fi, in this launch or a later one.");
         }
+
+        // What holds uploads back now, in the words the log and RecordingUploadChanged use.
+        private static string WhyUploadsWait()
+            => "the player chose Wi-Fi only, and the device is " + (CurrentNetwork() == NetworkReachability.NotReachable ? "on no network." : "on mobile data.");
 
         // An upload begins on a network the player allows: the token it stops on when the device leaves Wi-Fi (one for every upload
         // under way, replaced once used), and a wait that comes later is said again.

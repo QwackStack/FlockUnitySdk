@@ -19,6 +19,7 @@ namespace Protokite.Playtest
         CouldNotWrite,
         PlayerTookTheScreenBack,
         PlayerAskedToSendIt,
+        SessionEnded,
         PlaytestRecordingStarts,
         PhoneTooHot,
         BatteryLow
@@ -71,6 +72,7 @@ namespace Protokite.Playtest
                 case ProtokitePlaytestVideoStopReason.CouldNotWrite: return "its file could not be written";
                 case ProtokitePlaytestVideoStopReason.PlayerTookTheScreenBack: return "the player asked for the screen not to be recorded";
                 case ProtokitePlaytestVideoStopReason.PlayerAskedToSendIt: return "the player asked for it to be sent";
+                case ProtokitePlaytestVideoStopReason.SessionEnded: return "the game ended its Protokite session";
                 case ProtokitePlaytestVideoStopReason.PlaytestRecordingStarts: return "the playtest's own recording was starting";
                 case ProtokitePlaytestVideoStopReason.PhoneTooHot: return "the phone was too hot";
                 case ProtokitePlaytestVideoStopReason.BatteryLow: return "the phone's battery was low";

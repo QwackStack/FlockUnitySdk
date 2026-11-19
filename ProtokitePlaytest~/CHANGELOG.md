@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 It is released with the Flock SDK, at the Flock SDK's version.
 
+## [1.107.0]
+
+### Added
+- **`ProtokitePlaytest.RecordingUploadChanged`**, an event raised on the main thread each time a recording's upload begins
+  (`Started`), ends (`Uploaded`, with the bytes the storage took, or `Kept`, with why) or waits because the player chose
+  Wi-Fi only (`WaitingForWiFi`). It covers this launch's recordings and those earlier launches kept
+  (`FromAnEarlierLaunch`), and names each one's Protokite session. A handler that throws is logged and never stops an upload.
+- **Start Session And Recording Automatically**, a playtest setting, on by default, which is how every earlier version
+  behaved; with it on, every session the game starts later gets a recording of its own as well. Turned off, nothing starts
+  until the game calls **`ProtokitePlaytest.StartPlaytestSession()`** and **`ProtokitePlaytest.StartVideoRecording()`**.
+- **`ProtokitePlaytest.EndPlaytestSession(ended)`** ends the session during play: a recording still running stops, is
+  uploaded to this session, and the end goes once the upload has an answer (at once while the player's Wi-Fi only answer holds
+  the upload back; the recording is kept and sent on Wi-Fi). `ended(bool, string)` hears whether Protokite took the end.
+- **A launch can hold several sessions and recordings, one at a time.** After an end, `StartPlaytestSession` starts another;
+  after a stop, `StartVideoRecording` records again. Each recording goes to the session open while it recorded, never a later
+  one; recordings made while no session is open are all kept and go to the next session started. One that uploaded is deleted before the next starts; one that
+  was not is kept on disk with its session for a later launch, as before. A new recording is refused while the last is still
+  being written or uploaded; the call says so and returns false.
+
+### Changed
+- **`SetSteamId` is taken whenever no session is starting or open**, and goes with the next session. It used to be refused
+  once the launch's one session had ended or failed to start.
+
 ## [1.106.0]
 
 No changes to the playtest: this version is released together with the Flock SDK's local players.

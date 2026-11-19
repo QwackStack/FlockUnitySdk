@@ -1331,6 +1331,482 @@ namespace Protokite.Playtest.Tests
             }
         }
 
+        // What the game hears
+
+        private static List<ProtokitePlaytestUploadUpdate> Listen()
+        {
+            List<ProtokitePlaytestUploadUpdate> heard = new List<ProtokitePlaytestUploadUpdate>();
+            ProtokitePlaytest.RecordingUploadChanged += heard.Add;
+            return heard;
+        }
+
+        private static string States(List<ProtokitePlaytestUploadUpdate> heard) => string.Join(",", heard.ConvertAll(update => update.State.ToString()));
+
+        // An upload's ending is told on the frame after it settles.
+        private static IEnumerator Heard(List<ProtokitePlaytestUploadUpdate> heard, int count)
+        {
+            yield return Settled(() => heard.Count >= count, 5f, $"{count} updates were heard");
+        }
+
+        [UnityTest]
+        public IEnumerator TheGameHearsAnUploadStartAndEndWithItsSessionAndBytes()
+        {
+            List<ProtokitePlaytestUploadUpdate> heard = Listen();
+            using (FlockTestClient flock = StartFlock(Transport()))
+            {
+                ProtokitePlaytest.Refresh();
+                Frames(1);
+                yield return TheSessionStarts(flock);
+                yield return RecordAndStop();
+                yield return ThisLaunchsUpload();
+                yield return Heard(heard, 2);
+
+                Assert.AreEqual("Started,Uploaded", States(heard));
+                Assert.AreEqual("pk-1", heard[1].PlaytestSessionId);
+                Assert.IsFalse(heard[1].FromAnEarlierLaunch);
+                Assert.AreEqual(_uploader.Single().FileBytes, heard[1].BytesSent, "The bytes the storage took");
+                Assert.IsNull(heard[1].WhyNot);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator TheGameHearsAFailedUploadIsKeptAndWhy()
+        {
+            _uploader.Answers.Enqueue(FakeUploader.Status(500, "<Error><Code>InternalError</Code></Error>"));
+            _uploader.Answers.Enqueue(FakeUploader.Status(500, "<Error><Code>InternalError</Code></Error>"));
+            List<ProtokitePlaytestUploadUpdate> heard = Listen();
+            using (FlockTestClient flock = StartFlock(Transport()))
+            {
+                ProtokitePlaytest.Refresh();
+                Frames(1);
+                yield return TheSessionStarts(flock);
+                LogAssert.Expect(LogType.Warning, new Regex("The playtest recording was not uploaded"));
+                yield return RecordAndStop();
+                yield return ThisLaunchsUpload();
+                yield return Heard(heard, 2);
+
+                Assert.AreEqual("Started,Kept", States(heard), "One Started for both tries");
+                StringAssert.Contains("HTTP 500 (InternalError)", heard[1].WhyNot);
+                Assert.AreEqual(0, heard[1].BytesSent);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator TheGameHearsARecordingWaitsForWiFiOnceAndThenGoes()
+        {
+            PlayerChooses(ProtokitePlaytestUploadNetworkChoice.WiFiOnly);
+            _network = OnMobileData;
+            List<ProtokitePlaytestUploadUpdate> heard = Listen();
+            using (FlockTestClient flock = StartFlock(Transport()))
+            {
+                ProtokitePlaytest.Refresh();
+                Frames(1);
+                yield return TheSessionStarts(flock);
+                LogAssert.Expect(LogType.Log, new Regex("Recordings wait on this device"));
+                yield return RecordAndStop();
+                yield return ForAWhile(0.5f, ProtokitePlaytest.Refresh);
+                Assert.AreEqual("WaitingForWiFi", States(heard), "Said once, not every frame");
+                StringAssert.Contains("Wi-Fi only", heard[0].WhyNot);
+
+                _network = OnWiFi;
+                yield return SettledWithRefresh(ThisLaunchsUploadEnded, 10f, "The upload went on Wi-Fi");
+                yield return Heard(heard, 3);
+                Assert.AreEqual("WaitingForWiFi,Started,Uploaded", States(heard));
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator TheGameHearsAnEarlierLaunchsRecordingGo()
+        {
+            PlantWaitingRecording("20260101-000000-00000001", "pk-9", "session-gvid");
+            yield return TheEarlierRecordingsAreGoneThrough();
+            List<ProtokitePlaytestUploadUpdate> heard = Listen();
+            using (FlockTestClient flock = StartFlock(EarlierTransport()))
+            {
+                LogAssert.Expect(LogType.Log, new Regex("Recordings earlier launches left: 1 uploaded"));
+                yield return EarlierUploads();
+                Assert.AreEqual("Started,Uploaded", States(heard));
+                Assert.IsTrue(heard.TrueForAll(update => update.FromAnEarlierLaunch && update.PlaytestSessionId == "pk-9"));
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator AHandlerThatThrowsStopsNeitherTheUploadNorTheOtherHandlers()
+        {
+            ProtokitePlaytest.RecordingUploadChanged += update => throw new InvalidOperationException("the game's handler broke");
+            List<ProtokitePlaytestUploadUpdate> heard = Listen();
+            using (FlockTestClient flock = StartFlock(Transport()))
+            {
+                ProtokitePlaytest.Refresh();
+                Frames(1);
+                yield return TheSessionStarts(flock);
+                LogAssert.Expect(LogType.Exception, new Regex("the game's handler broke"));
+                LogAssert.Expect(LogType.Exception, new Regex("the game's handler broke"));
+                yield return RecordAndStop();
+                yield return ThisLaunchsUpload();
+                yield return Heard(heard, 2);
+                Assert.IsTrue(ProtokitePlaytest.ThisLaunchsUpload.Result.Uploaded);
+                Assert.AreEqual("Started,Uploaded", States(heard));
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator TheGameCanRecordAgainFromTheUploadedUpdate()
+        {
+            bool startedAgain = false;
+            ProtokitePlaytest.RecordingUploadChanged += update =>
+            {
+                if (update.State == ProtokitePlaytestUploadState.Uploaded)
+                    startedAgain = ProtokitePlaytest.StartVideoRecording();
+            };
+            using (FlockTestClient flock = StartFlock(Transport()))
+            {
+                ProtokitePlaytest.Refresh();
+                Frames(1);
+                yield return TheSessionStarts(flock);
+                yield return RecordAndStop();
+                yield return Settled(() => startedAgain, 10f, "The next recording started from the update");
+                Assert.IsTrue(ProtokitePlaytest.IsRecordingVideo || ProtokitePlaytest.VideoRecordingForTesting != null);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator NothingIsHeardInALaterLaunch()
+        {
+            _uploader.HoldEach = true;
+            List<ProtokitePlaytestUploadUpdate> heard = Listen();
+            using (FlockTestClient flock = StartFlock(Transport()))
+            {
+                ProtokitePlaytest.Refresh();
+                Frames(1);
+                yield return TheSessionStarts(flock);
+                yield return RecordAndStop();
+                yield return Settled(() => _uploader.Count == 1, 10f, "The upload began");
+                LogAssert.Expect(LogType.Warning, new Regex("The playtest recording was not uploaded"));
+                ProtokitePlaytest.HandleGameQuitting();
+                _uploader.ReleaseEverything();
+                yield return ForAWhile(0.5f);
+                Assert.AreEqual("Started", States(heard), "The quit's cut is not told");
+            }
+        }
+
+        // Starting and ending from the game
+
+        private const string SecondLinkRoute = "/playtest-session/pk-2/recording-upload";
+
+        // Two sessions in turn, each with its own upload link.
+        private static FlockFakeTransport TwoSessionsTransport()
+            => new FlockFakeTransport()
+                .On(LinkRoute, FlockFakeTransport.Ok(Link(FirstLink)))
+                .On(SecondLinkRoute, FlockFakeTransport.Ok(Link(SecondLink)))
+                .On(EndRoute, FlockFakeTransport.Status(204, ""))
+                .OnSequence(StartRoute, FlockFakeTransport.Ok("{\"result\":{\"session_id\":\"pk-1\"}}"), FlockFakeTransport.Ok("{\"result\":{\"session_id\":\"pk-2\"}}"))
+                .On(ConfigRoute, FlockFakeTransport.Ok(Config(true)))
+                .On(FlockSessionRoute, FlockFakeTransport.Ok("{\"session_id\":\"" + ServerSessionId + "\"}"));
+
+        // Session starts alone: the start's route is also the start of every link's and end's address.
+        private static int SessionStarts(FlockTestClient flock) => flock.Transport.Requests.FindAll(request => request.Url.EndsWith(StartRoute)).Count;
+
+        private static IEnumerator TheEndIsSent(FlockTestClient flock, int ends)
+        {
+            yield return SettledWithRefresh(() =>
+            {
+                Frames(1);
+                return flock.Transport.CountTo(EndRoute) == ends;
+            }, 20f, $"End {ends} was sent");
+        }
+
+        [UnityTest]
+        public IEnumerator WithTheSettingOffNothingStartsUntilTheGameAsks()
+        {
+            _settings.Settings.StartSessionAndRecordingAutomatically = false;
+            using (FlockTestClient flock = StartFlock(Transport()))
+            {
+                ProtokitePlaytest.Refresh();
+                Frames(5);
+                StartAFlockSession(flock);
+                yield return ForAWhile(0.5f, () =>
+                {
+                    ProtokitePlaytest.Refresh();
+                    Frames(1);
+                });
+                Assert.AreEqual(ProtokitePlaytestStatus.Ready, ProtokitePlaytest.Status, "Precondition: the playtest is loaded");
+                Assert.AreEqual(0, SessionStarts(flock), "No session until the game asks");
+                Assert.IsNull(ProtokitePlaytest.RecordingRunForTesting, "No recording until the game asks");
+
+                Assert.IsTrue(ProtokitePlaytest.StartPlaytestSession());
+                yield return Settled(() => ProtokitePlaytest.SessionState != ProtokitePlaytestSessionState.Starting, 5f, "The start settled");
+                Assert.AreEqual("pk-1", ProtokitePlaytest.PlaytestSessionId);
+                LogAssert.Expect(LogType.Warning, new Regex("No Protokite session was started: session pk-1 is open; end it with EndPlaytestSession first"));
+                Assert.IsFalse(ProtokitePlaytest.StartPlaytestSession(), "One session at a time");
+
+                Assert.IsTrue(ProtokitePlaytest.StartVideoRecording());
+                Frames(5);
+                Assert.IsTrue(ProtokitePlaytest.IsRecordingVideo);
+                LogAssert.Expect(LogType.Warning, new Regex("No playtest recording was started: one is recording"));
+                Assert.IsFalse(ProtokitePlaytest.StartVideoRecording(), "One recording at a time");
+                Assert.AreEqual(1, SessionStarts(flock));
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator WithTheSettingOnTheSessionAndRecordingStartOnceALaunch()
+        {
+            using (FlockTestClient flock = StartFlock(TwoSessionsTransport()))
+            {
+                ProtokitePlaytest.Refresh();
+                Frames(1);
+                yield return TheSessionStarts(flock);
+                Assert.IsNotNull(ProtokitePlaytest.RecordingRunForTesting, "Started by itself");
+                Assert.IsTrue(ProtokitePlaytest.EndPlaytestSession());
+                yield return TheEndIsSent(flock, 1);
+                yield return ForAWhile(0.5f, () =>
+                {
+                    ProtokitePlaytest.Refresh();
+                    Frames(1);
+                });
+                Assert.AreEqual(1, SessionStarts(flock), "An ended session is not started again by the setting");
+                Assert.IsNull(ProtokitePlaytest.VideoRecordingForTesting, "Nor is a recording");
+
+                // The game's next session gets a recording of its own, as the first did.
+                Assert.IsTrue(ProtokitePlaytest.StartPlaytestSession());
+                Frames(1);
+                Assert.IsTrue(ProtokitePlaytest.IsRecordingVideo, "Started by itself with the session");
+                yield return Settled(() => ProtokitePlaytest.SessionState == ProtokitePlaytestSessionState.Started, 5f, "The second session started");
+                Assert.AreEqual("pk-2", ProtokitePlaytest.PlaytestSessionId);
+                yield return RecordAndStop();
+                yield return ThisLaunchsUpload();
+                Assert.AreEqual(1, flock.Transport.CountTo(SecondLinkRoute), "It goes to the second session");
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator EndingTheSessionUploadsItsRecordingFirstThenEndsAndTellsTheGame()
+        {
+            _uploader.HoldEach = true;
+            List<string> ended = new List<string>();
+            using (FlockTestClient flock = StartFlock(Transport()))
+            {
+                ProtokitePlaytest.Refresh();
+                Frames(1);
+                yield return TheSessionStarts(flock);
+                Frames(30);
+                Assert.IsTrue(ProtokitePlaytest.IsRecordingVideo, "Precondition: recording");
+
+                LogAssert.Expect(LogType.Log, new Regex("Ending Protokite session pk-1: the end goes once its recording, if any, has been uploaded"));
+                Assert.IsTrue(ProtokitePlaytest.EndPlaytestSession((endedOk, whyNot) => ended.Add(endedOk + ":" + whyNot)));
+                Assert.IsFalse(ProtokitePlaytest.IsRecordingVideo, "The recording stops at once");
+                LogAssert.Expect(LogType.Warning, new Regex("No Protokite session was ended: session pk-1 is already ending"));
+                Assert.IsFalse(ProtokitePlaytest.EndPlaytestSession(), "Asked once");
+                LogAssert.Expect(LogType.Warning, new Regex("No playtest recording was started: .*ending"));
+                Assert.IsFalse(ProtokitePlaytest.StartVideoRecording(), "Nothing new records while it ends");
+
+                yield return SettledWithRefresh(() =>
+                {
+                    Frames(1);
+                    return _uploader.Count == 1;
+                }, 20f, "The recording's upload began");
+                yield return ForAWhile(0.5f, ProtokitePlaytest.Refresh);
+                Assert.AreEqual(0, flock.Transport.CountTo(EndRoute), "Not ended while its recording uploads");
+                Assert.AreEqual("pk-1", ProtokitePlaytest.PlaytestSessionId);
+                StringAssert.Contains("/pk-1/", flock.Transport.LastTo(LinkRoute).Url, "To the session it recorded in");
+
+                _uploader.ReleaseEverything();
+                yield return TheEndIsSent(flock, 1);
+                yield return Settled(() => ended.Count == 1, 5f, "The game was told");
+                Assert.AreEqual("True:", ended[0]);
+                Assert.IsTrue(ProtokitePlaytest.ThisLaunchsUpload.Result.Uploaded, "Uploaded before the end");
+                Assert.IsNull(ProtokitePlaytest.PlaytestSessionId);
+                LogAssert.Expect(LogType.Warning, new Regex("No Protokite session was ended: none is open"));
+                Assert.IsFalse(ProtokitePlaytest.EndPlaytestSession(), "Nothing left to end");
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator EndingWhileTheRecordingWaitsForWiFiEndsAtOnceAndKeepsIt()
+        {
+            PlayerChooses(ProtokitePlaytestUploadNetworkChoice.WiFiOnly);
+            _network = OnMobileData;
+            using (FlockTestClient flock = StartFlock(Transport()))
+            {
+                ProtokitePlaytest.Refresh();
+                Frames(1);
+                yield return TheSessionStarts(flock);
+                string runFolder = ProtokitePlaytest.RecordingRunForTesting.FolderPath;
+                Frames(30);
+                LogAssert.Expect(LogType.Log, new Regex("Recordings wait on this device"));
+                Assert.IsTrue(ProtokitePlaytest.EndPlaytestSession());
+                yield return SettledWithRefresh(() =>
+                {
+                    Frames(1);
+                    return flock.Transport.CountTo(EndRoute) == 1;
+                }, 20f, "Ended without waiting for Wi-Fi");
+                Assert.AreEqual(0, _uploader.Count);
+                Assert.IsTrue(File.Exists(Path.Combine(runFolder, "session.json")), "Kept, with its session");
+
+                _network = OnWiFi;
+                yield return SettledWithRefresh(ThisLaunchsUploadEnded, 10f, "It goes on Wi-Fi, to the session it recorded in");
+                Assert.IsTrue(ProtokitePlaytest.ThisLaunchsUpload.Result.Uploaded);
+                StringAssert.Contains("/pk-1/", flock.Transport.LastTo(LinkRoute).Url);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator AfterAnEndANewSessionAndRecordingGoTogether()
+        {
+            using (FlockTestClient flock = StartFlock(TwoSessionsTransport()))
+            {
+                ProtokitePlaytest.Refresh();
+                Frames(1);
+                yield return TheSessionStarts(flock);
+                string firstRun = ProtokitePlaytest.RecordingRunForTesting.FolderPath;
+                Frames(30);
+                Assert.IsTrue(ProtokitePlaytest.EndPlaytestSession());
+                yield return SettledWithRefresh(() =>
+                {
+                    Frames(1);
+                    return flock.Transport.CountTo(EndRoute) == 1;
+                }, 20f, "The first session ended");
+                Assert.IsFalse(Directory.Exists(firstRun), "The first recording was uploaded and cleaned up");
+
+                Assert.IsTrue(ProtokitePlaytest.StartPlaytestSession());
+                yield return Settled(() => ProtokitePlaytest.SessionState == ProtokitePlaytestSessionState.Started, 5f, "The second session started");
+                Assert.AreEqual("pk-2", ProtokitePlaytest.PlaytestSessionId);
+                Assert.IsTrue(ProtokitePlaytest.StartVideoRecording());
+                string secondRun = ProtokitePlaytest.RecordingRunForTesting.FolderPath;
+                Assert.AreNotEqual(firstRun, secondRun, "A run of its own");
+                yield return RecordAndStop();
+                yield return ThisLaunchsUpload();
+                Assert.IsTrue(ProtokitePlaytest.ThisLaunchsUpload.Result.Uploaded);
+                Assert.AreEqual(1, flock.Transport.CountTo(SecondLinkRoute), "The second recording goes to the second session");
+                CollectionAssert.AreEqual(new[] { FirstLink, SecondLink }, _uploader.Urls());
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator ANewRecordingLeavesOneThatFailedOnDiskWithItsOwnSession()
+        {
+            _uploader.Answers.Enqueue(FakeUploader.Status(500, "<Error><Code>InternalError</Code></Error>"));
+            _uploader.Answers.Enqueue(FakeUploader.Status(500, "<Error><Code>InternalError</Code></Error>"));
+            using (FlockTestClient flock = StartFlock(TwoSessionsTransport()))
+            {
+                ProtokitePlaytest.Refresh();
+                Frames(1);
+                yield return TheSessionStarts(flock);
+                string firstRun = ProtokitePlaytest.RecordingRunForTesting.FolderPath;
+                LogAssert.Expect(LogType.Warning, new Regex("The playtest recording was not uploaded"));
+                yield return RecordAndStop();
+                yield return ThisLaunchsUpload();
+                Assert.IsFalse(ProtokitePlaytest.ThisLaunchsUpload.Result.Uploaded, "Precondition: it failed");
+
+                // Ended, then a second session, so a recording given the wrong session would show.
+                Assert.IsTrue(ProtokitePlaytest.EndPlaytestSession());
+                yield return TheEndIsSent(flock, 1);
+                Assert.IsTrue(ProtokitePlaytest.StartPlaytestSession());
+                yield return Settled(() => ProtokitePlaytest.SessionState == ProtokitePlaytestSessionState.Started, 5f, "The second session started");
+
+                LogAssert.Expect(LogType.Log, new Regex("The last recording was not uploaded, so it is kept for a later launch to upload to Protokite session pk-1"));
+                Assert.IsTrue(ProtokitePlaytest.StartVideoRecording());
+                Assert.AreNotEqual(firstRun, ProtokitePlaytest.RecordingRunForTesting.FolderPath);
+                Assert.AreEqual(1, Directory.GetFiles(firstRun, "*.mp4").Length, "The failed one is kept on disk");
+                StringAssert.Contains("\"pk-1\"", File.ReadAllText(Path.Combine(firstRun, "session.json")), "With the session it recorded in, not the new one");
+                using (ProtokitePlaytestRecordingRun claimed = ProtokitePlaytestRecordingRun.ClaimEnded(firstRun, ProtokitePlaytestRecordingKind.Playtest))
+                    Assert.IsNotNull(claimed, "Let go, so a later launch can claim and upload it");
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator NoNewRecordingWhileTheLastOneUploads()
+        {
+            _uploader.HoldEach = true;
+            using (FlockTestClient flock = StartFlock(Transport()))
+            {
+                ProtokitePlaytest.Refresh();
+                Frames(1);
+                yield return TheSessionStarts(flock);
+                yield return RecordAndStop();
+                yield return Settled(() => _uploader.Count == 1, 10f, "The upload began");
+                LogAssert.Expect(LogType.Warning, new Regex("No playtest recording was started: the last recording is still uploading"));
+                Assert.IsFalse(ProtokitePlaytest.StartVideoRecording());
+
+                _uploader.ReleaseEverything();
+                yield return ThisLaunchsUpload();
+                Assert.IsTrue(ProtokitePlaytest.StartVideoRecording(), "Once it has gone, the next may start");
+                Assert.IsNull(ProtokitePlaytest.ThisLaunchsUpload, "The last upload is forgotten with its recording");
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator RecordingsMadeBeforeAnySessionAllGoToTheNextOneStarted()
+        {
+            _settings.Settings.StartSessionAndRecordingAutomatically = false;
+            List<ProtokitePlaytestUploadUpdate> heard = Listen();
+            using (FlockTestClient flock = StartFlock(Transport()))
+            {
+                ProtokitePlaytest.Refresh();
+                Assert.IsTrue(ProtokitePlaytest.StartVideoRecording(), "A recording may start before any session");
+                string firstRun = ProtokitePlaytest.RecordingRunForTesting.FolderPath;
+                yield return RecordAndStop();
+                LogAssert.Expect(LogType.Log, new Regex("The last recording has no Protokite session yet; it goes to the next one started"));
+                Assert.IsTrue(ProtokitePlaytest.StartVideoRecording(), "Not held back by the one waiting for a session");
+                yield return RecordAndStop();
+                Assert.IsTrue(Directory.Exists(firstRun), "The first is kept meanwhile");
+
+                StartAFlockSession(flock);
+                LogAssert.Expect(LogType.Log, new Regex(@"1 recording\(s\) made before Protokite session pk-1 started go to it"));
+                Assert.IsTrue(ProtokitePlaytest.StartPlaytestSession());
+                yield return Settled(() => ProtokitePlaytest.SessionState == ProtokitePlaytestSessionState.Started, 5f, "The session started");
+                yield return SettledWithRefresh(() => ThisLaunchsUploadEnded() && _uploader.Count == 2 && !Directory.Exists(firstRun), 20f, "Both went to the session");
+                Assert.AreEqual(2, flock.Transport.CountTo(LinkRoute), "Both to pk-1");
+                yield return Heard(heard, 4);
+                Assert.IsTrue(heard.TrueForAll(update => !update.FromAnEarlierLaunch && update.PlaytestSessionId == "pk-1"), "This launch's own, to its session");
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator QuittingRightAfterAnEndWasSentWaitsForItAndTellsTheGame()
+        {
+            _settings.Settings.StartSessionAndRecordingAutomatically = false;
+            List<string> ended = new List<string>();
+            using (FlockTestClient flock = StartFlock(Transport()))
+            {
+                ProtokitePlaytest.Refresh();
+                StartAFlockSession(flock);
+                Assert.IsTrue(ProtokitePlaytest.StartPlaytestSession());
+                yield return Settled(() => ProtokitePlaytest.SessionState == ProtokitePlaytestSessionState.Started, 5f, "The session started");
+                Assert.IsTrue(ProtokitePlaytest.EndPlaytestSession((endedOk, whyNot) => ended.Add(endedOk + ":" + whyNot)));
+                ProtokitePlaytest.Refresh();
+                Assert.AreEqual(ProtokitePlaytestSessionState.Ended, ProtokitePlaytest.SessionState, "Precondition: the end was sent, with nothing to wait for");
+
+                ProtokitePlaytest.HandleGameQuitting();
+                Assert.AreEqual(new List<string> { "True:" }, ended, "The quit waited for the end and told the game");
+                Assert.AreEqual(1, flock.Transport.CountTo(EndRoute), "Sent once, not again by the quit");
+                yield return ForAWhile(0.5f);
+                Assert.AreEqual(1, ended.Count, "Told once");
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator QuittingWhileTheSessionEndsTellsTheGame()
+        {
+            _uploader.HoldEach = true;
+            List<string> ended = new List<string>();
+            using (FlockTestClient flock = StartFlock(Transport()))
+            {
+                ProtokitePlaytest.Refresh();
+                Frames(1);
+                yield return TheSessionStarts(flock);
+                yield return RecordAndStop();
+                yield return Settled(() => _uploader.Count == 1, 10f, "The upload began");
+                Assert.IsTrue(ProtokitePlaytest.EndPlaytestSession((endedOk, whyNot) => ended.Add(endedOk + ":" + whyNot)));
+
+                LogAssert.Expect(LogType.Log, new Regex("Protokite session pk-1 ended"));
+                ProtokitePlaytest.HandleGameQuitting();
+                Assert.AreEqual(new List<string> { "True:" }, ended, "Told once, by the quit's own end");
+                Assert.AreEqual(1, flock.Transport.CountTo(EndRoute));
+            }
+        }
+
         /// <summary>Takes each file upload the playtest makes, answers as the test says (200 unless told otherwise), and can hold one until released.</summary>
         private sealed class FakeUploader : IFlockFileUploader
         {

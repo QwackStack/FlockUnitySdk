@@ -16,7 +16,21 @@ namespace Protokite.Playtest
         private const double BytesPerMegabyte = 1024.0 * 1024.0;
 
         private static ProtokitePlaytestVideoRecording _videoRecording;
-        private static bool _videoStartedThisLaunch;
+        // A recording the game asked for, whether the setting's one start a launch has been tried, and whether any start has been.
+        private static bool _recordingAskedFor;
+        private static bool _automaticRecordingTried;
+        private static bool _playtestRecordingTried;
+        // The Protokite session the recording goes to, fixed when it is first given one: a later session never takes it.
+        private static string _recordingSessionId;
+        private static string _recordingSessionApiUrl;
+        private static Dictionary<string, string> _recordingSessionHeaders;
+        private static Flock.Http.RetryPolicy _recordingSessionRetryPolicy;
+        // Finished recordings that had no session when the next one started: held, and all given the next session started (owner, 2026-11-19).
+        private static readonly List<ProtokitePlaytestRecordingRun> _recordingsWaitingForASession = new List<ProtokitePlaytestRecordingRun>();
+        // This launch's own recordings handed to the earlier recordings' pass, and the session they were given, which an end waits for.
+        private static readonly HashSet<string> _thisLaunchsRecordingsLetGo = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private static bool _lookAgainForThisLaunchsRecordings;
+        private static string _recordingsGivenSessionId;
         // Why this launch's recording did not start, and whether that is the build's nature (no encoder, nothing drawn) rather than a fault.
         private static string _videoNotStartedBecause;
         private static bool _videoNotStartedIsExpected;
@@ -124,7 +138,64 @@ namespace Protokite.Playtest
             return parts.Count == 0 ? null : "Recordings earlier launches left, " + string.Join("; ", parts) + ".";
         }
 
-        /// <summary>Stops this launch's playtest recording for good, for a game that ends play on its own schedule; its file is uploaded like any finished recording. False when none is capturing. Main thread only.</summary>
+        /// <summary>
+        /// Starts recording the screen for the playtest, for a game that turned off Start Session And Recording Automatically or stopped
+        /// the last recording. It goes to the session open while it records, or the next one started (every recording made while no
+        /// session is open does). The last recording must be written and uploaded first; one kept after a failed upload or waiting for
+        /// Wi-Fi stays on disk for a later launch. True when
+        /// it started or starts within a few frames (a failure then is logged); false, saying why in the log, when the playtest, its
+        /// config or the player's answer does not allow video, one is recording or about to start, a session is ending, the last one
+        /// is still being written or uploaded, or the disk has no room. Main thread only.
+        /// </summary>
+        public static bool StartVideoRecording()
+        {
+            string whyNot = WhyARecordingCannotStart(out bool expected);
+            if (whyNot == null)
+            {
+                // Earlier launches' recordings, the platform's encoders and a test video are waited for, a few frames at most.
+                if (!EarlierRecordingsGoneThrough() || !EncoderAnswerReady() || _testVideo != null)
+                {
+                    _recordingAskedFor = true;
+                    Debug.Log(LogPrefix + "The playtest recording starts in a moment, once " +
+                              (_testVideo != null ? "the test video gives way." : "the recordings earlier launches left are gone through."));
+                    return true;
+                }
+                if (StartThePlaytestRecording(true, out whyNot, out expected))
+                    return true;
+            }
+            string line = LogPrefix + "No playtest recording was started: " + whyNot;
+            if (expected)
+                Debug.Log(line);
+            else
+                Debug.LogWarning(line);
+            return false;
+        }
+
+        // Why StartVideoRecording cannot start one now, or null; expected when it is the player's or the playtest's choice, not a mistake.
+        private static string WhyARecordingCannotStart(out bool expected)
+        {
+            expected = false;
+            if (_sessionEnding)
+                return $"session {_playtestSessionId} is ending; record again once EndPlaytestSession has said how the end went.";
+            if (_videoRecording != null)
+                return _videoRecording.IsCapturing ? "one is recording." : "the last recording's file is still being written; it takes a moment.";
+            if (_recordingAskedFor)
+                return "one is already about to start.";
+            if (!VideoIsOnInTheLoadedConfig())
+            {
+                expected = ConfigIsLoaded() && !_playtestNoLongerCollecting;
+                if (!expected)
+                    return "the playtest is not ready. " + Describe(Status);
+                return _config.IsFeatureEnabled(ProtokitePlaytestFeatures.VideoRecording)
+                    ? "the player's answer does not allow the screen to be recorded."
+                    : "this playtest does not turn video recording on in Protokite.";
+            }
+            if (TheLastRecordingIsUploading())
+                return "the last recording is still uploading; record again once RecordingUploadChanged says it is Uploaded or Kept.";
+            return null;
+        }
+
+        /// <summary>Stops the playtest's recording, for a game that ends play on its own schedule; its file is uploaded like any finished recording, and StartVideoRecording records again. False when none is capturing. Main thread only.</summary>
         public static bool StopVideoRecording()
         {
             if (!IsRecordingVideo)
@@ -142,7 +213,7 @@ namespace Protokite.Playtest
             KeepRecordingsWithinThePhonesLimits(frameSeconds);
             // The launch's recording belongs to the playtest: a test video gives way on the frame the playtest's could start, and the
             // playtest's starts once the test video's file is written.
-            bool playtestRecordingDue = _videoRecording == null && !_videoStartedThisLaunch && VideoIsOnInTheLoadedConfig() && EarlierRecordingsGoneThrough() && EncoderAnswerReady();
+            bool playtestRecordingDue = PlaytestRecordingWanted() && EarlierRecordingsGoneThrough() && EncoderAnswerReady();
             if (playtestRecordingDue)
                 MakeTheTestVideoGiveWay();
             UpdateTestVideo(frameSeconds);
@@ -150,7 +221,7 @@ namespace Protokite.Playtest
             if (_videoRecording == null)
             {
                 if (playtestRecordingDue && _testVideo == null)
-                    StartVideoRecording();
+                    StartThePlaytestRecording(false, out _, out _);
                 return;
             }
 
@@ -193,33 +264,57 @@ namespace Protokite.Playtest
 
         private static bool ConfigIsLoaded() => _config != null && ConfigStateForRunningFlock() == ProtokitePlaytestConfigState.Loaded;
 
-        private static void StartVideoRecording()
+        // One recording at a time, wanted by the setting (once a launch) or the game, never while the game is ending its session.
+        private static bool PlaytestRecordingWanted()
+            => _videoRecording == null && !_sessionEnding && VideoIsOnInTheLoadedConfig()
+               && (_recordingAskedFor || (!_automaticRecordingTried && StartsAutomatically()));
+
+        // Starts the playtest's recording; false, with why, logged here unless the caller logs it.
+        private static bool StartThePlaytestRecording(bool callerLogs, out string whyNot, out bool expected)
         {
-            // One attempt a launch, whatever becomes of it.
-            _videoStartedThisLaunch = true;
+            bool askedForByTheGame = _recordingAskedFor;
+            // One attempt for each start wanted, whatever becomes of it.
+            _recordingAskedFor = false;
+            _automaticRecordingTried = true;
+            _playtestRecordingTried = true;
+            // A start the game asked for frames ago: what was true then (the last recording settled) may not be now.
+            if (!callerLogs)
+            {
+                whyNot = WhyARecordingCannotStart(out expected);
+                if (whyNot != null)
+                {
+                    Debug.LogWarning(LogPrefix + "No playtest recording was started: " + whyNot);
+                    return false;
+                }
+            }
+            LetGoOfTheLastRecording();
             ProtokitePlaytestVideoSettings settings = ProtokitePlaytestVideoSettings.From(ProtokitePlaytestSettings.Load());
             long sizeLimit = settings.MaxBytes;
             if (!TryStartRecording(ProtokitePlaytestRecordingKind.Playtest, settings, out ProtokitePlaytestVideoRecording recording, out ProtokitePlaytestRecordingRun run,
-                    out string contentType, out string roomLimitedBy, out RecordingNotStarted notStarted, out string whyNot))
+                    out string contentType, out string roomLimitedBy, out RecordingNotStarted notStarted, out whyNot))
             {
                 // Recordings kept waiting for Wi-Fi are the player's own choice, so a launch with no room left for another is not a fault either.
-                bool expected = notStarted == RecordingNotStarted.NoEncoder || notStarted == RecordingNotStarted.TurnedOff
-                                || notStarted == RecordingNotStarted.NoRoomWhileUploadsWait
-                                || (notStarted == RecordingNotStarted.NoCapture && SystemInfo.graphicsDeviceType == GraphicsDeviceType.Null);
+                expected = notStarted == RecordingNotStarted.NoEncoder || notStarted == RecordingNotStarted.TurnedOff
+                           || notStarted == RecordingNotStarted.NoRoomWhileUploadsWait
+                           || (notStarted == RecordingNotStarted.NoCapture && SystemInfo.graphicsDeviceType == GraphicsDeviceType.Null);
                 _videoNotStartedBecause = whyNot;
                 _videoNotStartedIsExpected = expected;
                 // The encoder has said why it is missing, once.
-                if (notStarted == RecordingNotStarted.NoEncoder)
-                    return;
-                string line = LogPrefix + "This launch records no playtest video: " + whyNot + " Everything else in the playtest still runs.";
+                if (callerLogs || (notStarted == RecordingNotStarted.NoEncoder && !askedForByTheGame))
+                    return false;
+                string line = LogPrefix + (askedForByTheGame
+                    ? "No playtest recording was started: " + whyNot
+                    : "This launch records no playtest video: " + whyNot + " Everything else in the playtest still runs.");
                 // No capture is expected in a build that draws nothing, and nothing in one a studio turned off; loud where a studio's players should have been recorded.
                 if (expected)
                     Debug.Log(line);
                 else
                     Debug.LogWarning(line);
-                return;
+                return false;
             }
 
+            whyNot = null;
+            expected = false;
             _videoRecording = recording;
             _recordingRun = run;
             // Uploaded as the kind of file it is written as, so a platform writing another kind sends its own.
@@ -232,6 +327,7 @@ namespace Protokite.Playtest
             Debug.Log(LogPrefix + $"Recording video for the playtest to {_videoRecording.PartPath}, at {_videoRecording.Width}x{_videoRecording.Height} and " +
                 Invariant($"{settings.FramesPerSecond} frames a second, as H.264. It stops for good after {settings.MaxSeconds / 60.0:0.#} minutes of play, ") +
                 Invariant($"before the file passes {settings.MaxBytes / BytesPerMegabyte:0.#} MB{cutShort}, or when the game stops it."));
+            return true;
         }
 
         /// <summary>What stopped a recording from starting.</summary>
@@ -423,20 +519,56 @@ namespace Protokite.Playtest
         /// <summary>Saves this launch's Protokite session beside its recording, so a later launch uploads the recording to it rather than delete it.</summary>
         private static void SaveSessionBesideRecording()
         {
-            // A recording the player took the screen back from is never given a session, or a later launch would send it.
-            if (_recordingRun == null || _sessionState != ProtokitePlaytestSessionState.Started
+            // A recording the player took the screen back from is never given a session, or a later launch would send it. One that has a
+            // session keeps it; one that finished before any started takes the next.
+            if (_recordingRun == null || _recordingSessionId != null || _sessionState != ProtokitePlaytestSessionState.Started
                 || !ProtokitePlaytestConsent.AllowsVideoRecording(EffectiveConsent()))
                 return;
+            _recordingSessionId = _playtestSessionId;
+            _recordingSessionApiUrl = _sessionApiUrl;
+            _recordingSessionHeaders = _sessionHeaders;
+            _recordingSessionRetryPolicy = _sessionRetryPolicy;
+            if (!_recordingRun.SaveSession(TheOpenSessionToSave(), out string error))
+                Debug.LogWarning(LogPrefix + $"Protokite session {_playtestSessionId} could not be saved beside this launch's recording, so a later launch deletes the recording rather than upload it. {error}");
+        }
+
+        private static ProtokitePlaytestSavedSession TheOpenSessionToSave()
+        {
             string gameVersionId = null;
             _sessionHeaders?.TryGetValue(GameVersionHeader, out gameVersionId);
-            ProtokitePlaytestSavedSession session = new ProtokitePlaytestSavedSession
+            return new ProtokitePlaytestSavedSession { PlaytestSessionId = _playtestSessionId, ProtokiteApiUrl = _sessionApiUrl, FlockGameVersionId = gameVersionId };
+        }
+
+        /// <summary>The session just started: recordings held for a session are given it, let go, and sent by the earlier recordings' pass, one at a time.</summary>
+        private static void GiveTheHeldRecordingsThisSession()
+        {
+            if (_recordingsWaitingForASession.Count == 0)
+                return;
+            ProtokitePlaytestSavedSession session = TheOpenSessionToSave();
+            foreach (ProtokitePlaytestRecordingRun run in _recordingsWaitingForASession)
             {
-                PlaytestSessionId = _playtestSessionId,
-                ProtokiteApiUrl = _sessionApiUrl,
-                FlockGameVersionId = gameVersionId
-            };
-            if (!_recordingRun.SaveSession(session, out string error))
-                Debug.LogWarning(LogPrefix + $"Protokite session {_playtestSessionId} could not be saved beside this launch's recording, so a later launch deletes the recording rather than upload it. {error}");
+                if (!run.SaveSession(session, out string error))
+                    Debug.LogWarning(LogPrefix + $"Protokite session {_playtestSessionId} could not be saved beside a recording made before it, so a later launch deletes that recording rather than upload it. {error}");
+                _thisLaunchsRecordingsLetGo.Add(Path.GetFullPath(run.FolderPath));
+                run.Dispose();
+            }
+            Debug.Log(LogPrefix + $"{_recordingsWaitingForASession.Count} recording(s) made before Protokite session {_playtestSessionId} started go to it.");
+            _recordingsWaitingForASession.Clear();
+            _recordingsGivenSessionId = _playtestSessionId;
+            _lookAgainForThisLaunchsRecordings = true;
+        }
+
+        // Held recordings with no session: let go, so the next launch deletes them; or deleted now, when the player took the screen back.
+        private static void LetGoOfTheHeldRecordings(bool delete)
+        {
+            foreach (ProtokitePlaytestRecordingRun run in _recordingsWaitingForASession)
+            {
+                if (delete)
+                    run.DeleteEverything();
+                else
+                    run.Dispose();
+            }
+            _recordingsWaitingForASession.Clear();
         }
 
         private static void ReportFinishedVideo()
@@ -502,10 +634,50 @@ namespace Protokite.Playtest
         // A file still being written keeps its run held until a new launch has waited for it.
         private static void LetGoOfRecordingRunOnceWritten()
         {
+            LetGoOfTheHeldRecordings(false);
             if (_videoRecording != null)
                 return;
             _recordingRun?.Dispose();
+            ForgetThisLaunchsRecordingRun();
+        }
+
+        // Before the next recording: the last one's run is let go, so it is kept on disk for a later launch like any ended run (its
+        // session saved beside it), or deleted by the next launch when no session started for it. Uploaded ones are already gone.
+        private static void LetGoOfTheLastRecording()
+        {
+            if (_recordingRun != null)
+            {
+                bool uploaded = ThisLaunchsUpload != null && ThisLaunchsUpload.Status == TaskStatus.RanToCompletion && ThisLaunchsUpload.Result.Uploaded;
+                if (_recordingSessionId == null && FinishedVideo?.FilePath != null)
+                {
+                    // Held, so it can still be given the next session started.
+                    _recordingsWaitingForASession.Add(_recordingRun);
+                    Debug.Log(LogPrefix + "The last recording has no Protokite session yet; it goes to the next one started.");
+                }
+                else
+                {
+                    if (!uploaded && _recordingSessionId != null)
+                    {
+                        Debug.Log(LogPrefix + $"The last recording was not uploaded, so it is kept for a later launch to upload to Protokite session {_recordingSessionId}.");
+                        _thisLaunchsRecordingsLetGo.Add(Path.GetFullPath(_recordingRun.FolderPath));
+                    }
+                    _recordingRun.Dispose();
+                }
+            }
+            ForgetThisLaunchsRecordingRun();
+            FinishedVideo = null;
+            ThisLaunchsUpload = null;
+            _thisLaunchsRecordingSaidWaiting = false;
+        }
+
+        // The run and the session it goes to are forgotten together.
+        private static void ForgetThisLaunchsRecordingRun()
+        {
             _recordingRun = null;
+            _recordingSessionId = null;
+            _recordingSessionApiUrl = null;
+            _recordingSessionHeaders = null;
+            _recordingSessionRetryPolicy = null;
         }
 
         // A second Play with domain reload off is a new launch: the last one's recording is stopped and waited for first.
@@ -520,12 +692,18 @@ namespace Protokite.Playtest
             _videoRecording = null;
             // Let go once the last launch's recording has been waited for, so this launch's pass may finish or keep it.
             _recordingRun?.Dispose();
-            _recordingRun = null;
+            ForgetThisLaunchsRecordingRun();
+            LetGoOfTheHeldRecordings(false);
+            _thisLaunchsRecordingsLetGo.Clear();
+            _lookAgainForThisLaunchsRecordings = false;
+            _recordingsGivenSessionId = null;
             ResetTestVideoForNewLaunch();
             // The last launch's pass is let finish (5 s at most) before this launch's driver starts its own, then forgotten.
             _earlierRecordings?.Wait(TimeSpan.FromSeconds(5));
             _earlierRecordings = null;
-            _videoStartedThisLaunch = false;
+            _recordingAskedFor = false;
+            _automaticRecordingTried = false;
+            _playtestRecordingTried = false;
             _videoNotStartedBecause = null;
             _videoNotStartedIsExpected = false;
             _videoTurnedOffOnThisPlatform = false;
