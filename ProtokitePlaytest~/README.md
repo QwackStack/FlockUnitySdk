@@ -3,7 +3,7 @@
 Playtesting for games built with the Flock SDK: each play session, gameplay recording and in-game feedback,
 reported to your Protokite playtest.
 
-It asks the player what the playtest may collect, runs one Protokite session per launch, records the game's screen on 64-bit
+It asks the player what the playtest may collect, runs a Protokite session (one per launch unless your game starts more), records the game's screen on 64-bit
 Windows and Android and uploads it to that session, sends performance and scene events through the Flock SDK, and shows your playtest's
 feedback form. In the editor it checks your setup, records test videos and runs a live self-test. A sample puts the calls a
 game makes most on one screen.
@@ -570,14 +570,67 @@ in Play Mode.
 
 ## Sessions
 
-A Protokite session is one launch of the game, as it shows on the playtest's **Sessions** page in Protokite. Each launch runs
-**one**. It starts once the playtest's config is loaded, the player's answer lets it collect something, and a Flock session
-(the Flock SDK's own record of a play session) has reached the server. That happens when a player signs in with **Analytics
-Enabled** and **Analytics Auto Start Session** on (both in **Flock > Settings > Advanced Settings**, the second under
-**Analytics Settings**), or when you call `FlockClient.Instance.Analytics.StartSessionAsync()`, and once consent is given
-when **Analytics Require Explicit Consent** is on. Signing out and in, a new Flock session or restarting Flock never start a
-second one. The session ends when the game quits; quitting waits up to 3 seconds for Protokite to take the end.
-`ProtokitePlaytest.PlaytestSessionId` is its id once it has started, and null before.
+A Protokite session is a stretch of play, as it shows on the playtest's **Sessions** page in Protokite. By default each launch
+runs **one**, started by itself (your game can end it and start more, one at a time: see below). It starts once the playtest's
+config is loaded, the player's answer lets it collect something, and a Flock session (the Flock SDK's own record of a play
+session) has reached the server. That happens when a player signs in with **Analytics Enabled** and **Analytics Auto Start
+Session** on (both in **Flock > Settings > Advanced Settings**, the second under **Analytics Settings**), or when you call
+`FlockClient.Instance.Analytics.StartSessionAsync()`, and once consent is given when **Analytics Require Explicit Consent** is
+on. Signing out and in, a new Flock session or restarting Flock never start a second one. The session ends when the game quits (or your game ends it, below);
+quitting waits up to 3 seconds for Protokite to take the end. `ProtokitePlaytest.PlaytestSessionId` is its id once it has
+started, and null before and once it has ended.
+
+### Starting and ending them from your game
+
+A game that wants a session, or a recording, for one part of play only (a level, a match, a booth visitor's turn) turns off
+**Start Session And Recording Automatically** in **Protokite > Playtest > Settings** and calls these on `ProtokitePlaytest`,
+on the main thread:
+
+| Call | What it does |
+|---|---|
+| `StartPlaytestSession()` | Starts a session; it starts once a Flock session has reached the server, as above. False when one is starting or open, the playtest is not ready (`Status`), or the player's answer collects nothing |
+| `StartVideoRecording()` | Starts recording the screen; it may start before the session and then goes to the next one started. True when it started, or starts within a few frames (while the recordings earlier launches left are gone through, or a test video gives way; a failure then is in the Console). False when the playtest is not ready, does not turn video on, or the player's answer does not allow the screen; when one is recording or about to start; when a session is ending; when the last recording is still being written or uploaded; or when there is no room on disk |
+| `StopVideoRecording()` | Stops the recording; it uploads once its file is finished. False, with nothing logged, when none is recording |
+| `EndPlaytestSession(ended)` | Ends the session: a recording still running stops, is uploaded to this session, and the end goes once the upload has an answer. `ended(bool endedOk, string whyNot)` hears how it went. False when none is open, one is still starting, or one is already ending |
+| `PlaytestSessionChanged` | An event, raised on the main thread with `(string sessionId, bool started)`: `true` once Protokite has started a session (`PlaytestSessionId` is set), `false` as a session's end is sent (whether Protokite took it is `ended`'s to say). Not raised for a start that failed, or while the game quits; a handler that throws is logged |
+
+The start and end calls say in the Console why they returned false. One session and one recording run at a time, and a launch may hold
+several of each. A recording always goes to the session open while it recorded, never a later one; one that uploaded is
+deleted before the next starts, and one that did not is kept on disk with its session, for a later launch to upload. Recordings
+made while no session is open are all kept, and all go to the next session started. With the setting on (the default), the first
+session and recording start by themselves, and every session the game starts later gets a recording of its own too; these calls
+are there to end them and start more.
+
+```csharp
+using Protokite.Playtest;
+using UnityEngine;
+
+public class PlaytestEachLevel : MonoBehaviour
+{
+    // Call when a level starts: its own session, and its own recording.
+    public void OnLevelStarted()
+    {
+        ProtokitePlaytest.StartPlaytestSession();
+        ProtokitePlaytest.StartVideoRecording();
+    }
+
+    // Call when the level ends: the recording is uploaded to the level's session, then the session ends.
+    public void OnLevelEnded()
+    {
+        ProtokitePlaytest.EndPlaytestSession((endedOk, whyNot) =>
+            Debug.Log(endedOk ? "The level's playtest session ended." : "The session did not end: " + whyNot));
+    }
+}
+```
+
+A new session or recording cannot start while a session is ending: start the next level's from `ended`, or once it has been
+called. While the player's answer is Wi-Fi only and the phone is off Wi-Fi, `EndPlaytestSession` ends the session at once and the
+recording waits on the phone, uploading to that session once it is on Wi-Fi. A game that quits while a session is ending ends it
+then, and `ended` still hears how it went.
+
+| Setting | Default | |
+|---|---|---|
+| Start Session And Recording Automatically | on | The launch's first session and its recording start by themselves, and every session the game starts later gets a recording of its own. Off: neither starts until the game calls `StartPlaytestSession` and `StartVideoRecording` |
 
 **The playtest never signs a player in**, so your game must. A game with no sign-in screen of its own can sign in with this
 device, registering it the first time:
@@ -638,13 +691,13 @@ public class PlaytestSteamName : MonoBehaviour
     {
         string steamId = SteamUser.GetSteamID().ToString();
         if (!ProtokitePlaytest.SetSteamId(steamId, SteamFriends.GetPersonaName()))
-            Debug.Log("Steam id not used: the session has already started, or the id was refused; the Console says which.");
+            Debug.Log("Steam id not used: a session has already started, or the id was refused; the Console says which.");
     }
 }
 ```
 
 An id that is empty, longer than 64 characters or holds whitespace is refused (not trimmed), and the device id is sent. One set
-after the session has started changes nothing for this launch.
+while a session is starting or open is refused, and changes nothing until the next session.
 
 When a player is signed in to Flock, the session start also carries their sign-in, renewed first if it has run out or has a
 minute or less left, so Protokite can link the session to the player's Qwacks Community account. Nothing else is needed from
@@ -713,9 +766,10 @@ install it there.
 ## Video
 
 When the playtest's config turns **video_recording** on, the game's screen is recorded from the moment the config loads,
-before anyone signs in: one recording a launch, encoded as H.264 by the graphics card's (or the phone's) own video encoder and written as it
+before anyone signs in: one recording a launch by default (see
+[Starting and ending them from your game](#starting-and-ending-them-from-your-game) for more), encoded as H.264 by the graphics card's (or the phone's) own video encoder and written as it
 records as an MP4 file a browser plays with nothing installed. Each frame is written whole as it comes, so a recording cut
-off by a crash keeps every frame before the cut. It stops for good at the length or size limit, or when the game quits;
+off by a crash keeps every frame before the cut. It stops at the length or size limit, or when the game quits;
 quitting waits for the file within the same 3 seconds as the session end, and a file not finished by then stays as its
 `.part` file, which the next launch finishes. Time the game spends in the background is left out, and nothing fills it: the
 video goes on from the moment the player left. As the game goes to the background, everything the recording holds (frames on
@@ -723,9 +777,10 @@ their way from the graphics card, and those the encoder has not handed back) is 
 while it is away keeps every frame recorded before. On a phone the encoder is given back to the phone meanwhile, and the first
 frame after the return starts a new stream on a keyframe in the same file.
 
-There is nothing to call: it records by itself. `ProtokitePlaytest.IsRecordingVideo` is true while this launch's recording
+There is nothing to call: it records by itself, unless **Start Session And Recording Automatically** is off, when
+`ProtokitePlaytest.StartVideoRecording()` starts it. `ProtokitePlaytest.IsRecordingVideo` is true while the playtest's recording
 captures (a test video does not count). A game that ends play on its own schedule, such as a demo's last level, can stop the
-recording for good, and it then uploads like any finished recording:
+recording, and it then uploads like any finished recording:
 
 ```csharp
 using Protokite.Playtest;
@@ -733,7 +788,7 @@ using UnityEngine;
 
 public class EndOfDemo : MonoBehaviour
 {
-    // Call when your demo's last level ends: the recording stops for good and uploads like any finished one.
+    // Call when your demo's last level ends: the recording stops and uploads like any finished one.
     public void OnDemoFinished()
     {
         if (ProtokitePlaytest.StopVideoRecording())
@@ -806,8 +861,43 @@ file is finished, the Console shows where it is.
 
 ### Uploading
 
-**Uploads are automatic**: there is no call to make, and no event or result a game can read about them. They show in the
-Console only, as `[Protokite Playtest]` lines saying when an upload starts, when it is done, and why a recording was kept.
+**Uploads are automatic**: there is no call to make. The Console shows `[Protokite Playtest]` lines saying when an upload
+starts, when it is done, and why a recording was kept, and a game hears the same through `ProtokitePlaytest.RecordingUploadChanged`,
+raised on the main thread with a `ProtokitePlaytestUploadUpdate`:
+
+| `State` | When | Also set |
+|---|---|---|
+| `Started` | An upload begins | |
+| `Uploaded` | The storage took the whole file; it is deleted from disk (a file that cannot be deleted now is deleted by a later launch, never sent again) | `BytesSent` |
+| `Kept` | It was not uploaded, so it is kept on disk and a later launch tries again | `WhyNot` |
+| `WaitingForWiFi` | The player chose Wi-Fi only and the device is not on Wi-Fi; it uploads once it is | `WhyNot` |
+
+Every update names the recording's Protokite session in `PlaytestSessionId`. `FromAnEarlierLaunch` is true for a recording an earlier launch kept; those are told about once their upload begins, so one
+held back for Wi-Fi from the start of the launch is told `WaitingForWiFi` only if an upload of it had begun. Nothing is raised
+while the game quits. A handler that
+throws is logged and stops neither the upload nor the other handlers.
+
+```csharp
+using Protokite.Playtest;
+using UnityEngine;
+
+public class ShowRecordingUploads : MonoBehaviour
+{
+    private void OnEnable() => ProtokitePlaytest.RecordingUploadChanged += Show;
+    private void OnDisable() => ProtokitePlaytest.RecordingUploadChanged -= Show;
+
+    private void Show(ProtokitePlaytestUploadUpdate update)
+    {
+        switch (update.State)
+        {
+            case ProtokitePlaytestUploadState.Started: Debug.Log("Sending the playtest recording…"); break;
+            case ProtokitePlaytestUploadState.Uploaded: Debug.Log($"Recording sent ({update.BytesSent} bytes)."); break;
+            case ProtokitePlaytestUploadState.Kept: Debug.Log("Recording kept for later: " + update.WhyNot); break;
+            case ProtokitePlaytestUploadState.WaitingForWiFi: Debug.Log("Recording waits for Wi-Fi."); break;
+        }
+    }
+}
+```
 
 A recording is uploaded to its Protokite session once its file is finished (it reached its length or size limit, or the game
 stopped it) and the session has started, whichever comes second. It is sent straight from disk, never whole in memory, and

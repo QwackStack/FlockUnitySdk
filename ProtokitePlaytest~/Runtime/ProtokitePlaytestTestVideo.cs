@@ -73,7 +73,7 @@ namespace Protokite.Playtest
                 whyNot = "a test video records in Play Mode or a player, and the editor is not playing.";
             else if (_testVideo != null || _testVideoSecondsAskedFor > 0.0)
                 whyNot = "a test video is already being recorded.";
-            else if (_videoRecording != null || (!_videoStartedThisLaunch && VideoIsOnInTheLoadedConfig()))
+            else if (_videoRecording != null || PlaytestRecordingWanted())
                 whyNot = "this launch records video for its playtest, and a launch records one video at a time.";
             if (whyNot != null)
             {

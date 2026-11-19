@@ -28,6 +28,9 @@ namespace Protokite.Playtest
         [SerializeField, HideInInspector] private string resolvedFromPlaytestId = "";
         [SerializeField, HideInInspector] private string resolvedWithFlockSettings = "";
 
+        [Tooltip("On by default: the launch's Protokite session starts once the playtest is loaded and a Flock session has started, and the screen recording once the playtest turns video on; every session the game starts later gets a recording of its own too. Off: neither starts until the game calls ProtokitePlaytest.StartPlaytestSession and ProtokitePlaytest.StartVideoRecording. Either way a game can end them (EndPlaytestSession, StopVideoRecording) and start them again in the same launch.")]
+        [SerializeField] private bool startSessionAndRecordingAutomatically = true;
+
         [Header("Player consent")]
         [Tooltip("On by default: the player is asked what this playtest may collect (yes, the screen and play data, or not now, nothing), and nothing is collected until they answer; on a phone that records, an answer that lets the screen be recorded is followed by which networks recordings may upload on (Wi-Fi only, or Wi-Fi and mobile data). The answers are kept on their machine for later launches. Turn it off only where players were asked another way, or for a test run with nobody to answer; everything the playtest turns on is then collected, and each session says nobody was asked.")]
         [SerializeField] private bool askThePlayerForPlaytestConsent = true;
@@ -151,6 +154,13 @@ namespace Protokite.Playtest
             resolvedFromPlaytestId = fromPlaytestId ?? "";
             resolvedPlaytestVersionId = versionId ?? "";
             resolvedWithFlockSettings = withFlockSettings ?? "";
+        }
+
+        /// <summary>Whether the launch's session and recording start by themselves, once each; off, only the game's start calls start them.</summary>
+        public bool StartSessionAndRecordingAutomatically
+        {
+            get => startSessionAndRecordingAutomatically;
+            set => startSessionAndRecordingAutomatically = value;
         }
 
         /// <summary>Whether the player is asked what this playtest may collect before anything is. An answer already given counts either way.</summary>

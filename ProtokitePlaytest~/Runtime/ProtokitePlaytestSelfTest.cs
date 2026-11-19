@@ -146,11 +146,14 @@ namespace Protokite.Playtest
             return run.Pass(run.NoSessionBecause == null ? loaded + "." : loaded + "; " + run.NoSessionBecause);
         }
 
-        // Step 5: the game's own session, started once a Flock session reaches the server; the self-test starts nothing itself.
+        // Step 5: the game's own session, started once a Flock session reaches the server; with Start Session And Recording Automatically
+        // off, the self-test asks for it as the game would.
         private static async Task<ProtokitePlaytestSelfTestStep> CheckTheSessionStartsAsync(SelfTestRun run)
         {
             if (run.NoSessionBecause != null)
                 return run.Skip(run.NoSessionBecause);
+            if (!StartsAutomatically() && _sessionState == ProtokitePlaytestSessionState.NotStarted && !SessionWanted())
+                StartPlaytestSession();
             await run.WaitUntilAsync(() => _sessionState != ProtokitePlaytestSessionState.NotStarted && _sessionState != ProtokitePlaytestSessionState.Starting,
                 SelfTestWaitSecondsForTesting ?? SelfTestWaitSeconds);
             switch (_sessionState)
@@ -346,8 +349,10 @@ namespace Protokite.Playtest
         {
             if (!IsFeatureEnabled(ProtokitePlaytestFeatures.VideoRecording))
                 return run.Skip("the playtest records no video: it does not turn video on, or the player's answer does not allow the screen.");
-            // The launch's recording starts on a frame once earlier launches' recordings are gone through.
-            await run.WaitUntilAsync(() => _videoStartedThisLaunch, SelfTestWaitSecondsForTesting ?? SelfTestWaitSeconds);
+            // The launch's recording starts on a frame once earlier launches' recordings are gone through; asked for as the game would when the setting is off.
+            if (!StartsAutomatically() && !_playtestRecordingTried && _videoRecording == null)
+                StartVideoRecording();
+            await run.WaitUntilAsync(() => _playtestRecordingTried, SelfTestWaitSecondsForTesting ?? SelfTestWaitSeconds);
             // A recording that already ended (its length limit, or an encoder that could not start) has started; its file is judged below.
             if (_videoRecording == null && FinishedVideo == null)
             {

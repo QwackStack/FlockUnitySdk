@@ -28,6 +28,33 @@ namespace Protokite.Playtest
         }
     }
 
+    /// <summary>Where a recording's upload has got to.</summary>
+    public enum ProtokitePlaytestUploadState
+    {
+        /// <summary>The upload began.</summary>
+        Started,
+        /// <summary>The storage took the whole file, and the recording is deleted from disk.</summary>
+        Uploaded,
+        /// <summary>It was not uploaded (see WhyNot), so it is kept on disk and a later launch tries again.</summary>
+        Kept,
+        /// <summary>The player chose Wi-Fi only and the device is not on Wi-Fi: it is kept, and uploads once the device is on Wi-Fi.</summary>
+        WaitingForWiFi
+    }
+
+    /// <summary>One change in a recording's upload, as <see cref="ProtokitePlaytest.RecordingUploadChanged"/> hands it over.</summary>
+    public sealed class ProtokitePlaytestUploadUpdate
+    {
+        public ProtokitePlaytestUploadState State { get; internal set; }
+        /// <summary>The Protokite session the recording goes to.</summary>
+        public string PlaytestSessionId { get; internal set; }
+        /// <summary>True for a recording an earlier launch kept, sent as this launch starts.</summary>
+        public bool FromAnEarlierLaunch { get; internal set; }
+        /// <summary>The bytes the storage took, when Uploaded; 0 otherwise.</summary>
+        public long BytesSent { get; internal set; }
+        /// <summary>Why it is Kept or WaitingForWiFi; null otherwise.</summary>
+        public string WhyNot { get; internal set; }
+    }
+
     /// <summary>What became of one recording's upload.</summary>
     internal sealed class ProtokitePlaytestRecordingUploadOutcome
     {
@@ -40,6 +67,8 @@ namespace Protokite.Playtest
         public bool Deleted;
         /// <summary>Stopped because the device left Wi-Fi under a Wi-Fi only answer: kept, and sent again once it is back on Wi-Fi.</summary>
         public bool StoppedWhenTheDeviceLeftWiFi;
+        /// <summary>Stopped because the launch ended: the next launch sends it, and nobody is told now.</summary>
+        public bool LaunchEnded;
     }
 
     public static partial class ProtokitePlaytest
@@ -50,6 +79,11 @@ namespace Protokite.Playtest
         private static CancellationTokenSource _uploadsCancel = new CancellationTokenSource();
         private static bool _earlierUploadsStarted;
         private static string _recordingContentType;
+        // Whether the game was told this launch's recording waits for Wi-Fi, since it last began uploading.
+        private static bool _thisLaunchsRecordingSaidWaiting;
+
+        /// <summary>Raised on the main thread each time a recording's upload begins, ends (Uploaded or Kept) or waits for Wi-Fi: this launch's recordings and those earlier launches kept. Not raised while the game is closing.</summary>
+        public static event Action<ProtokitePlaytestUploadUpdate> RecordingUploadChanged;
 
         /// <summary>This launch's recording's upload, which the self-test waits for; null until one starts.</summary>
         internal static Task<ProtokitePlaytestRecordingUploadOutcome> ThisLaunchsUpload { get; private set; }
@@ -75,18 +109,82 @@ namespace Protokite.Playtest
             if (ThisLaunchsUpload != null
                 && (ThisLaunchsUpload.Status != TaskStatus.RanToCompletion || !ThisLaunchsUpload.Result.StoppedWhenTheDeviceLeftWiFi))
                 return;
-            if (FinishedVideo.FilePath == null || _sessionState != ProtokitePlaytestSessionState.Started)
+            // To the session it recorded in, never a later one; none before a session starts, and none once the launch is ending.
+            if (FinishedVideo.FilePath == null || _recordingSessionId == null || _uploadsCancel.IsCancellationRequested)
                 return;
             if (UploadsWaitForWiFi())
             {
                 SayUploadsWaitForWiFi();
+                SayThisLaunchsRecordingWaits();
                 return;
             }
-            // The address, key and version the session started with, as its end uses: a Flock restart since changes none of them.
-            Dictionary<string, string> headers = new Dictionary<string, string>(_sessionHeaders);
-            Debug.Log(LogPrefix + $"Uploading this launch's playtest recording to Protokite session {_playtestSessionId}.");
-            ThisLaunchsUpload = UploadThisLaunchsRecordingAsync(_recordingRun, FinishedVideo.FilePath, _recordingContentType, _sessionApiUrl,
-                headers, _playtestSessionId, _sessionRetryPolicy, _uploadsCancel.Token, BeginUploadOnAnAllowedNetwork());
+            // The address, key and version its session started with, as the session's end uses: a Flock restart since changes none of them.
+            Dictionary<string, string> headers = new Dictionary<string, string>(_recordingSessionHeaders);
+            Debug.Log(LogPrefix + $"Uploading this launch's playtest recording to Protokite session {_recordingSessionId}.");
+            _thisLaunchsRecordingSaidWaiting = false;
+            // Read now: an upload that ends at once forgets its run and session before the call returns.
+            string sessionId = _recordingSessionId;
+            TellTheGameAboutTheUpload(ProtokitePlaytestUploadState.Started, sessionId, false, _launch);
+            Task<ProtokitePlaytestRecordingUploadOutcome> upload = UploadThisLaunchsRecordingAsync(_recordingRun, FinishedVideo.FilePath, _recordingContentType,
+                _recordingSessionApiUrl, headers, sessionId, _recordingSessionRetryPolicy, _uploadsCancel.Token, BeginUploadOnAnAllowedNetwork());
+            ThisLaunchsUpload = upload;
+            // Told once the upload has completed, so a game that records again from the update finds the last one settled.
+            _ = TellTheGameHowThisLaunchsUploadEndedAsync(upload, sessionId, _launch);
+        }
+
+        private static async Task TellTheGameHowThisLaunchsUploadEndedAsync(Task<ProtokitePlaytestRecordingUploadOutcome> upload, string sessionId, int launch)
+        {
+            ProtokitePlaytestRecordingUploadOutcome outcome = await upload;
+            // A frame later, as an upload that ended at once is still being taken by the frame that began it.
+            await Task.Yield();
+            if (outcome.LaunchEnded)
+                return;
+            if (outcome.StoppedWhenTheDeviceLeftWiFi)
+            {
+                if (ReferenceEquals(ThisLaunchsUpload, upload))
+                    _thisLaunchsRecordingSaidWaiting = true;
+                TellTheGameAboutTheUpload(ProtokitePlaytestUploadState.WaitingForWiFi, sessionId, false, launch, whyNot: outcome.WhyNot);
+                return;
+            }
+            TellTheGameAboutTheUpload(outcome.Uploaded ? ProtokitePlaytestUploadState.Uploaded : ProtokitePlaytestUploadState.Kept, sessionId, false, launch,
+                outcome.Uploaded ? outcome.BytesSent : 0, outcome.Uploaded ? null : outcome.WhyNot);
+        }
+
+        // Once each time this launch's recording begins to wait for Wi-Fi.
+        private static void SayThisLaunchsRecordingWaits()
+        {
+            if (_thisLaunchsRecordingSaidWaiting)
+                return;
+            _thisLaunchsRecordingSaidWaiting = true;
+            TellTheGameAboutTheUpload(ProtokitePlaytestUploadState.WaitingForWiFi, _recordingSessionId, false, _launch, whyNot: WhyUploadsWait());
+        }
+
+        // Each handler is called on its own, so one that throws is logged and the others still hear; never in a later launch than the upload's.
+        private static void TellTheGameAboutTheUpload(ProtokitePlaytestUploadState state, string sessionId, bool fromAnEarlierLaunch, int launch,
+            long bytesSent = 0, string whyNot = null)
+        {
+            Action<ProtokitePlaytestUploadUpdate> handlers = RecordingUploadChanged;
+            if (handlers == null || launch != _launch)
+                return;
+            ProtokitePlaytestUploadUpdate update = new ProtokitePlaytestUploadUpdate
+            {
+                State = state,
+                PlaytestSessionId = sessionId,
+                FromAnEarlierLaunch = fromAnEarlierLaunch,
+                BytesSent = bytesSent,
+                WhyNot = whyNot
+            };
+            foreach (Delegate handler in handlers.GetInvocationList())
+            {
+                try
+                {
+                    ((Action<ProtokitePlaytestUploadUpdate>)handler)(update);
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogException(ex);
+                }
+            }
         }
 
         // An upload still being sent goes on whatever the player answers meanwhile, and an uploaded recording is sent; anything else of this
@@ -104,7 +202,7 @@ namespace Protokite.Playtest
             if (outcome.StoppedWhenTheDeviceLeftWiFi)
                 return outcome;
             if (outcome.Uploaded && outcome.Deleted && ReferenceEquals(_recordingRun, run))
-                _recordingRun = null;
+                ForgetThisLaunchsRecordingRun();
             if (outcome.Uploaded)
                 Debug.Log(LogPrefix + Invariant($"Playtest recording uploaded to Protokite session {sessionId} ({outcome.BytesSent / BytesPerMegabyte:0.#} MB); ") +
                           (outcome.Deleted ? "it is no longer kept on disk." : "its files could not all be deleted now."));
@@ -119,8 +217,10 @@ namespace Protokite.Playtest
         {
             // One pass a launch, but one the device leaving Wi-Fi stopped goes through again once it is back on Wi-Fi.
             bool stoppedOffWiFi = EarlierUploads != null && EarlierUploads.Status == TaskStatus.RanToCompletion && EarlierUploads.Result.StoppedWhenTheDeviceLeftWiFi;
-            if ((_earlierUploadsStarted && !stoppedOffWiFi) || running == null || _uploadsCancel.IsCancellationRequested || _earlierRecordings == null
-                || !_earlierRecordings.IsCompleted)
+            // Again for this launch's own recordings once a session was given to those held for one, after any pass under way.
+            bool lookAgain = _lookAgainForThisLaunchsRecordings && (EarlierUploads == null || EarlierUploads.IsCompleted);
+            if ((_earlierUploadsStarted && !stoppedOffWiFi && !lookAgain) || running == null || _uploadsCancel.IsCancellationRequested
+                || (_earlierRecordings == null && !lookAgain) || (_earlierRecordings != null && !_earlierRecordings.IsCompleted))
                 return;
             // Waits rather than giving up for the launch, so a change of mind sends them in the same launch.
             if (HoldingBackEarlierRecordings())
@@ -131,12 +231,13 @@ namespace Protokite.Playtest
                 return;
             }
             _earlierUploadsStarted = true;
+            _lookAgainForThisLaunchsRecordings = false;
             EarlierUploads = UploadEarlierRecordingsAsync(RecordingsFolder, running.GetGameHeaders(), running.RetryPolicy, _uploadsCancel.Token,
-                BeginUploadOnAnAllowedNetwork());
+                BeginUploadOnAnAllowedNetwork(), _launch);
         }
 
         private static async Task<(int Uploaded, int Kept, bool StoppedWhenTheDeviceLeftWiFi)> UploadEarlierRecordingsAsync(string folder, Dictionary<string, string> launchHeaders,
-            RetryPolicy retryPolicy, CancellationToken launchEnds, CancellationToken deviceLeavesWiFi)
+            RetryPolicy retryPolicy, CancellationToken launchEnds, CancellationToken deviceLeavesWiFi, int launch)
         {
             int uploaded = 0;
             int kept = 0;
@@ -163,20 +264,26 @@ namespace Protokite.Playtest
                         if (session == null || videoPath == null)
                             continue;
 
+                        bool fromAnEarlierLaunch = !_thisLaunchsRecordingsLetGo.Contains(Path.GetFullPath(runFolder));
+                        TellTheGameAboutTheUpload(ProtokitePlaytestUploadState.Started, session.PlaytestSessionId, fromAnEarlierLaunch, launch);
                         ProtokitePlaytestRecordingUploadOutcome outcome = await UploadWaitingRecordingAsync(run, videoPath, session, launchHeaders,
                             retryPolicy, launchEnds, deviceLeavesWiFi);
                         if (outcome.Uploaded)
                         {
                             uploaded++;
+                            TellTheGameAboutTheUpload(ProtokitePlaytestUploadState.Uploaded, session.PlaytestSessionId, fromAnEarlierLaunch, launch, outcome.BytesSent);
                         }
                         else if (outcome.StoppedWhenTheDeviceLeftWiFi)
                         {
                             stoppedWhenTheDeviceLeftWiFi = true;
+                            TellTheGameAboutTheUpload(ProtokitePlaytestUploadState.WaitingForWiFi, session.PlaytestSessionId, fromAnEarlierLaunch, launch, whyNot: outcome.WhyNot);
                             break;
                         }
                         else
                         {
                             kept++;
+                            if (!outcome.LaunchEnded)
+                                TellTheGameAboutTheUpload(ProtokitePlaytestUploadState.Kept, session.PlaytestSessionId, fromAnEarlierLaunch, launch, whyNot: outcome.WhyNot);
                             // Not a warning: a build that never records never makes room either, so one Protokite refuses is asked for every launch.
                             Debug.Log(LogPrefix + $"A recording an earlier launch left for Protokite session {session.PlaytestSessionId} was not uploaded, so it is kept: {outcome.WhyNot}");
                         }
@@ -233,6 +340,7 @@ namespace Protokite.Playtest
                 {
                     // The launch ending wins: what it was sending is the next launch's to send.
                     outcome.StoppedWhenTheDeviceLeftWiFi = !launchEnds.IsCancellationRequested && deviceLeavesWiFi.IsCancellationRequested;
+                    outcome.LaunchEnded = launchEnds.IsCancellationRequested;
                     outcome.WhyNot = outcome.StoppedWhenTheDeviceLeftWiFi
                         ? "the device left Wi-Fi, and the player chose Wi-Fi only."
                         : "the launch ended before the upload finished.";
@@ -352,6 +460,7 @@ namespace Protokite.Playtest
             _recordingContentType = null;
             ThisLaunchsUpload = null;
             EarlierUploads = null;
+            _thisLaunchsRecordingSaidWaiting = false;
         }
     }
 }

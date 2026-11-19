@@ -51,6 +51,19 @@ namespace Protokite.Playtest
         private static int _launch;
         private static string _steamId;
         private static string _playerName;
+        // A start the game asked for, and whether the setting's one start a launch has been used.
+        private static bool _sessionAskedFor;
+        private static bool _automaticSessionTried;
+        // The setting, read once a launch: asked every frame until the starts are used.
+        private static bool? _startsAutomatically;
+        // The game asked for the session to end: it ends once its recording has been sent, and then tells the game.
+        private static bool _sessionEnding;
+        private static Action<bool, string> _onSessionEnded;
+        // The game's end once sent, until the game is told how it went: quitting waits for it.
+        private static Task _gamesEnd;
+
+        /// <summary>Raised on the main thread when a Protokite session opens (true, once Protokite has answered its start with an id) and when it closes (false, as its end is sent). Not raised for a start that failed, or while the game quits.</summary>
+        public static event Action<string, bool> PlaytestSessionChanged;
 
         /// <summary>Where the device id is kept, when a test sets one; the game's persistent data folder otherwise.</summary>
         internal static string DeviceIdFilePathForTesting;
@@ -61,19 +74,15 @@ namespace Protokite.Playtest
         /// <summary>Where this launch's session is.</summary>
         internal static ProtokitePlaytestSessionState SessionState => _sessionState;
 
-        /// <summary>This launch's Protokite session id, or null until Protokite has started one.</summary>
+        /// <summary>The open Protokite session's id; null until Protokite has started one, and once it has ended.</summary>
         public static string PlaytestSessionId => _sessionState == ProtokitePlaytestSessionState.Started ? _playtestSessionId : null;
 
-        /// <summary>Sends this Steam id and name instead of the device id, when called before the session starts; an id empty, over 64 characters or holding whitespace is refused, and null goes back to the device id.</summary>
+        /// <summary>Sends this Steam id and name instead of the device id, when called while no session is starting or open (it goes with the next one); an id empty, over 64 characters or holding whitespace is refused, and null goes back to the device id.</summary>
         public static bool SetSteamId(string steamId, string playerName = null)
         {
-            if (_sessionState != ProtokitePlaytestSessionState.NotStarted)
+            if (_sessionState == ProtokitePlaytestSessionState.Starting || _sessionState == ProtokitePlaytestSessionState.Started)
             {
-                bool sent = _sessionState == ProtokitePlaytestSessionState.Starting || _sessionState == ProtokitePlaytestSessionState.Started
-                            || _sessionState == ProtokitePlaytestSessionState.Ended;
-                Debug.LogWarning(LogPrefix + (sent
-                    ? "The Steam id was set after this launch's Protokite session started, so it changes nothing this launch."
-                    : "The Steam id was set after this launch's one Protokite session start was given up, so it changes nothing this launch."));
+                Debug.LogWarning(LogPrefix + "The Steam id was set after this Protokite session started, so it changes nothing until the next session (EndPlaytestSession, then StartPlaytestSession).");
                 return false;
             }
             if (steamId == null)
@@ -94,10 +103,179 @@ namespace Protokite.Playtest
             return true;
         }
 
-        // A session can start once the playtest is ready, the player's answer lets it collect something, and a Flock session has reached the server.
+        /// <summary>
+        /// Starts a Protokite session, for a game that turned off Start Session And Recording Automatically or ended the last one. It
+        /// starts once a Flock session has reached the server. False, saying why in the log, when one is starting or open, the playtest
+        /// is not ready, or the player's answer collects nothing. Main thread only.
+        /// </summary>
+        public static bool StartPlaytestSession()
+        {
+            string whyNot = WhyASessionCannotStart(out bool playersChoice);
+            if (whyNot != null)
+            {
+                string line = LogPrefix + "No Protokite session was started: " + whyNot;
+                if (playersChoice)
+                    Debug.Log(line);
+                else
+                    Debug.LogWarning(line);
+                return false;
+            }
+            _sessionState = ProtokitePlaytestSessionState.NotStarted;
+            _sessionAskedFor = true;
+            // With the setting on, every session gets a recording of its own (owner, 2026-11-19); one already running goes to it.
+            if (StartsAutomatically() && _videoRecording == null)
+                _automaticRecordingTried = false;
+            // The Flock session running now is the one this session names, not the one an earlier session did.
+            _flockSessionReadyClient = null;
+            _flockSessionReadyUnder = null;
+            _loggedWaitingForFlockSession = false;
+            _loggedWaitingForUploadNetwork = false;
+            Refresh();
+            return true;
+        }
+
+        /// <summary>
+        /// Ends this launch's Protokite session: a recording still running stops, is uploaded to this session, and the end goes once the
+        /// upload has an answer (at once when the player's network answer holds the upload back; it is kept and sent on Wi-Fi). ended, when
+        /// given, hears whether Protokite took the end and why not. False, changing nothing, when no session is open, one is still
+        /// starting, or one is already ending. <see cref="StartPlaytestSession"/> starts another afterwards. Main thread only.
+        /// </summary>
+        public static bool EndPlaytestSession(Action<bool, string> ended = null)
+        {
+            if (_sessionState != ProtokitePlaytestSessionState.Started || _sessionEnding)
+            {
+                Debug.LogWarning(LogPrefix + "No Protokite session was ended: " + (_sessionEnding
+                    ? $"session {_playtestSessionId} is already ending."
+                    : _sessionState == ProtokitePlaytestSessionState.Starting
+                        ? "the session is still starting; end it once PlaytestSessionId is set."
+                        : "none is open."));
+                return false;
+            }
+            _sessionEnding = true;
+            _onSessionEnded = ended;
+            if (IsRecordingVideo)
+                _videoRecording.StopCapturing(ProtokitePlaytestVideoStopReason.SessionEnded);
+            Debug.Log(LogPrefix + $"Ending Protokite session {_playtestSessionId}: the end goes once its recording, if any, has been uploaded.");
+            return true;
+        }
+
+        // Why StartPlaytestSession cannot start one now, or null; playersChoice when the player's answer is why.
+        private static string WhyASessionCannotStart(out bool playersChoice)
+        {
+            playersChoice = false;
+            if (_sessionState == ProtokitePlaytestSessionState.Starting)
+                return "one is already starting.";
+            if (_sessionEnding)
+                return $"session {_playtestSessionId} is ending; start the next one once EndPlaytestSession has said how the end went.";
+            if (_sessionState == ProtokitePlaytestSessionState.Started)
+                return $"session {_playtestSessionId} is open; end it with EndPlaytestSession first.";
+            ProtokitePlaytestStatus status = Status;
+            if (status != ProtokitePlaytestStatus.Ready)
+            {
+                playersChoice = status == ProtokitePlaytestStatus.WaitingForPlayerConsent || status == ProtokitePlaytestStatus.PlayerRefusedPlaytest;
+                return "the playtest is not ready. " + Describe(status);
+            }
+            if (_sessionState == ProtokitePlaytestSessionState.NotStarted && SessionWanted())
+                return "one is already about to start: it starts once a Flock session has reached the server.";
+            return null;
+        }
+
+        // Whether the setting starts this launch's session and recording by themselves; read once a launch.
+        private static bool StartsAutomatically()
+        {
+            if (!_startsAutomatically.HasValue)
+                _startsAutomatically = ProtokitePlaytestSettings.Load()?.StartSessionAndRecordingAutomatically ?? true;
+            return _startsAutomatically.Value;
+        }
+
+        private static bool SessionWanted() => _sessionAskedFor || (!_automaticSessionTried && StartsAutomatically());
+
+        // A session can start once one is wanted, the playtest is ready, the player's answer lets it collect something, and a Flock session has reached the server.
         private static bool SessionCanStart(FlockClient running)
             => _sessionState == ProtokitePlaytestSessionState.NotStarted && _configState == ProtokitePlaytestConfigState.Loaded
-               && running != null && FlockSessionIdFor(running) != null && ProtokitePlaytestConsent.CollectsAnything(EffectiveConsent());
+               && running != null && SessionWanted() && FlockSessionIdFor(running) != null && ProtokitePlaytestConsent.CollectsAnything(EffectiveConsent());
+
+        /// <summary>Once a frame: a session the game asked to end ends once its recording has been sent, or can wait no longer for it.</summary>
+        private static void EndTheSessionOnceItsRecordingIsSent()
+        {
+            if (!_sessionEnding || _sessionState != ProtokitePlaytestSessionState.Started || ThisSessionsRecordingIsOnItsWay())
+                return;
+            _sessionEnding = false;
+            _sessionState = ProtokitePlaytestSessionState.Ended;
+            Task end = SendTheEnd(_sessionApiUrl, _sessionHeaders, _sessionRetryPolicy, _playtestSessionId, CancellationToken.None);
+            _gamesEnd = end;
+            _ = TellTheGameHowItsEndWentAsync(end, _playtestSessionId, _launch);
+            TellTheGameTheSessionChanged(_playtestSessionId, false);
+            Refresh();
+        }
+
+        // A handler that throws is logged, and the others still hear.
+        private static void TellTheGameTheSessionChanged(string sessionId, bool started)
+        {
+            Action<string, bool> handlers = PlaytestSessionChanged;
+            if (handlers == null)
+                return;
+            foreach (Delegate handler in handlers.GetInvocationList())
+            {
+                try
+                {
+                    ((Action<string, bool>)handler)(sessionId, started);
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogException(ex);
+                }
+            }
+        }
+
+        private static async Task TellTheGameHowItsEndWentAsync(Task end, string sessionId, int launch)
+        {
+            string whyNot = null;
+            try
+            {
+                await end;
+                Debug.Log(LogPrefix + $"Protokite session {sessionId} ended.");
+            }
+            catch (Exception ex)
+            {
+                whyNot = $"Protokite session {sessionId} could not be ended, so Protokite shows it as still in progress. {ex.Message}";
+                Debug.LogWarning(LogPrefix + whyNot);
+            }
+            // Quitting may have told the game already, and a later launch's game has let go of what it handed over.
+            if (launch == _launch && ReferenceEquals(_gamesEnd, end))
+                TellTheGameTheSessionEnded(whyNot == null, whyNot);
+        }
+
+        // On the thread pool (see SendOffTheMainThread), so quitting can wait for it.
+        private static Task SendTheEnd(string url, Dictionary<string, string> headers, RetryPolicy retryPolicy, string sessionId, CancellationToken cancellationToken)
+        {
+            ProtokiteClient client = new ProtokiteClient(retryPolicy);
+            return SendOffTheMainThread(async () =>
+            {
+                await client.EndPlaytestSessionAsync(url, headers, sessionId, cancellationToken);
+                return true;
+            });
+        }
+
+        private static bool ThisSessionsRecordingIsOnItsWay()
+            => _videoRecording != null || (string.Equals(_recordingSessionId, _playtestSessionId, StringComparison.Ordinal) && TheLastRecordingIsUploading())
+               || TheRecordingsGivenThisSessionAreUploading();
+
+        // Recordings made before this session started, sent by the earlier recordings' pass on a network the player allows.
+        private static bool TheRecordingsGivenThisSessionAreUploading()
+            => string.Equals(_recordingsGivenSessionId, _playtestSessionId, StringComparison.Ordinal) && RunningFlock() != null && !UploadsWaitForWiFi()
+               && (_lookAgainForThisLaunchsRecordings || (EarlierUploads != null && !EarlierUploads.IsCompleted));
+
+        // Finished, given a session, and uploading or about to (next frame) on a network the player allows.
+        private static bool TheLastRecordingIsUploading()
+        {
+            if (ThisLaunchsUpload != null && !ThisLaunchsUpload.IsCompleted)
+                return true;
+            if (_recordingRun == null || FinishedVideo?.FilePath == null || _recordingSessionId == null
+                || !ProtokitePlaytestConsent.AllowsVideoRecording(EffectiveConsent()) || UploadsWaitForWiFi())
+                return false;
+            return ThisLaunchsUpload == null || !ThisLaunchsUpload.IsCompleted;
+        }
 
         // The first Flock session on the server the start was ready under: a renewal Flock refuses signs the player out and ends it, and the start still goes, unlinked.
         private static string FlockSessionIdFor(FlockClient running)
@@ -113,7 +291,7 @@ namespace Protokite.Playtest
 
         private static void StartPlaytestSessionWhenAllowed(FlockClient running, string protokiteApiUrl)
         {
-            if (_sessionState != ProtokitePlaytestSessionState.NotStarted)
+            if (_sessionState != ProtokitePlaytestSessionState.NotStarted || !SessionWanted())
                 return;
             // On a phone, once the player has said which networks recordings upload on, so the start carries it.
             if (UploadNetworkAnswerIsDue())
@@ -158,6 +336,9 @@ namespace Protokite.Playtest
             if (carriesTheToken && ReferenceEquals(_playerTokenRenewedFor, running) && _playerTokenRenewal != null && !_playerTokenRenewal.IsCompleted)
                 return;
 
+            // From here the start is decided: whatever becomes of it, the setting's one start a launch, or the game's call, is used.
+            _sessionAskedFor = false;
+            _automaticSessionTried = true;
             JObject body = new JObject();
             if (_steamId != null)
             {
@@ -237,7 +418,9 @@ namespace Protokite.Playtest
                 _sessionState = ProtokitePlaytestSessionState.Started;
                 _playtestSessionId = sessionId;
                 SaveSessionBesideRecording();
+                GiveTheHeldRecordingsThisSession();
                 Debug.Log(LogPrefix + $"Protokite session {sessionId} started for this launch, with the player's {(sentSteamId ? "Steam id" : "device id")} and Flock session {flockSessionId}.");
+                TellTheGameTheSessionChanged(sessionId, true);
                 // A recording that finished before its session started goes now.
                 UploadThisLaunchsRecordingWhenReady();
             }
@@ -247,7 +430,7 @@ namespace Protokite.Playtest
                 if ((failure as FlockException)?.StatusCode == 400)
                     _playtestNoLongerCollecting = true;
                 else
-                    Debug.LogWarning(LogPrefix + "No Protokite session was started, and none is tried again this launch, because a start that reached Protokite may already have created one. " + failure?.Message);
+                    Debug.LogWarning(LogPrefix + "No Protokite session was started, and none is tried again unless the game calls StartPlaytestSession, because a start that reached Protokite may already have created one. " + failure?.Message);
             }
             Refresh();
         }
@@ -273,8 +456,12 @@ namespace Protokite.Playtest
             // An upload still going stops here and its recording is kept: the next launch sends it.
             StopUploads();
             StopVideoForQuitting();
+            // An end the game asked for goes now, without its recording, which a later launch sends; the game hears how it went.
+            _sessionEnding = false;
 #if UNITY_WEBGL && !UNITY_EDITOR
             // A page closing cannot be held up, and the transport needs the main thread this would block: the end is sent once.
+            _onSessionEnded = null;
+            _gamesEnd = null;
             if (_sessionState == ProtokitePlaytestSessionState.Started)
             {
                 _sessionState = ProtokitePlaytestSessionState.Ended;
@@ -283,6 +470,7 @@ namespace Protokite.Playtest
 #else
             TimeSpan quitWait = QuitWaitForTesting ?? QuitWait;
             DateTime until = DateTime.UtcNow + quitWait;
+            WaitForTheGamesEnd(until, quitWait);
             if (_sessionState == ProtokitePlaytestSessionState.Starting && _sessionStart != null)
             {
                 try
@@ -299,6 +487,7 @@ namespace Protokite.Playtest
                     _sessionState = ProtokitePlaytestSessionState.Started;
                     _sessionStartEndedAtQuit = _sessionStart;
                     SaveSessionBesideRecording();
+                    GiveTheHeldRecordingsThisSession();
                 }
             }
 
@@ -317,6 +506,7 @@ namespace Protokite.Playtest
                         return true;
                     });
                     bool ended;
+                    string whyNot = null;
                     try
                     {
                         ended = end.Wait(Remaining(until));
@@ -328,19 +518,16 @@ namespace Protokite.Playtest
                     }
                     catch (AggregateException ex)
                     {
-                        Debug.LogWarning(LogPrefix + $"Protokite session {sessionId} could not be ended, so Protokite shows it as still in progress. {ex.GetBaseException().Message}");
-                        ended = true;
-                        sessionId = null;
+                        whyNot = $"Protokite session {sessionId} could not be ended, so Protokite shows it as still in progress. {ex.GetBaseException().Message}";
+                        ended = false;
                     }
                     // Once the wait is over, nothing more is sent: the end's retries stop here.
                     giveUp.Cancel();
-                    if (sessionId != null)
-                    {
-                        if (ended)
-                            Debug.Log(LogPrefix + $"Protokite session {sessionId} ended.");
-                        else
-                            Debug.LogWarning(LogPrefix + $"Protokite session {sessionId} could not be ended within {quitWait.TotalSeconds:0} s of quitting, so Protokite shows it as still in progress.");
-                    }
+                    if (ended)
+                        Debug.Log(LogPrefix + $"Protokite session {sessionId} ended.");
+                    else
+                        Debug.LogWarning(LogPrefix + (whyNot ?? $"Protokite session {sessionId} could not be ended within {quitWait.TotalSeconds:0} s of quitting, so Protokite shows it as still in progress."));
+                    TellTheGameTheSessionEnded(ended, ended ? null : whyNot ?? $"the game quit, and Protokite did not answer the end within {quitWait.TotalSeconds:0} s.");
                 }
             }
 
@@ -362,19 +549,48 @@ namespace Protokite.Playtest
 
         private static async Task EndAndReportAsync(string url, Dictionary<string, string> headers, RetryPolicy retryPolicy, string sessionId)
         {
-            ProtokiteClient client = new ProtokiteClient(retryPolicy);
             try
             {
-                await SendOffTheMainThread(async () =>
-                {
-                    await client.EndPlaytestSessionAsync(url, headers, sessionId, CancellationToken.None);
-                    return true;
-                });
+                await SendTheEnd(url, headers, retryPolicy, sessionId, CancellationToken.None);
                 Debug.Log(LogPrefix + $"Protokite session {sessionId} ended.");
             }
             catch (Exception ex)
             {
                 Debug.LogWarning(LogPrefix + $"Protokite session {sessionId} could not be ended, so Protokite shows it as still in progress. {ex.Message}");
+            }
+        }
+
+        // An end the game asked for, already sent, gets the quit's bound too, and the game is told how it went.
+        private static void WaitForTheGamesEnd(DateTime until, TimeSpan quitWait)
+        {
+            if (_gamesEnd == null)
+                return;
+            string whyNot = null;
+            try
+            {
+                if (!_gamesEnd.Wait(Remaining(until)))
+                    whyNot = $"the game quit, and Protokite did not answer the end within {quitWait.TotalSeconds:0} s.";
+            }
+            catch (AggregateException ex)
+            {
+                whyNot = "Protokite could not end the session: " + ex.GetBaseException().Message;
+            }
+            TellTheGameTheSessionEnded(whyNot == null, whyNot);
+        }
+
+        // Once, for the end the game asked for; a game's code that throws here is logged, never let stop the playtest.
+        private static void TellTheGameTheSessionEnded(bool endedOk, string whyNot)
+        {
+            Action<bool, string> ended = _onSessionEnded;
+            _onSessionEnded = null;
+            _gamesEnd = null;
+            try
+            {
+                ended?.Invoke(endedOk, whyNot);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex);
             }
         }
 
@@ -439,6 +655,12 @@ namespace Protokite.Playtest
             _flockSessionReadyClient = null;
             _steamId = null;
             _playerName = null;
+            _sessionAskedFor = false;
+            _automaticSessionTried = false;
+            _startsAutomatically = null;
+            _sessionEnding = false;
+            _onSessionEnded = null;
+            _gamesEnd = null;
         }
     }
 }

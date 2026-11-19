@@ -54,7 +54,34 @@ namespace Protokite.Playtest.Tests
             ["IsRecordingVideo"] = () => Assert.IsFalse(ProtokitePlaytest.IsRecordingVideo),
             ["StopVideoRecording()"] = () => Assert.IsFalse(ProtokitePlaytest.StopVideoRecording()),
             ["RecordPlaytestEvent(String,Dictionary`2)"] = () => Assert.IsFalse(ProtokitePlaytest.RecordPlaytestEvent("boss_defeated", new Dictionary<string, object> { ["boss"] = "dragon" })),
+            ["StartVideoRecording()"] = () =>
+            {
+                LogAssert.Expect(LogType.Warning, new Regex("No playtest recording was started: the playtest is not ready"));
+                Assert.IsFalse(ProtokitePlaytest.StartVideoRecording());
+            },
+            ["RecordingUploadChanged"] = () =>
+            {
+                Action<ProtokitePlaytestUploadUpdate> heard = update => Assert.Fail("Nothing is uploaded before Flock starts");
+                ProtokitePlaytest.RecordingUploadChanged += heard;
+                ProtokitePlaytest.RecordingUploadChanged -= heard;
+            },
             ["PlaytestSessionId"] = () => Assert.IsNull(ProtokitePlaytest.PlaytestSessionId),
+            ["PlaytestSessionChanged"] = () =>
+            {
+                Action<string, bool> heard = (sessionId, started) => Assert.Fail("No session opens before Flock starts");
+                ProtokitePlaytest.PlaytestSessionChanged += heard;
+                ProtokitePlaytest.PlaytestSessionChanged -= heard;
+            },
+            ["StartPlaytestSession()"] = () =>
+            {
+                LogAssert.Expect(LogType.Warning, new Regex("No Protokite session was started: the playtest is not ready. Playtesting is set up and waiting for the Flock SDK"));
+                Assert.IsFalse(ProtokitePlaytest.StartPlaytestSession());
+            },
+            ["EndPlaytestSession(Action`2)"] = () =>
+            {
+                LogAssert.Expect(LogType.Warning, new Regex("No Protokite session was ended: none is open"));
+                Assert.IsFalse(ProtokitePlaytest.EndPlaytestSession((ended, whyNot) => Assert.Fail("Nothing to end")));
+            },
             ["SetSteamId(String,String)"] = () =>
             {
                 Assert.IsTrue(ProtokitePlaytest.SetSteamId("76561198000000001", "A Player"), "Taken before the session starts");
